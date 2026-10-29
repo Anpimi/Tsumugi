@@ -15,6 +15,7 @@ import type { InteractionGate } from "../../workspace/interactionGate";
 import type { TranslationDrafts } from "../editor/translationDrafts";
 import { contextKindForKnowledge, knowledgeKinds, type KnowledgeOwner, type KnowledgeKind } from "./knowledgeTypes";
 import { knowledgeBlocked } from "./knowledgeState";
+import { ResourceDraftRecovery } from "../../../ResourceDraftRecovery";
 import { knowledgeCurrentKey, knowledgeTermsKey, useKnowledgeCurrent, useKnowledgeScope, useKnowledgeTerms } from "./knowledgeReads";
 import TermScopePicker from "./TermScopePicker";
 import TermProposalPanel from "./TermProposalPanel";
@@ -36,6 +37,7 @@ export interface KnowledgeViewProps {
 export default function KnowledgeView({ project, owner, view, disabled, gate, current, patch, onDetails, reviewTarget = null, onReviewOpened, drafts = null, onEditTranslation, onRevealTranslationDraft }: KnowledgeViewProps) {
   const { t } = useTranslation(undefined, { keyPrefix: "knowledge" });
   const { selectedTerm, termDraft, aliasInput, locale, pending, busyMutation, notice, failure } = owner.state;
+  const editingDisabled = disabled || owner.journal.hydration !== "ready" || owner.journal.retired;
   const sourceInput = useRef<HTMLInputElement>(null), focusTicket = useRef<{ termId: string | null; origin: HTMLElement | null } | null>(null);
   useLayoutEffect(() => {
     const ticket = focusTicket.current;
@@ -100,17 +102,17 @@ export default function KnowledgeView({ project, owner, view, disabled, gate, cu
     const editing = term === null || term.termId === selectedTerm?.termId;
     return <>
       <tr data-selected={editing || undefined}>
-        <td>{editing ? <Field label={t("sourceTerm")} required error={fieldError(termDraft.source)}><TextInput ref={sourceInput} readOnly={disabled || !localeMatches} value={termDraft.source} onChange={event => owner.editTerm({ ...owner.current().termDraft, source: event.target.value })}/></Field>
+        <td>{editing ? <Field label={t("sourceTerm")} required error={fieldError(termDraft.source)}><TextInput ref={sourceInput} readOnly={editingDisabled || !localeMatches || !localeAvailable} value={termDraft.source} onChange={event => owner.editTerm({ ...owner.current().termDraft, source: event.target.value })}/></Field>
           : <Button variant="link" disabled={disabled || blocked || dirty || !fresh || !localeMatches} onClick={() => select(term)}>{term.source}</Button>}</td>
-        <td>{editing ? <Field label={t("targetTerm")} required error={fieldError(termDraft.target)}><TextInput readOnly={disabled || !localeMatches} value={termDraft.target} onChange={event => owner.editTerm({ ...owner.current().termDraft, target: event.target.value })}/></Field> : term?.target}</td>
+        <td>{editing ? <Field label={t("targetTerm")} required error={fieldError(termDraft.target)}><TextInput readOnly={editingDisabled || !localeMatches || !localeAvailable} value={termDraft.target} onChange={event => owner.editTerm({ ...owner.current().termDraft, target: event.target.value })}/></Field> : term?.target}</td>
         <td>{t((editing ? termDraft.scopeUnitId : term?.scopeUnitId) ? "entryScope" : "projectScope")}</td>
         <td>{term ? <><span>{t(term.originKind === "manual" ? "manual" : "imported")}</span><Button size="xs" disabled={disabled || blocked || !fresh || dirty && !editing || !localeMatches} onClick={() => select(term, true)}>{t("details")}</Button></> : t("newTerm")}</td>
       </tr>
       {editing ? <tr><td colSpan={4}><div className={styles.rowEditor} aria-label={t("termEditor")}>
         <div className={styles.fields}>
-          <Field label={t("aliases")} description={t("aliasesHelp")} error={termDraft.aliases.length > 16 ? t("aliasesInvalid") : termDraft.aliases.map(fieldError).find(Boolean)}><TextInput value={aliasInput} readOnly={disabled || !localeMatches} onChange={event => { const value = event.target.value; owner.editTerm({ ...owner.current().termDraft, aliases: value.split(",").map(alias => alias.trim()).filter(Boolean) }, value); }}/></Field>
+          <Field label={t("aliases")} description={t("aliasesHelp")} error={termDraft.aliases.length > 16 ? t("aliasesInvalid") : termDraft.aliases.map(fieldError).find(Boolean)}><TextInput value={aliasInput} readOnly={editingDisabled || !localeMatches || !localeAvailable} onChange={event => { const value = event.target.value; owner.editTerm({ ...owner.current().termDraft, aliases: value.split(",").map(alias => alias.trim()).filter(Boolean) }, value); }}/></Field>
           <Field label={t("protected")} description={t("protectedHelp")}><TextInput type="checkbox" checked={termDraft.protected} disabled={disabled || !localeMatches} onChange={event => owner.editTerm({ ...owner.current().termDraft, protected: event.target.checked })}/></Field>
-          <Field label={t("reason")} required error={fieldError(termDraft.reason)}><TextInput value={termDraft.reason} readOnly={disabled || !localeMatches} onChange={event => owner.editTerm({ ...owner.current().termDraft, reason: event.target.value })}/></Field>
+          <Field label={t("reason")} required error={fieldError(termDraft.reason)}><TextInput value={termDraft.reason} readOnly={editingDisabled || !localeMatches || !localeAvailable} onChange={event => owner.editTerm({ ...owner.current().termDraft, reason: event.target.value })}/></Field>
         </div>
         <p>{t("scope")}: {termDraft.scopeUnitId ? scope.data && !scope.error && !scope.isFetching ? scope.data.nativeKey : t("entryScope") : t("projectScope")}</p>
         {termDraft.scopeUnitId && (scope.error || scope.isFetching) ? <p className={styles.meta}>{t(scope.error ? "scopeUnavailable" : "readingEntries")}</p> : null}
@@ -130,10 +132,11 @@ export default function KnowledgeView({ project, owner, view, disabled, gate, cu
     <section className={styles.body} aria-label={t(`kinds.${kind}`)} onFocusCapture={() => gate.setInputOwner(view.id, inputOwner)}
       onBlurCapture={event => { if (!event.currentTarget.contains(event.relatedTarget)) gate.setInputOwner(view.id, null); }}
       onCompositionStartCapture={() => gate.setComposing(inputOwner, true)} onCompositionEndCapture={() => gate.setComposing(inputOwner, false)}>
+      <ResourceDraftRecovery owner={owner} disabled={disabled}/>
       {Object.values(owner.state.knowledgeDrafts).length ? <nav className={styles.toolbar} aria-label={t("reviewDrafts")}>{Object.values(owner.state.knowledgeDrafts).map(draft => <Button key={draft.key} aria-current={showReview && reviewDraft?.key === draft.key ? "page" : undefined}
         onClick={() => { if (current()) { owner.knowledgeProposals.activate(draft.key); patch({ locale: draft.locale, preset: draft.entry.kind === "character" ? "characters" : draft.entry.kind }); } }}>{draft.name || draft.entry.name}</Button>)}</nav> : null}
-      {showReview ? <KnowledgeProposalPanel project={project} owner={owner} view={view} disabled={disabled} gate={gate} current={current} patch={patch} onDetails={onDetails} target={reviewTarget} onOpened={onReviewOpened}/> : null}
-      {contextKindForKnowledge(kind) ? <ContextResourcesView project={project} owner={owner} view={view} disabled={disabled} gate={gate} current={current} patch={patch} onDetails={onDetails} kind={contextKindForKnowledge(kind)!}/> : kind === "memory" ? <TranslationMemoryView project={project} view={view} drafts={drafts} disabled={disabled} gate={gate} current={current} patch={patch} onDetails={onDetails} onEdit={onEditTranslation} onRevealDraft={onRevealTranslationDraft}/> : <>
+      {showReview ? <KnowledgeProposalPanel project={project} owner={owner} view={view} disabled={editingDisabled} gate={gate} current={current} patch={patch} onDetails={onDetails} target={reviewTarget} onOpened={onReviewOpened}/> : null}
+      {contextKindForKnowledge(kind) ? <ContextResourcesView project={project} owner={owner} view={view} disabled={editingDisabled} gate={gate} current={current} patch={patch} onDetails={onDetails} kind={contextKindForKnowledge(kind)!}/> : kind === "memory" ? <TranslationMemoryView project={project} view={view} drafts={drafts} disabled={disabled} gate={gate} current={current} patch={patch} onDetails={onDetails} onEdit={onEditTranslation} onRevealDraft={onRevealTranslationDraft}/> : <>
         <div className={styles.toolbar}><h1>{t("kinds.terms")}</h1><Button disabled={disabled || blocked || dirty || !localeMatches || !source.data?.currentSnapshot} onClick={newTerm}><Plus/>{t("newTerm")}</Button><Button disabled={terms.isFetching} onClick={() => void terms.refetch()}>{t("refresh")}</Button></div>
         {!localeMatches ? <Banner tone="warning" action={<Button onClick={() => { if (current()) patch({ locale }); }}>{t("returnToLanguage", { locale })}</Button>}>{t("retainedLanguage", { locale })}</Banner> : null}
         {!localeAvailable ? <Banner tone="warning">{t("localeUnavailable", { locale })}</Banner> : null}

@@ -14,18 +14,19 @@ const noActivity = () => null;
 export function useDecisionFeed(reads: SessionReads, owners: DecisionOwners, cursor: DecisionCursor | null,
   visible: boolean, enabled: boolean, read = decisionCommands.page,
 ) {
-  const firstOwner = owners[0], secondOwner = owners[1];
+  const firstOwner = owners[0], secondOwner = owners[1], resourceOwner = owners[2];
   const firstActivity = useSyncExternalStore(firstOwner?.subscribe ?? noSubscription, firstOwner?.getDecisionActivity ?? noActivity);
   const secondActivity = useSyncExternalStore(secondOwner?.subscribe ?? noSubscription, secondOwner?.getDecisionActivity ?? noActivity);
-  const activity = firstActivity && secondActivity ? [firstActivity, secondActivity] : null;
+  const resourceActivity = useSyncExternalStore(resourceOwner?.subscribe ?? noSubscription, resourceOwner?.getDecisionActivity ?? noActivity);
+  const activity = firstActivity && secondActivity && (owners.length < 3 || resourceActivity) ? [firstActivity, secondActivity, ...(resourceActivity ? [resourceActivity] : [])] : null;
   const identity = decisionActivityIdentity(activity);
   const liveOwners = useRef(owners);
   liveOwners.current = owners;
   const getOwners = useCallback(() => liveOwners.current, []);
   const firstOptions = useMemo(() => decisionReadOptions(reads, allDecisions, null, getOwners, read),
-    [reads, firstOwner, secondOwner, identity, getOwners, read]);
+    [reads, firstOwner, secondOwner, resourceOwner, identity, getOwners, read]);
   const pageOptions = useMemo(() => decisionReadOptions(reads, allDecisions, cursor, getOwners, read),
-    [reads, firstOwner, secondOwner, identity, getOwners, cursor, read]);
+    [reads, firstOwner, secondOwner, resourceOwner, identity, getOwners, cursor, read]);
   const live = enabled && !reads.retired;
   const first = useQuery({ ...firstOptions, enabled: live });
   const changed = cursor !== null && first.data !== undefined && cursor.basis !== first.data.basis;

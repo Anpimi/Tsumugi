@@ -10,6 +10,7 @@ import type { ContextFactDecision, ContextFactWrite, ContextRevision, SaveContex
 import type { ReviewEditorSnapshot } from "./reviewCommands";
 import type { CommandError, ProjectView } from "./projectCommands";
 import { fixtureIdentity } from "./testSupport/executionFixture";
+import { installResourceDraftFixture } from "./testSupport/resourceDraftFixture";
 import { reviewSummaryFor, reviewSummaryPageFixture, reviewTargetFixture } from "./testSupport/reviewFixture";
 import { sourcePageFixture, sourceRowFixture } from "./testSupport/sourceFixture";
 import { i18n } from "./i18n";
@@ -29,6 +30,7 @@ const wireValidators: Record<string, (value: unknown) => boolean> = {
   read_review_editor_snapshot: validateResponseEditor, read_execution_task_activity: validateResponseActivity,
   read_source_context: validateResponseSourceContext,
   read_context_fact_decisions:validateResponseContextFacts,decide_context_fact:validateResponseContextFact,read_context_fact_action:validateResponseContextFactAction,read_context_fact_history:validateResponseContextFactHistory,
+  observe_context_fact_action:validateResponseContextFactAction,
   read_context_save_action:validateResponseContextAction,
   read_work_protection: validateResponseWorkProtection, set_work_protection: validateResponseWorkProtection,
 };
@@ -101,6 +103,12 @@ beforeEach(async()=>{
     }
     if(command==="read_context_fact_history")return{rows:[...factHistory].reverse(),nextOffset:null};
     if(command==="read_context_fact_action")return factActions.get(String(request.actionId))??null;
+    if(command==="observe_context_fact_action"){
+      if(!validateRequestContextFact(request))throw new Error("Invalid original fact observation request");
+      const value=factActions.get(request.decision.actionId)??null;
+      if(value)expect(value.request).toEqual(request.decision);
+      return value;
+    }
     if(command==="decide_context_fact"){
       if(!validateRequestContextFact(request))throw new Error("Invalid synthetic context fact request");
       expect(request.decision).toHaveProperty("expectedDecisionId",factHistory.at(-1)?.request.actionId??null);
@@ -128,6 +136,7 @@ beforeEach(async()=>{
     }
     throw new Error(`Unexpected synthetic IPC command: ${command}`);
   }));
+  installResourceDraftFixture();
 });
 afterEach(cleanup);
 async function open(){
@@ -227,14 +236,19 @@ it.each(["en-US", "zh-CN"])("checks an invalid fact acknowledgement once and pre
   const write=new Promise<ContextFactDecision>(resolve=>{finishWrite=resolve;}),lookup=new Promise<ContextFactDecision|null>(resolve=>{finishRead=resolve;});
   const native=invoke.getMockImplementation()!;let recorded!:ContextFactDecision;
   invoke.mockImplementation(async(command:string,args)=>{
-    if(command==="read_context_fact_action")return lookup;
+    if(command==="observe_context_fact_action"){
+      if(!validateRequestContextFact(args.request))throw new Error("Invalid original fact observation request");
+      return lookup;
+    }
     const value=await native(command,args);
     if(command!=="decide_context_fact")return value;
     if(!validateResponseContextFact(value))throw new Error("Invalid original fact fixture");recorded=value;return write;
   });
   const identities=invoke.mock.calls.filter(([name])=>name==="create_execution_identity").length;
   await user.click(screen.getByRole("button",{name:i18n.t("contextFacts.save")}));
-  await waitFor(()=>expect(invoke.mock.calls.filter(([name])=>name==="decide_context_fact")).toHaveLength(1));
+  await waitFor(()=>{expect(invoke.mock.calls.filter(([name])=>name==="decide_context_fact")).toHaveLength(1);expect(recorded).toBeDefined();});
+  const checkpoints=invoke.mock.calls.filter(([name])=>name==="write_local_resource_draft");
+  expect(checkpoints.at(-1)?.[1].request.write.value.factPending?.request).toEqual(recorded.request);
   expect(screen.queryByText(i18n.t("contextFacts.checking"))).not.toBeInTheDocument();
   expect(invoke.mock.calls.filter(([name])=>name==="read_context_fact_action")).toHaveLength(0);
   await act(async()=>{finishWrite({request:{...recorded.request,reason:"Wrong acknowledged reason"}});});
@@ -245,6 +259,13 @@ it.each(["en-US", "zh-CN"])("checks an invalid fact acknowledgement once and pre
   await user.type(screen.getByRole("textbox",{name:i18n.t("contextFacts.actor")}),"Reviewer B");
   await user.type(screen.getByRole("textbox",{name:i18n.t("contextFacts.reason")})," newer B");
   await act(async()=>{finishRead(recorded);});
+  await waitFor(()=>expect(screen.getByRole("button",{name:i18n.t("contextFacts.check")})).toBeEnabled());
+  expect(screen.getByText(i18n.t("contextFacts.unknown"))).toBeVisible();
+  expect(screen.queryByText(i18n.t("resource.savedNewer"))).not.toBeInTheDocument();
+  expect(invoke.mock.calls.filter(([name])=>name==="read_context_fact_action")).toHaveLength(0);
+  expect(invoke.mock.calls.filter(([name])=>name==="observe_context_fact_action").map(([,args])=>args.request))
+    .toEqual([{projectId:project.metadata.projectId,sessionToken:project.sessionToken,decision:recorded.request}]);
+  await user.click(screen.getByRole("button",{name:i18n.t("contextFacts.check")}));
   await screen.findByText(i18n.t("resource.savedNewer"));
   expect(screen.getByRole("textbox",{name:i18n.t("contextFacts.actor")})).toHaveValue("Reviewer B");
   expect(screen.getByRole("textbox",{name:i18n.t("contextFacts.reason")})).toHaveValue("Reason A newer B");
@@ -365,10 +386,16 @@ it("saves a typed human replacement while preserving independent resource contex
 
 it("settles only the original fact action when a successful acknowledgement arrives after newer reason B",async()=>{
   factsEnabled=true;const user=await open();await editFact(user);let finish!:(v:ContextFactDecision)=>void;holdFact=()=>new Promise(resolve=>{finish=resolve;});
+  const identities=invoke.mock.calls.filter(([name])=>name==="create_execution_identity").length;
   await user.click(screen.getByRole("button",{name:i18n.t("contextFacts.save")}));await waitFor(()=>expect(finish).toBeDefined());
+  const checkpoints=invoke.mock.calls.filter(([name])=>name==="write_local_resource_draft");
+  expect(checkpoints.at(-1)?.[1].request.write.value.factPending?.request).toEqual(factHistory[0].request);
   await user.type(screen.getByRole("textbox",{name:i18n.t("contextFacts.reason")})," newer B");await act(async()=>{finish(factHistory[0]);});
   await screen.findByText(i18n.t("resource.savedNewer"));expect(screen.getByRole("textbox",{name:i18n.t("contextFacts.reason")})).toHaveValue("Reason A newer B");
   expect(screen.getByRole("textbox",{name:i18n.t("translation.draft")})).toHaveValue("Manual B");expect(factHistory).toHaveLength(1);expect(factHistory[0].request.reason).toBe("Reason A");
+  expect(invoke.mock.calls.filter(([name])=>name==="decide_context_fact")).toHaveLength(1);
+  expect(invoke.mock.calls.filter(([name])=>name==="create_execution_identity")).toHaveLength(identities+1);
+  expect(invoke.mock.calls.filter(([name])=>name==="observe_context_fact_action"||name==="read_context_fact_action")).toHaveLength(0);
 });
 
 it("keeps unknown fact actions reachable, blocks navigation, and checks the original receipt without resending B",async()=>{

@@ -293,8 +293,29 @@ pub(super) fn validate(c: &Connection) -> rusqlite::Result<()> {
     }
     Ok(())
 }
+fn check_current(c:&Connection,request:&ContextFactWrite)->Result<(),ExecutionError>{
+    let current=latest(c,&request.basis)?;
+    if current.as_ref().map(|v|v.request.action_id)!=request.expected_decision_id {
+        return Err(failure(ErrorCode::DependencyConflict,"context-fact-current"));
+    }Ok(())
+}
 impl ProjectStore {
-    pub fn context_fact_action(
+    pub fn context_fact_request_observation(&self,request:&ContextFactWrite)
+        ->Result<Option<ContextFactDecision>,ExecutionError>{
+        let value=self.context_fact_action_observation(request.basis.scope.project_id,request.action_id)?;
+        if value.as_ref().is_some_and(|v|v.request!=*request){
+            return Err(failure(ErrorCode::ResultMismatch,"context-fact-action"));
+        }Ok(value)
+    }
+    pub fn context_fact_request_settlement_observation(&self,request:&ContextFactWrite)
+        -> Result<Option<ContextFactDecision>,ExecutionError>{
+        super::super::review::read_snapshot(self.connection().map_err(|_|failure(ErrorCode::StorageFailed,"context-fact-read"))?,|c|{
+            let value=self.context_fact_request_observation(request)?;
+            if value.is_none(){check_current(c,request)?;}
+            Ok(value)
+        })
+    }
+    pub fn context_fact_action_observation(
         &self,
         project: ExecutionId,
         action: ExecutionId,
@@ -302,6 +323,7 @@ impl ProjectStore {
         let c = self
             .connection()
             .map_err(|_| failure(ErrorCode::StorageFailed, "context-fact-read"))?;
+        super::super::review::read_snapshot(c, |c| {
         let value = load(c, action)?;
         if value
             .as_ref()
@@ -309,6 +331,13 @@ impl ProjectStore {
         {
             return Err(failure(ErrorCode::Unauthorized, "context-fact-project"));
         }
+        Ok(value)
+        })
+    }
+    pub fn context_fact_action(
+        &self, project: ExecutionId, action: ExecutionId,
+    ) -> Result<Option<ContextFactDecision>, ExecutionError> {
+        let value = self.context_fact_action_observation(project, action)?;
         if self
             .execution_unknown
             .load(std::sync::atomic::Ordering::Acquire)
@@ -434,13 +463,7 @@ impl ProjectStore {
         {
             return Err(failure(ErrorCode::DependencyConflict, "context-fact-basis"));
         }
-        let current = latest(&tx, &request.basis)?;
-        if current.as_ref().map(|v| v.request.action_id) != request.expected_decision_id {
-            return Err(failure(
-                ErrorCode::DependencyConflict,
-                "context-fact-current",
-            ));
-        }
+        check_current(&tx,request)?;
         tx.execute(
             "INSERT INTO context_fact_decisions VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11)",
             params![

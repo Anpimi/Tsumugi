@@ -1,5 +1,8 @@
 import { describe, expect, it, vi } from "vitest";
 import translationWire from "../../../../test/fixtures/translation-commands.json";
+import resourceWire from "../../../../test/fixtures/resourceDraftCommands.contract.json";
+import { canonicalResourceDraft, type ResourceDraftHead } from "../../../resourceDraftCommands";
+import { validateRequestResourceWrite } from "../../../generated/draft.validators";
 import type { DecisionItem } from "../../../decisionCommands";
 import type { ConversationDraftHead, ConversationDraftPending } from "../../../conversationDraftCommands";
 import type { DraftReadView } from "../../../draftCommands";
@@ -14,7 +17,7 @@ import { DecisionNavigationChanged, resolveDecisionNavigation, type DecisionNavi
 const ctx = { projectId: id(60000), sessionToken: "synthetic-decision-session" };
 function ports(overrides: Partial<DecisionNavigationPorts> = {}): DecisionNavigationPorts {
   const unexpected = vi.fn(async () => { throw new Error("Unexpected reader"); });
-  return { revision: unexpected, target: unexpected, findings: unexpected, draft: unexpected, conversationDraft: unexpected, proposal: unexpected, knowledgeDecision: unexpected, ...overrides };
+  return { revision: unexpected, target: unexpected, findings: unexpected, draft: unexpected, conversationDraft: unexpected, resourceDraft: unexpected, proposal: unexpected, knowledgeDecision: unexpected, ...overrides };
 }
 function item(action: DecisionItem["action"], targets: DecisionItem["targets"], locale: string | null = "zh-CN"): DecisionItem {
   const source = action.kind === "compare-candidate" ? "translation-candidate" : action.kind === "review-translation" ? "human-review"
@@ -31,6 +34,23 @@ function candidate(value = revision()) {
   return item({ kind: "compare-candidate", unitId: value.unitId, revisionId: value.revisionId,
     sourceSnapshotId: value.sourceSnapshotId, sourceRevisionId: value.sourceRevisionId }, [{ kind: "entry", unitId: value.unitId }], value.locale);
 }
+
+it("opens the real resource request while preserving later B and rejects a different original action", async () => {
+  const raw: unknown = structuredClone(resourceWire.requests.write);
+  if (!validateRequestResourceWrite(raw)) throw new Error("Expected resource journal fixture");
+  const value = canonicalResourceDraft(raw.write.value), pending = value.pending;
+  if (!pending || pending.kind !== "term") throw new Error("Expected original term request");
+  pending.request.projectId = ctx.projectId;
+  const head: ResourceDraftHead = { key: { projectId: ctx.projectId }, revision: "7", writerId: id(60900), value };
+  const reference = { requestKind: "resource-term" as const, action: { key: { kind: "resource" as const }, slot: "primary" as const, actionId: pending.request.actionId, submittedSeq: pending.submittedSeq } };
+  const row = item({ kind: "inspect-local-request", reference }, [{ kind: "project" }]);
+  const resourceDraft = vi.fn<DecisionNavigationPorts["resourceDraft"]>(async () => head);
+  value.termDraft.target = "Later B"; value.editSeq = "20";
+  expect(await resolveDecisionNavigation(ctx, row, () => true, ports({ resourceDraft }))).toEqual({ kind: "resource-request", slot: "primary", actionId: pending.request.actionId });
+  expect(resourceDraft).toHaveBeenCalledWith({ sessionToken: ctx.sessionToken, key: { projectId: ctx.projectId } });
+  expect(value.termDraft.target).toBe("Later B"); pending.request.actionId = id(60901);
+  await expect(resolveDecisionNavigation(ctx, row, () => true, ports({ resourceDraft }))).rejects.toBeInstanceOf(DecisionNavigationChanged);
+});
 
 it("opens the exact proposal group only while that original revision remains the latest", async () => {
   const original = conversationProposalFixture({ projectId: ctx.projectId, conversationId: id(60200) }).revision;

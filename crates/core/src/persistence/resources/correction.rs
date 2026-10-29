@@ -489,27 +489,14 @@ pub(super) fn preview(
     })
 }
 
-pub(super) fn decide(
-    c: &Connection,
-    request: &ResourceDecision,
-    capture: &CaptureCorrectionTerm,
-    request_digest: &str,
-) -> Result<Option<TermRevision>, ExecutionError> {
+pub(super) fn check_decision_admission(c:&Connection,request:&ResourceDecision,capture:&CaptureCorrectionTerm)
+    ->Result<Option<TermRevision>,ExecutionError>{
     if request.entry_id != "term" {
         return Err(failure(ErrorCode::DependencyConflict, "resource-entry"));
     }
     let evidence = validate_request(c, capture)?;
     let current = current_term(c, request.project_id, &request.capture_id.to_string())?;
-    if current.as_ref().map(|r| r.revision_id) != request.expected_revision_id {
-        return Err(
-            failure(ErrorCode::DependencyConflict, "resource-current").with_conflict(
-                ConflictEvidence::TermRevision {
-                    expected: request.expected_revision_id,
-                    current: current.as_ref().map(|r| r.revision_id),
-                },
-            ),
-        );
-    }
+    check_term_revision(current.as_ref(),request.expected_revision_id)?;
     if matches!(
         request.decision,
         ResourceDecisionKind::Keep | ResourceDecisionKind::Ignore
@@ -523,6 +510,17 @@ pub(super) fn decide(
     if request.decision != ResourceDecisionKind::Adopt || current.is_some() {
         return Err(failure(ErrorCode::DependencyConflict, "correction-adopt"));
     }
+    Ok(current)
+}
+
+pub(super) fn decide(
+    c: &Connection,
+    request: &ResourceDecision,
+    capture: &CaptureCorrectionTerm,
+    request_digest: &str,
+) -> Result<Option<TermRevision>, ExecutionError> {
+    let current=check_decision_admission(c,request,capture)?;
+    if matches!(request.decision,ResourceDecisionKind::Keep|ResourceDecisionKind::Ignore){return Ok(current);}
     let b = &capture.basis;
     let revision = insert_term(
         c,
@@ -604,7 +602,44 @@ pub(super) fn decision_action_in(
     }))
 }
 
+fn check_capture_current(c:&Connection,request:&CaptureCorrectionTerm)->Result<String,ExecutionError>{
+        let evidence = validate_request(c, request)?;
+        if !evidence.current {
+            return Err(failure(ErrorCode::DependencyConflict, "correction-stale"));
+        }
+        let key = proposal_key(request)?;
+        if c
+            .query_row(
+                "SELECT EXISTS(SELECT 1 FROM resource_captures WHERE correction_key=?1)",
+                [&key],
+                |r| r.get::<_, bool>(0),
+            )
+            .map_err(sql)?
+        {
+            return Err(failure(
+                ErrorCode::DependencyConflict,
+                "correction-existing",
+            ));
+        }
+        Ok(key)
+}
+
 impl ProjectStore {
+    pub fn correction_term_request_observation(&self,request:&CaptureCorrectionTerm)
+        ->Result<Option<CorrectionTermReceipt>,ExecutionError>{
+        let value=self.correction_term_capture_action_observation(request.basis.project_id,request.action_id)?;
+        if value.as_ref().is_some_and(|v|v.request!=*request){
+            return Err(failure(ErrorCode::ResultMismatch,"resource-action"));
+        }Ok(value)
+    }
+    pub fn correction_term_request_settlement_observation(&self,request:&CaptureCorrectionTerm)
+        ->Result<Option<CorrectionTermReceipt>,ExecutionError>{
+        super::super::review::read_snapshot(self.connection().map_err(|_|failure(ErrorCode::StorageFailed,"resource-read"))?,|c|{
+            let value=self.correction_term_request_observation(request)?;
+            if value.is_none(){check_capture_current(c,request)?;}
+            Ok(value)
+        })
+    }
     /// Read the original saved correction, including historical source text.
     /// `current` is advisory; a new capture or adoption checks it again atomically.
     pub fn correction_term_basis(
@@ -619,17 +654,19 @@ impl ProjectStore {
             .map_err(|_| failure(ErrorCode::StorageFailed, "resource-read"))?;
         evidence_in(c, project_id, unit_id, locale, after_selection_id)
     }
-    pub fn correction_term_capture_action(
+    pub fn correction_term_capture_action_observation(
         &self,
         project_id: ExecutionId,
         action_id: ExecutionId,
     ) -> Result<Option<CorrectionTermReceipt>, ExecutionError> {
-        let receipt = capture_action_in(
-            self.connection()
-                .map_err(|_| failure(ErrorCode::StorageFailed, "resource-read"))?,
-            project_id,
-            action_id,
-        )?;
+        super::super::review::read_snapshot(
+            self.connection().map_err(|_| failure(ErrorCode::StorageFailed, "resource-read"))?,
+            |c| capture_action_in(c, project_id, action_id))
+    }
+    pub fn correction_term_capture_action(
+        &self, project_id: ExecutionId, action_id: ExecutionId,
+    ) -> Result<Option<CorrectionTermReceipt>, ExecutionError> {
+        let receipt = self.correction_term_capture_action_observation(project_id, action_id)?;
         if self
             .execution_unknown
             .load(std::sync::atomic::Ordering::Acquire)
@@ -673,24 +710,7 @@ impl ProjectStore {
                 Err(failure(ErrorCode::ResultMismatch, "resource-action"))
             };
         }
-        let evidence = validate_request(&tx, request)?;
-        if !evidence.current {
-            return Err(failure(ErrorCode::DependencyConflict, "correction-stale"));
-        }
-        let key = proposal_key(request)?;
-        if tx
-            .query_row(
-                "SELECT EXISTS(SELECT 1 FROM resource_captures WHERE correction_key=?1)",
-                [&key],
-                |r| r.get::<_, bool>(0),
-            )
-            .map_err(sql)?
-        {
-            return Err(failure(
-                ErrorCode::DependencyConflict,
-                "correction-existing",
-            ));
-        }
+        let key=check_capture_current(&tx,request)?;
         let source_locale = check_project(&tx, request.basis.project_id, &request.basis.locale)?;
         let bytes = codec::encode(request, MAX_RESOURCE_BYTES)?;
         let capture_id = ExecutionId::new();

@@ -1,5 +1,5 @@
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
-import { StrictMode, useLayoutEffect } from "react";
+import { StrictMode, useLayoutEffect, type ComponentProps } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { i18n } from "../i18n";
 import { SessionReads } from "../sessionReads";
@@ -21,9 +21,25 @@ import { ProjectLifecycle } from "./platform/projectLifecycle";
 import type { TranslationImportPanelProps } from "./features/import/TranslationImportPanel";
 import { Button } from "../design-system/Button";
 import { fixtureIdentity } from "../testSupport/executionFixture";
+import { installResourceDraftPortsFixture } from "../testSupport/resourceDraftFixture";
 import { translationCaptureFixture, translationImportChoice, translationSelectionFixture } from "../testSupport/translationFixture";
 
 vi.mock("./platform/useProjectLifecycle", async original => ({ ...await original<object>(), useNativeProjectClose: () => ({ state: "ready" }) }));
+const ownerLoad = vi.hoisted(() => ({ execution: null as Promise<void> | null, knowledge: null as Promise<void> | null }));
+vi.mock("./features/execution/ExecutionOwnerHost", async original => {
+  const module = await original<typeof import("./features/execution/ExecutionOwnerHost")>(), Actual = module.default;
+  return { ...module, default: (props: ComponentProps<typeof Actual>) => {
+    if (ownerLoad.execution) throw ownerLoad.execution;
+    return <Actual {...props}/>;
+  } };
+});
+vi.mock("./features/knowledge/KnowledgeOwnerHost", async original => {
+  const module = await original<typeof import("./features/knowledge/KnowledgeOwnerHost")>(), Actual = module.default;
+  return { ...module, default: (props: ComponentProps<typeof Actual>) => {
+    if (ownerLoad.knowledge) throw ownerLoad.knowledge;
+    return <Actual {...props}/>;
+  } };
+});
 let importPresentation: TranslationImportPanelProps | null = null;
 vi.mock("./features/import/TranslationImportPanel", () => ({ default: function ImportPresentationProbe(props: TranslationImportPanelProps) {
   useLayoutEffect(() => { importPresentation = props; });
@@ -36,10 +52,10 @@ vi.mock("./features/import/TranslationImportPanel", () => ({ default: function I
   </section>;
 } }));
 
-const project: ProjectView = { locator: "/synthetic/project", sessionToken: "session", reconciliationState: "settled", metadata: { projectId: "project", metadataRevision: "1", displayName: "Synthetic project", sourceLocale: "en", targetLocales: ["zh-CN"] } };
+const project: ProjectView = { locator: "/synthetic/project", sessionToken: "session", reconciliationState: "settled", metadata: { projectId: fixtureIdentity(1), metadataRevision: "1", displayName: "Synthetic project", sourceLocale: "en", targetLocales: ["zh-CN"] } };
 const emptyChecks = { passed: 0, findings: 0, missing: 0, unavailable: 0, failed: 0, cancelled: 0, unknown: 0, notApplicable: 0, findingCount: 0 };
 const page: SegmentPage = {
-  projectId: "project", locale: "zh-CN", query: { text: "", selection: "all", status: "all" }, queryFingerprint: "fingerprint", epoch: "epoch", sequence: "1",
+  projectId: project.metadata.projectId, locale: "zh-CN", query: { text: "", selection: "all", status: "all" }, queryFingerprint: "fingerprint", epoch: "epoch", sequence: "1",
   scopeId: "scope", sourceSnapshotId: "snapshot", readVersion: "1", total: 1, nextCursor: null,
   rows: [{
     sourceTruncated: false, translationTruncated: false,
@@ -53,6 +69,8 @@ const page: SegmentPage = {
 };
 let controller: ProjectLifecycle;
 beforeEach(async () => {
+  ownerLoad.execution = null; ownerLoad.knowledge = null;
+  installResourceDraftPortsFixture();
   importPresentation = null;
   localStorage.clear(); history.replaceState(null, "", "/");
   await i18n.changeLanguage("zh-CN");
@@ -280,6 +298,54 @@ describe("real-port workspace assembly", () => {
     expect(screen.queryByRole("button", { name: "回到首页" })).not.toBeInTheDocument();
   });
 
+  it("keeps the first navigation permit current when the original task and knowledge owners arrive during it", async () => {
+    let releaseExecution!: () => void, releaseKnowledge!: () => void, entered!: () => void, finish!: () => void;
+    ownerLoad.execution = new Promise<void>(resolve => { releaseExecution = resolve; });
+    ownerLoad.knowledge = new Promise<void>(resolve => { releaseKnowledge = resolve; });
+    const guarding = new Promise<void>(resolve => { entered = resolve; }), continueNavigation = new Promise<void>(resolve => { finish = resolve; });
+    const read = vi.mocked(segmentCommands.page).mockImplementation(async request => request.cursor
+      ? { ...page, total: 2, rows: [{ ...page.rows[0], content: { ...page.rows[0].content, sourcePreview: "Second page source" } }] }
+      : { ...page, total: 2, nextCursor: "opaque-next" });
+    const close = vi.fn(async () => ({ closed: true }));
+    controller = new ProjectLifecycle({ open: vi.fn().mockResolvedValue(project), close });
+    const lifecycle = controller, register = vi.spyOn(lifecycle, "register"), prepare = lifecycle.prepareLeave.bind(lifecycle);
+    let paused = false;
+    const leave = vi.spyOn(lifecycle, "prepareLeave").mockImplementation(async (intent, current) => {
+      const permit = await prepare(intent, current);
+      if (intent.kind === "navigate" && !paused) { paused = true; entered(); await continueNavigation; }
+      return permit;
+    });
+    render(<WorkbenchApp controller={lifecycle} native/>);
+    fireEvent.change(screen.getByRole("textbox", { name: i18n.t("workbenchV2.projectFolder") }), { target: { value: project.locator } });
+    fireEvent.click(screen.getByRole("button", { name: i18n.t("workbenchV2.openProject") }));
+    const next = await screen.findByRole("button", { name: i18n.t("workbenchV2.nextPage") }, { timeout: 5000 });
+    await waitFor(() => expect(next).toBeEnabled());
+    const tasks = register.mock.calls.find(([participant]) => participant.id === "execution-tasks")?.[0];
+    const knowledge = register.mock.calls.find(([participant]) => participant.id === "knowledge-resources")?.[0];
+    if (!tasks || !knowledge) throw new Error("Startup lifecycle registrations are required");
+    const tasksBefore = tasks.inspect({ kind: "navigate" }), knowledgeBefore = knowledge.inspect({ kind: "navigate" });
+    expect(tasks.inspect({ kind: "close-project" }).status).toBe("blocked");
+    expect(knowledge.inspect({ kind: "close-project" }).status).toBe("blocked");
+    await act(async () => { expect(await lifecycle.close()).toBe(false); });
+    expect(lifecycle.getSnapshot().failure).toMatchObject({ code: "leave-blocked", ownerId: "execution-tasks" });
+    expect(close).not.toHaveBeenCalled();
+    fireEvent.click(next); await act(async () => { await guarding; });
+    await act(async () => { ownerLoad.execution = null; releaseExecution(); });
+    await waitFor(() => expect(tasks.inspect({ kind: "close-project" }).status).toBe("ready"));
+    expect(knowledge.inspect({ kind: "close-project" }).status).toBe("blocked");
+    await act(async () => { ownerLoad.knowledge = null; releaseKnowledge(); });
+    await waitFor(() => expect(knowledge.inspect({ kind: "close-project" }).status).toBe("ready"));
+    expect(tasks.inspect({ kind: "navigate" })).toEqual(tasksBefore);
+    expect(knowledge.inspect({ kind: "navigate" })).toEqual(knowledgeBefore);
+    expect(register.mock.calls.filter(([participant]) => participant.id === "execution-tasks")).toHaveLength(1);
+    expect(register.mock.calls.filter(([participant]) => participant.id === "knowledge-resources")).toHaveLength(1);
+    await act(async () => { finish(); });
+    expect(await screen.findByText("Second page source")).toBeVisible();
+    expect(read.mock.calls.map(([request]) => request.cursor)).toEqual([null, "opaque-next"]);
+    expect(leave.mock.calls.filter(([intent]) => intent.kind === "navigate")).toHaveLength(1);
+    expect(lifecycle.getSnapshot().failure).toBeNull();
+  });
+
   it("keeps the editor focused on a narrow workspace until details are explicitly requested", async () => {
     const width = Object.getOwnPropertyDescriptor(window, "innerWidth");
     Object.defineProperty(window, "innerWidth", { configurable: true, writable: true, value: 900 });
@@ -385,10 +451,19 @@ describe("real-port workspace assembly", () => {
     vi.mocked(segmentCommands.page).mockResolvedValue({ ...page, projectId: restored.metadata.projectId });
     const close = vi.fn(async () => ({ closed: true }));
     controller = new ProjectLifecycle({ open: vi.fn().mockResolvedValue(restored), close });
+    const register = vi.spyOn(controller, "register");
     render(<StrictMode><WorkbenchApp controller={controller} native /></StrictMode>);
     fireEvent.change(screen.getByRole("textbox", { name: "项目文件夹" }), { target: { value: restored.locator } });
     fireEvent.click(screen.getByRole("button", { name: "打开项目" }));
     await screen.findByText(i18n.t("workbenchV2.draftPendingSummary", { count: 1 }));
+    // Exercise the pending translation's recovery once the other startup
+    // owners are ready; their loading guards independently block project exit.
+    await waitFor(() => {
+      for (const id of ["execution-tasks", "knowledge-resources"]) {
+        const participant = [...register.mock.calls].reverse().find(([value]) => value.id === id)?.[0];
+        expect(participant?.inspect({ kind: "close-project" }).status).toBe("ready");
+      }
+    });
     await act(async () => { expect(await controller.close()).toBe(false); });
     const sheet = await screen.findByRole("dialog", { name: i18n.t("workbenchV2.draftRecoveryTitle") });
     const input = await within(sheet).findByRole("textbox", { name: i18n.t("workbenchV2.editorLabel", { key: "greeting.welcome" }) });

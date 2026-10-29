@@ -221,8 +221,11 @@ export type DecisionJournalKey =
   | {
       conversationId: ExecutionId;
       kind: "conversation";
+    }
+  | {
+      kind: "resource";
     };
-export type DecisionJournalSlot = "primary" | "revocation";
+export type DecisionJournalSlot = "primary" | "revocation" | "resource-fact";
 export type DecisionLocalRequestKind =
   | "save"
   | "selection"
@@ -234,7 +237,16 @@ export type DecisionLocalRequestKind =
   | "proposal-revision"
   | "proposal-work-plan"
   | "work-plan-start"
-  | "work-plan-control";
+  | "work-plan-control"
+  | "resource-typed-context-save"
+  | "resource-typed-context-withdraw"
+  | "resource-knowledge-decision"
+  | "resource-correction"
+  | "resource-term"
+  | "resource-context"
+  | "resource-decision"
+  | "resource-capture"
+  | "resource-fact";
 export type DecisionEvidence =
   | {
       blockerCount: number;

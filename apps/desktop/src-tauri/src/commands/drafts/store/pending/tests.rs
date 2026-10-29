@@ -61,7 +61,7 @@ fn supported_formats_one_through_seven_are_read_without_upgrade() {
             connection.execute("INSERT INTO conversation_draft_heads VALUES(?1,?2,?3,?4,?5,?6)",
                 params![conv.key.project_id.to_string(),conv.key.conversation_id.to_string(),1,2,1,payload]).unwrap();
         }
-        connection.pragma_update(None, "user_version", format).unwrap();
+        set_legacy_format(&connection,format).unwrap();
         drop(connection);
         let before = store.read(&write.key).unwrap();
         let snapshot = store.pending_snapshot(write.key.project_id, None).unwrap();
@@ -95,6 +95,7 @@ fn pending_snapshot_isolates_projects_and_translation_languages() {
     assert!(selected.rows.iter().all(|row| match &row.key {
         PendingJournalKey::Translation(key) => key.project_id == write.key.project_id && key.locale == "zh-CN",
         PendingJournalKey::Conversation(key) => key.project_id == write.key.project_id,
+        PendingJournalKey::Resource(key) => key.project_id == write.key.project_id,
     }));
     assert_eq!(store.pending_snapshot(foreign_project, None).unwrap().rows.len(), 1);
     assert_ne!(all.basis, selected.basis);

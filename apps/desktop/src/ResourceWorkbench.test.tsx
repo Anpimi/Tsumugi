@@ -24,6 +24,9 @@ const checkedCapture = originalCapture, checkedPreview = originalPreview;
 const invoke = vi.hoisted(() => vi.fn());
 vi.mock("@tauri-apps/api/core", () => ({ invoke }));
 
+// Pure observation and explicit recovery share the same immutable response fixture.
+const resourceActionRead = (command: string, original: string) => command === original || command === original.replace(/^read_/, "observe_");
+
 const project: ProjectView = {
   sessionToken: "session", locator: "C:\\isolated\\project", reconciliationState: "settled",
   metadata: { projectId: fixtureIdentity(405), displayName: "Demo", sourceLocale: "en", targetLocales: ["zh-CN"], metadataRevision: "1" },
@@ -37,8 +40,8 @@ beforeEach(async () => {
   await i18n.changeLanguage("en-US");
   invoke.mockReset();
   invoke.mockImplementation(async (command: string, payload: { request: Record<string, unknown> }) => {
-    if (command === "read_term_save_action" || command === "read_context_save_action" || command === "read_context_capture_action") {
-      const validate = command === "read_term_save_action" ? validateRequestTerm : command === "read_context_save_action" ? validateRequestContext : validateRequestContextCapture;
+    if (resourceActionRead(command, "read_term_save_action") || resourceActionRead(command, "read_context_save_action") || resourceActionRead(command, "read_context_capture_action")) {
+      const validate = resourceActionRead(command, "read_term_save_action") ? validateRequestTerm : resourceActionRead(command, "read_context_save_action") ? validateRequestContext : validateRequestContextCapture;
       if (!validate(payload.request)) throw new Error("Invalid original resource action lookup request");
       return null;
     }
@@ -54,7 +57,7 @@ beforeEach(async () => {
       previousRevisionId: null, removed: false,
     };
     if (command === "read_term_history") return [];
-    if (["read_term_save_action", "read_context_save_action", "read_context_capture_action", "read_resource_decision_action"].includes(command)) return null;
+    if (["read_term_save_action", "read_context_save_action", "read_context_capture_action", "read_resource_decision_action"].some(original => resourceActionRead(command, original))) return null;
     throw new Error(command);
   });
 });
@@ -121,11 +124,15 @@ it("keeps newer term edits when checking an uncertain original save", async () =
   await user.type(target, "A");
   await user.type(screen.getByRole("textbox", { name: "Reason or source note" }), "Reviewed");
   await user.click(screen.getByRole("button", { name: "Save term" }));
-  const retry = await screen.findByRole("button", { name: i18n.t("resource.retry") });
+  const checkSaved = await screen.findByRole("button", { name: i18n.t("correctionFeedback.check") });
+  await waitFor(() => expect(checkSaved).toBeEnabled());
+  const uncheckedRetry = screen.getByRole("button", { name: i18n.t("resource.retry") });
+  expect(uncheckedRetry).toBeDisabled(); await user.click(uncheckedRetry);
+  expect(invoke.mock.calls.filter(([command]) => command === "save_term")).toHaveLength(1);
   await user.type(target, "B");
-  const checkSaved = screen.getByRole("button", { name: i18n.t("correctionFeedback.check") });
   expect(checkSaved).toBeEnabled(); await user.click(checkSaved);
-  expect(invoke.mock.calls.filter(([command]) => command === "read_term_save_action")).toHaveLength(2);
+  expect(invoke.mock.calls.filter(([command]) => resourceActionRead(command, "read_term_save_action"))).toHaveLength(2);
+  const retry = await screen.findByRole("button", { name: i18n.t("resource.retry") });
   await user.click(retry);
   await screen.findByText("Saved. Earlier revisions remain available.");
   expect(target).toHaveValue("AB");
@@ -164,11 +171,12 @@ it.each(["delayed", "replayed"] as const)("keeps newer context and reason after 
   await user.type(reason, "Reason A");
   await user.click(screen.getByRole("button", { name: "Save context" }));
   await waitFor(() => expect(saves).toBe(1));
-  if (mode === "replayed") await screen.findByRole("button", { name: i18n.t("resource.retry") });
+  if (mode === "replayed") await waitFor(() => expect(screen.getByRole("button", { name: i18n.t("correctionFeedback.check") })).toBeEnabled());
   await user.type(context, "B");
   await user.type(reason, "B");
   if (mode === "delayed") await act(async () => finishSave(saved));
-  else await user.click(screen.getByRole("button", { name: i18n.t("resource.retry") }));
+  else { await user.click(screen.getByRole("button", { name: i18n.t("correctionFeedback.check") }));
+    await user.click(await screen.findByRole("button", { name: i18n.t("resource.retry") })); }
   await screen.findByText("Saved. Earlier revisions remain available.");
   expect(context).toHaveValue("AB");
   expect(reason).toHaveValue("Reason AB");
@@ -182,6 +190,7 @@ it.each(["delayed", "replayed"] as const)("keeps newer context and reason after 
 let resourceOwner: ReturnType<typeof useResourceDraftSession>;
 let resourceReads: ReturnType<typeof useSessionReads>;
 let resourceRegistry: ReturnType<typeof useWorkbenchCommands>;
+async function resourceReady() { await waitFor(() => expect(resourceOwner.journal.hydration).toBe("ready")); }
 function ResourceView({ project: value }: { project: ProjectView }) {
   const owner = useResourceDraftSession(), reads = useSessionReads(), registry = useWorkbenchCommands();
   useEffect(() => { resourceOwner = owner; resourceReads = reads; resourceRegistry = registry; }, [owner, reads, registry]);
@@ -205,7 +214,7 @@ function captureAcknowledgement(request: CaptureContext) {
 function installResourceReads() {
   const original = invoke.getMockImplementation()!;
   invoke.mockImplementation((command: string, payload: { request: Record<string, unknown> }) => {
-    if (command === "read_resource_decision_action") {
+    if (resourceActionRead(command, "read_resource_decision_action")) {
       if (!validateRequestDecision(payload.request)) throw new Error("Invalid resource action lookup request");
       return Promise.resolve(null);
     }
@@ -264,8 +273,8 @@ function plainReceipt(action: ResourcePending) {
 it.each(plainActions)("checks one original $kind action without resending it and preserves newer drafts after consumer removal", async test => {
   if (test.kind === "context") await i18n.changeLanguage("zh-CN");
   installResourceReads(); const native = invoke.getMockImplementation()!, write = deferred<unknown>(), lookup = deferred<unknown>();
-  invoke.mockImplementation((command, args) => command === test.command ? write.promise : command === test.read ? lookup.promise : native(command, args));
-  const view = render(<ResourceView project={project}/>), user = userEvent.setup();
+  invoke.mockImplementation((command, args) => command === test.command ? write.promise : resourceActionRead(command, test.read) ? lookup.promise : native(command, args));
+  const view = render(<ResourceView project={project}/>), user = userEvent.setup(); await resourceReady();
   await user.click(screen.getByRole("button", { name: i18n.t("resource.title") }));
   act(beginPlainAction);
   let running!: Promise<void>; act(() => { running = sendPlainAction(test.kind); void sendPlainAction(test.kind); });
@@ -280,13 +289,15 @@ it.each(plainActions)("checks one original $kind action without resending it and
   await act(async () => { await resourceOwner.checkPending(); await resourceOwner.retryPending(); await sendPlainAction(test.kind); });
   view.rerender(null);
   await act(async () => { lookup.resolve(plainReceipt(pending)); await running; });
-  view.rerender(<ResourceView project={project}/>);
+  view.rerender(<ResourceView project={project}/>); await resourceReady();
+  expect(resourceOwner.current()).toMatchObject({ pending, pendingRecorded: true, pendingUncertain: true, pendingCheckedMissing: false });
+  await user.click(screen.getByRole("button", { name: i18n.t("correctionFeedback.check") }));
   expect(resourceOwner.current()).toMatchObject({ pending: null, pendingUncertain: false, pendingCheckedMissing: false, checkingAction: null, busyMutation: false, failure: null,
     termDraft: { target: "Term B" }, aliasInput: "Cask,    Drum", contextDraft: "Context B", contextReason: "Reason B" });
   if (pending.kind === "capture") expect(resourceOwner.current().fixedContext).toMatchObject({ unitId: pending.request.unitId, sourceRevisionId: pending.request.sourceRevisionId, budgetBytes: pending.request.budgetBytes });
   const written = invoke.mock.calls.filter(([command]) => command === test.command).map(([, args]) => args.request);
   expect(written).toHaveLength(1);
-  expect(invoke.mock.calls.filter(([command]) => command === test.read).map(([, args]) => args.request)).toEqual(written);
+  expect(invoke.mock.calls.filter(([command]) => resourceActionRead(command, test.read)).map(([, args]) => args.request)).toEqual([written[0], written[0]]);
   expect(invoke.mock.calls.filter(([command]) => command === "create_execution_identity")).toHaveLength(1);
 });
 
@@ -294,20 +305,20 @@ it.each(plainActions)("keeps a $kind action unresolved after a forged echo or mi
   installResourceReads(); const native = invoke.getMockImplementation()!; let reads = 0;
   invoke.mockImplementation((command, args) => {
     if (command === test.command) return Promise.reject(lostResource);
-    if (command !== test.read) return native(command, args);
+    if (!resourceActionRead(command, test.read)) return native(command, args);
     const pending = resourceOwner.current().pending!; const value = plainReceipt(pending); reads++;
     if (reads === 1) return Promise.resolve({ ...value, request: { ...value.request, actionId: fixtureIdentity(599) } });
     if (reads === 2) return Promise.resolve({ ...value, receipt: { ...value.receipt, locale: "fr" } });
     return Promise.resolve(value);
   });
-  const view = render(<ResourceView project={project}/>), user = userEvent.setup();
+  const view = render(<ResourceView project={project}/>), user = userEvent.setup(); await resourceReady();
   await user.click(screen.getByRole("button", { name: i18n.t("resource.title") }));
   await act(async () => { await resourceOwner.openPreview(checkedCapture); }); act(beginPlainAction);
   const previewReads = invoke.mock.calls.filter(([command]) => command === "read_resource_preview").length;
   await act(async () => { await sendPlainAction(test.kind); }); const pending = resourceOwner.current().pending;
   expect(resourceOwner.current()).toMatchObject({ pendingCheckedMissing: false, pendingUncertain: true });
   act(() => { resourceOwner.editContext("Retained context B"); resourceOwner.editTerm({ ...resourceOwner.current().termDraft, target: "Term B" }, "Cask,   Drum"); });
-  view.rerender(<ResourceView project={test.kind === "term" ? project : { ...project, metadata: { ...project.metadata, targetLocales: [] } }}/>);
+  view.rerender(<ResourceView project={test.kind === "term" ? project : { ...project, metadata: { ...project.metadata, targetLocales: [] } }}/>); await resourceReady();
   for (const button of screen.queryAllByRole("button", { name: i18n.t("resource.retry") })) expect(button).toBeDisabled();
   await act(async () => { await resourceOwner.retryPending(); });
   await user.click(screen.getByRole("button", { name: i18n.t("correctionFeedback.check") }));
@@ -317,7 +328,7 @@ it.each(plainActions)("keeps a $kind action unresolved after a forged echo or mi
   expect(resourceOwner.current()).toMatchObject({ checkingAction: null, failure: null, aliasInput: "Cask,   Drum", termDraft: { target: "Term B" }, contextDraft: "Retained context B" });
   const written = invoke.mock.calls.filter(([command]) => command === test.command).map(([, args]) => args.request);
   expect(written).toHaveLength(1);
-  expect(invoke.mock.calls.filter(([command]) => command === test.read).map(([, args]) => args.request)).toEqual([written[0], written[0], written[0]]);
+  expect(invoke.mock.calls.filter(([command]) => resourceActionRead(command, test.read)).map(([, args]) => args.request)).toEqual([written[0], written[0], written[0]]);
   expect(invoke.mock.calls.filter(([command]) => command === "read_resource_preview")).toHaveLength(previewReads);
 });
 
@@ -325,39 +336,39 @@ it("retains the original typed write error after a missing term receipt and the 
   installResourceReads(); const native = invoke.getMockImplementation()!;
   const readFailure: CommandError = { code: "storage-failed", stage: "execution-recover", outcome: "rejected", recoveryRequired: false, reason: "term-action-read" }; let reads = 0;
   invoke.mockImplementation((command, args) => command === "save_term" ? Promise.reject(lostResource)
-    : command === "read_term_save_action" ? ++reads === 1 ? Promise.resolve(null) : Promise.reject(readFailure) : native(command, args));
-  render(<ResourceView project={project}/>); act(beginPlainAction); await act(async () => { await resourceOwner.saveTerm(); });
+    : resourceActionRead(command, "read_term_save_action") ? ++reads === 1 ? Promise.resolve(null) : Promise.reject(readFailure) : native(command, args));
+  render(<ResourceView project={project}/>); await resourceReady(); act(beginPlainAction); await act(async () => { await resourceOwner.saveTerm(); });
   const pending = resourceOwner.current().pending;
-  expect(resourceOwner.current()).toMatchObject({ pendingCheckedMissing: true, failure: lostResource });
+  expect(resourceOwner.current()).toMatchObject({ pendingCheckedMissing: false, failure: lostResource });
   expect(resourceOwner.current().failure).toBe(lostResource);
   await act(async () => { await resourceOwner.checkPending(); });
   expect(resourceOwner.current()).toMatchObject({ pending, pendingCheckedMissing: false, failure: readFailure });
   expect(resourceOwner.current().failure).toBe(readFailure);
   await act(async () => { await resourceOwner.retryPending(); });
   expect(invoke.mock.calls.filter(([command]) => command === "save_term")).toHaveLength(1);
-  expect(invoke.mock.calls.filter(([command]) => command === "read_term_save_action")).toHaveLength(2);
+  expect(invoke.mock.calls.filter(([command]) => resourceActionRead(command, "read_term_save_action"))).toHaveLength(2);
 });
 
 it.each(plainActions)("does not read a fresh formally rejected $kind action", async test => {
   installResourceReads(); const native = invoke.getMockImplementation()!;
   const rejected: CommandError = { code: "busy", stage: "execution-recover", outcome: "rejected", recoveryRequired: false };
   invoke.mockImplementation((command, args) => command === test.command ? Promise.reject(rejected) : native(command, args));
-  render(<ResourceView project={project}/>); act(beginPlainAction); await act(async () => { await sendPlainAction(test.kind); });
+  render(<ResourceView project={project}/>); await resourceReady(); act(beginPlainAction); await act(async () => { await sendPlainAction(test.kind); });
   expect(resourceOwner.current()).toMatchObject({ pending: null, checkingAction: null, failure: rejected });
-  expect(invoke.mock.calls.filter(([command]) => command === test.read)).toHaveLength(0);
+  expect(invoke.mock.calls.filter(([command]) => resourceActionRead(command, test.read))).toHaveLength(0);
 });
 
 it.each(["before", "during"] as const)("does not dispatch or settle a captured context lookup after the owner retires %s the read", async moment => {
   installResourceReads(); const native = invoke.getMockImplementation()!, write = deferred<unknown>(), lookup = deferred<unknown>();
-  invoke.mockImplementation((command, args) => command === "capture_context" ? write.promise : command === "read_context_capture_action" ? lookup.promise : native(command, args));
-  render(<ResourceView project={project}/>); act(beginPlainAction);
+  invoke.mockImplementation((command, args) => command === "capture_context" ? write.promise : resourceActionRead(command, "read_context_capture_action") ? lookup.promise : native(command, args));
+  render(<ResourceView project={project}/>); await resourceReady(); act(beginPlainAction);
   let running!: Promise<void>; act(() => { running = resourceOwner.captureContext(); });
   await waitFor(() => expect(invoke.mock.calls.filter(([command]) => command === "capture_context")).toHaveLength(1));
   if (moment === "during") { await act(async () => { write.reject(lostResource); }); await waitFor(() => expect(resourceOwner.current().checkingAction).toBe("resource")); }
   const before = resourceOwner.current(), pending = before.pending!; act(() => resourceReads.retire());
   await act(async () => { if (moment === "before") write.reject(lostResource); else lookup.resolve(plainReceipt(pending)); await running; });
   expect(resourceOwner.current()).toBe(before);
-  expect(invoke.mock.calls.filter(([command]) => command === "read_context_capture_action")).toHaveLength(moment === "before" ? 0 : 1);
+  expect(invoke.mock.calls.filter(([command]) => resourceActionRead(command, "read_context_capture_action"))).toHaveLength(moment === "before" ? 0 : 1);
   expect(invoke.mock.calls.filter(([command]) => command === "capture_context")).toHaveLength(1);
 });
 
@@ -367,10 +378,10 @@ it.each(["file", "mcp"] as const)("confirms one original %s decision read after 
   invoke.mockImplementation((command: string, args) => {
     if (command === "read_resource_preview") return Promise.resolve(preview);
     if (command === "decide_resource_entry") { written = args.request.decision; return Promise.reject(lostResource); }
-    if (command === "read_resource_decision_action") return lookup.promise;
+    if (resourceActionRead(command, "read_resource_decision_action")) return lookup.promise;
     return native(command, args);
   });
-  const view = render(<ResourceView project={project} />), user = userEvent.setup();
+  const view = render(<ResourceView project={project} />), user = userEvent.setup(); await resourceReady();
   await user.click(screen.getByRole("button", { name: i18n.t("resource.title") }));
   await act(async () => { await resourceOwner.openPreview(preview.capture); });
   act(() => { resourceOwner.beginContext(page.rows[0], null); });
@@ -383,14 +394,17 @@ it.each(["file", "mcp"] as const)("confirms one original %s decision read after 
   const readsBefore = invoke.mock.calls.filter(([command]) => command === "read_resource_preview").length;
   view.rerender(null);
   await act(async () => { lookup.resolve(decisionLookup(written)); await running; });
-  view.rerender(<ResourceView project={project} />);
-  expect(resourceOwner.current()).toMatchObject({ pending: null, checkingAction: null, busyMutation: false, failure: null,
-    notice: "decisionSaved", termDraft: { target: "A" }, contextDraft: "Context B", contextReason: "Reason B", previewNeedsRefresh: true });
-  expect(invoke.mock.calls.filter(([command]) => command === "decide_resource_entry")).toHaveLength(1);
-  expect(invoke.mock.calls.filter(([command]) => command === "read_resource_decision_action").map(([, args]) => args.request))
-    .toEqual([{ projectId: project.metadata.projectId, sessionToken: project.sessionToken, decision: written }]);
-  expect(invoke.mock.calls.filter(([command]) => command === "create_execution_identity")).toHaveLength(1);
+  view.rerender(<ResourceView project={project} />); await resourceReady();
+  expect(resourceOwner.current()).toMatchObject({ pendingRecorded: true, pendingUncertain: true, pendingCheckedMissing: false });
   expect(invoke.mock.calls.filter(([command]) => command === "read_resource_preview")).toHaveLength(readsBefore);
+  await user.click(screen.getByRole("button", { name: i18n.t("correctionFeedback.check") }));
+  await waitFor(() => expect(resourceOwner.current()).toMatchObject({ pending: null, checkingAction: null, busyMutation: false, failure: null,
+    notice: "previewReady", termDraft: { target: "A" }, contextDraft: "Context B", contextReason: "Reason B", previewNeedsRefresh: false }));
+  expect(invoke.mock.calls.filter(([command]) => command === "decide_resource_entry")).toHaveLength(1);
+  expect(invoke.mock.calls.filter(([command]) => resourceActionRead(command, "read_resource_decision_action")).map(([, args]) => args.request))
+    .toEqual([{ projectId: project.metadata.projectId, sessionToken: project.sessionToken, decision: written }, { projectId: project.metadata.projectId, sessionToken: project.sessionToken, decision: written }]);
+  expect(invoke.mock.calls.filter(([command]) => command === "create_execution_identity")).toHaveLength(1);
+  expect(invoke.mock.calls.filter(([command]) => command === "read_resource_preview")).toHaveLength(readsBefore + 1);
   expect(invoke.mock.calls.some(([command]) => ["save_term", "save_context", "capture_context"].includes(command))).toBe(false);
 });
 
@@ -402,28 +416,30 @@ it.each(["file", "mcp"] as const)("keeps the exact %s decision check and explici
   invoke.mockImplementation((command: string, args) => {
     if (command === "read_resource_preview") return Promise.resolve(preview);
     if (command === "decide_resource_entry") { written = args.request.decision; return Promise.reject(++writes === 1 ? lostResource : rejected); }
-    if (command === "read_resource_decision_action") {
-      reads++; if (reads === 1) return Promise.resolve(null);
-      if (reads === 3) return Promise.reject(readFailure);
+    if (resourceActionRead(command, "read_resource_decision_action")) {
+      reads++; if (reads <= 2) return Promise.resolve(null);
+      if (reads === 4) return Promise.reject(readFailure);
       const receipt = decisionLookup(written);
-      if (reads === 2) receipt.request.entryId = "different-original-entry";
+      if (reads === 3) receipt.request.entryId = "different-original-entry";
       expect(validateResponseDecisionAction(receipt)).toBe(true); return Promise.resolve(receipt);
     }
     return native(command, args);
   });
-  const view = render(<ResourceView project={project} />), user = userEvent.setup();
+  const view = render(<ResourceView project={project} />), user = userEvent.setup(); await resourceReady();
   await user.click(screen.getByRole("button", { name: i18n.t("resource.title") }));
   await act(async () => { await resourceOwner.openPreview(preview.capture); await resourceOwner.decide("barrel", null, "keep"); });
   const pending = resourceOwner.current().pending;
-  expect(resourceOwner.current()).toMatchObject({ pendingCheckedMissing: true, failure: lostResource, pendingUncertain: true });
+  expect(resourceOwner.current()).toMatchObject({ pendingCheckedMissing: false, failure: lostResource, pendingUncertain: true });
   expect(resourceOwner.current().failure).toBe(lostResource);
   expect(screen.getByRole("button", { name: i18n.t("correctionFeedback.check") })).toBeEnabled();
+  await user.click(screen.getByRole("button", { name: i18n.t("correctionFeedback.check") }));
+  expect(resourceOwner.current().pendingCheckedMissing).toBe(true);
   await user.click(screen.getByRole("button", { name: i18n.t("resource.retry") }));
-  expect(writes).toBe(2); expect(reads).toBe(1); expect(resourceOwner.current().pending).toBe(pending);
+  expect(writes).toBe(2); expect(reads).toBe(2); expect(resourceOwner.current().pending).toBe(pending);
   expect(screen.queryByRole("button", { name: i18n.t("resource.retry") })).not.toBeInTheDocument();
   act(() => { editTermA(); });
   const removed = { ...project, metadata: { ...project.metadata, targetLocales: [] } };
-  view.rerender(<ResourceView project={removed} />, removed);
+  view.rerender(<ResourceView project={removed} />, removed); await resourceReady();
   await user.click(screen.getByRole("button", { name: i18n.t("correctionFeedback.check") }));
   expect(resourceOwner.current()).toMatchObject({ pending, pendingCheckedMissing: false, failure: "failed" });
   await user.click(screen.getByRole("button", { name: i18n.t("correctionFeedback.check") }));
@@ -431,10 +447,10 @@ it.each(["file", "mcp"] as const)("keeps the exact %s decision check and explici
   await user.click(screen.getByRole("button", { name: i18n.t("correctionFeedback.check") }));
   await waitFor(() => expect(resourceOwner.current().pending).toBeNull());
   expect(resourceOwner.current()).toMatchObject({ failure: null, checkingAction: null, termDraft: { target: "A" } });
-  expect(writes).toBe(2); expect(reads).toBe(4);
+  expect(writes).toBe(2); expect(reads).toBe(5);
   const requests = invoke.mock.calls.filter(([command]) => command === "decide_resource_entry").map(([, args]) => args.request);
   expect(requests[1]).toEqual(requests[0]); expect(requests[0].decision.captureId).toBe(preview.capture.captureId);
-  expect(invoke.mock.calls.filter(([command]) => command === "read_resource_decision_action").every(([, args]) => JSON.stringify(args.request.decision) === JSON.stringify(written))).toBe(true);
+  expect(invoke.mock.calls.filter(([command]) => resourceActionRead(command, "read_resource_decision_action")).every(([, args]) => JSON.stringify(args.request.decision) === JSON.stringify(written))).toBe(true);
   expect(invoke.mock.calls.filter(([command]) => command === "create_execution_identity")).toHaveLength(1);
 });
 
@@ -443,28 +459,28 @@ it.each(["before", "during"] as const)("does not read or accept a resource decis
   let written!: ResourceDecision;
   invoke.mockImplementation((command: string, args) => {
     if (command === "decide_resource_entry") { written = args.request.decision; return write.promise; }
-    if (command === "read_resource_decision_action") return lookup.promise;
+    if (resourceActionRead(command, "read_resource_decision_action")) return lookup.promise;
     return native(command, args);
   });
-  render(<ResourceView project={project} />);
+  render(<ResourceView project={project} />); await resourceReady();
   await act(async () => { await resourceOwner.openPreview(checkedCapture); });
   let running!: Promise<void>; act(() => { running = resourceOwner.decide("barrel", null, "keep"); });
   await waitFor(() => expect(invoke.mock.calls.filter(([command]) => command === "decide_resource_entry")).toHaveLength(1));
   if (moment === "during") {
     await act(async () => { write.reject(lostResource); });
-    await waitFor(() => expect(invoke.mock.calls.filter(([command]) => command === "read_resource_decision_action")).toHaveLength(1));
+    await waitFor(() => expect(invoke.mock.calls.filter(([command]) => resourceActionRead(command, "read_resource_decision_action"))).toHaveLength(1));
   }
   const before = resourceOwner.current(); act(() => resourceReads.retire());
   await act(async () => { if (moment === "before") write.reject(lostResource); else lookup.resolve(decisionLookup(written)); await running; });
   expect(resourceOwner.current()).toBe(before);
-  expect(invoke.mock.calls.filter(([command]) => command === "read_resource_decision_action")).toHaveLength(moment === "before" ? 0 : 1);
+  expect(invoke.mock.calls.filter(([command]) => resourceActionRead(command, "read_resource_decision_action"))).toHaveLength(moment === "before" ? 0 : 1);
   expect(invoke.mock.calls.filter(([command]) => command === "decide_resource_entry")).toHaveLength(1);
 });
 
 it("displays the first impact read after the impact tab is committed", async () => {
   const original = invoke.getMockImplementation()!;
   invoke.mockImplementation((name: string, payload: unknown) => name === "resource_impacts" ? Promise.resolve(resourceFixture.responses.impacts) : original(name, payload));
-  render(<ResourceView project={project} />);
+  render(<ResourceView project={project} />); await resourceReady();
   const user = userEvent.setup();
   await user.click(screen.getByRole("button", { name: "Glossary and context" }));
   await user.click(screen.getByRole("tab", { name: "Affected work" }));
@@ -479,7 +495,7 @@ it("keeps both drafts and raw aliases through full view removal while a save com
   let finish!: (value: unknown) => void;
   const original = invoke.getMockImplementation()!;
   invoke.mockImplementation((command: string, payload: unknown) => command === "save_term" ? new Promise(resolve => { finish = resolve; }) : original(command, payload));
-  const view = render(<ResourceView project={project} />), user = userEvent.setup();
+  const view = render(<ResourceView project={project} />), user = userEvent.setup(); await resourceReady();
   await user.click(screen.getByRole("button", { name: "Glossary and context" }));
   await screen.findByRole("option", { name: "barrel" });
   act(() => {
@@ -493,7 +509,7 @@ it("keeps both drafts and raw aliases through full view removal while a save com
   view.rerender(null);
   expect(resourceOwner.inFlight()).toBe(true);
   await act(async () => { finish(termAcknowledgement(request)); await save; });
-  view.rerender(<ResourceView project={project} />);
+  view.rerender(<ResourceView project={project} />); await resourceReady();
   expect(screen.getByRole("textbox", { name: "Preferred target form" })).toHaveValue("A");
   expect(screen.getByRole("textbox", { name: "Source aliases, separated by commas" })).toHaveValue("Cask,   Drum");
   expect(screen.getByText("The earlier version was saved. Your newer edits are still here; save them separately when ready.")).toBeVisible();
@@ -510,7 +526,7 @@ it.each(["term", "context"] as const)("retains a newer %s edit sequence even whe
   const command = kind === "term" ? "save_term" : "save_context";
   let finish!: (value: unknown) => void;
   invoke.mockImplementation((name: string, payload: unknown) => name === command ? new Promise(resolve => { finish = resolve; }) : original(name, payload));
-  const view = render(<ResourceView project={project} />);
+  const view = render(<ResourceView project={project} />); await resourceReady();
   act(() => { resourceOwner.beginContext(page.rows[0], null); resourceOwner.editContext("A"); resourceOwner.editContextReason("Reason A"); editTermA(); });
   let saving!: Promise<void>;
   act(() => { saving = kind === "term" ? resourceOwner.saveTerm() : resourceOwner.saveContext(); });
@@ -522,7 +538,7 @@ it.each(["term", "context"] as const)("retains a newer %s edit sequence even whe
   });
   view.rerender(null);
   await act(async () => { finish(kind === "term" ? termAcknowledgement(request.term) : contextAcknowledgement(request.context)); await saving; });
-  view.rerender(<ResourceView project={project} />);
+  view.rerender(<ResourceView project={project} />); await resourceReady();
   expect(resourceOwner.current().notice).toBe("savedNewer");
   expect(kind === "term" ? resourceOwner.termDirty() : resourceOwner.contextDirty()).toBe(true);
   expect(resourceOwner.current().termDraft.target).toBe("A");
@@ -543,7 +559,7 @@ it("confirms a decision after the view is removed without continuing its preview
   const original = invoke.getMockImplementation()!;
   let finish!: (value: unknown) => void;
   invoke.mockImplementation((name: string, payload: unknown) => name === "decide_resource_entry" ? new Promise(resolve => { finish = resolve; }) : original(name, payload));
-  const view = render(<ResourceView project={project} />), user = userEvent.setup();
+  const view = render(<ResourceView project={project} />), user = userEvent.setup(); await resourceReady();
   await user.click(screen.getByRole("button", { name: "Glossary and context" }));
   await act(async () => { await resourceOwner.openPreview(checkedCapture); });
   const previewReads = () => invoke.mock.calls.filter(([name]) => name === "read_resource_preview");
@@ -560,7 +576,7 @@ it("confirms a decision after the view is removed without continuing its preview
   await waitFor(() => expect(resourceOwner.current().pending).toBeNull());
   expect(resourceOwner.current().previewNeedsRefresh).toBe(true);
   expect(previewReads()).toHaveLength(readsBeforeDecision);
-  view.rerender(<ResourceView project={project} />);
+  view.rerender(<ResourceView project={project} />); await resourceReady();
   await user.click(screen.getByRole("tab", { name: "Resource updates" }));
   let finishRead!: (value: unknown) => void;
   const reads = invoke.getMockImplementation()!;
@@ -576,7 +592,7 @@ it("confirms a decision after the view is removed without continuing its preview
   expect(previewReads()).toHaveLength(readsBeforeDecision + 1);
   expect(invoke.mock.calls.filter(([name]) => name === "decide_resource_entry")).toHaveLength(1);
   invoke.mockImplementation(reads);
-  view.rerender(<ResourceView project={project} />);
+  view.rerender(<ResourceView project={project} />); await resourceReady();
   await user.click(screen.getByRole("tab", { name: "Resource updates" }));
   await user.click(screen.getByRole("button", { name: "Read this captured source again" }));
   await waitFor(() => expect(resourceOwner.current().previewNeedsRefresh).toBe(false));
@@ -605,7 +621,7 @@ it.each([
     if (kind === "decision") return Promise.resolve({ actionId: payload.request.decision.actionId, decision: payload.request.decision.decision, request: payload.request.decision, revision: null, ...wrong });
     return Promise.resolve({ ...captureAcknowledgement(payload.request.capture), ...wrong });
   });
-  const view = render(<ResourceView project={project} />);
+  const view = render(<ResourceView project={project} />); await resourceReady();
   act(() => {
     if (kind === "term") resourceOwner.beginTerm({ ...resourceFixture.responses.term, termId: "existing-term", originKind: "manual", captureId: null, externalEntryId: null });
     resourceOwner.beginContext(page.rows[0], null); resourceOwner.editContext("A"); resourceOwner.editContextReason("Reason A"); editTermA();
@@ -624,11 +640,14 @@ it.each([
   const removed = { ...project, metadata: { ...project.metadata, targetLocales: ["fr"] } };
   view.rerender(null, removed);
   expect(resourceOwner.current().pending).toBe(pending);
-  view.rerender(<ResourceView project={removed} />);
+  view.rerender(<ResourceView project={removed} />); await resourceReady();
   await userEvent.setup().click(screen.getByRole("button", { name: "Glossary and context" }));
   expect(screen.getByRole("option", { name: "zh-CN (removed from project)" })).toBeDisabled();
   expect(screen.getByRole("button", { name: "New term" })).toBeDisabled();
   const readsBefore = invoke.mock.calls.filter(([name]) => ["read_terms", "read_context_revision", "resolve_terms", "tm_suggestions"].includes(name)).length;
+  expect(resourceOwner.current().pendingCheckedMissing).toBe(false);
+  await act(async () => { await resourceOwner.checkPending(); });
+  expect(resourceOwner.current().pendingCheckedMissing).toBe(true);
   await act(async () => { await resourceOwner.retryPending(); });
   const requests = invoke.mock.calls.filter(([name]) => name === command).map(([, payload]) => payload.request);
   expect(requests).toHaveLength(2); expect(requests[1]).toEqual(requests[0]);
@@ -640,7 +659,7 @@ it.each([
   expect(resourceOwner.current().contextReason).toBe("Reason B");
   expect(invoke.mock.calls.filter(([name]) => ["read_terms", "read_context_revision", "resolve_terms", "tm_suggestions"].includes(name))).toHaveLength(readsBefore);
   if (kind === "capture") {
-    view.rerender(null); view.rerender(<ResourceView project={removed} />);
+    view.rerender(null); view.rerender(<ResourceView project={removed} />); await resourceReady();
     expect(resourceOwner.current().fixedContext?.captureId).toBe(fixtureIdentity(422));
   }
 });
@@ -650,7 +669,7 @@ it("reserves original writes before identity resolves and rejects a removed fres
   let finishIdentity!: (value: string) => void;
   const original = invoke.getMockImplementation()!;
   invoke.mockImplementation((command: string, payload: unknown) => command === "create_execution_identity" ? new Promise(resolve => { finishIdentity = resolve; }) : original(command, payload));
-  const view = render(<ResourceView project={project} />);
+  const view = render(<ResourceView project={project} />); await resourceReady();
   act(() => { resourceOwner.beginContext(page.rows[0], null); resourceOwner.editContextReason("Reason"); editTermA(); });
   await act(async () => { await resourceOwner.openPreview(checkedCapture); });
   let saving!: Promise<void>;
@@ -659,7 +678,7 @@ it("reserves original writes before identity resolves and rejects a removed fres
   await act(async () => { await resourceOwner.saveContext(); await resourceOwner.captureContext(); await resourceOwner.decide("barrel", null, "keep"); await resourceOwner.chooseFile(); });
   expect(invoke.mock.calls.filter(([name]) => name === "create_execution_identity")).toHaveLength(1);
   expect(resourceOwner.beginContext({ ...page.rows[0], sourceRevisionId: fixtureIdentity(499) }, null)).toBe(false);
-  view.rerender(<ResourceView project={{ ...project, metadata: { ...project.metadata, targetLocales: ["fr"] } }} />);
+  view.rerender(<ResourceView project={{ ...project, metadata: { ...project.metadata, targetLocales: ["fr"] } }} />); await resourceReady();
   await act(async () => { finishIdentity(fixtureIdentity(430)); await saving; });
   expect(invoke.mock.calls.some(([name]) => ["save_term", "save_context", "capture_context", "choose_resource_file"].includes(name))).toBe(false);
   expect(resourceOwner.current().termDraft.target).toBe("A");
@@ -676,10 +695,10 @@ it("rebases a clean removed language and recovers a picker uncertainty through a
     if (name === "read_resource_preview") return Promise.resolve({ ...checkedPreview, capture });
     return original(name, payload);
   });
-  const view = render(<ResourceView project={project} />), user = userEvent.setup();
+  const view = render(<ResourceView project={project} />), user = userEvent.setup(); await resourceReady();
   await user.click(screen.getByRole("button", { name: "Glossary and context" }));
   const next = { ...project, metadata: { ...project.metadata, targetLocales: ["fr"] } };
-  view.rerender(<ResourceView project={next} />);
+  view.rerender(<ResourceView project={next} />); await resourceReady();
   await waitFor(() => expect(screen.getByRole("combobox", { name: "Target language" })).toHaveValue("fr"));
   expect(screen.queryByRole("option", { name: "zh-CN (removed from project)" })).not.toBeInTheDocument();
   await user.click(screen.getByRole("tab", { name: "Resource updates" }));
@@ -688,7 +707,7 @@ it("rebases a clean removed language and recovers a picker uncertainty through a
   await screen.findByText(/The file selection result is uncertain/);
   expect(resourceOwner.current().pending).toBeNull();
   expect(screen.queryByRole("button", { name: i18n.t("resource.retry") })).not.toBeInTheDocument();
-  view.rerender(null); view.rerender(<ResourceView project={next} />);
+  view.rerender(null); view.rerender(<ResourceView project={next} />); await resourceReady();
   await user.click(screen.getByRole("tab", { name: "Resource updates" }));
   await user.click(await screen.findByRole("button", { name: capture.origin.kind === "file" ? `${capture.origin.resourceId} · ${capture.origin.revision}` : "Correction candidate" }));
   await waitFor(() => expect(resourceOwner.current().preview?.capture.captureId).toBe(capture.captureId));
@@ -710,13 +729,13 @@ it("retains the chosen capture after preview failure and uses its actual languag
     return original(command, payload);
   });
   const available = { ...project, metadata: { ...project.metadata, targetLocales: ["zh-CN", "fr"] } };
-  const view = render(<ResourceView project={available} />), user = userEvent.setup();
+  const view = render(<ResourceView project={available} />), user = userEvent.setup(); await resourceReady();
   await user.click(screen.getByRole("button", { name: "Glossary and context" }));
   await screen.findByRole("option", { name: "barrel" });
   await user.click(screen.getByRole("tab", { name: "Resource updates" }));
   await user.click(screen.getByRole("button", { name: "Choose glossary file" }));
   await screen.findByRole("button", { name: "Read this captured source again" });
-  view.rerender(null); view.rerender(<ResourceView project={available} />);
+  view.rerender(null); view.rerender(<ResourceView project={available} />); await resourceReady();
   await user.click(screen.getByRole("tab", { name: "Resource updates" }));
   await user.click(screen.getByRole("button", { name: "Read this captured source again" }));
   const row = await screen.findByRole("row", { name: /Barrel/ });
@@ -725,8 +744,10 @@ it("retains the chosen capture after preview failure and uses its actual languag
   await waitFor(() => expect(resourceOwner.current().pending?.kind).toBe("decision"));
   const pending = resourceOwner.current().pending;
   expect(pending?.kind === "decision" && pending.locale).toBe("fr");
-  view.rerender(<ResourceView project={project} />);
+  view.rerender(<ResourceView project={project} />); await resourceReady();
   expect(within(screen.getByRole("row", { name: /Barrel/ })).getByRole("button", { name: "Keep current" })).toBeDisabled();
+  await waitFor(() => expect(screen.getByRole("button", { name: i18n.t("correctionFeedback.check") })).toBeEnabled());
+  await user.click(screen.getByRole("button", { name: i18n.t("correctionFeedback.check") }));
   await waitFor(() => expect(screen.getByRole("button", { name: i18n.t("resource.retry") })).toBeEnabled());
   await user.click(screen.getByRole("button", { name: i18n.t("resource.retry") }));
   await waitFor(() => expect(resourceOwner.current().pending).toBeNull());
@@ -742,14 +763,14 @@ it("does not continue a decision or an identity allocation after the project own
   const original = invoke.getMockImplementation()!;
   let finishDecision!: (value: unknown) => void;
   invoke.mockImplementation((command: string, payload: unknown) => command === "decide_resource_entry" ? new Promise(resolve => { finishDecision = resolve; }) : original(command, payload));
-  const view = render(<ResourceView project={project} />);
+  const view = render(<ResourceView project={project} />); await resourceReady();
   await act(async () => { await resourceOwner.openPreview(checkedCapture); });
   let decision!: Promise<void>;
   act(() => { decision = resourceOwner.decide("barrel", null, "keep"); });
   await waitFor(() => expect(invoke.mock.calls.some(([name]) => name === "decide_resource_entry")).toBe(true));
   const request = invoke.mock.calls.find(([name]) => name === "decide_resource_entry")![1].request.decision;
   const next = { ...project, sessionToken: "next-session", metadata: { ...project.metadata, projectId: fixtureIdentity(440) } };
-  view.rerender(<ResourceView project={next} />);
+  view.rerender(<ResourceView project={next} />); await resourceReady();
   await act(async () => { finishDecision({ actionId: request.actionId, decision: request.decision, revision: null }); await decision; });
   expect(resourceOwner.current().preview).toBeNull();
   expect(invoke.mock.calls.filter(([name]) => name === "read_resource_preview")).toHaveLength(1);
@@ -772,7 +793,7 @@ function decisionInput(): ResourceDecisionCommandPayload {
 it.each(["read_content_scope", "read_source_content", "read_terms"])("keeps %s failures distinct from empty resources and blocks fresh saves", async failing => {
   const original = invoke.getMockImplementation()!;
   invoke.mockImplementation((name: string, payload: unknown) => name === failing ? Promise.reject(new Error("current read failed")) : original(name, payload));
-  render(<ResourceView project={project} />); await userEvent.setup().click(screen.getByRole("button", { name: "Glossary and context" }));
+  render(<ResourceView project={project} />); await resourceReady(); await userEvent.setup().click(screen.getByRole("button", { name: "Glossary and context" }));
   await screen.findByRole("button", { name: "Retry this read" }); act(editTermA);
   expect(screen.queryByText("Import source content before managing resources.")).not.toBeInTheDocument();
   if (failing === "read_terms") expect(screen.queryByText("No terms have been adopted for this language.")).not.toBeInTheDocument();
@@ -795,7 +816,7 @@ it("resets the source cursor for a changed snapshot without changing captured dr
     if (name === "read_source_content") return Promise.resolve(scope === page.scope ? (payload.request.after === 50 ? later : { ...page, total: 51, nextOrdinal: 50 }) : next);
     return original(name, payload);
   });
-  render(<ResourceView project={project} />); await userEvent.setup().click(screen.getByRole("button", { name: "Glossary and context" }));
+  render(<ResourceView project={project} />); await resourceReady(); await userEvent.setup().click(screen.getByRole("button", { name: "Glossary and context" }));
   await screen.findByRole("option", { name: "barrel" });
   await userEvent.setup().click(screen.getByRole("button", { name: "Next page" })); await screen.findByRole("option", { name: "later" });
   act(() => { resourceOwner.beginContext(page.rows[0], null); resourceOwner.editContext("Captured context"); resourceOwner.editContextReason("Original reason"); editTermA(); });
@@ -823,7 +844,7 @@ it("loads term and revision pages cumulatively and retries each failed next curs
     }
     return original(name, payload);
   });
-  render(<ResourceView project={project} />); await user.click(screen.getByRole("button", { name: "Glossary and context" }));
+  render(<ResourceView project={project} />); await resourceReady(); await user.click(screen.getByRole("button", { name: "Glossary and context" }));
   await screen.findByRole("button", { name: "Term 99 → Target 99" });
   await user.click(screen.getAllByRole("button", { name: "Next page" }).find(button => !button.hasAttribute("disabled"))!);
   await user.click(await screen.findByRole("button", { name: "Retry this read" })); await screen.findByRole("button", { name: "Term 199 → Target 199" });
@@ -849,7 +870,7 @@ it("retries the failed impact page and invalidates the first page when returning
     if (payload.request.offset === 0) firstReads++;
     return Promise.resolve({ ...resourceFixture.responses.impacts, totalAffected: 55, nextOffset: payload.request.offset === 0 ? 50 : null });
   });
-  render(<ResourceView project={project} />); const user = userEvent.setup();
+  render(<ResourceView project={project} />); await resourceReady(); const user = userEvent.setup();
   await user.click(screen.getByRole("button", { name: "Glossary and context" })); await user.click(screen.getByRole("tab", { name: "Affected work" }));
   await screen.findByRole("heading", { name: "barrel" }); await user.click(screen.getByRole("button", { name: "Next page" }));
   await user.click(await screen.findByRole("button", { name: "Retry this read" })); await screen.findByRole("heading", { name: "barrel" });
@@ -860,7 +881,7 @@ it("refreshes the current comparison without adopting it or changing its origina
   installResourceReads(); const original = invoke.getMockImplementation()!; let current: ResourcePreview = checkedPreview, scope = page.scope;
   invoke.mockImplementation((name: string, payload: unknown) => name === "read_resource_preview" ? Promise.resolve(current) : name === "read_content_scope" ? Promise.resolve(scope)
     : name === "read_source_content" ? Promise.resolve({ ...page, scope, snapshotId: scope.currentSnapshot }) : original(name, payload));
-  render(<ResourceView project={project} />); const user = userEvent.setup(); await user.click(screen.getByRole("button", { name: "Glossary and context" }));
+  render(<ResourceView project={project} />); await resourceReady(); const user = userEvent.setup(); await user.click(screen.getByRole("button", { name: "Glossary and context" }));
   await screen.findByRole("option", { name: "barrel" }); await user.click(screen.getByRole("tab", { name: "Resource updates" }));
   await act(async () => { await resourceOwner.openPreview(checkedCapture); });
   const baseline = resourceOwner.current().preview, sourceBasis = resourceOwner.current().previewSourceBasis;
@@ -886,7 +907,7 @@ it("refreshes the current comparison without adopting it or changing its origina
 it("retains fixed evidence, original comparison and edits when automatic reads fail", async () => {
   installResourceReads(); const original = invoke.getMockImplementation()!;
   invoke.mockImplementation((name: string, payload: { request: { capture: CaptureContext } }) => name === "capture_context" ? Promise.resolve(captureAcknowledgement(payload.request.capture)) : original(name, payload));
-  render(<ResourceView project={project} />); const user = userEvent.setup(); await user.click(screen.getByRole("button", { name: "Glossary and context" }));
+  render(<ResourceView project={project} />); await resourceReady(); const user = userEvent.setup(); await user.click(screen.getByRole("button", { name: "Glossary and context" }));
   await screen.findByRole("option", { name: "barrel" });
   await act(async () => { resourceOwner.beginContext(page.rows[0], null); await resourceOwner.captureContext(); await resourceOwner.openPreview(checkedCapture); });
   act(editTermA); const value = resourceOwner.current(); await user.click(screen.getByRole("tab", { name: "Resource updates" }));
@@ -903,7 +924,7 @@ it.each(["source", "resources"] as const)("rejects a fresh decision when %s evid
   invoke.mockImplementation((name: string, payload: unknown) => name === "create_execution_identity" ? new Promise(resolve => { finish = resolve; })
     : name === "read_content_scope" ? Promise.resolve(scope) : name === "read_source_content" ? Promise.resolve({ ...page, scope, snapshotId: scope.currentSnapshot })
     : name === "read_resource_preview" ? Promise.resolve(preview) : original(name, payload));
-  render(<ResourceView project={project} />); const user = userEvent.setup(); await user.click(screen.getByRole("button", { name: "Glossary and context" }));
+  render(<ResourceView project={project} />); await resourceReady(); const user = userEvent.setup(); await user.click(screen.getByRole("button", { name: "Glossary and context" }));
   await screen.findByRole("option", { name: "barrel" }); await user.click(screen.getByRole("tab", { name: "Resource updates" }));
   await act(async () => { await resourceOwner.openPreview(checkedCapture); });
   await waitFor(() => expect(resourceRegistry.describe("resource.decide-entry", resourceScope, decisionInput())?.availability.enabled).toBe(true));
@@ -956,7 +977,7 @@ it.each(["term", "context", "decision", "capture"] as const)("reconciles the ori
     if (kind === "decision") return Promise.resolve({ actionId: mismatch ? fixtureIdentity(480) : payload.request.decision.actionId, decision: payload.request.decision.decision, request: payload.request.decision, revision: null });
     return Promise.resolve({ ...captureAcknowledgement(payload.request.capture), ...(mismatch ? { budgetBytes: 1 } : {}) });
   });
-  render(<ResourceView project={project}/>);
+  render(<ResourceView project={project}/>); await resourceReady();
   act(() => { resourceOwner.beginContext(page.rows[0], null); resourceOwner.editContext("Original context"); resourceOwner.editContextReason("Original reason"); editTermA(); });
   if (kind === "decision") await act(async () => { await resourceOwner.openPreview(checkedCapture); });
   await act(async () => {
@@ -972,6 +993,9 @@ it.each(["term", "context", "decision", "capture"] as const)("reconciles the ori
   const user = userEvent.setup(); await user.click(screen.getByRole("button", { name: "Glossary and context" })); await screen.findAllByRole("button", { name: "Retry this read" });
   const input = { kind: "resource-pending" as const, pendingKind: kind, actionId: pending.request.actionId };
   expect(resourceRegistry.dispatch("resource.retry-pending", resourceScope, { ...input, actionId: fixtureIdentity(481) })).toBe(false);
+  expect(resourceOwner.current().pendingCheckedMissing).toBe(false);
+  await user.click(screen.getByRole("button", { name: i18n.t("correctionFeedback.check") }));
+  expect(resourceOwner.current().pendingCheckedMissing).toBe(true);
   expect(screen.getByRole("button", { name: i18n.t("resource.retry") })).toBeEnabled();
   await user.click(screen.getByRole("button", { name: i18n.t("resource.retry") })); await waitFor(() => expect(resourceOwner.current().pending).toBeNull());
   const requests = invoke.mock.calls.filter(([name]) => name === command).map(([, payload]) => payload.request);
@@ -982,7 +1006,7 @@ it.each(["term", "context", "decision", "capture"] as const)("reconciles the ori
 it("waits for resolution before showing empty memory or enabling context actions", async () => {
   installResourceReads(); const original = invoke.getMockImplementation()!; let finish!: (value: unknown) => void;
   invoke.mockImplementation((name: string, payload: unknown) => name === "resolve_terms" ? new Promise(resolve => { finish = resolve; }) : original(name, payload));
-  render(<ResourceView project={project}/>); const user = userEvent.setup(); await user.click(screen.getByRole("button", { name: "Glossary and context" }));
+  render(<ResourceView project={project}/>); await resourceReady(); const user = userEvent.setup(); await user.click(screen.getByRole("button", { name: "Glossary and context" }));
   await screen.findByRole("option", { name: "barrel" }); await user.click(screen.getByRole("tab", { name: "Context and memory" }));
   await user.click(screen.getByRole("button", { name: "barrel" })); await screen.findByRole("textbox", { name: "Context you provide" });
   await waitFor(() => expect(resourceReads.client.getQueryState(resourceReads.key(["resource-tm", fixtureIdentity(401), "zh-CN", fixtureIdentity(402), 0, 20]))?.status).toBe("success"));
@@ -1016,12 +1040,12 @@ it.each(["hidden", "removed"] as const)("ignores late resource-list results afte
   const original = invoke.getMockImplementation()!; let finish!: (value: unknown) => void, terms = 0;
   const stale = { ...resourceFixture.responses.term, termId: "stale", source: "Obsolete list term" }, fresh = { ...stale, termId: "fresh", source: "Current list term" };
   invoke.mockImplementation((name: string, payload: unknown) => name === "read_terms" ? (++terms === 1 ? new Promise(resolve => { finish = resolve; }) : Promise.resolve([fresh])) : original(name, payload));
-  const view = render(<ResourceView project={project}/>), user = userEvent.setup(); await user.click(screen.getByRole("button", { name: "Glossary and context" }));
+  const view = render(<ResourceView project={project}/>), user = userEvent.setup(); await resourceReady(); await user.click(screen.getByRole("button", { name: "Glossary and context" }));
   await screen.findByRole("option", { name: "barrel" }); act(editTermA);
   if (mode === "hidden") await user.click(screen.getByRole("button", { name: "Back to overview" })); else view.rerender(null);
   const before = terms; await refreshWorkbenchReads(["resources"]); await act(async () => finish([stale]));
   expect(terms).toBe(before); expect(resourceOwner.current().termDraft.target).toBe("A");
-  if (mode === "hidden") await user.click(screen.getByRole("button", { name: "Glossary and context" })); else view.rerender(<ResourceView project={project}/>);
+  if (mode === "hidden") await user.click(screen.getByRole("button", { name: "Glossary and context" })); else view.rerender(<ResourceView project={project}/>); await resourceReady();
   await screen.findByRole("button", { name: /Current list term/ }); expect(screen.queryByRole("button", { name: /Obsolete list term/ })).not.toBeInTheDocument();
   expect(screen.getByRole("textbox", { name: "Source aliases, separated by commas" })).toHaveValue("Cask,  Drum"); expect(terms).toBe(2);
 });
@@ -1029,7 +1053,7 @@ it("starts locale reads from the beginning and ignores a late previous-language 
   const original = invoke.getMockImplementation()!; let finish!: (value: unknown) => void;
   invoke.mockImplementation((name: string, payload: { request: { locale: string } }) => name === "read_terms" ? (payload.request.locale === "zh-CN" ? new Promise(resolve => { finish = resolve; })
     : Promise.resolve([{ ...resourceFixture.responses.term, termId: "french", locale: "fr", source: "French term" }])) : original(name, payload));
-  render(<ResourceView project={{ ...project, metadata: { ...project.metadata, targetLocales: ["zh-CN", "fr"] } }}/>); const user = userEvent.setup();
+  render(<ResourceView project={{ ...project, metadata: { ...project.metadata, targetLocales: ["zh-CN", "fr"] } }}/>); await resourceReady(); const user = userEvent.setup();
   await user.click(screen.getByRole("button", { name: "Glossary and context" })); await screen.findByRole("option", { name: "barrel" });
   await user.selectOptions(screen.getByRole("combobox", { name: "Target language" }), "fr"); await screen.findByRole("button", { name: /French term/ });
   await act(async () => finish([{ ...resourceFixture.responses.term, source: "Obsolete Chinese term" }]));
@@ -1070,7 +1094,7 @@ it("opens an adopted correction from term history after a manual edit without re
     }
     return original(command, { request });
   });
-  render(<ResourceView project={project} />); const user = userEvent.setup();
+  render(<ResourceView project={project} />); await resourceReady(); const user = userEvent.setup();
   await user.click(screen.getByRole("button", { name: "Glossary and context" }));
   await screen.findByRole("option", { name: "barrel" });
   await user.click(await screen.findByRole("button", { name: "Barrel → Adopted A" }));
@@ -1109,7 +1133,7 @@ it.each(["term", "context", "decision", "capture"] as const)("retains the origin
     if (kind === "decision") return Promise.resolve({ actionId: payload.request.decision.actionId, decision: payload.request.decision.decision, request: payload.request.decision, revision: null });
     return Promise.resolve(captureAcknowledgement(payload.request.capture));
   });
-  const view = render(<ResourceView project={project} />);
+  const view = render(<ResourceView project={project} />); await resourceReady();
   act(() => { resourceOwner.beginContext(page.rows[0], null); resourceOwner.editContext("Original context"); resourceOwner.editContextReason("Original reason"); editTermA(); });
   if (kind === "decision") await act(async () => { await resourceOwner.openPreview(checkedCapture); });
   await act(async () => {
@@ -1121,7 +1145,9 @@ it.each(["term", "context", "decision", "capture"] as const)("retains the origin
   const original = resourceOwner.current().pending;
   expect(original?.kind).toBe(kind); expect(resourceOwner.current().pendingUncertain).toBe(true);
   act(() => { resourceOwner.editTerm({ ...resourceOwner.current().termDraft, target: "New B" }); resourceOwner.editContext("New context B"); });
-  view.rerender(null, project); view.rerender(<ResourceView project={project} />, project);
+  view.rerender(null, project); view.rerender(<ResourceView project={project} />, project); await resourceReady();
+  expect(resourceOwner.current().pendingCheckedMissing).toBe(false);
+  await act(async () => { await resourceOwner.checkPending(); });
   await act(async () => { await resourceOwner.retryPending(); });
   expect(resourceOwner.current().pending).toBe(original);
   expect(resourceOwner.current().pendingUncertain).toBe(true);

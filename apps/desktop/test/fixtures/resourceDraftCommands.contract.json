@@ -1,0 +1,624 @@
+{
+  "requests": {
+    "read": {
+      "sessionToken": "isolated-resource-session",
+      "key": {
+        "projectId": "30000000-0000-4000-8000-000000000001"
+      }
+    },
+    "write": {
+      "sessionToken": "isolated-resource-session",
+      "write": {
+        "key": {
+          "projectId": "30000000-0000-4000-8000-000000000001"
+        },
+        "expectedRevision": "0",
+        "writerId": "30000000-0000-4000-8000-000000000088",
+        "value": {
+          "editSeq": "10",
+          "locale": "zh-CN",
+          "selectedTerm": null,
+          "termDraft": {
+            "source": "Barrel",
+            "aliases": [
+              "Cask",
+              "Drum"
+            ],
+            "target": "Newer B 👩🏽‍💻\r\né",
+            "protected": true,
+            "scopeUnitId": "30000000-0000-4000-8000-000000000002",
+            "reason": "Reviewed 世界"
+          },
+          "aliasInput": "Cask, Drum",
+          "termSeq": "2",
+          "newerTerm": true,
+          "selectedUnit": null,
+          "contextRevision": null,
+          "contextDraft": "",
+          "contextReason": "",
+          "contextSeq": "0",
+          "newerContext": false,
+          "correctionDraft": null,
+          "factDraft": null,
+          "typedDrafts": [],
+          "typedActiveKey": null,
+          "knowledgeDrafts": [],
+          "knowledgeActiveKey": null,
+          "previewCaptureId": null,
+          "fixedContextId": null,
+          "pickerUnknown": false,
+          "pending": {
+            "kind": "term",
+            "request": {
+              "projectId": "30000000-0000-4000-8000-000000000001",
+              "actionId": "30000000-0000-4000-8000-000000000009",
+              "termId": null,
+              "locale": "zh-CN",
+              "source": "Barrel",
+              "aliases": [
+                "Cask",
+                "Drum"
+              ],
+              "target": "木桶 👩🏽‍💻 é",
+              "protected": true,
+              "scopeUnitId": "30000000-0000-4000-8000-000000000002",
+              "expectedRevisionId": null,
+              "reason": "Reviewed 世界"
+            },
+            "submittedSeq": "1",
+            "aliasInput": "Cask, Drum"
+          },
+          "factPending": null
+        }
+      }
+    },
+    "resolve": {
+      "sessionToken": "isolated-resource-session",
+      "resolve": {
+        "write": {
+          "key": {
+            "projectId": "30000000-0000-4000-8000-000000000001"
+          },
+          "expectedRevision": "1",
+          "writerId": "30000000-0000-4000-8000-000000000088",
+          "value": {
+            "editSeq": "11",
+            "locale": "zh-CN",
+            "selectedTerm": null,
+            "termDraft": {
+              "source": "Barrel",
+              "aliases": [
+                "Cask",
+                "Drum"
+              ],
+              "target": "Newer B 👩🏽‍💻\r\né",
+              "protected": true,
+              "scopeUnitId": "30000000-0000-4000-8000-000000000002",
+              "reason": "Reviewed 世界"
+            },
+            "aliasInput": "Cask, Drum",
+            "termSeq": "2",
+            "newerTerm": true,
+            "selectedUnit": null,
+            "contextRevision": null,
+            "contextDraft": "",
+            "contextReason": "",
+            "contextSeq": "0",
+            "newerContext": false,
+            "correctionDraft": null,
+            "factDraft": null,
+            "typedDrafts": [],
+            "typedActiveKey": null,
+            "knowledgeDrafts": [],
+            "knowledgeActiveKey": null,
+            "previewCaptureId": null,
+            "fixedContextId": null,
+            "pickerUnknown": false,
+            "pending": null,
+            "factPending": null
+          }
+        },
+        "target": {
+          "kind": "primary",
+          "pending": {
+            "kind": "term",
+            "request": {
+              "projectId": "30000000-0000-4000-8000-000000000001",
+              "actionId": "30000000-0000-4000-8000-000000000009",
+              "termId": null,
+              "locale": "zh-CN",
+              "source": "Barrel",
+              "aliases": [
+                "Cask",
+                "Drum"
+              ],
+              "target": "木桶 👩🏽‍💻 é",
+              "protected": true,
+              "scopeUnitId": "30000000-0000-4000-8000-000000000002",
+              "expectedRevisionId": null,
+              "reason": "Reviewed 世界"
+            },
+            "submittedSeq": "1",
+            "aliasInput": "Cask, Drum"
+          }
+        },
+        "disposition": "recorded"
+      }
+    },
+    "clear": {
+      "sessionToken": "isolated-resource-session",
+      "clear": {
+        "key": {
+          "projectId": "30000000-0000-4000-8000-000000000001"
+        },
+        "expectedRevision": "2"
+      }
+    }
+  },
+  "responses": {
+    "read": {
+      "key": {
+        "projectId": "30000000-0000-4000-8000-000000000001"
+      },
+      "revision": "1",
+      "writerId": "30000000-0000-4000-8000-000000000088",
+      "value": {
+        "editSeq": "10",
+        "locale": "zh-CN",
+        "selectedTerm": null,
+        "termDraft": {
+          "source": "Barrel",
+          "aliases": [
+            "Cask",
+            "Drum"
+          ],
+          "target": "Newer B 👩🏽‍💻\r\né",
+          "protected": true,
+          "scopeUnitId": "30000000-0000-4000-8000-000000000002",
+          "reason": "Reviewed 世界"
+        },
+        "aliasInput": "Cask, Drum",
+        "termSeq": "2",
+        "newerTerm": true,
+        "selectedUnit": null,
+        "contextRevision": null,
+        "contextDraft": "",
+        "contextReason": "",
+        "contextSeq": "0",
+        "newerContext": false,
+        "correctionDraft": null,
+        "factDraft": null,
+        "typedDrafts": [],
+        "typedActiveKey": null,
+        "knowledgeDrafts": [],
+        "knowledgeActiveKey": null,
+        "previewCaptureId": null,
+        "fixedContextId": null,
+        "pickerUnknown": false,
+        "pending": {
+          "kind": "term",
+          "request": {
+            "projectId": "30000000-0000-4000-8000-000000000001",
+            "actionId": "30000000-0000-4000-8000-000000000009",
+            "termId": null,
+            "locale": "zh-CN",
+            "source": "Barrel",
+            "aliases": [
+              "Cask",
+              "Drum"
+            ],
+            "target": "木桶 👩🏽‍💻 é",
+            "protected": true,
+            "scopeUnitId": "30000000-0000-4000-8000-000000000002",
+            "expectedRevisionId": null,
+            "reason": "Reviewed 世界"
+          },
+          "submittedSeq": "1",
+          "aliasInput": "Cask, Drum"
+        },
+        "factPending": null
+      }
+    },
+    "written": {
+      "key": {
+        "projectId": "30000000-0000-4000-8000-000000000001"
+      },
+      "revision": "1",
+      "writerId": "30000000-0000-4000-8000-000000000088",
+      "value": {
+        "editSeq": "10",
+        "locale": "zh-CN",
+        "selectedTerm": null,
+        "termDraft": {
+          "source": "Barrel",
+          "aliases": [
+            "Cask",
+            "Drum"
+          ],
+          "target": "Newer B 👩🏽‍💻\r\né",
+          "protected": true,
+          "scopeUnitId": "30000000-0000-4000-8000-000000000002",
+          "reason": "Reviewed 世界"
+        },
+        "aliasInput": "Cask, Drum",
+        "termSeq": "2",
+        "newerTerm": true,
+        "selectedUnit": null,
+        "contextRevision": null,
+        "contextDraft": "",
+        "contextReason": "",
+        "contextSeq": "0",
+        "newerContext": false,
+        "correctionDraft": null,
+        "factDraft": null,
+        "typedDrafts": [],
+        "typedActiveKey": null,
+        "knowledgeDrafts": [],
+        "knowledgeActiveKey": null,
+        "previewCaptureId": null,
+        "fixedContextId": null,
+        "pickerUnknown": false,
+        "pending": {
+          "kind": "term",
+          "request": {
+            "projectId": "30000000-0000-4000-8000-000000000001",
+            "actionId": "30000000-0000-4000-8000-000000000009",
+            "termId": null,
+            "locale": "zh-CN",
+            "source": "Barrel",
+            "aliases": [
+              "Cask",
+              "Drum"
+            ],
+            "target": "木桶 👩🏽‍💻 é",
+            "protected": true,
+            "scopeUnitId": "30000000-0000-4000-8000-000000000002",
+            "expectedRevisionId": null,
+            "reason": "Reviewed 世界"
+          },
+          "submittedSeq": "1",
+          "aliasInput": "Cask, Drum"
+        },
+        "factPending": null
+      }
+    },
+    "resolved": {
+      "key": {
+        "projectId": "30000000-0000-4000-8000-000000000001"
+      },
+      "revision": "2",
+      "writerId": "30000000-0000-4000-8000-000000000088",
+      "value": {
+        "editSeq": "11",
+        "locale": "zh-CN",
+        "selectedTerm": null,
+        "termDraft": {
+          "source": "Barrel",
+          "aliases": [
+            "Cask",
+            "Drum"
+          ],
+          "target": "Newer B 👩🏽‍💻\r\né",
+          "protected": true,
+          "scopeUnitId": "30000000-0000-4000-8000-000000000002",
+          "reason": "Reviewed 世界"
+        },
+        "aliasInput": "Cask, Drum",
+        "termSeq": "2",
+        "newerTerm": true,
+        "selectedUnit": null,
+        "contextRevision": null,
+        "contextDraft": "",
+        "contextReason": "",
+        "contextSeq": "0",
+        "newerContext": false,
+        "correctionDraft": null,
+        "factDraft": null,
+        "typedDrafts": [],
+        "typedActiveKey": null,
+        "knowledgeDrafts": [],
+        "knowledgeActiveKey": null,
+        "previewCaptureId": null,
+        "fixedContextId": null,
+        "pickerUnknown": false,
+        "pending": null,
+        "factPending": null
+      }
+    },
+    "cleared": {
+      "key": {
+        "projectId": "30000000-0000-4000-8000-000000000001"
+      },
+      "revision": "3",
+      "writerId": null,
+      "value": null
+    }
+  },
+  "observations": {
+    "term": {
+      "request": {
+        "sessionToken": "isolated-resource-session",
+        "projectId": "30000000-0000-4000-8000-000000000001",
+        "term": {
+          "projectId": "30000000-0000-4000-8000-000000000001",
+          "actionId": "30000000-0000-4000-8000-000000000009",
+          "termId": null,
+          "locale": "zh-CN",
+          "source": "Barrel",
+          "aliases": [
+            "Cask",
+            "Drum"
+          ],
+          "target": "木桶 👩🏽‍💻 é",
+          "protected": true,
+          "scopeUnitId": "30000000-0000-4000-8000-000000000002",
+          "expectedRevisionId": null,
+          "reason": "Reviewed 世界"
+        }
+      },
+      "response": {
+        "request": {
+          "projectId": "30000000-0000-4000-8000-000000000001",
+          "actionId": "30000000-0000-4000-8000-000000000009",
+          "termId": null,
+          "locale": "zh-CN",
+          "source": "Barrel",
+          "aliases": [
+            "Cask",
+            "Drum"
+          ],
+          "target": "木桶 👩🏽‍💻 é",
+          "protected": true,
+          "scopeUnitId": "30000000-0000-4000-8000-000000000002",
+          "expectedRevisionId": null,
+          "reason": "Reviewed 世界"
+        },
+        "receipt": {
+          "revisionId": "30000000-0000-4000-8000-000000000004",
+          "termId": "30000000-0000-4000-8000-000000000005",
+          "locale": "zh-CN",
+          "source": "Barrel",
+          "aliases": [
+            "Cask",
+            "Drum"
+          ],
+          "target": "木桶 👩🏽‍💻 é",
+          "protected": true,
+          "scopeUnitId": "30000000-0000-4000-8000-000000000002",
+          "reason": "Reviewed 世界",
+          "originKind": "manual",
+          "captureId": null,
+          "externalEntryId": null,
+          "previousRevisionId": null,
+          "removed": false
+        }
+      }
+    },
+    "context": {
+      "request": {
+        "sessionToken": "isolated-resource-session",
+        "projectId": "30000000-0000-4000-8000-000000000001",
+        "context": {
+          "projectId": "30000000-0000-4000-8000-000000000001",
+          "actionId": "30000000-0000-4000-8000-000000000011",
+          "unitId": "30000000-0000-4000-8000-000000000002",
+          "locale": "zh-CN",
+          "sourceRevisionId": "30000000-0000-4000-8000-000000000003",
+          "expectedRevisionId": null,
+          "text": "Translator note 中文 👩🏽‍💻 é",
+          "reason": "Reviewed context"
+        }
+      },
+      "response": {
+        "request": {
+          "projectId": "30000000-0000-4000-8000-000000000001",
+          "actionId": "30000000-0000-4000-8000-000000000011",
+          "unitId": "30000000-0000-4000-8000-000000000002",
+          "locale": "zh-CN",
+          "sourceRevisionId": "30000000-0000-4000-8000-000000000003",
+          "expectedRevisionId": null,
+          "text": "Translator note 中文 👩🏽‍💻 é",
+          "reason": "Reviewed context"
+        },
+        "receipt": {
+          "revisionId": "30000000-0000-4000-8000-000000000008",
+          "unitId": "30000000-0000-4000-8000-000000000002",
+          "locale": "zh-CN",
+          "text": "Translator note 中文 👩🏽‍💻 é",
+          "reason": "Reviewed context",
+          "previousRevisionId": null
+        }
+      }
+    },
+    "capture": {
+      "request": {
+        "sessionToken": "isolated-resource-session",
+        "projectId": "30000000-0000-4000-8000-000000000001",
+        "capture": {
+          "projectId": "30000000-0000-4000-8000-000000000001",
+          "actionId": "30000000-0000-4000-8000-000000000012",
+          "unitId": "30000000-0000-4000-8000-000000000002",
+          "locale": "zh-CN",
+          "sourceRevisionId": "30000000-0000-4000-8000-000000000003",
+          "budgetBytes": 16384
+        }
+      },
+      "response": {
+        "request": {
+          "projectId": "30000000-0000-4000-8000-000000000001",
+          "actionId": "30000000-0000-4000-8000-000000000012",
+          "unitId": "30000000-0000-4000-8000-000000000002",
+          "locale": "zh-CN",
+          "sourceRevisionId": "30000000-0000-4000-8000-000000000003",
+          "budgetBytes": 16384
+        },
+        "receipt": {
+          "captureId": "30000000-0000-4000-8000-000000000013",
+          "unitId": "30000000-0000-4000-8000-000000000002",
+          "locale": "zh-CN",
+          "sourceRevisionId": "30000000-0000-4000-8000-000000000003",
+          "budgetBytes": 16384,
+          "included": [
+            {
+              "kind": "source",
+              "revisionId": "30000000-0000-4000-8000-000000000003",
+              "text": "Example.Mod/barrel: Barrel",
+              "provenance": "extracted-current-source"
+            },
+            {
+              "kind": "manual",
+              "revisionId": "30000000-0000-4000-8000-000000000008",
+              "text": "Translator note 中文 👩🏽‍💻 é",
+              "provenance": "Reviewed context"
+            },
+            {
+              "kind": "term",
+              "revisionId": "30000000-0000-4000-8000-000000000004",
+              "text": "Barrel → 木桶 👩🏽‍💻 é",
+              "provenance": "manual"
+            }
+          ],
+          "omitted": [
+            {
+              "kind": "term",
+              "reference": "Cask",
+              "reason": "conflict"
+            }
+          ]
+        }
+      }
+    },
+    "correction": {
+      "request": {
+        "sessionToken": "isolated-resource-session",
+        "projectId": "30000000-0000-4000-8000-000000000001",
+        "capture": {
+          "actionId": "30000000-0000-4000-8000-000000000036",
+          "basis": {
+            "projectId": "30000000-0000-4000-8000-000000000001",
+            "unitId": "30000000-0000-4000-8000-000000000002",
+            "locale": "zh-CN",
+            "sourceSnapshotId": "30000000-0000-4000-8000-000000000030",
+            "sourceRevisionId": "30000000-0000-4000-8000-000000000031",
+            "before": {
+              "revisionId": "30000000-0000-4000-8000-000000000032",
+              "selectionId": "30000000-0000-4000-8000-000000000033"
+            },
+            "after": {
+              "revisionId": "30000000-0000-4000-8000-000000000034",
+              "selectionId": "30000000-0000-4000-8000-000000000035"
+            }
+          },
+          "source": "Barrel",
+          "target": "木桶",
+          "protected": false,
+          "reason": "Reviewed saved manual correction"
+        }
+      },
+      "response": {
+        "request": {
+          "actionId": "30000000-0000-4000-8000-000000000036",
+          "basis": {
+            "projectId": "30000000-0000-4000-8000-000000000001",
+            "unitId": "30000000-0000-4000-8000-000000000002",
+            "locale": "zh-CN",
+            "sourceSnapshotId": "30000000-0000-4000-8000-000000000030",
+            "sourceRevisionId": "30000000-0000-4000-8000-000000000031",
+            "before": {
+              "revisionId": "30000000-0000-4000-8000-000000000032",
+              "selectionId": "30000000-0000-4000-8000-000000000033"
+            },
+            "after": {
+              "revisionId": "30000000-0000-4000-8000-000000000034",
+              "selectionId": "30000000-0000-4000-8000-000000000035"
+            }
+          },
+          "source": "Barrel",
+          "target": "木桶",
+          "protected": false,
+          "reason": "Reviewed saved manual correction"
+        },
+        "capture": {
+          "captureId": "30000000-0000-4000-8000-000000000037",
+          "origin": {
+            "kind": "correction",
+            "basis": {
+              "projectId": "30000000-0000-4000-8000-000000000001",
+              "unitId": "30000000-0000-4000-8000-000000000002",
+              "locale": "zh-CN",
+              "sourceSnapshotId": "30000000-0000-4000-8000-000000000030",
+              "sourceRevisionId": "30000000-0000-4000-8000-000000000031",
+              "before": {
+                "revisionId": "30000000-0000-4000-8000-000000000032",
+                "selectionId": "30000000-0000-4000-8000-000000000033"
+              },
+              "after": {
+                "revisionId": "30000000-0000-4000-8000-000000000034",
+                "selectionId": "30000000-0000-4000-8000-000000000035"
+              }
+            }
+          },
+          "sourceLocale": "en-US",
+          "targetLocale": "zh-CN",
+          "digest": "1234567890abcdef",
+          "count": 1
+        }
+      }
+    },
+    "decision": {
+      "request": {
+        "sessionToken": "isolated-resource-session",
+        "projectId": "30000000-0000-4000-8000-000000000001",
+        "decision": {
+          "projectId": "30000000-0000-4000-8000-000000000001",
+          "actionId": "30000000-0000-4000-8000-000000000010",
+          "captureId": "30000000-0000-4000-8000-000000000006",
+          "entryId": "barrel",
+          "expectedRevisionId": null,
+          "decision": "adopt"
+        }
+      },
+      "response": {
+        "request": {
+          "projectId": "30000000-0000-4000-8000-000000000001",
+          "actionId": "30000000-0000-4000-8000-000000000010",
+          "captureId": "30000000-0000-4000-8000-000000000006",
+          "entryId": "barrel",
+          "expectedRevisionId": null,
+          "decision": "adopt"
+        },
+        "receipt": {
+          "actionId": "30000000-0000-4000-8000-000000000010",
+          "decision": "adopt",
+          "revision": {
+            "revisionId": "30000000-0000-4000-8000-000000000007",
+            "termId": "external:contract-glossary:barrel",
+            "locale": "zh-CN",
+            "source": "Barrel",
+            "aliases": [
+              "Cask",
+              "Drum"
+            ],
+            "target": "木桶 👩🏽‍💻 é",
+            "protected": true,
+            "scopeUnitId": null,
+            "reason": "Fixed glossary entry",
+            "originKind": "external",
+            "captureId": "30000000-0000-4000-8000-000000000006",
+            "externalEntryId": "barrel",
+            "previousRevisionId": null,
+            "removed": false
+          },
+          "request": {
+            "projectId": "30000000-0000-4000-8000-000000000001",
+            "actionId": "30000000-0000-4000-8000-000000000010",
+            "captureId": "30000000-0000-4000-8000-000000000006",
+            "entryId": "barrel",
+            "expectedRevisionId": null,
+            "decision": "adopt"
+          }
+        }
+      }
+    }
+  }
+}

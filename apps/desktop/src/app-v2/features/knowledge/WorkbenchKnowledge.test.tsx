@@ -5,6 +5,8 @@ import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import wire from "../../../../test/fixtures/resourceCommands.contract.json";
 import segmentWire from "../../../../test/fixtures/segmentCommands.contract.json";
 import { i18n } from "../../../i18n";
+import { installResourceDraftFixture } from "../../../testSupport/resourceDraftFixture";
+import { resourceDraftCommands } from "../../../resourceDraftCommands";
 import type { knowledgeEn } from "../../../i18n/knowledge";
 import type { workbenchEn } from "../../../i18n/workbench";
 import { SessionReads } from "../../../sessionReads";
@@ -62,10 +64,11 @@ beforeEach(async () => {
     if (command === "list_resource_captures") return [];
     throw new Error(`Unexpected synthetic workspace command: ${command}`);
   });
+  installResourceDraftFixture();
 });
 afterEach(() => { cleanup(); controller?.dispose(); controller = undefined; if (originalWidth) Object.defineProperty(window, "innerWidth", originalWidth); });
 
-it("protects the lazy owner gap and retains the original draft across workspace tabs", async () => {
+it("hydrates knowledge at project startup and retains the original draft across workspace tabs and closing", async () => {
   const close = vi.fn<ProjectLifecyclePorts["close"]>(async () => ({ closed: true }));
   controller = new ProjectLifecycle({ open: async () => project, close, status: async () => ({ active: false, quiescing: false, queryCount: 0, error: null }) });
   const register = vi.spyOn(controller, "register"), lifecycle = controller;
@@ -74,10 +77,9 @@ it("protects the lazy owner gap and retains the original draft across workspace 
   await user.type(screen.getByRole("textbox", { name: w("projectFolder") }), project.locator);
   await user.click(screen.getByRole("button", { name: w("openProject") }));
   const activity = await screen.findByRole("navigation", { name: w("activity") }, { timeout: 5000 });
-  const loading = register.mock.calls.find(([participant]) => participant.id === "knowledge-resources-loading")?.[0];
-  expect(loading).toBeDefined(); expect(loading?.inspect({ kind: "close-project" }).status).toBe("ready");
-  act(() => { loading?.reveal?.(); expect(loading?.inspect({ kind: "close-window" }).status).toBe("blocked"); });
-  await waitFor(() => expect(register.mock.calls.some(([participant]) => participant.id === "knowledge-resources")).toBe(true), { timeout: 5000 });
+  const loading = register.mock.calls.find(([participant]) => participant.id === "knowledge-resources")?.[0];
+  expect(loading).toBeDefined();
+  await waitFor(() => expect(loading?.inspect({ kind: "close-project" }).status).toBe("ready"), { timeout: 5000 });
   expect(loading?.inspect({ kind: "close-window" }).status).toBe("ready");
   await waitFor(() => {
     const knowledge = within(activity).getByRole("button", { name: w("knowledge") });
@@ -89,11 +91,13 @@ it("protects the lazy owner gap and retains the original draft across workspace 
   fireEvent.change(editor, { target: { value: "Keep my edit" } });
   await user.click(within(activity).getByRole("button", { name: w("entries") }));
   expect(await screen.findByRole("button", { name: k("backToDraft") })).toBeVisible();
-  await act(async () => { expect(await lifecycle.close()).toBe(false); }); expect(close).not.toHaveBeenCalled();
   await user.click(screen.getByRole("button", { name: k("backToDraft") }));
   expect(await screen.findByRole("textbox", { name: k("targetTerm") })).toHaveValue("Keep my edit");
   expect(within(screen.getByRole("tablist", { name: w("dockTabs") })).getByRole("tab", { name: w("agent") })).toHaveAttribute("aria-selected", "true");
-  await user.click(screen.getByRole("button", { name: k("discard") }));
+  await waitFor(async () => {
+    const retained = await resourceDraftCommands.read({ sessionToken: project.sessionToken, key: { projectId: project.metadata.projectId } });
+    expect(retained.value?.termDraft.target).toBe("Keep my edit"); expect(retained.value?.pending).toBeNull();
+  });
   await act(async () => { expect(await lifecycle.close()).toBe(true); }); expect(close).toHaveBeenCalledOnce();
 });
 
@@ -137,7 +141,7 @@ it("does not steal focus or switch tabs when the user moves while the original k
   await user.tab({ shift: true }); expect(entries).toHaveFocus();
   await waitFor(() => expect(knowledgeActivity).not.toHaveAttribute("aria-busy", "true"));
   await act(async () => { ownerLoad.wait = null; resolve(); });
-  await waitFor(() => expect(register.mock.calls.some(([participant]) => participant.id === "knowledge-resources")).toBe(true));
+  await waitFor(() => expect(register.mock.calls.find(([participant]) => participant.id === "knowledge-resources")?.[0].inspect({ kind: "close-project" }).status).toBe("ready"));
   expect(entries).toHaveFocus(); expect(originalTab).toHaveAttribute("aria-current", "page");
   expect(screen.queryByRole("navigation", { name: k("categories") })).toBeNull();
   await waitFor(() => { const button = within(activity).getByRole("button", { name: w("knowledge") }); expect(button.tagName).toBe("BUTTON"); expect(button).toBeEnabled(); });

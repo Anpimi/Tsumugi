@@ -700,7 +700,7 @@ pub(super) fn validate_capture(
     Ok(())
 }
 
-fn term_id(p: &McpTermProvenance, entry: &str) -> Result<String, ExecutionError> {
+pub(super) fn term_id(p: &McpTermProvenance, entry: &str) -> Result<String, ExecutionError> {
     // A query is a proposal batch, not a whole glossary. Reconnection and new
     // result identities do not change a term's identity or remove omitted terms.
     Ok(format!(
@@ -804,16 +804,7 @@ pub(super) fn decide(
         .ok_or_else(|| failure(ErrorCode::DependencyConflict, "resource-entry"))?;
     let term = term_id(&captured.provenance, &request.entry_id)?;
     let old = current_term(c, request.project_id, &term)?;
-    if old.as_ref().map(|v| v.revision_id) != request.expected_revision_id {
-        return Err(
-            failure(ErrorCode::DependencyConflict, "resource-current").with_conflict(
-                ConflictEvidence::TermRevision {
-                    expected: request.expected_revision_id,
-                    current: old.as_ref().map(|v| v.revision_id),
-                },
-            ),
-        );
-    }
+    check_term_revision(old.as_ref(),request.expected_revision_id)?;
     if matches!(
         request.decision,
         ResourceDecisionKind::Keep | ResourceDecisionKind::Ignore

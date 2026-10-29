@@ -147,6 +147,8 @@ function ProjectWorkspace({ session, lifecycle, gate, readOnly, requestOpen }: {
   const hideReviewRecovery = useCallback(() => setReviewRecovery(false), []);
   const publishReviewOwner = useCallback((owner: ReviewOwner | null) => { reviewStatus.current.owner = owner; setReviewOwner(owner); }, []);
   const [executionTasks, setExecutionTasks] = useState<ReturnType<typeof useExecutionTaskSession> | null>(null);
+  const executionParticipant = useRef<LifecycleParticipant | null>(null);
+  const publishExecutionParticipant = useCallback((participant: LifecycleParticipant | null) => { executionParticipant.current = participant; }, []);
   const executionHadOwner = useRef(false), [executionAttempt, setExecutionAttempt] = useState(0);
   const publishExecutionTasks = useCallback((owner: ReturnType<typeof useExecutionTaskSession> | null) => { if (owner) executionHadOwner.current = true; setExecutionTasks(owner); }, []);
   const revealTask = useCallback((operation: string | null, attemptId: string | null) => {
@@ -158,13 +160,14 @@ function ProjectWorkspace({ session, lifecycle, gate, readOnly, requestOpen }: {
   const comparisonStatus = useRef({ requested: false, owner: null as ComparisonSession | null });
   const requestComparisons = useCallback(() => { comparisonStatus.current.requested = true; setComparisonsRequested(true); }, []);
   const publishComparisonOwner = useCallback((owner: ComparisonSession | null) => { comparisonStatus.current.owner = owner; setComparisonOwner(owner); }, []);
-  const [knowledgeRequested, setKnowledgeRequested] = useState(false), [knowledgeOwner, setKnowledgeOwner] = useState<KnowledgeOwner | null>(null), [knowledgeReveal, setKnowledgeReveal] = useState(0);
+  const [knowledgeRequested, setKnowledgeRequested] = useState(true), [knowledgeOwner, setKnowledgeOwner] = useState<KnowledgeOwner | null>(null), [knowledgeReveal, setKnowledgeReveal] = useState(0);
   const [knowledgeLoadFailed, setKnowledgeLoadFailed] = useState(false), [knowledgeAttempt, setKnowledgeAttempt] = useState(0), knowledgeHadOwner = useRef(false);
   const [knowledgeOpenIntent, setKnowledgeOpenIntent] = useState<KnowledgeOpenIntent | null>(null);
-  const knowledgeStatus = useRef({ requested: false, owner: null as KnowledgeOwner | null });
-  const requestKnowledge = useCallback(() => { knowledgeStatus.current.requested = true; setKnowledgeRequested(true); }, []);
+  const knowledgeParticipant = useRef<LifecycleParticipant | null>(null);
+  const publishKnowledgeParticipant = useCallback((participant: LifecycleParticipant | null) => { knowledgeParticipant.current = participant; }, []);
+  const requestKnowledge = useCallback(() => setKnowledgeRequested(true), []);
   const revealKnowledge = useCallback(() => { requestKnowledge(); setKnowledgeReveal(value => value + 1); }, [requestKnowledge]);
-  const publishKnowledgeOwner = useCallback((owner: KnowledgeOwner | null) => { if (owner) knowledgeHadOwner.current = true; knowledgeStatus.current.owner = owner; setKnowledgeOwner(owner); }, []);
+  const publishKnowledgeOwner = useCallback((owner: KnowledgeOwner | null) => { if (owner) knowledgeHadOwner.current = true; setKnowledgeOwner(owner); }, []);
   const failKnowledgeLoad = useCallback(() => setKnowledgeLoadFailed(true), []);
   const retryKnowledgeLoad = (execution: boolean) => {
     if (knowledgeHadOwner.current || execution && executionHadOwner.current) return;
@@ -176,11 +179,19 @@ function ProjectWorkspace({ session, lifecycle, gate, readOnly, requestOpen }: {
     requestKnowledge();
     setKnowledgeOpenIntent({ newView: false, restoreDraft: false, viewId: store.getState().activeViewId, origin: document.activeElement });
   };
-  useLayoutEffect(() => lifecycle.register({ id: "knowledge-resources-loading", area: "resources", scope: { kind: "project", ...executionContext(session.project) },
+  // Lazy owners delegate to registrations that exist before the first view
+  // navigation. Loading must not change the participant set during its guard.
+  useLayoutEffect(() => lifecycle.register({ id: "execution-tasks", area: "tasks", scope: { kind: "project", ...executionContext(session.project) },
+    inspect: intent => ["navigate", "language", "close-view", "restore"].includes(intent.kind) ? { status: "ready", revision: "retained-project-session" }
+      : executionParticipant.current?.inspect(intent) ?? { status: "blocked", revision: "execution-owner-loading" },
+    prepareLeave: (intent, proof, current) => executionParticipant.current?.prepareLeave(intent, proof, current) ?? Promise.resolve(false),
+    reveal: () => { if (executionParticipant.current) executionParticipant.current.reveal?.(); else revealKnowledge(); },
+  }), [lifecycle, session.project.sessionToken, session.project.metadata.projectId, revealKnowledge]);
+  useLayoutEffect(() => lifecycle.register({ id: "knowledge-resources", area: "resources", scope: { kind: "project", ...executionContext(session.project) },
     inspect: intent => ["navigate", "language", "close-view", "restore"].includes(intent.kind) ? { status: "ready", revision: "retained-knowledge-presentation" }
-      : { status: knowledgeStatus.current.requested && !knowledgeStatus.current.owner ? "blocked" : "ready",
-        revision: knowledgeStatus.current.requested ? knowledgeStatus.current.owner ? "knowledge-owner-ready" : "knowledge-owner-loading" : "knowledge-not-requested" },
-    prepareLeave: async () => false, reveal: revealKnowledge,
+      : knowledgeParticipant.current?.inspect(intent) ?? { status: "blocked", revision: "knowledge-owner-loading" },
+    prepareLeave: (intent, proof, current) => knowledgeParticipant.current?.prepareLeave(intent, proof, current) ?? Promise.resolve(false),
+    reveal: () => { if (knowledgeParticipant.current) knowledgeParticipant.current.reveal?.(); else revealKnowledge(); },
   }), [lifecycle, session.project.sessionToken, session.project.metadata.projectId, revealKnowledge]);
   const draftParticipant = useRef<LifecycleParticipant | null>(null), draftOwner = useRef<TranslationDrafts | null>(null), readonlyRef = useRef(readOnly);
   const [conversations, setConversations] = useState<ConversationSession | null>(null), [conversationLoadFailed, setConversationLoadFailed] = useState(false);
@@ -283,7 +294,7 @@ function ProjectWorkspace({ session, lifecycle, gate, readOnly, requestOpen }: {
     revealConversation: target => { setConversationTarget(target ? { kind: "request", value: { ...target } } : null); setConversationReveal(value => value + 1); },
     revealConversationProposal: target => { setConversationTarget({ kind: "proposal", value: { ...target } }); setConversationReveal(value => value + 1); } }}>
     {(importRequested || reviewRequested || knowledgeRequested) && drafts ? <FeatureBoundary key={executionAttempt} fallback={knowledgeRequested ? <KnowledgeLoadFailure canRetry={!executionHadOwner.current && !knowledgeHadOwner.current} onFailure={failKnowledgeLoad} onRetry={() => retryKnowledgeLoad(true)}/> : <ErrorState title={t("reviewUnavailable")} />}><Suspense fallback={null}>
-      <ExecutionOwnerHost project={session.project} drafts={drafts} lifecycle={lifecycle} onReveal={revealTask} onOwner={publishExecutionTasks}>
+      <ExecutionOwnerHost project={session.project} drafts={drafts} lifecycle={lifecycle} onReveal={revealTask} onOwner={publishExecutionTasks} onParticipant={publishExecutionParticipant}>
         {importRequested ? <FeatureBoundary fallback={<ErrorState title={t("importUnavailable")} description={t("importHelp")} />}><Suspense fallback={null}>
           <ImportOwnerHost project={session.project} drafts={drafts} lifecycle={lifecycle} onOwners={publishImportOwners} onReveal={revealImport}/>
         </Suspense></FeatureBoundary> : null}
@@ -291,7 +302,7 @@ function ProjectWorkspace({ session, lifecycle, gate, readOnly, requestOpen }: {
           <ReviewOwnerHost project={session.project} drafts={drafts} lifecycle={lifecycle} onOwner={publishReviewOwner} onReveal={revealReview}/>
         </Suspense></FeatureBoundary> : null}
         {knowledgeRequested ? <FeatureBoundary key={knowledgeAttempt} fallback={<KnowledgeLoadFailure canRetry={!knowledgeHadOwner.current} onFailure={failKnowledgeLoad} onRetry={() => retryKnowledgeLoad(false)}/>}><Suspense fallback={null}>
-          <KnowledgeOwnerHost project={session.project} lifecycle={lifecycle} onOwner={publishKnowledgeOwner} onReveal={revealKnowledge}/>
+          <KnowledgeOwnerHost project={session.project} lifecycle={lifecycle} onOwner={publishKnowledgeOwner} onReveal={revealKnowledge} onParticipant={publishKnowledgeParticipant}/>
         </Suspense></FeatureBoundary> : null}
       </ExecutionOwnerHost>
     </Suspense></FeatureBoundary> : null}
@@ -364,7 +375,10 @@ function WorkspaceShell() {
   const recoveryEntry = recoveryKey ? drafts?.getEntry(recoveryKey) : undefined;
   const pendingDrafts = draftState.summaries.filter(summary => summary.hasPending);
   const disabled = readOnly || lifecycleState.phase !== "idle" || !!lifecycleState.pending;
-  const decisionFeed = useDecisionFeed(session.reads, [drafts, conversations], view?.kind === "decisions" ? view.decisionCursor : null,
+  const resourceSubscribe = knowledgeOwner?.subscribe, readResourceActivity = knowledgeOwner?.getDecisionActivity;
+  const resourceActivity = useMemo(() => resourceSubscribe && readResourceActivity ? { subscribe: resourceSubscribe, getDecisionActivity: readResourceActivity } : null,
+    [resourceSubscribe, readResourceActivity]);
+  const decisionFeed = useDecisionFeed(session.reads, [drafts, conversations, resourceActivity], view?.kind === "decisions" ? view.decisionCursor : null,
     view?.kind === "decisions" && !importVisible, !readOnly);
   const decisionBadgeId = useId();
   const lastDecisionView = useRef<string | null>(null);
@@ -597,6 +611,12 @@ function WorkspaceShell() {
       if (destination.kind === "conversation-request") {
         if (!conversations || !await conversations.open(destination.conversationId) || !current()) return false;
         intent.release(); revealConversation({ conversationId: destination.conversationId, slot: destination.slot, actionId: destination.actionId, focus: focusRetained() }); return true;
+      }
+      if (destination.kind === "resource-request") {
+        if (!knowledgeOwner || knowledgeOwner.journal.hydration !== "ready") return false;
+        const pending = destination.slot === "resource-fact" ? knowledgeOwner.current().factPending : knowledgeOwner.current().pending;
+        if (!pending || pending.request.actionId !== destination.actionId || !current()) return false;
+        intent.release(); revealKnowledge(); return true;
       }
       if (destination.kind === "conversation-proposal") {
         if (!conversations || !await conversations.open(destination.conversationId) || !current()) return false;

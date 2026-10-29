@@ -3,6 +3,7 @@ import userEvent from "@testing-library/user-event";
 import { useCallback, useState } from "react";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { i18n } from "../../../i18n";
+import { installResourceDraftFixture } from "../../../testSupport/resourceDraftFixture";
 import type { knowledgeEn } from "../../../i18n/knowledge";
 import { executionContext } from "../../../executionCommands";
 import type { ProjectView } from "../../../projectCommands";
@@ -90,6 +91,7 @@ function Shell() {
     reviewTarget={target} onReviewOpened={() => setTarget(null)}/> : null}</>;
 }
 async function open() {
+  installResourceDraftFixture();
   const view = render(<SessionReadProvider context={executionContext(project)} reads={reads} bridge={false}><TranslationDraftSession project={project}><ExecutionTaskSession project={project}><Shell/></ExecutionTaskSession></TranslationDraftSession></SessionReadProvider>);
   const user = userEvent.setup(); await screen.findByRole("textbox", { name: k("reviewText") }); return { user, view };
 }

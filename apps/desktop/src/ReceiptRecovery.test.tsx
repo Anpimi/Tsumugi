@@ -62,6 +62,7 @@ function pending(test: Case) {
 
 async function prepare(test: Case) {
   renderWorkbench(<Probe />, project);
+  await waitFor(() => expect(resource.journal.hydration).toBe("ready"));
   await act(async () => {
     if (["decision", "check", "waiver", "fallback"].includes(test[0])) { review.setSelected(target); review.setActor("Reviewer A"); review.editReason(target, "Original A"); }
     if (test[0] === "term") resource.editTerm({ source: "Barrel", aliases: ["Cask"], target: "A", protected: false, scopeUnitId: null, reason: "Original A" }, "Cask, ");
@@ -87,13 +88,15 @@ function start(test: Case) {
 }
 let mode: "saved" | "missing" | "undefined" | "mismatch" | "error" | "deferred";
 let writeRejected: boolean, finish: (value: unknown) => void, lastOriginal: Wire, lastReceipt: object;
+const resourceCase = (test: Case) => ["term", "context", "capture", "file"].includes(test[0]);
+const actionRead = (command: string, test: Case) => command === test[2] || resourceCase(test) && command === test[2].replace(/^read_/, "observe_");
 function useCase(test: Case) {
   invoke.mockImplementation(async (command: string, args: { request: Wire }) => {
     if (command === "create_execution_identity") return fixtureIdentity(820);
     if (command === "read_content_scope") return { revision: "1", currentSnapshot: target.sourceSnapshotId };
     if (command === "read_resource_preview") return resourceFixture.responses.preview;
     if (command === test[1]) { if (writeRejected) throw errors.errors[0]; throw new Error("Lost acknowledgement"); }
-    if (command === test[2]) {
+    if (actionRead(command, test)) {
       lastOriginal = test[3] ? args.request[test[3]] : Object.fromEntries(Object.entries(args.request).filter(([key]) => key !== "sessionToken"));
       lastReceipt = receipt(test[0], lastOriginal);
       if (mode === "missing") return null;
@@ -108,20 +111,29 @@ function useCase(test: Case) {
 beforeEach(() => { invoke.mockReset(); mode = "saved"; writeRejected = false; });
 afterEach(cleanup);
 for (const test of cases) {
-  it(`${test[0]} automatically confirms once without a second write or identity`, async () => {
+  it(`${test[0]} ${resourceCase(test) ? "observes once and settles only after explicit recovery" : "automatically confirms once"} without a second write or identity`, async () => {
     useCase(test); await prepare(test); await act(async () => { await start(test); });
+    if (resourceCase(test)) {
+      expect(pending(test).pending).not.toBeNull(); expect(resource.current().pendingRecorded).toBe(true);
+      expect(pending(test).completionVersion).toBe(0);
+      await act(async () => { await resource.checkPending(); });
+    }
     expect(pending(test).pending).toBeNull(); expect(pending(test).completionVersion).toBe(1);
     expect(invoke.mock.calls.filter(([name]) => name === test[1])).toHaveLength(1);
-    expect(invoke.mock.calls.filter(([name]) => name === test[2])).toHaveLength(1);
+    expect(invoke.mock.calls.filter(([name]) => actionRead(name, test))).toHaveLength(resourceCase(test) ? 2 : 1);
     expect(invoke.mock.calls.filter(([name]) => name === "create_execution_identity")).toHaveLength(1);
   });
   it(`${test[0]} true null enables only explicit retry and preserves uncertainty after a rejected retry`, async () => {
     mode = "missing"; useCase(test); await prepare(test); await act(async () => { await start(test); });
+    if (resourceCase(test)) {
+      expect(resource.current().pendingCheckedMissing).toBe(false);
+      await act(async () => { await resource.checkPending(); });
+    }
     const original = pending(test).pending; expect(original).not.toBeNull(); expect(pending(test).pendingCheckedMissing).toBe(true);
     writeRejected = true; await act(async () => { if (["decision", "check", "waiver", "fallback"].includes(test[0])) await review.retryPending(); else await resource.retryPending(); });
     expect(pending(test).pending).toBe(original); expect(pending(test).pendingCheckedMissing).toBe(false);
     expect(invoke.mock.calls.filter(([name]) => name === test[1])).toHaveLength(2);
-    expect(invoke.mock.calls.filter(([name]) => name === test[2])).toHaveLength(1);
+    expect(invoke.mock.calls.filter(([name]) => actionRead(name, test))).toHaveLength(resourceCase(test) ? 2 : 1);
   });
   for (const invalid of ["undefined", "mismatch", "error"] as const) it(`${test[0]} keeps pending after ${invalid}, blocks replay, and shares manual lookup`, async () => {
     mode = invalid; useCase(test); await prepare(test); await act(async () => { await start(test); });
@@ -129,12 +141,12 @@ for (const test of cases) {
     await act(async () => { if (["decision", "check", "waiver", "fallback"].includes(test[0])) await review.retryPending(); else await resource.retryPending(); });
     expect(invoke.mock.calls.filter(([name]) => name === test[1])).toHaveLength(1);
     mode = "saved"; await act(async () => { if (["decision", "check", "waiver", "fallback"].includes(test[0])) await review.checkPending(); else await resource.checkPending(); });
-    expect(pending(test).pending).toBeNull(); expect(invoke.mock.calls.filter(([name]) => name === test[2])).toHaveLength(2);
+    expect(pending(test).pending).toBeNull(); expect(invoke.mock.calls.filter(([name]) => actionRead(name, test))).toHaveLength(2);
   });
   it(`${test[0]} formal fresh rejection performs zero receipt reads`, async () => {
     writeRejected = true; useCase(test); await prepare(test); await act(async () => { await start(test); });
     expect(pending(test).pending).toBeNull(); expect(pending(test).completionVersion).toBe(0);
-    expect(invoke.mock.calls.filter(([name]) => name === test[2])).toHaveLength(0);
+    expect(invoke.mock.calls.filter(([name]) => actionRead(name, test))).toHaveLength(0);
   });
   it(`${test[0]} retirement fences a late original read`, async () => {
     mode = "deferred"; useCase(test); await prepare(test); let work!: Promise<void>;
@@ -149,6 +161,8 @@ it("an original term read preserves B and raw aliases while the owner remains hi
   act(() => { work = start(test); }); await waitFor(() => expect(Boolean(resource.current().checkingAction)).toBe(true));
   act(() => resource.editTerm({ ...resource.current().termDraft, target: "B", reason: "New B" }, "Cask, B raw, "));
   await act(async () => { finish({ request: lastOriginal, receipt: lastReceipt }); await work; });
+  expect(resource.current().pending).not.toBeNull(); expect(resource.current().pendingRecorded).toBe(true);
+  mode = "saved"; await act(async () => { await resource.checkPending(); });
   expect(resource.current()).toMatchObject({ pending: null, newerTerm: true, termDraft: { target: "B", reason: "New B" }, aliasInput: "Cask, B raw, " });
 });
 it("an original context read preserves B text and reason", async () => {
@@ -156,6 +170,8 @@ it("an original context read preserves B text and reason", async () => {
   act(() => { work = start(test); }); await waitFor(() => expect(Boolean(resource.current().checkingAction)).toBe(true));
   act(() => { resource.editContext("B"); resource.editContextReason("New B"); });
   await act(async () => { finish({ request: lastOriginal, receipt: lastReceipt }); await work; });
+  expect(resource.current().pending).not.toBeNull(); expect(resource.current().pendingRecorded).toBe(true);
+  mode = "saved"; await act(async () => { await resource.checkPending(); });
   expect(resource.current()).toMatchObject({ pending: null, newerContext: true, contextDraft: "B", contextReason: "New B" });
 });
 for (const test of cases.slice(0, 2)) it(`${test[0]} historical receipt cannot overwrite newer same-basis Query evidence or B`, async () => {

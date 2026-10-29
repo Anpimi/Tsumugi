@@ -10,6 +10,10 @@ export declare function validateRequestConversationWrite(value: unknown): value 
 export declare function validateRequestList(value: unknown): value is Requests["list"];
 export declare function validateRequestRead(value: unknown): value is Requests["read"];
 export declare function validateRequestReadMany(value: unknown): value is Requests["readMany"];
+export declare function validateRequestResourceClear(value: unknown): value is Requests["resourceClear"];
+export declare function validateRequestResourceRead(value: unknown): value is Requests["resourceRead"];
+export declare function validateRequestResourceResolve(value: unknown): value is Requests["resourceResolve"];
+export declare function validateRequestResourceWrite(value: unknown): value is Requests["resourceWrite"];
 export declare function validateRequestWrite(value: unknown): value is Requests["write"];
 export declare function validateResponseCleared(value: unknown): value is Responses["cleared"];
 export declare function validateResponseConversationCleared(value: unknown): value is Responses["conversationCleared"];
@@ -21,4 +25,9 @@ export declare function validateResponseError(value: unknown): value is Response
 export declare function validateResponsePage(value: unknown): value is Responses["page"];
 export declare function validateResponseRead(value: unknown): value is Responses["read"];
 export declare function validateResponseReadMany(value: unknown): value is Responses["readMany"];
+export declare function validateResponseResourceCleared(value: unknown): value is Responses["resourceCleared"];
+export declare function validateResponseResourceRead(value: unknown): value is Responses["resourceRead"];
+export declare function validateResponseResourceResolved(value: unknown): value is Responses["resourceResolved"];
+export declare function validateResponseResourceValue(value: unknown): value is Responses["resourceValue"];
+export declare function validateResponseResourceWritten(value: unknown): value is Responses["resourceWritten"];
 export declare function validateResponseWritten(value: unknown): value is Responses["written"];

@@ -44,7 +44,7 @@ beforeEach(async () => {
     if (name === "read_context_revision") return saved;
     if (name === "resolve_terms") return { unitId: payload.request.unitId, locale: payload.request.locale, sourceRevisionId: row.sourceRevisionId, entries: [] };
     if (name === "create_execution_identity") return fixtureIdentity(807);
-    if (name === "read_context_save_action") {
+    if (name === "read_context_save_action" || name === "observe_context_save_action") {
       if (!validateRequestContext(payload.request)) throw new Error("Invalid original context lookup request");
       const value = contextActions.get(payload.request.context.actionId) ?? null;
       if (value) expect(value.request).toEqual(payload.request.context);
@@ -220,7 +220,7 @@ it("retains and reads the original uncertain context write while current context
   const { user } = await ready(); act(() => owner.editContext("Submitted A"));
   const original = invoke.getMockImplementation()!; let actionReads = 0;
   invoke.mockImplementation(async (name: string, payload: { request: { context: SaveContext } }) => {
-    if (name === "read_context_save_action" && actionReads++ === 0) throw new Error("Original context lookup temporarily unavailable");
+    if ((name === "read_context_save_action" || name === "observe_context_save_action") && actionReads++ === 0) throw new Error("Original context lookup temporarily unavailable");
     if (name === "save_context") {
       await original(name, payload); throw new Error("reply lost");
     }
@@ -237,7 +237,7 @@ it("retains and reads the original uncertain context write while current context
   await screen.findByText("Saved. Earlier revisions remain available.");
   const requests = invoke.mock.calls.filter(([name]) => name === "save_context").map(([, payload]) => payload.request);
   expect(requests).toHaveLength(1);
-  expect(invoke.mock.calls.filter(([name]) => name === "read_context_save_action").map(([, payload]) => payload.request)).toEqual([requests[0], requests[0]]);
+  expect(invoke.mock.calls.filter(([name]) => name === "read_context_save_action" || name === "observe_context_save_action").map(([, payload]) => payload.request)).toEqual([requests[0], requests[0]]);
   expect(requests[0].context).toMatchObject({ expectedRevisionId: initial.revisionId, text: "Submitted A" });
   expect(owner.current().contextDraft).toBe("New B"); expect(owner.current().contextReason).toBe("Reason B");
   expect(invoke.mock.calls.filter(([name]) => name === "create_execution_identity")).toHaveLength(1);
@@ -249,10 +249,15 @@ it("does not adopt context read for another unit and isolates a replacement sess
   await screen.findByRole("button", { name: "Retry this read" });
   expect(owner.current().contextRevision).toEqual(initial); expect(registry.dispatch("resource.adopt-context-basis", commandScope, basisPayload())).toBe(false);
   saved = replacement;
+  const retiredOwner = owner, retiredState = owner.current(), originalBasis = basisPayload();
+  await act(async () => { expect(await owner.flush()).toBe(true); });
   const next = { ...project, sessionToken: "replacement-context-session" }; view.rerender(<Probe project={next} />);
+  await waitFor(() => { expect(owner).not.toBe(retiredOwner); expect(owner.journal.hydration).toBe("ready"); });
   await user.click(screen.getByRole("tab", { name: "Context and memory" }));
-  await user.click(screen.getByRole("button", { name: "context-entry" }));
-  await waitFor(() => expect(screen.getByRole("textbox", { name: "Context you provide" })).toHaveValue(replacement.text));
-  expect(owner.current().contextDraft).not.toBe("Old session draft");
-  expect(registry.dispatch("resource.adopt-context-basis", commandScope, basisPayload())).toBe(false);
+  await waitFor(() => expect(screen.getByRole("textbox", { name: "Context you provide" })).toHaveValue("Old session draft"));
+  expect(owner.current().contextRevision).toEqual(initial);
+  expect(registry.dispatch("resource.adopt-context-basis", commandScope, originalBasis)).toBe(false);
+  expect(retiredOwner.adoptContext(replacement, initial.revisionId, retiredState.contextSeq)).toBe(false);
+  act(() => { retiredOwner.editContext("Retired session edit"); });
+  expect(owner.current().contextDraft).toBe("Old session draft");
 });

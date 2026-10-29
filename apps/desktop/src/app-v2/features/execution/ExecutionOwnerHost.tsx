@@ -2,7 +2,7 @@ import { memo, useLayoutEffect, useRef, type ReactNode } from "react";
 import { ExecutionTaskProvider, useExecutionTaskSession } from "../../../ExecutionTaskSession";
 import { executionContext } from "../../../executionCommands";
 import type { ProjectView } from "../../../projectCommands";
-import type { ProjectLifecycle, LeaveIntent } from "../../platform/projectLifecycle";
+import type { ProjectLifecycle, LeaveIntent, LifecycleParticipant } from "../../platform/projectLifecycle";
 import type { TranslationDrafts } from "../editor/translationDrafts";
 
 interface Props {
@@ -11,11 +11,12 @@ interface Props {
   lifecycle: ProjectLifecycle;
   onReveal: (operation: string | null, attemptId: string | null) => void;
   onOwner?: (owner: ReturnType<typeof useExecutionTaskSession> | null) => void;
+  onParticipant?: (participant: LifecycleParticipant | null) => void;
   children: ReactNode;
 }
 const leavesProject = (intent: LeaveIntent) => intent.kind === "open-project" || intent.kind === "close-project" || intent.kind === "close-window";
 
-function ExecutionOwnerBridge({ project, lifecycle, onReveal, onOwner }: Omit<Props, "drafts" | "children">) {
+function ExecutionOwnerBridge({ project, lifecycle, onReveal, onOwner, onParticipant }: Omit<Props, "drafts" | "children">) {
   const tasks = useExecutionTaskSession(), context = executionContext(project);
   const current = useRef({ tasks, onReveal });
   useLayoutEffect(() => { current.current = { tasks, onReveal }; });
@@ -35,22 +36,24 @@ function ExecutionOwnerBridge({ project, lifecycle, onReveal, onOwner }: Omit<Pr
       return { status: unresolved ? "blocked" as const : "ready" as const,
         revision: JSON.stringify([owner.state, owner.currentActivity(), unresolved]) };
     }
-    return lifecycle.register({ id: "execution-tasks", area: "tasks", scope: { kind: "project", ...context }, inspect,
+    const participant: LifecycleParticipant = { id: "execution-tasks", area: "tasks", scope: { kind: "project", ...context }, inspect,
       prepareLeave: async (intent, proof, current) => proof() && current() && inspect(intent).status === "ready",
       reveal: () => {
         const owner = current.current.tasks, latest = owner.currentActivity();
         const activity = latest && !["recorded", "rejected"].includes(latest.phase) ? latest : null;
         const cancellation = Object.values(owner.state).find(value => ["preparing", "pending", "checking", "unknown"].includes(value.phase));
         current.current.onReveal(activity?.intent.operation ?? null, activity?.intent.attemptId ?? cancellation?.target.attemptId ?? null);
-      } });
-  }, [lifecycle, context.projectId, context.sessionToken]);
+      } };
+    if (onParticipant) { onParticipant(participant); return () => onParticipant(null); }
+    return lifecycle.register(participant);
+  }, [lifecycle, context.projectId, context.sessionToken, onParticipant]);
   return null;
 }
 
 /** Retained task consumers share their original requests and the project mutation coordinator. */
-function ExecutionOwnerHost({ project, drafts, lifecycle, onReveal, onOwner, children }: Props) {
+function ExecutionOwnerHost({ project, drafts, lifecycle, onReveal, onOwner, onParticipant, children }: Props) {
   return <ExecutionTaskProvider project={project} mutations={drafts}>
-    <ExecutionOwnerBridge project={project} lifecycle={lifecycle} onReveal={onReveal} onOwner={onOwner}/>
+    <ExecutionOwnerBridge project={project} lifecycle={lifecycle} onReveal={onReveal} onOwner={onOwner} onParticipant={onParticipant}/>
     {children}
   </ExecutionTaskProvider>;
 }

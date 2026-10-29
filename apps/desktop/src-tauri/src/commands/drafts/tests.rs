@@ -9,9 +9,9 @@ use tsumugi_core::{SaveTranslationRevision, execution::Revision};
 
 #[allow(dead_code)]
 #[path = "../../../../../../crates/core/tests/support/mod.rs"]
-mod source_fixture;
+pub(super) mod source_fixture;
 
-fn call(
+pub(super) fn call(
     window: &tauri::WebviewWindow<tauri::test::MockRuntime>,
     command: &str,
     request: Value,

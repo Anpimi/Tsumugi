@@ -105,13 +105,27 @@
               "conversationId"
             ],
             "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "properties": {
+              "kind": {
+                "const": "resource",
+                "type": "string"
+              }
+            },
+            "required": [
+              "kind"
+            ],
+            "type": "object"
           }
         ]
       },
       "DecisionJournalSlot": {
         "enum": [
           "primary",
-          "revocation"
+          "revocation",
+          "resource-fact"
         ],
         "type": "string"
       },
@@ -1508,13 +1522,27 @@
               "conversationId"
             ],
             "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "properties": {
+              "kind": {
+                "const": "resource",
+                "type": "string"
+              }
+            },
+            "required": [
+              "kind"
+            ],
+            "type": "object"
           }
         ]
       },
       "DecisionJournalSlot": {
         "enum": [
           "primary",
-          "revocation"
+          "revocation",
+          "resource-fact"
         ],
         "type": "string"
       },
@@ -1610,7 +1638,16 @@
           "proposal-revision",
           "proposal-work-plan",
           "work-plan-start",
-          "work-plan-control"
+          "work-plan-control",
+          "resource-typed-context-save",
+          "resource-typed-context-withdraw",
+          "resource-knowledge-decision",
+          "resource-correction",
+          "resource-term",
+          "resource-context",
+          "resource-decision",
+          "resource-capture",
+          "resource-fact"
         ],
         "type": "string"
       },

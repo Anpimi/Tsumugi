@@ -3,17 +3,18 @@ import { ResourceDraftSession, useResourceDraftSession } from "../../../Resource
 import { executionContext } from "../../../executionCommands";
 import type { ProjectView } from "../../../projectCommands";
 import { useSessionReads } from "../../../SessionReadProvider";
-import type { LeaveIntent, ProjectLifecycle } from "../../platform/projectLifecycle";
+import type { LeaveIntent, LifecycleParticipant, ProjectLifecycle } from "../../platform/projectLifecycle";
 import type { KnowledgeOwner } from "./knowledgeTypes";
-import { knowledgeBlocked, knowledgeHasDraft } from "./knowledgeState";
+import { knowledgeBlocked } from "./knowledgeState";
 
 interface Props {
   project: ProjectView;
   lifecycle: ProjectLifecycle;
   onOwner: (owner: KnowledgeOwner | null) => void;
   onReveal: () => void;
+  onParticipant?: (participant: LifecycleParticipant | null) => void;
 }
-function Bridge({ project, lifecycle, onOwner, onReveal }: Props) {
+function Bridge({ project, lifecycle, onOwner, onReveal, onParticipant }: Props) {
   const value = useResourceDraftSession(), reads = useSessionReads();
   const owner = useRef(value), callbacks = useRef({ onOwner, onReveal });
   const completion = useRef(value.state.completionVersion), published = useRef<KnowledgeOwner | null>(null);
@@ -24,7 +25,7 @@ function Bridge({ project, lifecycle, onOwner, onReveal }: Props) {
       completion.current = value.state.completionVersion;
       reads.invalidate(["resources"]);
     }
-    if (published.current?.state === value.state && published.current?.inFlight() === value.inFlight()) return;
+    if (published.current?.state === value.state && published.current?.journal === value.journal && published.current?.inFlight() === value.inFlight()) return;
     published.current = value; callbacks.current.onOwner(value);
   });
   useLayoutEffect(() => () => { published.current = null; callbacks.current.onOwner(null); }, []);
@@ -32,13 +33,19 @@ function Bridge({ project, lifecycle, onOwner, onReveal }: Props) {
     function inspect(intent: LeaveIntent) {
       if (!["open-project", "close-project", "close-window"].includes(intent.kind)) return { status: "ready" as const, revision: "retained-knowledge-session" };
       const current = owner.current;
-      return { status: knowledgeBlocked(current) ? "blocked" as const : knowledgeHasDraft(current) ? "dirty" as const : "ready" as const,
+      return { status: knowledgeBlocked(current) ? "blocked" as const : current.journal.dirty || current.tool.hasDraft() ? "dirty" as const : "ready" as const,
         revision: JSON.stringify([current.current(), current.inFlight(), current.tool.blocked(), current.tool.hasDraft()]) };
     }
-    return lifecycle.register({ id: "knowledge-resources", area: "resources", scope: { kind: "project", ...context }, inspect,
-      prepareLeave: async (intent, proof, current) => proof() && current() && inspect(intent).status === "ready",
-      reveal: () => callbacks.current.onReveal() });
-  }, [lifecycle, context.projectId, context.sessionToken]);
+    const participant: LifecycleParticipant = { id: "knowledge-resources", area: "resources", scope: { kind: "project", ...context }, inspect,
+      prepareLeave: async (intent, proof, current) => {
+        if (!proof() || !current() || owner.current.blocked() || owner.current.tool.hasDraft()) return false;
+        const before = owner.current.current();
+        return await owner.current.flush() && proof() && current() && owner.current.current() === before && !owner.current.blocked() && !owner.current.tool.hasDraft();
+      },
+      reveal: () => callbacks.current.onReveal() };
+    if (onParticipant) { onParticipant(participant); return () => onParticipant(null); }
+    return lifecycle.register(participant);
+  }, [lifecycle, context.projectId, context.sessionToken, onParticipant]);
   return null;
 }
 function KnowledgeOwnerHost(props: Props) {

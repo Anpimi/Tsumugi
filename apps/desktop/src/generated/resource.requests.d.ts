@@ -161,6 +161,12 @@ export interface Requests {
   decision: DecisionRequest;
   decisionAction: DecisionRequest;
   impacts: ImpactRequest;
+  observeContextAction: ContextWriteRequest;
+  observeContextCaptureAction: ContextCaptureRequest;
+  observeCorrectionAction: CorrectionCaptureRequest;
+  observeDecisionAction: DecisionRequest;
+  observeFactAction: ContextFactRequest;
+  observeTermAction: TermRequest;
   resourceAction: ResourceActionRequest;
   session: SessionRequest;
   suggestions: SuggestionRequest;
@@ -450,6 +456,24 @@ export interface ImpactRequest {
   projectId: ExecutionId;
   sessionToken: string;
 }
+export interface TermRequest {
+  projectId: ExecutionId;
+  sessionToken: string;
+  term: SaveTerm;
+}
+export interface SaveTerm {
+  actionId: ExecutionId;
+  aliases: string[];
+  expectedRevisionId?: ExecutionId | null;
+  locale: string;
+  projectId: ExecutionId;
+  protected: boolean;
+  reason: string;
+  scopeUnitId?: ExecutionId | null;
+  source: string;
+  target: string;
+  termId?: string | null;
+}
 export interface ResourceActionRequest {
   actionId: ExecutionId;
   projectId: ExecutionId;
@@ -471,24 +495,6 @@ export interface TbxPreviewRequest {
   locale: string;
   projectId: ExecutionId;
   sessionToken: string;
-}
-export interface TermRequest {
-  projectId: ExecutionId;
-  sessionToken: string;
-  term: SaveTerm;
-}
-export interface SaveTerm {
-  actionId: ExecutionId;
-  aliases: string[];
-  expectedRevisionId?: ExecutionId | null;
-  locale: string;
-  projectId: ExecutionId;
-  protected: boolean;
-  reason: string;
-  scopeUnitId?: ExecutionId | null;
-  source: string;
-  target: string;
-  termId?: string | null;
 }
 export interface TermHistoryRequest {
   limit: number;

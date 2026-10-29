@@ -341,6 +341,12 @@ export interface Responses {
   decision: ResourceDecisionResult;
   decisionAction: ResourceDecisionActionRead | null;
   impacts: ImpactPage;
+  observedContextAction: ContextSaveActionRead | null;
+  observedContextCaptureAction: ContextCaptureActionRead | null;
+  observedCorrectionAction: CorrectionTermReceipt | null;
+  observedDecisionAction: ResourceDecisionActionRead | null;
+  observedFactAction: ContextFactDecision | null;
+  observedTermAction: TermSaveActionRead | null;
   preview: ResourcePreview;
   resolution: TermResolution;
   savedContext: ContextRevision;
@@ -719,6 +725,23 @@ export interface ImpactReason {
   oldRevisionId: ExecutionId | null;
   oldValue: string | null;
 }
+export interface TermSaveActionRead {
+  receipt: TermRevision;
+  request: SaveTerm;
+}
+export interface SaveTerm {
+  actionId: ExecutionId;
+  aliases: string[];
+  expectedRevisionId: ExecutionId | null;
+  locale: string;
+  projectId: ExecutionId;
+  protected: boolean;
+  reason: string;
+  scopeUnitId: ExecutionId | null;
+  source: string;
+  target: string;
+  termId: string | null;
+}
 export interface ResourcePreview {
   capture: GlossaryCapture;
   correction: CorrectionTermPreview | null;
@@ -856,23 +879,6 @@ export interface TbxTermPreview {
   termSecId: string | null;
   text: string | null;
   usageStatuses: string[];
-}
-export interface TermSaveActionRead {
-  receipt: TermRevision;
-  request: SaveTerm;
-}
-export interface SaveTerm {
-  actionId: ExecutionId;
-  aliases: string[];
-  expectedRevisionId: ExecutionId | null;
-  locale: string;
-  projectId: ExecutionId;
-  protected: boolean;
-  reason: string;
-  scopeUnitId: ExecutionId | null;
-  source: string;
-  target: string;
-  termId: string | null;
 }
 export interface TmxFilePreview {
   fileName: string;

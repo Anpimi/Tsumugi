@@ -1,7 +1,9 @@
 import { contextKnowledgeEn, contextKnowledgeZh } from "./contextKnowledge";
 import { knowledgeProposalEn, knowledgeProposalZh } from "./knowledgeProposal";
 import { translationMemoryEn, translationMemoryZh } from "./translationMemory";
+import { resourceDraftRecoveryEn, resourceDraftRecoveryZh } from "./resourceDraftRecovery";
 export const knowledgeEn = {
+  ...resourceDraftRecoveryEn,
   ...translationMemoryEn,
   ...contextKnowledgeEn,
   ...knowledgeProposalEn,
@@ -152,6 +154,7 @@ export const knowledgeEn = {
 };
 
 export const knowledgeZh = {
+  ...resourceDraftRecoveryZh,
   ...translationMemoryZh,
   ...contextKnowledgeZh,
   ...knowledgeProposalZh,

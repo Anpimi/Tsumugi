@@ -56,14 +56,15 @@ function ActiveContextFactDecisionFields({ context, disabled=false }: { context:
     ];return()=>removals.forEach(remove=>remove());
   });
   if(!draft)return state.factRecorded?<p role="status">{t("contextFacts.saved",{key:state.factRecorded.key,locale:state.factRecorded.decision.request.basis.scope.locale})}</p>:null;
+  const editingDisabled=disabled||owner.journal.hydration!=="ready"||owner.journal.retired||!owner.localeAvailable(draft.basis.scope.locale);
   const command=(action:"save"|"check"|"retry"|"discard")=>{const value=payload();if(value)registry.dispatch(`resource.${action}-fact`,scope,value);};
   return <section aria-label={t("contextFacts.editor")}>
     <h5>{t("contextFacts.editor")}</h5><p>{t("contextFacts.scope",{key:draft.key,locale:draft.basis.scope.locale})}</p>
     <p>{t(`sourceContext.factKinds.${draft.basis.fact.fact.kind}`)} · {t(`sourceContext.origins.${draft.basis.fact.fact.origin.kind}`)}</p><pre>{draft.basis.fact.fact.text}</pre>
     <p>{t(`contextFacts.operation.${draft.disposition.kind}`)}</p><p>{t("contextFacts.fieldLimits")}</p>
-    {draft.disposition.kind==="replace"?<label>{t("contextFacts.value")}<textarea value={draft.disposition.text} onChange={e=>owner.editFact({disposition:{kind:"replace",text:e.target.value}})}/></label>:null}
-    <label>{t("contextFacts.actor")}<input value={draft.actor} onChange={e=>owner.editFact({actor:e.target.value})}/></label>
-    <label>{t("contextFacts.reason")}<textarea value={draft.reason} onChange={e=>owner.editFact({reason:e.target.value})}/></label>
+    {draft.disposition.kind==="replace"?<label>{t("contextFacts.value")}<textarea readOnly={editingDisabled} value={draft.disposition.text} onChange={e=>owner.editFact({disposition:{kind:"replace",text:e.target.value}})}/></label>:null}
+    <label>{t("contextFacts.actor")}<input readOnly={editingDisabled} value={draft.actor} onChange={e=>owner.editFact({actor:e.target.value})}/></label>
+    <label>{t("contextFacts.reason")}<textarea readOnly={editingDisabled} value={draft.reason} onChange={e=>owner.editFact({reason:e.target.value})}/></label>
     {!pending&&!current()?<p role="status">{t("contextFacts.changed")} <button onClick={()=>{void source.refetch();void decisions.refetch();}}>{t("resource.refresh")}</button></p>:null}
     {state.factRecorded?<p role="status">{t("resource.savedNewer")}</p>:null}
     {pending ? state.checkingAction === "fact" ? <p role="status">{t("contextFacts.checking")}</p> : <p role="alert">{t("contextFacts.unknown")}</p> : null}

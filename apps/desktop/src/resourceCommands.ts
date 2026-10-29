@@ -27,6 +27,8 @@ import { checkedInvoke } from "./ipc";
 import type { TranslationMemoryPageRequest, TranslationMemoryEntryRequest, TranslationMemoryReuseRequest } from "./generated/resource.requests";
 import type { TranslationMemoryEntry } from "./generated/resource.responses";
 import { validateResponseTranslationMemoryPage, validateResponseTranslationMemoryEntry, validateResponseTranslationMemoryReuse } from "./generated/resource.validators";
+import { validateResponseObservedTermAction, validateResponseObservedContextAction, validateResponseObservedContextCaptureAction,
+  validateResponseObservedCorrectionAction, validateResponseObservedDecisionAction, validateResponseObservedFactAction } from "./generated/resource.validators";
 export type { TranslationMemoryFilter, PrepareTranslationMemoryReuse } from "./generated/resource.requests";
 export type { TranslationMemoryEntry, TranslationMemoryPage, TranslationMemoryReusePreview,
   TranslationMemoryQuality, TranslationMemorySourceLabel } from "./generated/resource.responses";
@@ -103,6 +105,44 @@ function memoryFilterIdentity(filter: TranslationMemoryPageRequest["filter"]) {
 }
 
 export const resourceCommands = {
+  observeTermAction: (input: TermRequest) => {
+    const request = structuredClone(input);
+    return checkedInvoke("observe_term_save_action", request,
+      (value): value is Responses["observedTermAction"] => validateResponseObservedTermAction(value)
+        && request.projectId === request.term.projectId && (value === null || sameOriginal(value.request, request.term)));
+  },
+  observeContextAction: (input: ContextWriteRequest) => {
+    const request = structuredClone(input);
+    return checkedInvoke("observe_context_save_action", request,
+      (value): value is Responses["observedContextAction"] => validateResponseObservedContextAction(value)
+        && request.projectId === request.context.projectId && (value === null || sameOriginal(value.request, request.context)));
+  },
+  observeContextCaptureAction: (input: ContextCaptureRequest) => {
+    const request = structuredClone(input);
+    return checkedInvoke("observe_context_capture_action", request,
+      (value): value is Responses["observedContextCaptureAction"] => validateResponseObservedContextCaptureAction(value)
+        && request.projectId === request.capture.projectId && (value === null || sameOriginal(value.request, request.capture)));
+  },
+  observeCorrectionAction: (input: CorrectionCaptureRequest) => {
+    const request = structuredClone(input);
+    return checkedInvoke("observe_correction_term_action", request,
+      (value): value is Responses["observedCorrectionAction"] => validateResponseObservedCorrectionAction(value)
+        && request.projectId === request.capture.basis.projectId && (value === null || sameOriginal(value.request, request.capture)
+          && value.capture.origin.kind === "correction" && jsonIdentity(value.capture.origin.basis) === jsonIdentity(request.capture.basis)
+          && value.capture.targetLocale === request.capture.basis.locale && value.capture.count === 1));
+  },
+  observeDecisionAction: (input: DecisionRequest) => {
+    const request = structuredClone(input);
+    return checkedInvoke("observe_resource_decision_action", request,
+      (value): value is Responses["observedDecisionAction"] => validateResponseObservedDecisionAction(value)
+        && request.projectId === request.decision.projectId && (value === null || sameOriginal(value.request, request.decision)));
+  },
+  observeFactAction: (input: ContextFactRequest) => {
+    const request = structuredClone(input);
+    return checkedInvoke("observe_context_fact_action", request,
+      (value): value is Responses["observedFactAction"] => validateResponseObservedFactAction(value)
+        && request.projectId === request.decision.basis.scope.projectId && (value === null || sameOriginal(value.request, request.decision)));
+  },
   translationMemoryPage: (request: TranslationMemoryPageRequest) => {
     const captured = structuredClone(request), filter = captured.filter;
     return checkedInvoke("list_translation_memory", captured,

@@ -9,6 +9,8 @@ import { ExecutionTaskSession } from "../../../ExecutionTaskSession";
 import { executionContext } from "../../../executionCommands";
 import { sourceCommands, type ContentScope } from "../../../sourceCommands";
 import { i18n } from "../../../i18n";
+import { installResourceDraftFixture } from "../../../testSupport/resourceDraftFixture";
+import { resourceDraftCommands } from "../../../resourceDraftCommands";
 import type { knowledgeEn } from "../../../i18n/knowledge";
 import type { CommandError, ProjectView } from "../../../projectCommands";
 import { validateRequestTerm, validateResponseTerm } from "../../../generated/resource.validators";
@@ -74,7 +76,7 @@ beforeEach(async () => {
       if (!validateRequestTerm(payload.request)) throw new Error("Invalid original term request");
       return save(payload.request.term);
     }
-    if (command === "read_term_save_action") {
+    if ((command === "read_term_save_action" || command === "observe_term_save_action")) {
       if (!validateRequestTerm(payload.request)) throw new Error("Invalid original term lookup");
       return structuredClone(actions.get(payload.request.term.actionId) ?? null);
     }
@@ -96,12 +98,14 @@ function Shell() {
       {details ? <KnowledgeDetails project={project} owner={owner} visible disabled={false} current={() => true}/> : null}</> : null}
   </>;
 }
-function open() {
+async function open() {
+  installResourceDraftFixture();
   render(<SessionReadProvider context={context} reads={reads} bridge={false}><TranslationDraftSession project={project}><ExecutionTaskSession project={project}><Shell/></ExecutionTaskSession></TranslationDraftSession></SessionReadProvider>);
+  await waitFor(() => expect(observed?.journal.hydration).toBe("ready"));
   return userEvent.setup();
 }
 async function edit() {
-  const user = open();
+  const user = await open();
   await user.click(await screen.findByRole("button", { name: "Barrel" }));
   await waitFor(() => expect(screen.getByRole("textbox", { name: k("targetTerm") })).toHaveValue("木桶"));
   expect(screen.getByRole("textbox", { name: k("sourceTerm") })).toHaveFocus();
@@ -111,7 +115,7 @@ function input(name: MessageKey, value: string) { fireEvent.change(screen.getByR
 
 describe.each(["en-US", "zh-CN"])("knowledge manual path in %s", locale => {
   it("saves a new scoped term through the original resource action", async () => {
-    await i18n.changeLanguage(locale); const user = open();
+    await i18n.changeLanguage(locale); const user = await open();
     const add = await screen.findByRole("button", { name: k("newTerm") });
     await waitFor(() => expect(add).toBeEnabled()); await user.click(add);
     expect(screen.getByRole("textbox", { name: k("sourceTerm") })).toHaveFocus();
@@ -131,18 +135,21 @@ describe.each(["en-US", "zh-CN"])("knowledge manual path in %s", locale => {
   });
 });
 
-it("keeps newer B input when A saves and retains it across tabs and blocked project exit", async () => {
+it("blocks exit for pending A, keeps B across tabs, and allows closing after B is kept locally", async () => {
   let finish: ((value: TermRevision) => void) | undefined, sent: SaveTerm | undefined;
   save = request => { sent = structuredClone(request); return new Promise(resolve => { finish = resolve; }); };
   const user = await edit(); input("targetTerm", "Version A");
   await user.click(screen.getByRole("button", { name: k("save") }));
   await waitFor(() => expect(sent).toBeDefined()); input("targetTerm", "Version B");
-  await act(async () => { const accepted = receipt(sent!); finish!(accepted); });
-  await screen.findByText(k("savedNewer")); expect(screen.getByRole("textbox", { name: k("targetTerm") })).toHaveValue("Version B");
   await user.click(screen.getByRole("button", { name: "Another tab" }));
   await act(async () => { expect(await lifecycle.close()).toBe(false); }); expect(close).not.toHaveBeenCalled();
   await waitFor(() => expect(screen.getByRole("textbox", { name: k("targetTerm") })).toHaveValue("Version B"));
-  await user.click(screen.getByRole("button", { name: k("discard") }));
+  await act(async () => { const accepted = receipt(sent!); finish!(accepted); });
+  await screen.findByText(k("savedNewer")); expect(screen.getByRole("textbox", { name: k("targetTerm") })).toHaveValue("Version B");
+  await act(async () => { expect(await observed?.flush()).toBe(true); });
+  const retained = await resourceDraftCommands.read({ sessionToken: context.sessionToken, key: { projectId: context.projectId } });
+  expect(retained.value?.termDraft.target).toBe("Version B"); expect(retained.value?.pending).toBeNull();
+  await user.click(screen.getByRole("button", { name: "Another tab" }));
   await act(async () => { expect(await lifecycle.close()).toBe(true); }); expect(close).toHaveBeenCalledTimes(1);
 });
 
@@ -167,12 +174,13 @@ it("checks an uncertain original action without issuing a replacement save", asy
   let sent: SaveTerm | undefined;
   save = async request => { sent = structuredClone(request); throw lost; };
   const user = await edit(); input("targetTerm", "Version A"); await user.click(screen.getByRole("button", { name: k("save") }));
-  await waitFor(() => expect(observed?.state.pendingCheckedMissing).toBe(true)); input("targetTerm", "Version B");
+  await waitFor(() => expect(observed?.state.pendingUncertain).toBe(true));
+  expect(observed?.state.pendingCheckedMissing).toBe(false); input("targetTerm", "Version B");
   receipt(sent!);
   await user.click(screen.getByRole("button", { name: k("checkAction") }));
   await screen.findByText(k("savedNewer")); expect(screen.getByRole("textbox", { name: k("targetTerm") })).toHaveValue("Version B");
   expect(invoke.mock.calls.filter(([name]) => name === "save_term")).toHaveLength(1);
-  const lookup = invoke.mock.calls.filter(([name]) => name === "read_term_save_action");
+  const lookup = invoke.mock.calls.filter(([name]) => name === "read_term_save_action" || name === "observe_term_save_action");
   expect(lookup.map(([, payload]) => payload.request.term)).toEqual([sent, sent]);
 });
 
@@ -185,6 +193,9 @@ it("settles only an original receipt-first CAS rejection after an uncertain save
     throw { code: "dependency-conflict", stage: "execution-adopt", outcome: "rejected", recoveryRequired: false, reason: "resource-current", diagnosticId: fixtureIdentity(73004) };
   };
   input("targetTerm", "Version A"); await user.click(screen.getByRole("button", { name: k("save") }));
+  await waitFor(() => expect(observed?.state.pendingUncertain).toBe(true));
+  expect(observed?.state.pendingCheckedMissing).toBe(false);
+  await user.click(screen.getByRole("button", { name: k("checkAction") }));
   await waitFor(() => expect(observed?.state.pendingCheckedMissing).toBe(true)); input("targetTerm", "Version B");
   await user.click(screen.getByRole("button", { name: k("retryAction") }));
   await waitFor(() => expect(observed?.state.pending).toBeNull());
@@ -194,7 +205,7 @@ it("settles only an original receipt-first CAS rejection after an uncertain save
 
 it("reads additional term pages and preserves drafts while showing unsupported categories", async () => {
   savedTerms = Array.from({ length: 101 }, (_, index) => ({ ...structuredClone(initial), termId: `term-${String(index).padStart(3, "0")}`, source: `Source ${index}` }));
-  const user = open();
+  const user = await open();
   expect(await screen.findByRole("button", { name: "Source 99" })).toBeVisible();
   expect(screen.queryByRole("button", { name: "Source 100" })).toBeNull();
   await user.click(screen.getByRole("button", { name: k("moreTerms") })); await screen.findByRole("button", { name: "Source 100" });
@@ -209,7 +220,7 @@ it("reads additional term pages and preserves drafts while showing unsupported c
 
 it("checks the selected term independently when it is no longer on a loaded list page", async () => {
   savedTerms = Array.from({ length: 101 }, (_, index) => ({ ...structuredClone(initial), termId: `term-${String(index).padStart(3, "0")}`, source: `Source ${index}` }));
-  const user = open(); await user.click(await screen.findByRole("button", { name: k("moreTerms") }));
+  const user = await open(); await user.click(await screen.findByRole("button", { name: k("moreTerms") }));
   await user.click(await screen.findByRole("button", { name: "Source 100" })); input("targetTerm", "Retained change");
   const latest = { ...savedTerms[100], revisionId: fixtureIdentity(73009), target: "Changed on another screen", previousRevisionId: savedTerms[100].revisionId };
   savedTerms[100] = latest;

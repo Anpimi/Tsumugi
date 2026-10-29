@@ -172,7 +172,7 @@ fn legacy(store: &DraftStore, format: i64) {
     let c = Connection::open(store.directory.join(DATABASE)).unwrap();
     c.execute_batch("DROP TABLE conversation_draft_heads")
         .unwrap();
-    c.pragma_update(None, "user_version", format).unwrap();
+    set_legacy_format(&c,format).unwrap();
 }
 
 #[test]
@@ -371,13 +371,12 @@ fn format_three(store: &DraftStore) {
     let c = Connection::open(store.directory.join(DATABASE)).unwrap();
     c.execute_batch("BEGIN IMMEDIATE; ALTER TABLE conversation_draft_heads RENAME TO conversation_draft_fixture_new").unwrap();
     c.execute_batch(LEGACY_HEAD_SQL).unwrap();
-    c.execute_batch("INSERT INTO conversation_draft_heads SELECT * FROM conversation_draft_fixture_new; DROP TABLE conversation_draft_fixture_new; PRAGMA user_version=3; COMMIT").unwrap();
+    c.execute_batch("DROP TABLE IF EXISTS resource_draft_heads; INSERT INTO conversation_draft_heads SELECT * FROM conversation_draft_fixture_new; DROP TABLE conversation_draft_fixture_new; PRAGMA user_version=3; COMMIT").unwrap();
 }
 
 fn format_four(store: &DraftStore) {
-    Connection::open(store.directory.join(DATABASE))
-        .unwrap()
-        .pragma_update(None, "user_version", ACTION_FORMAT)
+    set_legacy_format(&Connection::open(store.directory.join(DATABASE))
+        .unwrap(),ACTION_FORMAT)
         .unwrap();
 }
 
@@ -555,7 +554,7 @@ fn earlier_formats_reject_revocation_slots_without_writes() {
     store.write_conversation(&write).unwrap();
     let path = store.directory.join(DATABASE);
     for format in [ACTION_FORMAT, PROPOSAL_FORMAT, RUN_FORMAT] {
-        Connection::open(&path).unwrap().pragma_update(None, "user_version", format).unwrap();
+        set_legacy_format(&Connection::open(&path).unwrap(),format).unwrap();
         let bytes = fs::read(&path).unwrap();
         assert_eq!(store.read_conversation(&write.key).unwrap_err().code, ErrorCode::CorruptLedger);
         assert_eq!(store.list_conversations(write.key.project_id, None, 10).unwrap_err().code, ErrorCode::CorruptLedger);
@@ -675,7 +674,7 @@ fn formats_four_to_six_read_without_writes_and_upgrade_without_rewriting_heads()
         let translated = store.write(&translation).unwrap();
         let path = store.directory.join(DATABASE);
         let c = Connection::open(&path).unwrap();
-        c.pragma_update(None, "user_version", format).unwrap();
+        set_legacy_format(&c,format).unwrap();
         let payloads = || {
             c.prepare("SELECT payload FROM conversation_draft_heads UNION ALL SELECT payload FROM draft_heads").unwrap().query_map([], |row| row.get::<_, Vec<u8>>(0)).unwrap().collect::<rusqlite::Result<Vec<_>>>().unwrap()
         };
@@ -733,9 +732,8 @@ fn format_six_upgrade_abort_keeps_complete_original_or_committed_records() {
         let conversation = store.write_conversation(&write).unwrap();
         let old = translation(write.key.project_id);
         let first = store.write(&old).unwrap();
-        Connection::open(store.directory.join(DATABASE))
-            .unwrap()
-            .pragma_update(None, "user_version", RUN_FORMAT)
+        set_legacy_format(&Connection::open(store.directory.join(DATABASE))
+            .unwrap(),RUN_FORMAT)
             .unwrap();
         let mut next = old.clone();
         next.expected_revision = first.revision;
@@ -776,7 +774,7 @@ fn older_formats_reject_running_requests_without_rewriting_the_journal() {
             }
             let path = store.directory.join(DATABASE);
             let c = Connection::open(&path).unwrap();
-            c.pragma_update(None, "user_version", format).unwrap();
+            set_legacy_format(&c,format).unwrap();
             head.value.as_mut().unwrap().pending = Some(running_pending(&write, control));
             c.execute(
                 "UPDATE conversation_draft_heads SET payload=?1,has_pending=1",
@@ -835,7 +833,7 @@ fn format_seven_reads_keep_revocations_and_upgrade_only_with_a_successful_write(
     write.value.revocations.push(revocation(&write, ExecutionId::new()));
     let saved = store.write_conversation(&write).unwrap();
     let path = store.directory.join(DATABASE);
-    Connection::open(&path).unwrap().pragma_update(None, "user_version", REVOCATION_FORMAT).unwrap();
+    set_legacy_format(&Connection::open(&path).unwrap(),REVOCATION_FORMAT).unwrap();
     let before = fs::read(&path).unwrap();
     assert_eq!(store.read_conversation(&write.key).unwrap(), saved);
     assert_eq!(fs::read(&path).unwrap(), before, "a pure read cannot upgrade an older journal");
@@ -871,7 +869,7 @@ fn unfinished_knowledge_edits_and_the_original_pending_survive_from_format_eight
         let saved = store.write_conversation(&write).unwrap();
         assert_eq!(DraftStore::at(store.directory.clone()).unwrap().read_conversation(&write.key).unwrap(), saved);
         let path = store.directory.join(DATABASE);
-        Connection::open(&path).unwrap().pragma_update(None, "user_version", REVOCATION_FORMAT).unwrap();
+        set_legacy_format(&Connection::open(&path).unwrap(),REVOCATION_FORMAT).unwrap();
         let original = fs::read(&path).unwrap();
         assert_eq!(store.read_conversation(&write.key).unwrap_err().code, ErrorCode::CorruptLedger);
         assert_eq!(store.list_conversations(write.key.project_id, None, 50).unwrap_err().code, ErrorCode::CorruptLedger);
@@ -900,7 +898,7 @@ fn format_eight_knowledge_requests_are_readable_and_upgrade_only_with_a_successf
     write.value.proposal_edits.push(draft);
     let saved = store.write_conversation(&write).unwrap();
     let path = store.directory.join(DATABASE);
-    Connection::open(&path).unwrap().pragma_update(None, "user_version", KNOWLEDGE_PROPOSAL_FORMAT).unwrap();
+    set_legacy_format(&Connection::open(&path).unwrap(),KNOWLEDGE_PROPOSAL_FORMAT).unwrap();
     let before = fs::read(&path).unwrap();
     assert_eq!(store.read_conversation(&write.key).unwrap(), saved);
     assert_eq!(fs::read(&path).unwrap(), before);

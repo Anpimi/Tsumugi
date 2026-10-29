@@ -3,6 +3,7 @@ use super::*;
 use crate::commands::drafts::{
     self, ConversationDraftPending, ConversationDraftResolveTarget, DraftPending, PendingActionRef,
     PendingJournalKey, PendingJournalSlot, PendingSnapshot,
+    ResourceDraftPending, ResourceDraftResolveTarget, ResourceDraftDisposition,
 };
 use sha2::{Digest, Sha256};
 use std::collections::BTreeSet;
@@ -52,6 +53,12 @@ pub(super) fn validate_activity(
                     return Err(failure(ErrorCode::InvalidInput, "decision-activity"));
                 }
             }
+            if matches!(action.key,DecisionJournalKey::Resource)
+                && !matches!(action.slot,DecisionJournalSlot::Primary|DecisionJournalSlot::ResourceFact)
+                || matches!(action.key,DecisionJournalKey::Conversation{..})
+                    && action.slot==DecisionJournalSlot::ResourceFact {
+                return Err(failure(ErrorCode::InvalidInput,"decision-activity"));
+            }
         }
     }
     Ok(())
@@ -73,6 +80,7 @@ fn reference(
                 conversation_id: key.conversation_id,
             }
         }
+        PendingJournalKey::Resource(key) if key.project_id==project=>DecisionJournalKey::Resource,
         _ => {
             return Err(failure(
                 ErrorCode::CorruptLedger,
@@ -111,9 +119,22 @@ fn reference(
             }
         },
         PendingJournalSlot::Revocation(_) => DecisionLocalRequestKind::WorkPlanControl,
+        PendingJournalSlot::Resource(p)=>match p {
+            ResourceDraftPending::TypedContextSave{..}=>DecisionLocalRequestKind::ResourceTypedContextSave,
+            ResourceDraftPending::TypedContextWithdraw{..}=>DecisionLocalRequestKind::ResourceTypedContextWithdraw,
+            ResourceDraftPending::KnowledgeDecision{..}=>DecisionLocalRequestKind::ResourceKnowledgeDecision,
+            ResourceDraftPending::Correction{..}=>DecisionLocalRequestKind::ResourceCorrection,
+            ResourceDraftPending::Term{..}=>DecisionLocalRequestKind::ResourceTerm,
+            ResourceDraftPending::Context{..}=>DecisionLocalRequestKind::ResourceContext,
+            ResourceDraftPending::Decision{..}=>DecisionLocalRequestKind::ResourceDecision,
+            ResourceDraftPending::Capture{..}=>DecisionLocalRequestKind::ResourceCapture,
+        },
+        PendingJournalSlot::ResourceFact(_)=>DecisionLocalRequestKind::ResourceFact,
     };
     let slot = if matches!(row.slot, PendingJournalSlot::Revocation(_)) {
         DecisionJournalSlot::Revocation
+    } else if matches!(row.slot,PendingJournalSlot::ResourceFact(_)){
+        DecisionJournalSlot::ResourceFact
     } else {
         DecisionJournalSlot::Primary
     };
@@ -175,6 +196,18 @@ fn observe(
                 },
             );
         }
+        (PendingJournalKey::Resource(key),slot)=>{
+            let target=match slot{
+                PendingJournalSlot::Resource(pending)=>ResourceDraftResolveTarget::Primary{pending:pending.clone()},
+                PendingJournalSlot::ResourceFact(pending)=>ResourceDraftResolveTarget::Fact{pending:pending.clone()},
+                _=>return Err(failure(ErrorCode::CorruptLedger,"decision-journal-slot")),
+            };
+            return Ok(match drafts::observe_resource_target(store,key,&target)?{
+                Some(ResourceDraftDisposition::Recorded)=>DecisionLocalOutcome::Recorded,
+                Some(ResourceDraftDisposition::ConfirmedNotApplied)=>DecisionLocalOutcome::FencedNotApplied,
+                None=>DecisionLocalOutcome::ReceiptAbsent,
+            });
+        }
         _ => return Err(failure(ErrorCode::CorruptLedger, "decision-journal-slot")),
     };
     Ok(if recorded {
@@ -192,6 +225,7 @@ fn targets(row: &PendingActionRef) -> Vec<DecisionTarget> {
         PendingJournalKey::Conversation(key) => vec![DecisionTarget::Conversation {
             conversation_id: key.conversation_id,
         }],
+        PendingJournalKey::Resource(_)=>vec![DecisionTarget::Project],
     };
     let plan = match &row.slot {
         PendingJournalSlot::Conversation(ConversationDraftPending::WorkPlanStart {
@@ -277,11 +311,12 @@ pub(super) fn project(
                 DecisionJournalKey::Conversation { conversation_id } => {
                     format!("conversation:{conversation_id}")
                 }
+                DecisionJournalKey::Resource=>"resource".into(),
             };
-            let slot = if reference.action.slot == DecisionJournalSlot::Revocation {
-                "revocation"
-            } else {
-                "primary"
+            let slot = match reference.action.slot {
+                DecisionJournalSlot::Revocation=>"revocation",
+                DecisionJournalSlot::ResourceFact=>"resource-fact",
+                DecisionJournalSlot::Primary=>"primary",
             };
             let bytes = serde_json::to_vec(&(
                 &snapshot.basis,

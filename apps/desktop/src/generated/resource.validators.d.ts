@@ -26,6 +26,12 @@ export declare function validateRequestCurrentTerm(value: unknown): value is Req
 export declare function validateRequestDecision(value: unknown): value is Requests["decision"];
 export declare function validateRequestDecisionAction(value: unknown): value is Requests["decisionAction"];
 export declare function validateRequestImpacts(value: unknown): value is Requests["impacts"];
+export declare function validateRequestObserveContextAction(value: unknown): value is Requests["observeContextAction"];
+export declare function validateRequestObserveContextCaptureAction(value: unknown): value is Requests["observeContextCaptureAction"];
+export declare function validateRequestObserveCorrectionAction(value: unknown): value is Requests["observeCorrectionAction"];
+export declare function validateRequestObserveDecisionAction(value: unknown): value is Requests["observeDecisionAction"];
+export declare function validateRequestObserveFactAction(value: unknown): value is Requests["observeFactAction"];
+export declare function validateRequestObserveTermAction(value: unknown): value is Requests["observeTermAction"];
 export declare function validateRequestResourceAction(value: unknown): value is Requests["resourceAction"];
 export declare function validateRequestSession(value: unknown): value is Requests["session"];
 export declare function validateRequestSuggestions(value: unknown): value is Requests["suggestions"];
@@ -65,6 +71,12 @@ export declare function validateResponseCurrentTerm(value: unknown): value is Re
 export declare function validateResponseDecision(value: unknown): value is Responses["decision"];
 export declare function validateResponseDecisionAction(value: unknown): value is Responses["decisionAction"];
 export declare function validateResponseImpacts(value: unknown): value is Responses["impacts"];
+export declare function validateResponseObservedContextAction(value: unknown): value is Responses["observedContextAction"];
+export declare function validateResponseObservedContextCaptureAction(value: unknown): value is Responses["observedContextCaptureAction"];
+export declare function validateResponseObservedCorrectionAction(value: unknown): value is Responses["observedCorrectionAction"];
+export declare function validateResponseObservedDecisionAction(value: unknown): value is Responses["observedDecisionAction"];
+export declare function validateResponseObservedFactAction(value: unknown): value is Responses["observedFactAction"];
+export declare function validateResponseObservedTermAction(value: unknown): value is Responses["observedTermAction"];
 export declare function validateResponsePreview(value: unknown): value is Responses["preview"];
 export declare function validateResponseResolution(value: unknown): value is Responses["resolution"];
 export declare function validateResponseSavedContext(value: unknown): value is Responses["savedContext"];

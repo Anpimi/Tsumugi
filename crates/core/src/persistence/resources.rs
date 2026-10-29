@@ -1482,9 +1482,102 @@ fn check_action_project(
     Ok(())
 }
 
+fn check_context_source(c:&Connection,project:ExecutionId,unit:ExecutionId,expected:ExecutionId,conflict:bool)
+    ->Result<(ExecutionId,String,String,String),ExecutionError>{
+    let value=source_fact(c,project,unit)?;
+    if value.0!=expected {
+        let failure=failure(ErrorCode::DependencyConflict,"context-source");
+        return Err(if conflict{failure.with_conflict(ConflictEvidence::SourceRevision{expected,current:value.0})}else{failure});
+    }Ok(value)
+}
+
+fn check_context_current(c: &Connection, request: &SaveContext) -> Result<Option<ContextRevision>, ExecutionError> {
+        let current = current_context(c, request.project_id, request.unit_id, &request.locale)?;
+        if current.as_ref().map(|value| value.revision_id) != request.expected_revision_id {
+            return Err(
+                failure(ErrorCode::DependencyConflict, "context-current").with_conflict(
+                    ConflictEvidence::ContextRevision {
+                        expected: request.expected_revision_id,
+                        current: current.as_ref().map(|value| value.revision_id),
+                    },
+                ),
+            );
+        }
+        Ok(current)
+}
+fn check_term_revision(current:Option<&TermRevision>,expected:Option<ExecutionId>)->Result<(),ExecutionError>{
+    if current.map(|v|v.revision_id)!=expected {
+        return Err(failure(ErrorCode::DependencyConflict,"resource-current").with_conflict(
+            ConflictEvidence::TermRevision{expected,current:current.map(|v|v.revision_id)}));
+    }Ok(())
+}
+
+fn check_term_current(c: &Connection, request: &SaveTerm, term_id: &str) -> Result<Option<TermRevision>, ExecutionError> {
+        let current = current_term(c, request.project_id, term_id)?;
+        if request.term_id.is_some() && current.is_none() {
+            return Err(failure(ErrorCode::DependencyConflict, "resource-term"));
+        }
+        if current
+            .as_ref()
+            .is_some_and(|term| term.locale != request.locale)
+        {
+            return Err(failure(ErrorCode::DependencyConflict, "resource-locale"));
+        }
+        check_term_revision(current.as_ref(),request.expected_revision_id)?;
+        Ok(current)
+}
+
 impl ProjectStore {
+    pub fn resource_decision_request_settlement_observation(&self,request:&ResourceDecision)
+        ->Result<Option<ResourceDecisionActionRead>,ExecutionError>{
+        super::review::read_snapshot(self.connection().map_err(|_|failure(ErrorCode::StorageFailed,"resource-read"))?,|c|{
+            let value=self.resource_decision_request_observation(request)?;
+            if value.is_none(){
+                let (_,data)=capture_by_id(c,request.project_id,request.capture_id)?;
+                let current=match data{
+                    correction::CapturedGlossary::File(file)=>current_term(c,request.project_id,&external_term_id(&file.resource_id,&request.entry_id))?,
+                    correction::CapturedGlossary::Correction(capture)=>correction::check_decision_admission(c,request,&capture)?,
+                    correction::CapturedGlossary::Mcp(capture)=>current_term(c,request.project_id,&mcp::term_id(&capture.provenance,&request.entry_id)?)?,
+                };
+                check_term_revision(current.as_ref(),request.expected_revision_id)?;
+            }Ok(value)
+        })
+    }
+    pub fn context_capture_request_settlement_observation(&self,request:&CaptureContext)
+        ->Result<Option<ContextCaptureActionRead>,ExecutionError>{
+        super::review::read_snapshot(self.connection().map_err(|_|failure(ErrorCode::StorageFailed,"context-read"))?,|c|{
+            let value=self.context_capture_request_observation(request)?;
+            if value.is_none(){
+                check_project(c,request.project_id,&request.locale)?;
+                check_context_source(c,request.project_id,request.unit_id,request.source_revision_id,false)?;
+            }Ok(value)
+        })
+    }
+    /// Receipt-first observation; only a failed original CAS certifies rejection.
+    pub fn term_save_request_settlement_observation(&self, request:&SaveTerm)
+        -> Result<Option<TermSaveActionRead>,ExecutionError> {
+        super::review::read_snapshot(self.connection().map_err(|_|failure(ErrorCode::StorageFailed,"resource-read"))?,|c|{
+            let receipt=self.term_save_request_observation(request)?;
+            if receipt.is_none() {
+                if let Some(term)=&request.term_id {check_term_current(c,request,term)?;}
+            }
+            Ok(receipt)
+        })
+    }
+    pub fn context_save_request_settlement_observation(&self, request:&SaveContext)
+        -> Result<Option<ContextSaveActionRead>,ExecutionError> {
+        super::review::read_snapshot(self.connection().map_err(|_|failure(ErrorCode::StorageFailed,"context-read"))?,|c|{
+            let receipt=self.context_save_request_observation(request)?;
+            if receipt.is_none(){
+                check_project(c,request.project_id,&request.locale)?;
+                check_context_source(c,request.project_id,request.unit_id,request.source_revision_id,true)?;
+                check_context_current(c,request)?;
+            }
+            Ok(receipt)
+        })
+    }
     /// Confirm one file entry decision without recomputing a current preview.
-    pub fn resource_decision_action(
+    pub fn resource_decision_request_observation(
         &self,
         request: &ResourceDecision,
     ) -> Result<Option<ResourceDecisionActionRead>, ExecutionError> {
@@ -1605,14 +1698,18 @@ impl ProjectStore {
                 }))
             },
         )?;
-        if self.is_reconciling() {
-            self.reconcile_execution()?;
-        }
+        Ok(value)
+    }
+
+    /// Explicit historical recovery retains the original reconciliation behavior.
+    pub fn resource_decision_action(&self, request: &ResourceDecision) -> Result<Option<ResourceDecisionActionRead>, ExecutionError> {
+        let value = self.resource_decision_request_observation(request)?;
+        if self.is_reconciling() { self.reconcile_execution()?; }
         Ok(value)
     }
 
     /// Confirm one historical manual context save without consulting current source or locale.
-    pub fn context_save_action(
+    pub fn context_save_request_observation(
         &self,
         request: &SaveContext,
     ) -> Result<Option<ContextSaveActionRead>, ExecutionError> {
@@ -1685,14 +1782,18 @@ impl ProjectStore {
                 }))
             },
         )?;
-        if self.is_reconciling() {
-            self.reconcile_execution()?;
-        }
         Ok(found)
     }
 
+    /// Explicit historical recovery retains the original reconciliation behavior.
+    pub fn context_save_action(&self, request: &SaveContext) -> Result<Option<ContextSaveActionRead>, ExecutionError> {
+        let value = self.context_save_request_observation(request)?;
+        if self.is_reconciling() { self.reconcile_execution()?; }
+        Ok(value)
+    }
+
     /// Return the persisted context projection for one exact capture request.
-    pub fn context_capture_action(
+    pub fn context_capture_request_observation(
         &self,
         request: &CaptureContext,
     ) -> Result<Option<ContextCaptureActionRead>, ExecutionError> {
@@ -1753,14 +1854,18 @@ impl ProjectStore {
                 }))
             },
         )?;
-        if self.is_reconciling() {
-            self.reconcile_execution()?;
-        }
         Ok(found)
     }
 
+    /// Explicit historical recovery retains the original reconciliation behavior.
+    pub fn context_capture_action(&self, request: &CaptureContext) -> Result<Option<ContextCaptureActionRead>, ExecutionError> {
+        let value = self.context_capture_request_observation(request)?;
+        if self.is_reconciling() { self.reconcile_execution()?; }
+        Ok(value)
+    }
+
     /// Confirm one historical manual term save against its complete original request.
-    pub fn term_save_action(
+    pub fn term_save_request_observation(
         &self,
         request: &SaveTerm,
     ) -> Result<Option<TermSaveActionRead>, ExecutionError> {
@@ -1819,10 +1924,14 @@ impl ProjectStore {
                 }))
             },
         )?;
-        if self.is_reconciling() {
-            self.reconcile_execution()?;
-        }
         Ok(found)
+    }
+
+    /// Explicit historical recovery retains the original reconciliation behavior.
+    pub fn term_save_action(&self, request: &SaveTerm) -> Result<Option<TermSaveActionRead>, ExecutionError> {
+        let value = self.term_save_request_observation(request)?;
+        if self.is_reconciling() { self.reconcile_execution()?; }
+        Ok(value)
     }
 
     pub fn resource_impacts(
@@ -2278,28 +2387,8 @@ impl ProjectStore {
             });
         }
         check_project(&tx, request.project_id, &request.locale)?;
-        let (source_revision_id, _, _, _) = source_fact(&tx, request.project_id, request.unit_id)?;
-        if source_revision_id != request.source_revision_id {
-            return Err(
-                failure(ErrorCode::DependencyConflict, "context-source").with_conflict(
-                    ConflictEvidence::SourceRevision {
-                        expected: request.source_revision_id,
-                        current: source_revision_id,
-                    },
-                ),
-            );
-        }
-        let current = current_context(&tx, request.project_id, request.unit_id, &request.locale)?;
-        if current.as_ref().map(|value| value.revision_id) != request.expected_revision_id {
-            return Err(
-                failure(ErrorCode::DependencyConflict, "context-current").with_conflict(
-                    ConflictEvidence::ContextRevision {
-                        expected: request.expected_revision_id,
-                        current: current.as_ref().map(|value| value.revision_id),
-                    },
-                ),
-            );
-        }
+        check_context_source(&tx,request.project_id,request.unit_id,request.source_revision_id,true)?;
+        let current = check_context_current(&tx, request)?;
         let revision_id = ExecutionId::new();
         tx.execute(
             "INSERT INTO context_revisions
@@ -2393,7 +2482,7 @@ impl ProjectStore {
             resolve_terms_in(&tx, request.project_id, request.unit_id, &request.locale)?;
         check_project(&tx, request.project_id, &request.locale)?;
         let (source_revision, namespace, native_key, source_text) =
-            source_fact(&tx, request.project_id, request.unit_id)?;
+            check_context_source(&tx, request.project_id, request.unit_id, request.source_revision_id, false)?;
         if source_revision != request.source_revision_id
             || resolution.source_revision_id != source_revision
         {
@@ -2836,26 +2925,7 @@ impl ProjectStore {
             .term_id
             .clone()
             .unwrap_or_else(|| ExecutionId::new().to_string());
-        let current = current_term(&tx, request.project_id, &term_id)?;
-        if request.term_id.is_some() && current.is_none() {
-            return Err(failure(ErrorCode::DependencyConflict, "resource-term"));
-        }
-        if current
-            .as_ref()
-            .is_some_and(|term| term.locale != request.locale)
-        {
-            return Err(failure(ErrorCode::DependencyConflict, "resource-locale"));
-        }
-        if current.as_ref().map(|value| value.revision_id) != request.expected_revision_id {
-            return Err(
-                failure(ErrorCode::DependencyConflict, "resource-current").with_conflict(
-                    ConflictEvidence::TermRevision {
-                        expected: request.expected_revision_id,
-                        current: current.as_ref().map(|value| value.revision_id),
-                    },
-                ),
-            );
-        }
+        let current = check_term_current(&tx, request, &term_id)?;
         let revision = insert_term(
             &tx,
             request.project_id,
@@ -2954,13 +3024,7 @@ impl ProjectStore {
                 current_snapshot(&tx)?;
                 let term_id = external_term_id(&file.resource_id, &request.entry_id);
                 let current = current_term(&tx, request.project_id, &term_id)?;
-                if current.as_ref().map(|value| value.revision_id) != request.expected_revision_id {
-                    return Err(failure(ErrorCode::DependencyConflict, "resource-current")
-                        .with_conflict(ConflictEvidence::TermRevision {
-                            expected: request.expected_revision_id,
-                            current: current.as_ref().map(|value| value.revision_id),
-                        }));
-                }
+                check_term_revision(current.as_ref(),request.expected_revision_id)?;
                 let incoming = file
                     .entries
                     .iter()
@@ -3329,6 +3393,8 @@ pub(super) fn resolve_terms_from(
     }
 }
 
+#[cfg(test)]
+mod observation_tests;
 #[cfg(test)]
 mod tests {
     use super::*;

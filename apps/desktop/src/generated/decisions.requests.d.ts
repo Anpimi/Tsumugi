@@ -10,8 +10,11 @@ export type DecisionJournalKey =
   | {
       conversationId: ExecutionId;
       kind: "conversation";
+    }
+  | {
+      kind: "resource";
     };
-export type DecisionJournalSlot = "primary" | "revocation";
+export type DecisionJournalSlot = "primary" | "revocation" | "resource-fact";
 export type Revision = string;
 export type DecisionSource =
   | "translation-candidate"

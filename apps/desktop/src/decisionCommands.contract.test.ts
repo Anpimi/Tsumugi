@@ -173,6 +173,36 @@ it("binds a local request to its original slot, source observation and typed tar
   expect((await decisionCommands.page(input)).items[0]?.source).toBe("local-action-recovery");
 });
 
+function resourceLocalFixture(fact: boolean) {
+  const { input, page, action: original } = localFixture();
+  const reference = { action: { ...original, key: { kind: "resource" as const },
+    slot: fact ? "resource-fact" as const : "primary" as const },
+    requestKind: fact ? "resource-fact" as const : "resource-term" as const };
+  page.localActions!.observations[0]!.reference = reference;
+  const item = page.items[0]!;
+  item.locale = null; item.targets = [{ kind: "project" }];
+  item.action = { kind: "inspect-local-request", reference };
+  return { input, page, reference, item };
+}
+
+it.each([false, true])("keeps a resource request in its real project journal and fact slot=%s", async fact => {
+  const { input, page } = resourceLocalFixture(fact);
+  invoke.mockResolvedValueOnce(page);
+  expect((await decisionCommands.page(input)).items).toHaveLength(1);
+});
+
+it.each(["fact-in-primary", "term-in-fact", "conversation-target", "entry-locale", "conversation-key"] as const)(
+  "rejects a resource projection with %s", async change => {
+    const { input, page, reference, item } = resourceLocalFixture(change === "fact-in-primary");
+    if (change === "fact-in-primary") reference.action.slot = "primary";
+    if (change === "term-in-fact") reference.action.slot = "resource-fact";
+    if (change === "conversation-target") item.targets = [{ kind: "conversation", conversationId: "00000000-0000-4000-8000-000000000099" }];
+    if (change === "entry-locale") item.locale = "zh-CN";
+    if (change === "conversation-key") Reflect.set(reference.action, "key", { kind: "conversation", conversationId: "00000000-0000-4000-8000-000000000099" });
+    invoke.mockResolvedValueOnce(page);
+    await expect(decisionCommands.page(input)).rejects.toThrow("Invalid IPC response");
+  });
+
 it.each(["recorded", "in-flight"] as const)("excludes %s local requests while retaining their observed identity", async outcome => {
   const { input, page, action } = localFixture();
   const activity = outcome === "in-flight" ? [{ ownerId: "00000000-0000-4000-8000-000000000004", revision: "1", actions: [action] }] : [];

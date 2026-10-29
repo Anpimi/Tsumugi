@@ -9,7 +9,8 @@ export type { DecisionPageRequest } from "./generated/decisions.requests";
 export type { DecisionAction, DecisionCoverage, DecisionItem, DecisionPage, DecisionSource, DecisionTarget } from "./generated/decisions.responses";
 
 const actionIdentity = (action: DecisionClientAction) => JSON.stringify([action.key.kind,
-  action.key.kind === "translation" ? [action.key.unitId, action.key.locale] : action.key.conversationId,
+  action.key.kind === "translation" ? [action.key.unitId, action.key.locale]
+    : action.key.kind === "conversation" ? action.key.conversationId : null,
   action.slot, action.actionId, action.submittedSeq]);
 export const decisionActivityIdentity = (activity: readonly DecisionClientActivity[] | null | undefined) => activity == null ? "unavailable"
   : JSON.stringify(activity.map(owner => [owner.ownerId, owner.revision, owner.actions.map(actionIdentity)]));
@@ -87,8 +88,14 @@ function relatedItem(item: DecisionItem, projectId: string): boolean {
         && (pending.key.kind === "translation"
           ? pending.slot === "primary" && ["save", "selection", "merge"].includes(reference.requestKind)
             && item.locale === pending.key.locale && item.targets.some(target => target.kind === "entry" && pending.key.kind === "translation" && target.unitId === pending.key.unitId)
-          : !["save", "selection", "merge"].includes(reference.requestKind) && (pending.slot !== "revocation" || reference.requestKind === "work-plan-control")
-            && item.locale === null && item.targets.some(target => target.kind === "conversation" && pending.key.kind === "conversation" && target.conversationId === pending.key.conversationId));
+          : pending.key.kind === "resource"
+            ? reference.requestKind.startsWith("resource-")
+              && (pending.slot === "resource-fact" ? reference.requestKind === "resource-fact"
+                : pending.slot === "primary" && reference.requestKind !== "resource-fact")
+              && item.locale === null && item.targets.every(target => target.kind === "project")
+            : ["create", "append", "planning", "proposal-capture", "proposal-revision", "proposal-work-plan", "work-plan-start", "work-plan-control"].includes(reference.requestKind)
+              && (pending.slot === "primary" || pending.slot === "revocation" && reference.requestKind === "work-plan-control")
+              && item.locale === null && item.targets.some(target => target.kind === "conversation" && pending.key.kind === "conversation" && target.conversationId === pending.key.conversationId));
     }
     case "inspect-delivery-outcome": {
       const evidence = item.evidence;

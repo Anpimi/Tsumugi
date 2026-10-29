@@ -14,6 +14,7 @@ import { ExecutionTaskSession } from "../../../ExecutionTaskSession";
 import type { ProjectView } from "../../../projectCommands";
 import type { ContextResourceAction, ContextResourceRevision, ImpactPage, SaveContextResource, WithdrawContextResource } from "../../../resourceCommands";
 import { fixtureIdentity } from "../../../testSupport/executionFixture";
+import { installResourceDraftFixture } from "../../../testSupport/resourceDraftFixture";
 import { sourceContentFixture } from "../../../testSupport/sourceFixture";
 import { InteractionGate } from "../../workspace/interactionGate";
 import { makeWorkspaceView, type ViewPatch } from "../../workspace/workspaceStore";
@@ -99,6 +100,7 @@ function Shell() {
       {detail ? <ContextResourceDetails project={project} owner={value} visible disabled={false} current={current} gate={gate} preset={view.preset} locale={view.locale}/> : null}</> : null}</>;
 }
 function open() {
+  installResourceDraftFixture();
   render(<SessionReadProvider context={executionContext(project)} reads={reads} bridge={false}><TranslationDraftSession project={project}><ExecutionTaskSession project={project}><Shell/></ExecutionTaskSession></TranslationDraftSession></SessionReadProvider>);
   return userEvent.setup();
 }

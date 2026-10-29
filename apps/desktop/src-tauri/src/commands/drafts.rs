@@ -1,6 +1,11 @@
 //! Application-local input recovery, separate from project business mutations.
 mod store;
 mod types;
+mod resource_types;
+pub use resource_types::*;
+mod resource;
+pub use resource::*;
+pub(super) use resource::observe_resource_target;
 mod conversation;
 mod settlement;
 pub(super) use settlement::observe_conversation_target;

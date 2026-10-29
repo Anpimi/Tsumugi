@@ -288,7 +288,51 @@ pub(in crate::persistence) fn validate_context_origin(
     Ok(())
 }
 
+fn check_comparison(preview:&ConversationKnowledgeAdoptionPreview,a:&crate::application::ConversationKnowledgeAdoption)->Result<(),ExecutionError>{
+                if preview.basis != a.comparison_basis
+                    || preview.source_basis != a.source_basis
+                    || preview.current.as_ref().map(|v| v.revision_id) != a.expected_revision_id
+                {
+                    return Err(fail(
+                        ErrorCode::DependencyConflict,
+                        "knowledge-proposal-comparison",
+                    ));
+                }
+                Ok(())
+}
+
+fn check_decision_current(c:&Connection,r:&DecideConversationKnowledgeProposal)->Result<(),ExecutionError>{
+        if head(c, r.proposal.proposal_id)? != Some(r.proposal.revision_id) {
+            return Err(fail(
+                ErrorCode::DependencyConflict,
+                "conversation-proposal-head",
+            ));
+        }
+        if decision_action(c, &r.proposal, r.entry_index)?.is_some() {
+            return Err(fail(
+                ErrorCode::DependencyConflict,
+                "knowledge-proposal-decided",
+            ));
+        }
+        Ok(())
+}
+
 impl ProjectStore {
+    pub fn conversation_knowledge_decision_settlement_observation(&self,r:&DecideConversationKnowledgeProposal)
+        ->Result<Option<ConversationKnowledgeDecision>,ExecutionError>{
+        read_snapshot(self.connection().map_err(|_|fail(ErrorCode::StorageFailed,"knowledge-proposal-read"))?,|c|{
+            let value=self.conversation_knowledge_decision_receipt(r)?;
+            if value.is_none(){
+                entry_in(c,&r.proposal,r.entry_index)?;check_decision_current(c,r)?;
+                if let (ConversationKnowledgeDecisionKind::Adopt,Some(a))=(&r.decision,&r.adoption){
+                    let preview=preview_in(c,&PrepareConversationKnowledgeAdoption{proposal:r.proposal.clone(),
+                        entry_index:r.entry_index,context_id:a.context_id,subject_id:a.subject_id,scope:a.scope.clone()})?;
+                    check_comparison(&preview,a)?;
+                }
+            }
+            Ok(value)
+        })
+    }
     pub fn preview_conversation_knowledge_adoption(
         &self,
         r: &PrepareConversationKnowledgeAdoption,
@@ -312,18 +356,7 @@ impl ProjectStore {
             return Ok(receipt);
         }
         let (revision, _, evidence) = entry_in(&tx, &r.proposal, r.entry_index)?;
-        if head(&tx, r.proposal.proposal_id)? != Some(r.proposal.revision_id) {
-            return Err(fail(
-                ErrorCode::DependencyConflict,
-                "conversation-proposal-head",
-            ));
-        }
-        if decision_action(&tx, &r.proposal, r.entry_index)?.is_some() {
-            return Err(fail(
-                ErrorCode::DependencyConflict,
-                "knowledge-proposal-decided",
-            ));
-        }
+        check_decision_current(&tx,r)?;
         if r.actor.trim().is_empty()
             || r.actor.len() > 512
             || r.reason.trim().is_empty()
@@ -345,15 +378,7 @@ impl ProjectStore {
                         scope: a.scope.clone(),
                     },
                 )?;
-                if preview.basis != a.comparison_basis
-                    || preview.source_basis != a.source_basis
-                    || preview.current.as_ref().map(|v| v.revision_id) != a.expected_revision_id
-                {
-                    return Err(fail(
-                        ErrorCode::DependencyConflict,
-                        "knowledge-proposal-comparison",
-                    ));
-                }
+                check_comparison(&preview,a)?;
                 if preview.requires_wider_confirmation && !a.confirm_wider_scope {
                     return Err(fail(
                         ErrorCode::Unauthorized,

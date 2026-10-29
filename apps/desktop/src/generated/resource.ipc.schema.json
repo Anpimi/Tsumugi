@@ -2037,6 +2037,24 @@
       "impacts": {
         "$ref": "#/definitions/ImpactRequest"
       },
+      "observeContextAction": {
+        "$ref": "#/definitions/ContextWriteRequest"
+      },
+      "observeContextCaptureAction": {
+        "$ref": "#/definitions/ContextCaptureRequest"
+      },
+      "observeCorrectionAction": {
+        "$ref": "#/definitions/CorrectionCaptureRequest"
+      },
+      "observeDecisionAction": {
+        "$ref": "#/definitions/DecisionRequest"
+      },
+      "observeFactAction": {
+        "$ref": "#/definitions/ContextFactRequest"
+      },
+      "observeTermAction": {
+        "$ref": "#/definitions/TermRequest"
+      },
       "resourceAction": {
         "$ref": "#/definitions/ResourceActionRequest"
       },
@@ -2078,6 +2096,12 @@
       }
     },
     "required": [
+      "observeTermAction",
+      "observeContextAction",
+      "observeContextCaptureAction",
+      "observeCorrectionAction",
+      "observeDecisionAction",
+      "observeFactAction",
       "translationMemoryPage",
       "translationMemoryEntry",
       "translationMemoryReuse",
@@ -7577,6 +7601,66 @@
       "impacts": {
         "$ref": "#/definitions/ImpactPage"
       },
+      "observedContextAction": {
+        "anyOf": [
+          {
+            "$ref": "#/definitions/ContextSaveActionRead"
+          },
+          {
+            "type": "null"
+          }
+        ]
+      },
+      "observedContextCaptureAction": {
+        "anyOf": [
+          {
+            "$ref": "#/definitions/ContextCaptureActionRead"
+          },
+          {
+            "type": "null"
+          }
+        ]
+      },
+      "observedCorrectionAction": {
+        "anyOf": [
+          {
+            "$ref": "#/definitions/CorrectionTermReceipt"
+          },
+          {
+            "type": "null"
+          }
+        ]
+      },
+      "observedDecisionAction": {
+        "anyOf": [
+          {
+            "$ref": "#/definitions/ResourceDecisionActionRead"
+          },
+          {
+            "type": "null"
+          }
+        ]
+      },
+      "observedFactAction": {
+        "anyOf": [
+          {
+            "$ref": "#/definitions/ContextFactDecision"
+          },
+          {
+            "type": "null"
+          }
+        ]
+      },
+      "observedTermAction": {
+        "anyOf": [
+          {
+            "$ref": "#/definitions/TermSaveActionRead"
+          },
+          {
+            "type": "null"
+          }
+        ]
+      },
       "preview": {
         "$ref": "#/definitions/ResourcePreview"
       },
@@ -7642,6 +7726,12 @@
       }
     },
     "required": [
+      "observedTermAction",
+      "observedContextAction",
+      "observedContextCaptureAction",
+      "observedCorrectionAction",
+      "observedDecisionAction",
+      "observedFactAction",
       "translationMemoryPage",
       "translationMemoryEntry",
       "translationMemoryReuse",

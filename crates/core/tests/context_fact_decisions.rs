@@ -109,6 +109,7 @@ fn decisions_are_exact_append_only_cas_actions_and_reopen_with_original_sources(
         },
     );
     let receipt = store.decide_context_fact(&change).unwrap();
+    assert_eq!(store.context_fact_request_observation(&change).unwrap(),Some(receipt.clone()));
     assert_eq!(store.decide_context_fact(&change).unwrap(), receipt);
     assert_eq!(
         store
@@ -118,12 +119,14 @@ fn decisions_are_exact_append_only_cas_actions_and_reopen_with_original_sources(
     );
     let mut altered = change.clone();
     altered.reason = "different request".into();
+    assert_eq!(store.context_fact_request_observation(&altered).unwrap_err().code,ErrorCode::ResultMismatch);
     assert_eq!(
         store.decide_context_fact(&altered).unwrap_err().code,
         ErrorCode::ResultMismatch
     );
     let mut stale = change.clone();
     stale.action_id = ExecutionId::new();
+    assert_eq!(store.context_fact_request_settlement_observation(&stale).unwrap_err().stage,"context-fact-current");
     assert_eq!(
         store.decide_context_fact(&stale).unwrap_err().stage,
         "context-fact-current"

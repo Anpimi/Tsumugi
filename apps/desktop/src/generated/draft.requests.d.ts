@@ -191,6 +191,182 @@ export type AutomationEffect =
   | "send-team-message";
 export type WorkPlanCommand = "pause" | "stop" | "take-over" | "continue";
 export type WorkPlanRevocationCommand = "pause" | "stop" | "take-over";
+export type ResourceDraftDisposition = "recorded" | "confirmed-not-applied";
+export type ResourceDraftResolveTarget =
+  | {
+      kind: "primary";
+      pending: ResourceDraftPending;
+    }
+  | {
+      kind: "fact";
+      pending: ResourceFactPending;
+    };
+export type ResourceDraftPending =
+  | {
+      draftKey: string;
+      kind: "typed-context-save";
+      request: SaveContextResource;
+      submittedSeq: Revision;
+    }
+  | {
+      draftKey: string;
+      kind: "typed-context-withdraw";
+      request: WithdrawContextResource;
+      submittedSeq: Revision;
+    }
+  | {
+      draftKey: string;
+      kind: "knowledge-decision";
+      request: DecideConversationKnowledgeProposal;
+      submittedFields: string;
+      submittedSeq: Revision;
+    }
+  | {
+      kind: "correction";
+      request: CaptureCorrectionTerm;
+      submittedSeq: Revision;
+    }
+  | {
+      aliasInput: string;
+      kind: "term";
+      request: SaveTerm;
+      submittedSeq: Revision;
+    }
+  | {
+      kind: "context";
+      request: SaveContext;
+      submittedSeq: Revision;
+    }
+  | {
+      kind: "decision";
+      locale: string;
+      request: ResourceDecision;
+      submittedSeq: Revision;
+    }
+  | {
+      kind: "capture";
+      request: CaptureContext;
+      submittedSeq: Revision;
+    };
+export type ContextResourceScope =
+  | {
+      kind: "project";
+    }
+  | {
+      kind: "file-group";
+      logicalPaths: string[];
+      namespace: string;
+    }
+  | {
+      kind: "unit";
+      unitId: ExecutionId;
+    };
+export type ConversationKnowledgeDecisionKind = "adopt" | "keep" | "reject";
+export type ResourceDecisionKind = "adopt" | "keep" | "ignore" | "override";
+/**
+ * Classification for presentation, without interpreting a format's syntax or
+ * normalizing its literal text. Other source-associated information uses Note.
+ */
+export type SourceContextFactKind = "speaker" | "role" | "scene" | "time" | "location" | "note";
+/**
+ * References are observations in captured source, not proof of an inference.
+ * Human project decisions remain in the project's independent revision owner.
+ */
+export type SourceContextFactOrigin =
+  | {
+      kind: "extracted";
+      /**
+       * @minItems 1
+       * @maxItems 8
+       */
+      sources:
+        | [SourceReference]
+        | [SourceReference, SourceReference]
+        | [SourceReference, SourceReference, SourceReference]
+        | [SourceReference, SourceReference, SourceReference, SourceReference]
+        | [SourceReference, SourceReference, SourceReference, SourceReference, SourceReference]
+        | [SourceReference, SourceReference, SourceReference, SourceReference, SourceReference, SourceReference]
+        | [
+            SourceReference,
+            SourceReference,
+            SourceReference,
+            SourceReference,
+            SourceReference,
+            SourceReference,
+            SourceReference
+          ]
+        | [
+            SourceReference,
+            SourceReference,
+            SourceReference,
+            SourceReference,
+            SourceReference,
+            SourceReference,
+            SourceReference,
+            SourceReference
+          ];
+    }
+  | {
+      kind: "inferred";
+      rationale: string;
+      /**
+       * @minItems 1
+       * @maxItems 8
+       */
+      sources:
+        | [SourceReference]
+        | [SourceReference, SourceReference]
+        | [SourceReference, SourceReference, SourceReference]
+        | [SourceReference, SourceReference, SourceReference, SourceReference]
+        | [SourceReference, SourceReference, SourceReference, SourceReference, SourceReference]
+        | [SourceReference, SourceReference, SourceReference, SourceReference, SourceReference, SourceReference]
+        | [
+            SourceReference,
+            SourceReference,
+            SourceReference,
+            SourceReference,
+            SourceReference,
+            SourceReference,
+            SourceReference
+          ]
+        | [
+            SourceReference,
+            SourceReference,
+            SourceReference,
+            SourceReference,
+            SourceReference,
+            SourceReference,
+            SourceReference,
+            SourceReference
+          ];
+    };
+export type TextEncoding = "utf8-byte" | "utf16" | "grapheme";
+export type ExtensionHandling = "required" | "preserve" | "optional";
+export type ContentTarget =
+  | {
+      kind: "snapshot";
+    }
+  | {
+      id: string;
+      kind: "unit";
+    }
+  | {
+      id: string;
+      kind: "occurrence";
+    };
+export type ContextFactDisposition =
+  | {
+      kind: "replace";
+      text: string;
+    }
+  | {
+      kind: "reject-inference";
+    }
+  | {
+      kind: "restore";
+    };
+export type ResourceKnowledgeDestination = "new" | "update" | "variant";
+export type TermOrigin = "manual" | "external";
 /**
  * A frozen original request, without any session token or execution authority.
  */
@@ -223,6 +399,10 @@ export interface Requests {
   list: DraftListRequest;
   read: DraftReadRequest;
   readMany: DraftReadManyRequest;
+  resourceClear: ResourceDraftClearRequest;
+  resourceRead: ResourceDraftReadRequest;
+  resourceResolve: ResourceDraftResolveRequest;
+  resourceWrite: ResourceDraftWriteRequest;
   write: DraftWriteRequest;
 }
 export interface DraftClearRequest {
@@ -731,6 +911,378 @@ export interface DraftReadManyRequest {
    * @maxItems 50
    */
   unitIds: [ExecutionId, ...ExecutionId[]];
+}
+export interface ResourceDraftClearRequest {
+  clear: ResourceDraftClear;
+  sessionToken: string;
+}
+export interface ResourceDraftClear {
+  expectedRevision: Revision;
+  key: ResourceDraftKey;
+}
+export interface ResourceDraftKey {
+  projectId: ExecutionId;
+}
+export interface ResourceDraftReadRequest {
+  key: ResourceDraftKey;
+  sessionToken: string;
+}
+export interface ResourceDraftResolveRequest {
+  resolve: ResourceDraftResolve;
+  sessionToken: string;
+}
+export interface ResourceDraftResolve {
+  disposition: ResourceDraftDisposition;
+  target: ResourceDraftResolveTarget;
+  write: ResourceDraftWrite;
+}
+export interface SaveContextResource {
+  actionId: ExecutionId;
+  actor: string;
+  contextId?: ExecutionId | null;
+  expectedRevisionId?: ExecutionId | null;
+  kind: ContextResourceKind;
+  locale: string;
+  name: string;
+  projectId: ExecutionId;
+  reason: string;
+  scope: ContextResourceScope;
+  sourceBasis: ContentScope;
+  /**
+   * Only an explicit scoped variant reuses an existing subject.
+   */
+  subjectId?: ExecutionId | null;
+  text: string;
+}
+export interface ContentScope {
+  currentSnapshot?: ExecutionId | null;
+  revision: Revision;
+}
+export interface WithdrawContextResource {
+  actionId: ExecutionId;
+  actor: string;
+  contextId: ExecutionId;
+  expectedRevisionId: ExecutionId;
+  projectId: ExecutionId;
+  reason: string;
+}
+export interface DecideConversationKnowledgeProposal {
+  actionId: ExecutionId;
+  actor: string;
+  adoption?: ConversationKnowledgeAdoption | null;
+  decision: ConversationKnowledgeDecisionKind;
+  entryIndex: number;
+  proposal: ConversationProposalRef;
+  reason: string;
+}
+export interface ConversationKnowledgeAdoption {
+  comparisonBasis: string;
+  confirmWiderScope: boolean;
+  contextId?: ExecutionId | null;
+  expectedRevisionId?: ExecutionId | null;
+  name: string;
+  scope: ContextResourceScope;
+  sourceBasis: ContentScope;
+  subjectId?: ExecutionId | null;
+  text: string;
+}
+export interface CaptureCorrectionTerm {
+  actionId: ExecutionId;
+  basis: CorrectionTermBasis;
+  protected: boolean;
+  reason: string;
+  source: string;
+  target: string;
+}
+export interface CorrectionTermBasis {
+  after: RevisionSelectionRef;
+  before: RevisionSelectionRef;
+  locale: string;
+  projectId: ExecutionId;
+  sourceRevisionId: ExecutionId;
+  sourceSnapshotId: ExecutionId;
+  unitId: ExecutionId;
+}
+export interface RevisionSelectionRef {
+  revisionId: ExecutionId;
+  selectionId: ExecutionId;
+}
+export interface SaveTerm {
+  actionId: ExecutionId;
+  aliases: string[];
+  expectedRevisionId?: ExecutionId | null;
+  locale: string;
+  projectId: ExecutionId;
+  protected: boolean;
+  reason: string;
+  scopeUnitId?: ExecutionId | null;
+  source: string;
+  target: string;
+  termId?: string | null;
+}
+export interface SaveContext {
+  actionId: ExecutionId;
+  expectedRevisionId?: ExecutionId | null;
+  locale: string;
+  projectId: ExecutionId;
+  reason: string;
+  sourceRevisionId: ExecutionId;
+  text: string;
+  unitId: ExecutionId;
+}
+export interface ResourceDecision {
+  actionId: ExecutionId;
+  captureId: ExecutionId;
+  decision: ResourceDecisionKind;
+  entryId: string;
+  expectedRevisionId?: ExecutionId | null;
+  projectId: ExecutionId;
+}
+export interface CaptureContext {
+  actionId: ExecutionId;
+  budgetBytes: number;
+  locale: string;
+  projectId: ExecutionId;
+  sourceRevisionId: ExecutionId;
+  unitId: ExecutionId;
+}
+export interface ResourceFactPending {
+  request: ContextFactWrite;
+  submittedSeq: Revision;
+}
+export interface ContextFactWrite {
+  actionId: ExecutionId;
+  actor: string;
+  basis: SourceFactBasis;
+  disposition: ContextFactDisposition;
+  expectedDecisionId?: ExecutionId | null;
+  reason: string;
+}
+export interface SourceFactBasis {
+  fact: SelectedSourceFact;
+  scope: SourceContextRequest;
+  sourceResultDigest: string;
+  sourceResultId: ExecutionId;
+}
+/**
+ * One whole fact, with the original block target and source references.
+ */
+export interface SelectedSourceFact {
+  blockIndex: number;
+  fact: SourceContextFact;
+  factIndex: number;
+  handling: ExtensionHandling;
+  inRevisionBasis: boolean;
+  schema: ContractRef;
+  target: ContentTarget;
+}
+export interface SourceContextFact {
+  /**
+   * Unique only inside this block; it is not a project revision or entity ID.
+   */
+  id: string;
+  kind: SourceContextFactKind;
+  origin: SourceContextFactOrigin;
+  text: string;
+}
+export interface SourceReference {
+  artifactId: string;
+  range: TextRange;
+}
+/**
+ * Half-open offsets into one exact string, never between different strings.
+ */
+export interface TextRange {
+  encoding: TextEncoding;
+  end: number;
+  start: number;
+}
+export interface SourceContextRequest {
+  locale: string;
+  projectId: ExecutionId;
+  sourceRevisionId: ExecutionId;
+  sourceSnapshotId: ExecutionId;
+  unitId: ExecutionId;
+}
+export interface ResourceDraftWrite {
+  expectedRevision: Revision;
+  key: ResourceDraftKey;
+  value: ResourceDraftValue;
+  writerId: ExecutionId;
+}
+/**
+ * Input only. Removed source/locale and incomplete fields remain recoverable.
+ */
+export interface ResourceDraftValue {
+  aliasInput: string;
+  contextDraft: string;
+  contextReason: string;
+  contextRevision?: ContextRevision | null;
+  contextSeq: Revision;
+  correctionDraft?: ResourceCorrectionDraft | null;
+  editSeq: Revision;
+  factDraft?: ResourceFactDraft | null;
+  factPending?: ResourceFactPending | null;
+  fixedContextId?: ExecutionId | null;
+  knowledgeActiveKey?: string | null;
+  knowledgeDrafts: ResourceKnowledgeProposalDraft[];
+  locale: string;
+  newerContext: boolean;
+  newerTerm: boolean;
+  pending?: ResourceDraftPending | null;
+  /**
+   * A native picker has no exact replayable original request.
+   */
+  pickerUnknown: boolean;
+  previewCaptureId?: ExecutionId | null;
+  selectedTerm?: TermRevision | null;
+  selectedUnit?: ResourceContextTarget | null;
+  termDraft: ResourceTermInput;
+  termSeq: Revision;
+  typedActiveKey?: string | null;
+  typedDrafts: ResourceContextResourceDraft[];
+}
+export interface ContextRevision {
+  locale: string;
+  previousRevisionId?: ExecutionId | null;
+  reason: string;
+  revisionId: ExecutionId;
+  text: string;
+  unitId: ExecutionId;
+}
+export interface ResourceCorrectionDraft {
+  editSeq: Revision;
+  evidence: CorrectionTermEvidence;
+  protected: boolean;
+  reason: string;
+  source: string;
+  target: string;
+}
+export interface CorrectionTermEvidence {
+  afterText: string;
+  basis: CorrectionTermBasis;
+  beforeSourceRevisionId: ExecutionId;
+  beforeSourceSnapshotId: ExecutionId;
+  beforeText: string;
+  current: boolean;
+  sourceText: string;
+}
+export interface ResourceFactDraft {
+  actor: string;
+  basis: SourceFactBasis;
+  disposition: ContextFactDisposition;
+  editSeq: Revision;
+  expectedDecisionId?: ExecutionId | null;
+  key: string;
+  reason: string;
+}
+export interface ResourceKnowledgeProposalDraft {
+  actor: string;
+  destination?: ResourceKnowledgeDestination | null;
+  editSeq: Revision;
+  entry: ConversationKnowledgeEntry;
+  entryIndex: number;
+  key: string;
+  locale: string;
+  name: string;
+  proposal: ConversationProposalRef;
+  reason: string;
+  receipt?: ConversationKnowledgeDecision | null;
+  recordedFields?: string | null;
+  scope?: ContextResourceScope | null;
+  target?: ContextResourceRevision | null;
+  text: string;
+}
+export interface ConversationKnowledgeDecision {
+  actionId: ExecutionId;
+  actor: string;
+  decision: ConversationKnowledgeDecisionKind;
+  entryIndex: number;
+  proposal: ConversationProposalRef;
+  reason: string;
+  resource?: ContextResourceRevision | null;
+}
+export interface ContextResourceRevision {
+  actionId: ExecutionId;
+  actor: string;
+  contextId: ExecutionId;
+  kind: ContextResourceKind;
+  locale: string;
+  name: string;
+  previousRevisionId?: ExecutionId | null;
+  projectId: ExecutionId;
+  proposalOrigin?: ContextResourceProposalOrigin | null;
+  reason: string;
+  revisionId: ExecutionId;
+  scope: ContextResourceScope;
+  sourceBasis: ContentScope;
+  subjectId: ExecutionId;
+  text: string;
+  withdrawn: boolean;
+}
+export interface ContextResourceProposalOrigin {
+  entryIndex: number;
+  modelOrigin: ConversationProposalOrigin;
+  proposal: ConversationProposalRef;
+}
+export interface ConversationProposalOrigin {
+  attemptId: ExecutionId;
+  inputDigest: string;
+  resultDigest: string;
+  resultId: ExecutionId;
+}
+export interface TermRevision {
+  aliases: string[];
+  captureId?: ExecutionId | null;
+  externalEntryId?: string | null;
+  locale: string;
+  originKind: TermOrigin;
+  previousRevisionId?: ExecutionId | null;
+  protected: boolean;
+  reason: string;
+  removed: boolean;
+  revisionId: ExecutionId;
+  scopeUnitId?: ExecutionId | null;
+  source: string;
+  target: string;
+  termId: string;
+}
+export interface ResourceContextTarget {
+  occurrence: ResourceContextOccurrence;
+  sourceRevisionId: ExecutionId;
+  unitId: ExecutionId;
+}
+export interface ResourceContextOccurrence {
+  key: string;
+  text: string;
+}
+export interface ResourceTermInput {
+  aliases: string[];
+  protected: boolean;
+  reason: string;
+  scopeUnitId?: ExecutionId | null;
+  source: string;
+  target: string;
+}
+export interface ResourceContextResourceDraft {
+  actor: string;
+  base?: ContextResourceRevision | null;
+  contextId?: ExecutionId | null;
+  editSeq: Revision;
+  key: string;
+  kind: ContextResourceKind;
+  locale: string;
+  name: string;
+  reason: string;
+  restoring: boolean;
+  scope: ContextResourceScope;
+  sourceBasis: ContentScope;
+  subjectId?: ExecutionId | null;
+  text: string;
+}
+export interface ResourceDraftWriteRequest {
+  sessionToken: string;
+  write: ResourceDraftWrite;
 }
 export interface DraftWriteRequest {
   sessionToken: string;

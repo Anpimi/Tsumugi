@@ -6,7 +6,8 @@ export interface DecisionActivityOwner {
   getDecisionActivity(): DecisionClientActivity;
   subscribe(listener: () => void): () => void;
 }
-export type DecisionOwners = readonly [DecisionActivityOwner | null, DecisionActivityOwner | null];
+export type DecisionOwners = readonly [DecisionActivityOwner | null, DecisionActivityOwner | null]
+  | readonly [DecisionActivityOwner | null, DecisionActivityOwner | null, DecisionActivityOwner | null];
 const ownerBindings = new WeakMap<DecisionActivityOwner, number>();
 let nextBinding = 0;
 function binding(owner: DecisionActivityOwner | null): number | null {
@@ -30,7 +31,7 @@ export function decisionReadOptions(reads: SessionReads, query: DecisionPageRequ
     activity: activity ? structuredClone(activity) : null };
   const current = () => {
     const now = owners();
-    return !reads.retired && now.every((owner, index) => owner === capturedOwners[index])
+    return !reads.retired && now.length === capturedOwners.length && now.every((owner, index) => owner === capturedOwners[index])
       && decisionActivityIdentity(now.every(owner => owner !== null) ? now.map(owner => owner!.getDecisionActivity()) : null) === identity;
   };
   return {

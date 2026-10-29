@@ -38,7 +38,7 @@ fn reuse_origin_and_the_exact_pending_survive_newer_input_only_in_format_nine() 
     wrong.value.reuse_origin.as_mut().unwrap().target_unit_id = ExecutionId::new();
     assert_eq!(store.write(&wrong).unwrap_err().code, ErrorCode::InvalidInput);
     assert_eq!(store.read(&write.key).unwrap(), saved);
-    Connection::open(&path).unwrap().pragma_update(None, "user_version", KNOWLEDGE_PROPOSAL_FORMAT).unwrap();
+    set_legacy_format(&Connection::open(&path).unwrap(),KNOWLEDGE_PROPOSAL_FORMAT).unwrap();
     let old = fs::read(&path).unwrap();
     assert_eq!(store.read(&write.key).unwrap_err().code, ErrorCode::CorruptLedger);
     assert_eq!(store.list(write.key.project_id, None, 100).unwrap_err().code, ErrorCode::CorruptLedger);
@@ -98,7 +98,7 @@ fn draft_read_many_keeps_v1_pending_tombstones_and_absent_heads_without_migratio
     let cleared = store.clear(&DraftClear { key:tombstone.clone(),expected_revision:revision(0) }).unwrap();
     let connection = Connection::open(store.directory.join(DATABASE)).unwrap();
     connection.execute_batch("DROP TABLE conversation_draft_heads").unwrap();
-    connection.pragma_update(None,"user_version",LEGACY_FORMAT).unwrap(); drop(connection);
+    set_legacy_format(&connection,LEGACY_FORMAT).unwrap(); drop(connection);
     let heads = store.read_many(request.key.project_id,&request.key.locale,&[tombstone.unit_id,request.key.unit_id,missing]).unwrap();
     assert_eq!(heads[0],cleared); assert_eq!(heads[1],original); assert_eq!(heads[2],empty[1]);
     assert_eq!(disk_format(&store),LEGACY_FORMAT);
@@ -318,8 +318,7 @@ fn legacy_draft_reads_and_failed_cas_do_not_upgrade_then_a_valid_write_keeps_all
     let path = store.directory.join(DATABASE);
     let database = Connection::open(&path).unwrap();
     database.execute_batch("DROP TABLE conversation_draft_heads").unwrap();
-    database
-        .pragma_update(None, "user_version", LEGACY_FORMAT)
+    set_legacy_format(&database,LEGACY_FORMAT)
         .unwrap();
     drop(database);
     let bytes = fs::read(&path).unwrap();
@@ -366,8 +365,7 @@ fn legacy_upgrade_is_rolled_back_with_a_commit_failure_and_new_shapes_are_not_va
     let path = store.directory.join(DATABASE);
     let blocker = Connection::open(&path).unwrap();
     blocker.execute_batch("DROP TABLE conversation_draft_heads").unwrap();
-    blocker
-        .pragma_update(None, "user_version", LEGACY_FORMAT)
+    set_legacy_format(&blocker,LEGACY_FORMAT)
         .unwrap();
     blocker
         .execute_batch("BEGIN; SELECT * FROM draft_heads;")
@@ -384,8 +382,7 @@ fn legacy_upgrade_is_rolled_back_with_a_commit_failure_and_new_shapes_are_not_va
     let merged = store.write(&next).unwrap();
     assert_eq!(disk_format(&store), FORMAT);
     blocker.execute_batch("DROP TABLE conversation_draft_heads").unwrap();
-    blocker
-        .pragma_update(None, "user_version", LEGACY_FORMAT)
+    set_legacy_format(&blocker,LEGACY_FORMAT)
         .unwrap();
     assert_eq!(
         store.read(&merged.key).unwrap_err().code,

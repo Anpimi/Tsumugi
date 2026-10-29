@@ -453,27 +453,9 @@ pub(in crate::persistence) fn save_in(
         &request.reason,
     )?;
     check_project(&tx, request.project_id, &request.locale)?;
-    let basis = super::super::content::scope(&tx)?;
-    if basis.current_snapshot.is_none() || basis != request.source_basis {
-        return Err(failure(
-            ErrorCode::DependencyConflict,
-            "context-resource-source",
-        ));
-    }
+    check_save_source(c,request)?;
     check_scope(&tx, request.project_id, &request.scope)?;
-    let prior = request
-        .context_id
-        .map(|context| current(&tx, request.project_id, context))
-        .transpose()?
-        .flatten();
-    if request.context_id.is_some() && prior.is_none()
-        || prior.as_ref().map(|v| v.revision_id) != request.expected_revision_id
-    {
-        return Err(failure(
-            ErrorCode::DependencyConflict,
-            "context-resource-current",
-        ));
-    }
+    let prior = check_save_current(c,request)?;
     let context_id = request.context_id.unwrap_or_else(ExecutionId::new);
     let subject_id = prior
         .as_ref()
@@ -524,7 +506,62 @@ pub(in crate::persistence) fn save_in(
     append(&tx, action, revision, prior.as_ref())
 }
 
+fn check_save_source(c:&Connection,request:&SaveContextResource)->Result<(),ExecutionError>{
+    let basis = super::super::content::scope(c)?;
+    if basis.current_snapshot.is_none() || basis != request.source_basis {
+        return Err(failure(
+            ErrorCode::DependencyConflict,
+            "context-resource-source",
+        ));
+    }
+    Ok(())
+}
+
+fn check_save_current(c:&Connection,request:&SaveContextResource)->Result<Option<ContextResourceRevision>,ExecutionError>{
+    let prior = request
+        .context_id
+        .map(|context| current(c, request.project_id, context))
+        .transpose()?
+        .flatten();
+    if request.context_id.is_some() && prior.is_none()
+        || prior.as_ref().map(|v| v.revision_id) != request.expected_revision_id
+    {
+        return Err(failure(
+            ErrorCode::DependencyConflict,
+            "context-resource-current",
+        ));
+    }
+    Ok(prior)
+}
+
+fn check_withdraw_current(c:&Connection,request:&WithdrawContextResource)->Result<ContextResourceRevision,ExecutionError>{
+        let prior = current(c, request.project_id, request.context_id)?
+            .ok_or_else(|| failure(ErrorCode::DependencyConflict, "context-resource-current"))?;
+        if prior.revision_id != request.expected_revision_id {
+            return Err(failure(
+                ErrorCode::DependencyConflict,
+                "context-resource-current",
+            ));
+        }
+        Ok(prior)
+}
+
 impl ProjectStore {
+    pub fn context_resource_request_settlement_observation(&self,action:&ContextResourceAction)
+        ->Result<Option<ContextResourceActionRead>,ExecutionError>{
+        super::super::review::read_snapshot(self.connection().map_err(|_|failure(ErrorCode::StorageFailed,"context-resource-read"))?,|c|{
+            let value=by_action(c,action.project(),action.action())?;
+            if let Some(value)=&value {
+                if value.request!=*action{return Err(failure(ErrorCode::ResultMismatch,"context-resource-action"));}
+            }else{
+                match action {
+                    ContextResourceAction::Save(r)=>{check_save_source(c,r)?;check_save_current(c,r)?;}
+                    ContextResourceAction::Withdraw(r)=>{check_withdraw_current(c,r)?;}
+                    ContextResourceAction::ProposalAdoption(_)=>return Err(failure(ErrorCode::Unauthorized,"context-resource-proposal-recovery")),
+                }
+            }Ok(value)
+        })
+    }
     pub fn save_context_resource(
         &mut self,
         request: &SaveContextResource,
@@ -592,14 +629,7 @@ impl ProjectStore {
                 "context-resource-session",
             ));
         }
-        let prior = current(&tx, request.project_id, request.context_id)?
-            .ok_or_else(|| failure(ErrorCode::DependencyConflict, "context-resource-current"))?;
-        if prior.revision_id != request.expected_revision_id {
-            return Err(failure(
-                ErrorCode::DependencyConflict,
-                "context-resource-current",
-            ));
-        }
+        let prior=check_withdraw_current(&tx,request)?;
         checked_fields(&prior.name, &prior.text, &request.actor, &request.reason)?;
         let value = ContextResourceRevision {
             revision_id: ExecutionId::new(),

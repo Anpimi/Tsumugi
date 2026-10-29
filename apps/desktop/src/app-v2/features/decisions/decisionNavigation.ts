@@ -6,6 +6,7 @@ import type { DecisionItem } from "../../../decisionCommands";
 import { reviewCommands, type ReviewTarget } from "../../../reviewCommands";
 import { currentDiagnosticRun, sameReviewBasis } from "../../../reviewDiagnosticNavigation";
 import { translationCommands, translationHistoryAfter } from "../../../translationCommands";
+import { resourceDraftCommands, resourcePendingProject } from "../../../resourceDraftCommands";
 
 export type DecisionNavigation =
   | { kind: "candidate"; unitId: string; locale: string; revisionId: string; afterOrdinal: string }
@@ -13,6 +14,7 @@ export type DecisionNavigation =
   | { kind: "finding"; unitId: string; locale: string; runId: string; issueId: string; offset: number }
   | { kind: "translation-request"; key: DraftKey }
   | { kind: "conversation-request"; conversationId: string; slot: "primary" | "revocation"; actionId: string }
+  | { kind: "resource-request"; slot: "primary" | "resource-fact"; actionId: string }
   | { kind: "conversation-proposal"; conversationId: string; proposalId: string; revisionId: string }
   | { kind: "knowledge-proposal"; proposal: ConversationProposalRef; entryIndex: number }
   | { kind: "details" };
@@ -23,6 +25,7 @@ export interface DecisionNavigationPorts {
   findings: typeof reviewCommands.findings;
   draft: typeof draftCommands.read;
   conversationDraft: typeof conversationDraftCommands.read;
+  resourceDraft: typeof resourceDraftCommands.read;
   proposal: typeof conversationCommands.readProposal;
   knowledgeDecision: typeof conversationCommands.readKnowledgeDecision;
 }
@@ -32,6 +35,7 @@ const ports: DecisionNavigationPorts = {
   findings: request => reviewCommands.findings(request),
   draft: request => draftCommands.read(request),
   conversationDraft: request => conversationDraftCommands.read(request),
+  resourceDraft: request => resourceDraftCommands.read(request),
   proposal: request => conversationCommands.readProposal(request),
   knowledgeDecision: request => conversationCommands.readKnowledgeDecision(request),
 };
@@ -152,6 +156,21 @@ export async function resolveDecisionNavigation(context: SessionRequest, item: D
     case "inspect-local-request": {
       const reference = action.reference, original = reference.action;
       match(fixed.item.sourceActionId === original.actionId);
+      if (original.key.kind === "resource") {
+        match(planMatches(null) && fixed.item.targets.some(target => target.kind === "project"));
+        const head = await commands.resourceDraft({ sessionToken: ctx.sessionToken, key: { projectId: ctx.projectId } }); present();
+        match(head.key.projectId === ctx.projectId);
+        if (original.slot === "resource-fact") {
+          const pending = head.value?.factPending;
+          match(reference.requestKind === "resource-fact" && !!pending && pending.request.basis.scope.projectId === ctx.projectId
+            && pending.request.actionId === original.actionId && pending.submittedSeq === original.submittedSeq);
+        } else {
+          const pending = head.value?.pending;
+          match(original.slot === "primary" && !!pending && reference.requestKind === `resource-${pending.kind}`
+            && resourcePendingProject(pending) === ctx.projectId && pending.request.actionId === original.actionId && pending.submittedSeq === original.submittedSeq);
+        }
+        return { kind: "resource-request", slot: original.slot, actionId: original.actionId };
+      }
       if (original.key.kind === "translation") {
         const key: DraftKey = { projectId: ctx.projectId, unitId: original.key.unitId, locale: original.key.locale };
         match(entry(key.unitId) === key.locale && original.slot === "primary" && planMatches(null));
@@ -164,6 +183,7 @@ export async function resolveDecisionNavigation(context: SessionRequest, item: D
           && sameDraftKey(pending.request, key) && pending.request.actionId === original.actionId && pending.submittedSeq === original.submittedSeq);
         return { kind: "translation-request", key };
       }
+      match(original.slot === "primary" || original.slot === "revocation");
       const conversationId = original.key.conversationId, key = { projectId: ctx.projectId, conversationId };
       match(fixed.item.locale === null && fixed.item.targets.some(target => target.kind === "conversation" && target.conversationId === conversationId));
       present();

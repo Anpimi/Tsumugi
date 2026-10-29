@@ -7,12 +7,13 @@ use super::*;
 pub enum DecisionJournalKey {
     Translation { unit_id: ExecutionId, locale: String },
     Conversation { conversation_id: ExecutionId },
+    Resource,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
 #[cfg_attr(feature = "wire-schema", derive(schemars::JsonSchema))]
-pub enum DecisionJournalSlot { Primary, Revocation }
+pub enum DecisionJournalSlot { Primary, Revocation, ResourceFact }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
@@ -41,6 +42,8 @@ pub struct DecisionClientActivity {
 pub enum DecisionLocalRequestKind {
     Save, Selection, Merge, Create, Append, Planning, ProposalCapture,
     ProposalRevision, ProposalWorkPlan, WorkPlanStart, WorkPlanControl,
+    ResourceTypedContextSave, ResourceTypedContextWithdraw, ResourceKnowledgeDecision,
+    ResourceCorrection, ResourceTerm, ResourceContext, ResourceDecision, ResourceCapture, ResourceFact,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]

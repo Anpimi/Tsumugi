@@ -5,6 +5,7 @@ import wire from "../../../../test/fixtures/resourceCommands.contract.json";
 import { ExecutionTaskSession } from "../../../ExecutionTaskSession";
 import { executionContext } from "../../../executionCommands";
 import { i18n } from "../../../i18n";
+import { installResourceDraftFixture } from "../../../testSupport/resourceDraftFixture";
 import type { knowledgeEn } from "../../../i18n/knowledge";
 import type { ProjectView } from "../../../projectCommands";
 import { ResourceDraftSession, useResourceDraftSession } from "../../../ResourceDraftSession";
@@ -40,7 +41,7 @@ beforeEach(async () => {
     if (command === "list_resource_captures") return [structuredClone(preview.capture)];
     if (command === "read_resource_preview") return structuredClone(preview);
     if (command === "create_execution_identity") return fixtureIdentity(700);
-    if (command === "read_resource_decision_action") return null;
+    if ((command === "read_resource_decision_action" || command === "observe_resource_decision_action")) return null;
     if (command === "decide_resource_entry") {
       if (!validateRequestDecision(payload.request)) throw new Error("Invalid original term decision request");
       decisionCount += 1;
@@ -50,6 +51,7 @@ beforeEach(async () => {
     }
     throw new Error(`Unexpected synthetic command: ${command}`);
   });
+  installResourceDraftFixture();
 });
 afterEach(() => { cleanup(); reads.retire(); gate.dispose(); });
 
@@ -59,12 +61,14 @@ function Content() {
     current={dialogId => gate.canDispatch({ viewId: "knowledge-view", source: "button", dialogId })}/>;
 }
 async function open() {
+  installResourceDraftFixture();
   render(<SessionReadProvider context={executionContext(project)} reads={reads} bridge={false}>
     <TranslationDraftSession project={project}><ExecutionTaskSession project={project}>
       <ResourceDraftSession project={project}><Content/></ResourceDraftSession>
     </ExecutionTaskSession></TranslationDraftSession>
   </SessionReadProvider>);
   const user = userEvent.setup();
+  await waitFor(() => expect(observed?.journal.hydration).toBe("ready"));
   await user.click(await screen.findByRole("button", { name: label("proposalOpen") }));
   await waitFor(() => expect(screen.getByRole("button", { name: label("proposalAdopt") })).toBeEnabled());
   return user;
@@ -89,6 +93,11 @@ it("keeps the original action after an uncertain acknowledgement and retries onl
   uncertain = true;
   const user = await open();
   await user.click(screen.getByRole("button", { name: label("proposalAdopt") }));
+  await waitFor(() => expect(observed?.current().pendingUncertain).toBe(true));
+  expect(observed?.current().pendingCheckedMissing).toBe(false);
+  expect(screen.queryByRole("button", { name: label("proposalRetry") })).not.toBeInTheDocument();
+  await waitFor(() => expect(screen.getByRole("button", { name: label("proposalCheck") })).toBeEnabled());
+  await user.click(screen.getByRole("button", { name: label("proposalCheck") }));
   await user.click(await screen.findByRole("button", { name: label("proposalRetry") }));
   await waitFor(() => expect(decisions()).toHaveLength(2));
   expect(decisions()[1][1].request).toEqual(decisions()[0][1].request);
@@ -108,6 +117,7 @@ it("rechecks the current row inside a replacement confirmation and keeps changed
     </ExecutionTaskSession></TranslationDraftSession>
   </SessionReadProvider>);
   const user = userEvent.setup();
+  await waitFor(() => expect(observed?.journal.hydration).toBe("ready"));
   await user.click(await screen.findByRole("button", { name: label("proposalOpen") }));
   await user.click(await screen.findByRole("button", { name: label("proposalOverride") }));
   const dialog = await screen.findByRole("dialog", { name: label("proposalConfirmTitle") });
@@ -130,6 +140,7 @@ it("keeps stale MCP evidence readable while refusing adoption and allowing rejec
     </ExecutionTaskSession></TranslationDraftSession>
   </SessionReadProvider>);
   const user = userEvent.setup();
+  await waitFor(() => expect(observed?.journal.hydration).toBe("ready"));
   await user.click(await screen.findByRole("button", { name: label("proposalOpen") }));
   await screen.findByText(label("proposalStale"));
   expect(screen.getByRole("button", { name: label("proposalAdopt") })).toBeDisabled();

@@ -16,6 +16,7 @@ import { ArenaDraftSession } from "../ArenaDraftSession";
 import { ReleaseDraftSession } from "../ReleaseDraftSession";
 import { WorkbenchCommands, WorkbenchCommandsProvider } from "../workbenchCommands";
 import type { ChangeScope } from "../sessionReads";
+import { installResourceDraftFixture } from "./resourceDraftFixture";
 
 let currentReads: ReturnType<typeof useSessionReads> | undefined;
 function ReadControl() {
@@ -42,6 +43,7 @@ function WorkbenchTestShell({ children, project: retainedProject }: { children: 
 
 export function renderWorkbench(ui: ReactNode, project?: ProjectView) {
   let currentProject = project ?? (isValidElement<{project?: ProjectView}>(ui) ? ui.props.project : undefined);
+  if (currentProject) installResourceDraftFixture();
   const result = render(<WorkbenchTestShell project={currentProject}>{ui}</WorkbenchTestShell>);
   const rerender = result.rerender;
   return { ...result, rerender: (next: ReactNode, nextProject?: ProjectView) => {

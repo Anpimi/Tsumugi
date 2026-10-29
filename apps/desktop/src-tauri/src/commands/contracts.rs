@@ -117,6 +117,10 @@ struct DraftRequests {
     conversation_resolve: drafts::ConversationDraftResolveRequest,
     conversation_clear: drafts::ConversationDraftClearRequest,
     conversation_list: drafts::ConversationDraftListRequest,
+    resource_read: drafts::ResourceDraftReadRequest,
+    resource_write: drafts::ResourceDraftWriteRequest,
+    resource_clear: drafts::ResourceDraftClearRequest,
+    resource_resolve: drafts::ResourceDraftResolveRequest,
 }
 #[derive(JsonSchema)]
 #[schemars(rename_all = "camelCase")]
@@ -132,6 +136,11 @@ struct DraftResponses {
     conversation_resolved: drafts::ConversationDraftHead,
     conversation_cleared: drafts::ConversationDraftHead,
     conversation_page: drafts::ConversationDraftPage,
+    resource_read: drafts::ResourceDraftHead,
+    resource_written: drafts::ResourceDraftHead,
+    resource_cleared: drafts::ResourceDraftHead,
+    resource_resolved: drafts::ResourceDraftHead,
+    resource_value: drafts::ResourceDraftValue,
     error: CommandError,
 }
 #[derive(JsonSchema)]
@@ -434,6 +443,12 @@ struct TranslationResponses {
 #[schemars(rename_all = "camelCase")]
 #[allow(dead_code)]
 struct ResourceRequests {
+    observe_term_action: execution::resource::TermRequest,
+    observe_context_action: execution::resource::ContextWriteRequest,
+    observe_context_capture_action: execution::resource::ContextCaptureRequest,
+    observe_correction_action: execution::resource::CorrectionCaptureRequest,
+    observe_decision_action: execution::resource::DecisionRequest,
+    observe_fact_action: execution::resource::ContextFactRequest,
     translation_memory_page: execution::translation_memory::TranslationMemoryPageRequest,
     translation_memory_entry: execution::translation_memory::TranslationMemoryEntryRequest,
     translation_memory_reuse: execution::translation_memory::TranslationMemoryReuseRequest,
@@ -477,6 +492,12 @@ struct ResourceRequests {
 #[schemars(rename_all = "camelCase")]
 #[allow(dead_code)]
 struct ResourceResponses {
+    observed_term_action: Option<tsumugi_core::TermSaveActionRead>,
+    observed_context_action: Option<tsumugi_core::ContextSaveActionRead>,
+    observed_context_capture_action: Option<tsumugi_core::ContextCaptureActionRead>,
+    observed_correction_action: Option<tsumugi_core::CorrectionTermReceipt>,
+    observed_decision_action: Option<tsumugi_core::ResourceDecisionActionRead>,
+    observed_fact_action: Option<tsumugi_core::ContextFactDecision>,
     translation_memory_page: tsumugi_core::TranslationMemoryPage,
     translation_memory_entry: tsumugi_core::TranslationMemoryEntry,
     translation_memory_reuse: tsumugi_core::TranslationMemoryReusePreview,

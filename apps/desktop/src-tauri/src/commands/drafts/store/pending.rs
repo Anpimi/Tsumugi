@@ -10,6 +10,7 @@ const MAX_SNAPSHOT_BYTES: u64 = 8 * 1024 * 1024;
 pub enum PendingJournalKey {
     Translation(DraftKey),
     Conversation(ConversationDraftKey),
+    Resource(ResourceDraftKey),
 }
 
 /// Original frozen requests only. No unrelated current message or editor text.
@@ -18,6 +19,8 @@ pub enum PendingJournalSlot {
     Translation(DraftPending),
     Conversation(ConversationDraftPending),
     Revocation(ConversationDraftRevocation),
+    Resource(ResourceDraftPending),
+    ResourceFact(ResourceFactPending),
 }
 
 impl PendingJournalSlot {
@@ -35,6 +38,8 @@ impl PendingJournalSlot {
             Self::Conversation(ConversationDraftPending::WorkPlanStart { request, .. }) => request.action_id,
             Self::Conversation(ConversationDraftPending::WorkPlanControl { request, .. }) => request.action_id,
             Self::Revocation(slot) => slot.request.action_id,
+            Self::Resource(slot) => slot.action_id(),
+            Self::ResourceFact(slot) => slot.request.action_id,
         }
     }
 
@@ -52,6 +57,8 @@ impl PendingJournalSlot {
                 | ConversationDraftPending::WorkPlanStart { submitted_seq, .. }
                 | ConversationDraftPending::WorkPlanControl { submitted_seq, .. }) => *submitted_seq,
             Self::Revocation(slot) => slot.submitted_seq,
+            Self::Resource(slot) => slot.submitted_seq(),
+            Self::ResourceFact(slot) => slot.submitted_seq,
         }
     }
 }
@@ -114,7 +121,9 @@ impl DraftStore {
         snapshot.format = Some(format);
         digest.update(format.to_le_bytes());
         let translation = "SELECT 0 AS journal_kind,locale,unit_id AS entry_id,revision,edit_seq,source_revision_id,has_pending,length(payload) AS bytes,payload FROM draft_heads WHERE project_id=?1 AND (?2 IS NULL OR locale=?2)";
-        let query = if format >= CONVERSATION_FORMAT {
+        let query = if format >= RESOURCE_FORMAT {
+            format!("{translation} UNION ALL SELECT 1 AS journal_kind,'' AS locale,conversation_id AS entry_id,revision,edit_seq,NULL AS source_revision_id,has_pending,length(payload) AS bytes,payload FROM conversation_draft_heads WHERE project_id=?1 UNION ALL SELECT 2 AS journal_kind,'' AS locale,project_id AS entry_id,revision,edit_seq,NULL AS source_revision_id,has_pending,length(payload) AS bytes,payload FROM resource_draft_heads WHERE project_id=?1 ORDER BY journal_kind,locale,entry_id LIMIT ?3")
+        } else if format >= CONVERSATION_FORMAT {
             format!("{translation} UNION ALL SELECT 1 AS journal_kind,'' AS locale,conversation_id AS entry_id,revision,edit_seq,NULL AS source_revision_id,has_pending,length(payload) AS bytes,payload FROM conversation_draft_heads WHERE project_id=?1 ORDER BY journal_kind,locale,entry_id LIMIT ?3")
         } else { format!("{translation} ORDER BY journal_kind,locale,entry_id LIMIT ?3") };
         let mut statement = tx.prepare(&query).map_err(sql)?;
@@ -149,7 +158,7 @@ impl DraftStore {
                 let slots = head.value.and_then(|value| value.pending)
                     .map(PendingJournalSlot::Translation).into_iter().collect::<Vec<_>>();
                 (PendingJournalKey::Translation(key), head.revision, head.writer_id, seq, slots)
-            } else {
+            } else if kind == 1 {
                 let key = ConversationDraftKey { project_id: project, conversation_id: stored_id(&entry)? };
                 let head = conversations::decode(&key, (stored_revision, edit_seq, has_pending, Some(payload)), format)?;
                 let seq = head.value.as_ref().map(|value| value.edit_seq);
@@ -159,6 +168,18 @@ impl DraftStore {
                     slots.extend(value.revocations.into_iter().map(PendingJournalSlot::Revocation));
                 }
                 (PendingJournalKey::Conversation(key), head.revision, head.writer_id, seq, slots)
+            } else {
+                let key=ResourceDraftKey{project_id:project};
+                if entry!=project.to_string(){return Err(fail(ErrorCode::CorruptLedger,"resource-drafts-project"));}
+                let head=resources::decode(&key,(stored_revision,edit_seq,has_pending,Some(payload)))?;
+                let seq=head.value.as_ref().map(|v|v.edit_seq);
+                let mut slots=Vec::new();
+                if let Some(v)=head.value {
+                    let include=v.pending.as_ref().is_some_and(|p|locale.is_none_or(|l|resource_locale(p,&v)==Some(l)));
+                    slots.extend(v.pending.filter(|_|include).map(PendingJournalSlot::Resource));
+                    slots.extend(v.fact_pending.filter(|p|locale.is_none_or(|l|p.request.basis.scope.locale==l)).map(PendingJournalSlot::ResourceFact));
+                }
+                (PendingJournalKey::Resource(key),head.revision,head.writer_id,seq,slots)
             };
             snapshot.scanned_heads += 1;
             snapshot.scanned_bytes += bytes;
@@ -177,6 +198,19 @@ impl DraftStore {
         // End the read transaction. No journal migration or mutation is used.
         tx.commit().map_err(sql)?;
         finish(snapshot, digest)
+    }
+}
+
+fn resource_locale<'a>(p:&'a ResourceDraftPending,v:&'a ResourceDraftValue)->Option<&'a str>{
+    match p {
+        ResourceDraftPending::TypedContextSave{request,..}=>Some(&request.locale),
+        ResourceDraftPending::TypedContextWithdraw{draft_key,..}=>v.typed_drafts.iter().find(|d|d.key==*draft_key).map(|d|d.locale.as_str()),
+        ResourceDraftPending::KnowledgeDecision{draft_key,..}=>v.knowledge_drafts.iter().find(|d|d.key==*draft_key).map(|d|d.locale.as_str()),
+        ResourceDraftPending::Correction{request,..}=>Some(&request.basis.locale),
+        ResourceDraftPending::Term{request,..}=>Some(&request.locale),
+        ResourceDraftPending::Context{request,..}=>Some(&request.locale),
+        ResourceDraftPending::Decision{locale,..}=>Some(locale),
+        ResourceDraftPending::Capture{request,..}=>Some(&request.locale),
     }
 }
 
