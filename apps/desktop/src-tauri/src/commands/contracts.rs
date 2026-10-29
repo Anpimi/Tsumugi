@@ -335,6 +335,10 @@ struct ExecutionResponses {
 #[schemars(rename_all = "camelCase")]
 #[allow(dead_code)]
 struct SourceRequests {
+    startup_select: startup::StartupSelectRequest,
+    startup_drop: startup::StartupDropRequest,
+    startup_preflight: startup::StartupPreflightRequest,
+    startup_claim: startup::StartupClaimRequest,
     session: execution::SessionRequest,
     capture: execution::source::CaptureRequest,
     start: execution::source::StartRequest,
@@ -366,6 +370,9 @@ struct SourceRequests {
 #[schemars(rename_all = "camelCase")]
 #[allow(dead_code)]
 struct SourceResponses {
+    startup_directory: Option<startup::StartupDirectory>,
+    startup_preflight: startup::StartupPreflight,
+    startup_drop_event: startup::StartupDropEvent,
     start_action: Option<tsumugi_core::content::SourceImportStartRead>,
     integration: tsumugi_core::content::IntegrationDescriptor,
     selection: Option<execution::source::SourceSelection>,

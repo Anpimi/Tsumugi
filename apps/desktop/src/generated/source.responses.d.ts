@@ -337,6 +337,16 @@ export type ContentTarget =
       kind: "occurrence";
     };
 export type SourceContextDirection = "before" | "after";
+export type StartupDropEvent =
+  | {
+      dropTicket: ExecutionId;
+      folderName: string;
+      kind: "ready";
+    }
+  | {
+      error: CommandError;
+      kind: "rejected";
+    };
 
 export interface Responses {
   action: AdoptionAction;
@@ -367,6 +377,9 @@ export interface Responses {
   sourceContext: SourceContextPage;
   sourceContextBlock: SourceContextBlockDetail;
   startAction: SourceImportStartRead | null;
+  startupDirectory: StartupDirectory | null;
+  startupDropEvent: StartupDropEvent;
+  startupPreflight: StartupPreflight;
 }
 export interface AdoptionAction {
   actionId: ExecutionId;
@@ -1134,4 +1147,21 @@ export interface SourceImportStart {
   projectId: ExecutionId;
   selectionId: ExecutionId;
   sourceLanguage: string;
+}
+export interface StartupDirectory {
+  folderName: string;
+  selectionId: ExecutionId;
+}
+export interface StartupPreflight {
+  complete: boolean;
+  directory: StartupDirectory;
+  materials: DeclaredMaterial[];
+  source: PluginSourceView;
+}
+export interface DeclaredMaterial {
+  byteLength: number | null;
+  logicalPath: string;
+  maxBytes: number;
+  role: string;
+  sha256: string | null;
 }

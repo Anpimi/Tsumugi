@@ -61,6 +61,30 @@ struct CheckReview {
     capture: SourceValidationCapture,
     view: SourceCheckReview,
 }
+
+/// Move an explicitly reviewed startup directory into the existing Source owner.
+/// Repeating the same handoff only reads its selection; it never starts import.
+pub(in crate::commands) fn accept_startup_selection(
+    active: &mut crate::commands::ActiveSession,
+    selection: Arc<capture::Selection>,
+    selection_id: ExecutionId,
+    source: PluginSourceRequest,
+    view: PluginSourceView,
+) -> Result<PluginSourceSelection, CommandError> {
+    let (host, store) = active.execution_parts()?;
+    host.allow_mutation()?;
+    let same = host.source.selection.as_ref().is_some_and(|(id, _)| *id == selection_id)
+        && host.source.plugin.choice.as_ref().is_some_and(|(id, current)| *id == selection_id && *current == source);
+    if !same {
+        if host.source.selection.is_some() || host.source.picker.is_some() || host.source.is_active()
+            || store.content_scope().map_err(map_source)?.current_snapshot.is_some() {
+            return Err(stale());
+        }
+        host.source.selection = Some((selection_id, selection.clone()));
+        host.source.plugin.choice = Some((selection_id, source));
+    }
+    Ok(PluginSourceSelection { selection_id, folder_name: selection.label(), source: view })
+}
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 #[cfg_attr(feature = "wire-schema", derive(schemars::JsonSchema))]

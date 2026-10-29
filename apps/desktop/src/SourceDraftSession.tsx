@@ -6,6 +6,7 @@ import { useSessionReads, useSessionAlive } from "./SessionReadProvider";
 import { useExecutionTaskSession } from "./ExecutionTaskSession";
 import { jsonIdentity } from "./pluginToolChoices";
 import type { PluginSourceRequest } from "./pluginCommands";
+import { startupCommands, type StartupClaimRequest } from "./startupCommands";
 import { useSourceMaintenanceHook } from "./SourceMaintenanceHook";
 import { SourceDraftJournal, restoreSourceDraft, sourcePendingValue, sourceHookStopValue, sourceDraftValue, type SourceDraftInputs, type SourceJournalState } from "./sourceDraftJournal";
 import { sourceDraftCommands, type SourceDraftValue, type SourceDraftResolveTarget, type SourceDraftDisposition, type SourceDraftObservation } from "./sourceDraftCommands";
@@ -120,6 +121,7 @@ export interface SourceSession {
   confirm: (confirmed: boolean) => void;
   select: () => Promise<void>;
   selectDropped: (dropTicket: string) => Promise<void>;
+  claimStartup: (request: StartupClaimRequest, proof?: () => boolean) => Promise<boolean>;
   preflight: (proof?: () => boolean, dispose?: () => void) => Promise<void>;
   start: (proof?: () => boolean, dispose?: () => void) => Promise<void>;
   retryStart: () => Promise<void>;
@@ -326,6 +328,26 @@ export function SourceDraftSession({ project, children }: { project: ProjectView
         preflight: null, producerConsent: null, checkReview: null, checkerConsent: null, checkAttempt: null, confirmed: false,
         ...(selection ? { preview: null, comparison: null, lineage: {}, attempt: null, receipt: null } : {}) }));
     });
+  }
+  async function claimStartup(input: StartupClaimRequest, proof: () => boolean = live) {
+    if (journal.getSnapshot().hydration !== "ready" || reserved() || hasDraft() || current().source || !proof()
+      || input.projectId !== session.projectId || input.sessionToken !== session.sessionToken) return false;
+    const request = structuredClone(input), version = basisVersion.current, sequence = current().editSeq, metadata = metadataKey(projectRef.current);
+    let accepted = false;
+    await run(async () => {
+      nativeSelectionAttempted.current = true;
+      const selection = await startupCommands.claimDirectory(request);
+      if (!live() || !proof() || version !== basisVersion.current || sequence !== current().editSeq
+        || metadata !== metadataKey(projectRef.current) || hasDraft() || current().source) return;
+      if (selection.selectionId !== request.selectionId || !sameSourceEnvironment(selection.source, request.source)) invalidAcknowledgement();
+      basisVersion.current++; identity.current = null;
+      update(before => ({ ...before, source: request.source, domain: `${request.source.package.packageDigest}:${request.source.resourceId}`,
+        selection, selectionLabel: selection.folderName, preparationExpired: false, pickerUncertain: false,
+        sourceLanguage: projectRef.current.metadata.sourceLocale, declared: false, preflight: null, producerConsent: null,
+        checkReview: null, checkerConsent: null, confirmed: false, failure: null }));
+      accepted = true;
+    }, false, () => live() && proof());
+    return accepted;
   }
   async function preflight(proof: () => boolean = live, dispose?: () => void) {
     return withReadCleanup(dispose, async () => {
@@ -995,7 +1017,7 @@ export function SourceDraftSession({ project, children }: { project: ProjectView
     keepLocal: expected => { const conflict = journal.getSnapshot().conflict; return conflict ? journal.keepLocal(expected, conflict) : Promise.resolve(false); },
     draftValue: () => sourceDraftValue(inputs(), journal.sequence()), blocked, hasDraft, subscribe: journal.subscribe, getDecisionActivity: journal.getDecisionActivity, checkPending, readPreparation,
     current, inFlight: () => !!flight.current, hasPending, qualified: () => identity.current?.qualified === true, setSource, consentProducer, consentChecker, setDomain, declare, edit, confirm,
-    select: () => select(), selectDropped: ticket => select(ticket), preflight, start, retryStart: async () => { const request = current().pendingStart; if (request && current().startRetryAllowed && originalStartPermission(request, false)) await run(() => dispatchStart(request, true), true); },
+    select: () => select(), selectDropped: ticket => select(ticket), claimStartup, preflight, start, retryStart: async () => { const request = current().pendingStart; if (request && current().startRetryAllowed && originalStartPermission(request, false)) await run(() => dispatchStart(request, true), true); },
     checkStart: async () => { const request = current().pendingStart; if (request) await run(() => readStart(request, false), true); },
     checkPluginStart: async () => { const pending = current().pendingPlugin; if (pending?.pendingKind === "start-check") await run(() => readStart(pending.request, true), true); },
     prepareCheck, startCheck, finishCheck, canRetryPlugin, retryPlugin,

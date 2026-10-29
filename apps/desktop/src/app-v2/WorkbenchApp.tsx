@@ -10,7 +10,7 @@ import { SessionReadProvider, useSessionReadStatus } from "../SessionReadProvide
 import { CommandFailureDetails } from "../CommandFailure";
 import { executionContext } from "../executionCommands";
 import { ExecutionTaskHandleProvider, type useExecutionTaskSession } from "../ExecutionTaskSession";
-import { readRecentProjects, recentProjectName, rememberProject, type RecentProject } from "../recentProjects";
+import { readRecentProjects, readLastOpenProject, rememberProject, type RecentProject } from "../recentProjects";
 import { Button, IconButton } from "../design-system/Button";
 import { Field, TextInput } from "../design-system/Field";
 import { Banner, EmptyState, ErrorState, LoadingState } from "../design-system/Feedback";
@@ -63,6 +63,9 @@ import type { SourceDrop } from "./features/source/SourcePreparationSheet";
 import styles from "./WorkbenchLayout.module.css";
 import appStyles from "./WorkbenchApp.module.css";
 import ManualProjectPlan from "./features/startup/ManualProjectPlan";
+import StartupHandoff from "./features/startup/StartupHandoff";
+import Welcome from "./features/startup/Welcome";
+import { validateResponseStartupDropEvent, type StartupClaimRequest } from "../startupCommands";
 
 const EntriesView = lazy(() => import("./features/entries/EntriesView"));
 const EntryDetails = lazy(() => import("./features/entries/EntryDetails"));
@@ -132,7 +135,7 @@ function SourceLoadFailure({ canRetry, onRetry }: { canRetry: boolean; onRetry: 
     action={canRetry ? <Button onClick={onRetry}>{t("retryOwner")}</Button> : undefined}/>;
 }
 
-function ProjectWorkspace({ session, lifecycle, gate, readOnly, requestOpen, requestCreate }: { session: ProjectSession; lifecycle: ProjectLifecycle; gate: InteractionGate; readOnly: boolean; requestOpen: () => void; requestCreate: () => void }) {
+function ProjectWorkspace({ session, lifecycle, gate, readOnly, requestOpen, requestCreate, startupHandoff, onStartupHandled }: { session: ProjectSession; lifecycle: ProjectLifecycle; gate: InteractionGate; readOnly: boolean; requestOpen: () => void; requestCreate: () => void; startupHandoff: StartupClaimRequest | null; onStartupHandled: () => void }) {
   const [ExecutionOwnerHost, setExecutionOwnerHost] = useState(createExecutionOwnerHost), [KnowledgeOwnerHost, setKnowledgeOwnerHost] = useState(createKnowledgeOwnerHost);
   const [store] = useState(() => createWorkspaceStore({ initialLocale: session.project.metadata.targetLocales[0] ?? "" }));
   const [runtime, setRuntime] = useState<Runtime | null>(null);
@@ -316,15 +319,25 @@ function ProjectWorkspace({ session, lifecycle, gate, readOnly, requestOpen, req
     inspect: () => ({ status: gate.getSnapshot().composingOwners.length ? "blocked" : "ready", revision: JSON.stringify(gate.getSnapshot().composingOwners) }), prepareLeave: async () => false,
   }), [gate, lifecycle, session.project.sessionToken]);
   useEffect(() => {
-    let alive = true, next: Runtime | undefined;
-    // Let participant registration and StrictMode cleanup settle before acquiring a leave permit.
-    queueMicrotask(() => {
-      if (!alive) return;
-      next = createWorkspaceRouter({ store, gate, guard: (intent, current) => lifecycle.prepareLeave(intent, current), component: WorkspaceShell, onError: () => { if (alive) setNavigationFailed(true); } });
-      setRuntime(next);
-      void next.ready.then(accepted => { if (alive && !accepted) setNavigationFailed(true); }).catch(() => { if (alive) setNavigationFailed(true); });
-    });
-    return () => { alive = false; next?.dispose(); };
+    let alive = true, queued = false, next: Runtime | undefined;
+    // The acknowledging create/open may still be dismissing its dialog. Wait
+    // for that presentation to settle before acquiring the initial route permit.
+    const available = () => lifecycle.getSnapshot().phase === "idle" && gate.getSnapshot().dialogs.length === 0
+      && gate.getSnapshot().composingOwners.length === 0 && gate.getSnapshot().intentOwner === null;
+    const initialize = () => {
+      if (!alive || queued || next || !available()) return;
+      queued = true;
+      queueMicrotask(() => {
+        queued = false;
+        if (!alive || next || !available()) return;
+        next = createWorkspaceRouter({ store, gate, guard: (intent, current) => lifecycle.prepareLeave(intent, current), component: WorkspaceShell, onError: () => { if (alive) setNavigationFailed(true); } });
+        setRuntime(next);
+        void next.ready.then(accepted => { if (alive && !accepted) setNavigationFailed(true); }).catch(() => { if (alive) setNavigationFailed(true); });
+      });
+    };
+    const unlistenGate = gate.subscribe(initialize), unlistenLifecycle = lifecycle.subscribe(initialize);
+    initialize();
+    return () => { alive = false; unlistenGate(); unlistenLifecycle(); next?.dispose(); };
   }, [store, gate, lifecycle]);
   const { t } = useTranslation(undefined, { keyPrefix: "workbenchV2" });
   if (!runtime) return <LoadingState label={t("loadingEntries")} />;
@@ -365,6 +378,7 @@ function ProjectWorkspace({ session, lifecycle, gate, readOnly, requestOpen, req
     {comparisonsRequested && drafts ? <FeatureBoundary fallback={<ErrorState title={t("comparisonUnavailable")} description={t("comparisonUnavailableHelp")} />}><Suspense fallback={null}>
       <ComparisonOwnerHost project={session.project} drafts={drafts} lifecycle={lifecycle} onOwner={publishComparisonOwner} onReveal={requestComparisons}/>
     </Suspense></FeatureBoundary> : null}
+    {startupHandoff ? <StartupHandoff request={startupHandoff} owner={executionTasks ? sourceOwner : null} lifecycle={lifecycle} gate={gate} disabled={readOnly} onHandled={onStartupHandled} onOpen={revealSource}/> : null}
     {navigationFailed ? <Banner tone="error">{t("leaveChanged")}</Banner> : null}
     <ExecutionTaskHandleProvider value={executionTasks}><RouterProvider router={runtime.router} /></ExecutionTaskHandleProvider>
   </WorkspaceContext.Provider>;
@@ -1082,6 +1096,9 @@ function WorkspaceShell() {
 export default function WorkbenchApp({ controller: suppliedController, native = isTauri() }: { controller?: ProjectLifecycle; native?: boolean } = {}) {
   const { t } = useTranslation(undefined, { keyPrefix: "workbenchV2" });
   const { t: startup } = useTranslation(undefined, { keyPrefix: "startup" });
+  const [startupDrop, setStartupDrop] = useState<SourceDrop | null>(null), [startupDropFailure, setStartupDropFailure] = useState<CommandFailure | null>(null);
+  const [startupHandoff, setStartupHandoff] = useState<StartupClaimRequest | null>(null);
+  const [restoreCandidate] = useState(readLastOpenProject);
   const [stop, setStop] = useState<{ resolve: (allow: boolean) => void; current: () => boolean } | null>(null);
   const [gate] = useState(() => new InteractionGate());
   const [controller] = useState(() => suppliedController ?? new ProjectLifecycle({ confirmStop: (_project, _status, current) => new Promise(resolve => setStop({ resolve, current })) }));
@@ -1092,20 +1109,41 @@ export default function WorkbenchApp({ controller: suppliedController, native = 
   const [closeActionFailed, setCloseActionFailed] = useState(false);
   const busy = state.phase !== "idle", blocked = busy || !!state.pending || !!state.retainedSession || !!state.cleanup;
   const presentation = state.retainedSession ?? state.closingSession ?? state.session;
-  const pathSequence = useRef(0);
+  const pathSequence = useRef(0), openPicker = useRef(0), openCurrent = useRef(openPanel);
+  const appMounted = useRef(true);
+  useLayoutEffect(() => { appMounted.current = true; return () => { appMounted.current = false; openPicker.current++; }; }, []);
+  useLayoutEffect(() => { openCurrent.current = openPanel; if (!openPanel) openPicker.current++; }, [openPanel]);
   const rememberedSession = useRef<string | null>(null);
   const sessionIdentity = state.session ? `${state.session.project.metadata.projectId}:${state.session.project.sessionToken}` : null;
   useEffect(() => {
-    if (sessionIdentity && sessionIdentity !== rememberedSession.current && state.session) setRecent(rememberProject(state.session.project));
+    if (sessionIdentity && sessionIdentity !== rememberedSession.current && state.session) {
+      setRecent(rememberProject(state.session.project)); setStartupDropFailure(null);
+    }
     rememberedSession.current = sessionIdentity;
   }, [sessionIdentity, state.session]);
   useLayoutEffect(() => openPanel ? gate.pushDialog("project-open") : undefined, [gate, openPanel]);
   useLayoutEffect(() => stop ? gate.pushDialog("stop-running") : undefined, [gate, stop]);
   useLayoutEffect(() => discard ? gate.pushDialog("discard-workspace") : undefined, [gate, discard]);
+  const applicationPresentation = useRef({ discard, openPanel });
+  useLayoutEffect(() => { applicationPresentation.current = { discard, openPanel }; });
   useEffect(() => controller.register({ id: "application-input", area: "overview", scope: { kind: "application" },
-    inspect: intent => ({ status: gate.getSnapshot().composingOwners.length || discard || openPanel && intent.kind !== "open-project" ? "blocked" : "ready", revision: `${pathSequence.current}:${discard}:${openPanel}:${gate.getSnapshot().composingOwners.join(",")}` }),
+    inspect: intent => intent.kind === "restore" ? { status: "ready", revision: "retained-application-presentation" }
+      : { status: gate.getSnapshot().composingOwners.length || applicationPresentation.current.discard || applicationPresentation.current.openPanel && intent.kind !== "open-project" ? "blocked" : "ready", revision: `${pathSequence.current}:${applicationPresentation.current.discard}:${applicationPresentation.current.openPanel}:${gate.getSnapshot().composingOwners.join(",")}` },
     prepareLeave: async () => false,
-  }), [controller, gate, discard, openPanel]);
+  }), [controller, gate]);
+  useEffect(() => {
+    if (!native || !isTauri() || presentation) return;
+    let alive = true, unlisten: (() => void) | undefined;
+    void import("@tauri-apps/api/event").then(({ listen }) => listen<unknown>("startup-native-drop", event => {
+      const current = controller.getSnapshot();
+      if (!alive || current.session || current.retainedSession || current.closingSession) return;
+      if (!validateResponseStartupDropEvent(event.payload)) { setStartupDropFailure(commandFailure(new Error("Invalid native startup drop"))); return; }
+      if (event.payload.kind === "ready") {
+        setStartupDrop({ dropTicket: event.payload.dropTicket, folderName: event.payload.folderName }); setStartupDropFailure(null); setCreatePanel(true);
+      } else setStartupDropFailure(commandFailure(event.payload.error));
+    })).then(remove => { if (alive) unlisten = remove; else remove(); }).catch(error => { if (alive) setStartupDropFailure(commandFailure(error)); });
+    return () => { alive = false; unlisten?.(); };
+  }, [native, presentation, controller]);
   async function open(path: string) {
     const sequence = pathSequence.current;
     const success = await controller.open(path);
@@ -1114,8 +1152,12 @@ export default function WorkbenchApp({ controller: suppliedController, native = 
     else if (project && sequence !== pathSequence.current) setOpenPanel(true);
   }
   async function chooseFolder() {
-    try { const chosen = await pickDirectory({ directory: true, multiple: false }); if (typeof chosen === "string") { pathSequence.current++; setLocator(chosen); setPickerFailed(false); } }
-    catch { setPickerFailed(true); }
+    const sequence = pathSequence.current, ticket = ++openPicker.current;
+    try {
+      const chosen = await pickDirectory({ directory: true, multiple: false });
+      if (appMounted.current && openCurrent.current && ticket === openPicker.current && sequence === pathSequence.current
+        && controller.getSnapshot().phase === "idle" && typeof chosen === "string") { pathSequence.current++; setLocator(chosen); setPickerFailed(false); }
+    } catch { if (appMounted.current && openCurrent.current && ticket === openPicker.current) setPickerFailed(true); }
   }
   async function continueClosing() {
     const original = controller.getSnapshot().cleanup?.request;
@@ -1143,13 +1185,13 @@ export default function WorkbenchApp({ controller: suppliedController, native = 
       {error ? <Banner tone="error" action={state.pending?.kind === "runtime" || state.pending?.session && (state.pending.kind === "open" || state.pending.kind === "close") ? <Button disabled={busy} onClick={() => void controller.checkPending()}>{t("checkResult")}</Button> : undefined}>{errorText}</Banner> : null}
       {state.retainedSession ? <Banner tone="warning" action={<Button onClick={() => setDiscard(true)}>{t("discardRetained")}</Button>}>{t("retained")}</Banner> : null}
       {presentation ? <SessionReadProvider key={`${presentation.project.metadata.projectId}:${presentation.project.sessionToken}`} context={executionContext(presentation.project)} reads={presentation.reads} bridge={!presentation.reads.retired}>
-        <ProjectWorkspace session={presentation} lifecycle={controller} gate={gate} readOnly={presentation !== state.session || !!state.retainedSession} requestOpen={() => setOpenPanel(true)} requestCreate={() => { setOpenPanel(false); setCreatePanel(true); }} />
-      </SessionReadProvider> : <main className={appStyles.welcome}><span className={appStyles.brand}>紡 Tsumugi</span><h1>{t("welcome")}</h1><p>{t("welcomeHelp")}</p>{openForm}
-        <Button disabled={!native || blocked} onClick={() => setCreatePanel(true)}>{startup("manual")}</Button>
-        {recent.length ? <section className={appStyles.recent}><h2>{t("recent")}</h2>{recent.map(item => <Button key={item.locator} disabled={!native || blocked} onClick={() => void open(item.locator)}>{recentProjectName(item.locator)}<small>{item.locator}</small></Button>)}</section> : null}
-      </main>}
-      <Dialog open={openPanel && !!presentation} onOpenChange={setOpenPanel} title={t("openProject")} description={t("welcomeHelp")} closeLabel={t("close")}>{openForm}</Dialog>
-      <ManualProjectPlan controller={controller} gate={gate} open={createPanel} onOpenChange={setCreatePanel} native={native}/>
+        <ProjectWorkspace session={presentation} lifecycle={controller} gate={gate} readOnly={presentation !== state.session || !!state.retainedSession} requestOpen={() => setOpenPanel(true)} requestCreate={() => { setOpenPanel(false); setCreatePanel(true); }}
+          startupHandoff={startupHandoff?.projectId === presentation.project.metadata.projectId && startupHandoff.sessionToken === presentation.project.sessionToken ? startupHandoff : null} onStartupHandled={() => setStartupHandoff(null)}/>
+      </SessionReadProvider> : <Welcome recent={recent} restoreCandidate={restoreCandidate} native={native} blocked={blocked || createPanel || openPanel} gate={gate}
+        onOpen={path => void open(path)} onChoose={() => setCreatePanel(true)} onManual={() => setCreatePanel(true)} onOpenExisting={() => setOpenPanel(true)}/>}
+      {startupDropFailure ? <Banner tone="error" action={<Button disabled={!native || blocked} onClick={() => setCreatePanel(true)}>{startup("chooseSourceFolder")}</Button>}>{startup("sourceSelectionFailed")}<CommandFailureDetails failure={startupDropFailure}/></Banner> : null}
+      <Dialog open={openPanel} onOpenChange={setOpenPanel} title={t("openProject")} description={t("welcomeHelp")} closeLabel={t("close")}>{openForm}</Dialog>
+      <ManualProjectPlan controller={controller} gate={gate} open={createPanel} onOpenChange={setCreatePanel} native={native} drop={startupDrop} onDropConsumed={() => setStartupDrop(null)} onCreated={setStartupHandoff}/>
       <Dialog open={!!stop} onOpenChange={value => { if (!value && stop) { stop.resolve(false); setStop(null); } }} title={t("stopTitle")} description={t("stopHelp")} closeLabel={t("stay")} footer={<><Button onClick={() => { stop?.resolve(false); setStop(null); }}>{t("stay")}</Button><Button variant="danger" onClick={() => { if (stop) stop.resolve(stop.current()); setStop(null); }}>{t("stopAndLeave")}</Button></>}>{t("stopHelp")}</Dialog>
       <Dialog open={discard} onOpenChange={setDiscard} title={t("discardRetained")} description={t("discardHelp")} closeLabel={t("stay")} footer={<><Button onClick={() => setDiscard(false)}>{t("stay")}</Button><Button variant="danger" onClick={() => { controller.discardRetained(); setDiscard(false); }}>{t("discardRetained")}</Button></>}>{t("discardHelp")}</Dialog>
     </div>

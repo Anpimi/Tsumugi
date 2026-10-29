@@ -19,6 +19,8 @@ macro_rules! handlers {
         super::changes::read_project_changes, super::create_project,super::open_project,super::read_project,super::rename_project,
         decisions::read_decision_page,
         super::add_target_locale,super::set_target_locales,super::close_project,
+        super::startup::select_startup_source_directory,super::startup::select_dropped_startup_source_directory,
+        super::startup::read_startup_source_preflight,super::startup::claim_startup_source_directory,
         super::drafts::read_local_draft,super::drafts::read_local_drafts,super::drafts::write_local_draft,
         super::drafts::clear_local_draft,super::drafts::list_local_drafts,
         super::drafts::read_local_conversation_draft,super::drafts::write_local_conversation_draft,

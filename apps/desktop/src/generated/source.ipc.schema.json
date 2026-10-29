@@ -1650,6 +1650,62 @@
         ],
         "type": "object"
       },
+      "StartupClaimRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "projectId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "selectionId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "sessionToken": {
+            "type": "string"
+          },
+          "source": {
+            "$ref": "#/definitions/PluginSourceRequest"
+          }
+        },
+        "required": [
+          "selectionId",
+          "source",
+          "projectId",
+          "sessionToken"
+        ],
+        "type": "object"
+      },
+      "StartupDropRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "dropTicket": {
+            "$ref": "#/definitions/ExecutionId"
+          }
+        },
+        "required": [
+          "dropTicket"
+        ],
+        "type": "object"
+      },
+      "StartupPreflightRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "selectionId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "source": {
+            "$ref": "#/definitions/PluginSourceRequest"
+          }
+        },
+        "required": [
+          "selectionId",
+          "source"
+        ],
+        "type": "object"
+      },
+      "StartupSelectRequest": {
+        "additionalProperties": false,
+        "type": "object"
+      },
       "StopSourceMaintenanceHook": {
         "additionalProperties": false,
         "properties": {
@@ -1790,9 +1846,25 @@
       },
       "startAction": {
         "$ref": "#/definitions/StartRequest"
+      },
+      "startupClaim": {
+        "$ref": "#/definitions/StartupClaimRequest"
+      },
+      "startupDrop": {
+        "$ref": "#/definitions/StartupDropRequest"
+      },
+      "startupPreflight": {
+        "$ref": "#/definitions/StartupPreflightRequest"
+      },
+      "startupSelect": {
+        "$ref": "#/definitions/StartupSelectRequest"
       }
     },
     "required": [
+      "startupSelect",
+      "startupDrop",
+      "startupPreflight",
+      "startupClaim",
       "session",
       "capture",
       "start",
@@ -2812,6 +2884,46 @@
           "decision",
           "actor",
           "reason"
+        ],
+        "type": "object"
+      },
+      "DeclaredMaterial": {
+        "additionalProperties": false,
+        "properties": {
+          "byteLength": {
+            "format": "uint32",
+            "maximum": 4294967295,
+            "minimum": 0,
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "logicalPath": {
+            "type": "string"
+          },
+          "maxBytes": {
+            "format": "uint32",
+            "maximum": 4294967295,
+            "minimum": 0,
+            "type": "integer"
+          },
+          "role": {
+            "type": "string"
+          },
+          "sha256": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "logicalPath",
+          "role",
+          "maxBytes",
+          "byteLength",
+          "sha256"
         ],
         "type": "object"
       },
@@ -6014,6 +6126,91 @@
         ],
         "type": "object"
       },
+      "StartupDirectory": {
+        "additionalProperties": false,
+        "properties": {
+          "folderName": {
+            "type": "string"
+          },
+          "selectionId": {
+            "$ref": "#/definitions/ExecutionId"
+          }
+        },
+        "required": [
+          "selectionId",
+          "folderName"
+        ],
+        "type": "object"
+      },
+      "StartupDropEvent": {
+        "oneOf": [
+          {
+            "additionalProperties": false,
+            "properties": {
+              "dropTicket": {
+                "$ref": "#/definitions/ExecutionId"
+              },
+              "folderName": {
+                "type": "string"
+              },
+              "kind": {
+                "const": "ready",
+                "type": "string"
+              }
+            },
+            "required": [
+              "kind",
+              "dropTicket",
+              "folderName"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "properties": {
+              "error": {
+                "$ref": "#/definitions/CommandError"
+              },
+              "kind": {
+                "const": "rejected",
+                "type": "string"
+              }
+            },
+            "required": [
+              "kind",
+              "error"
+            ],
+            "type": "object"
+          }
+        ]
+      },
+      "StartupPreflight": {
+        "additionalProperties": false,
+        "properties": {
+          "complete": {
+            "type": "boolean"
+          },
+          "directory": {
+            "$ref": "#/definitions/StartupDirectory"
+          },
+          "materials": {
+            "items": {
+              "$ref": "#/definitions/DeclaredMaterial"
+            },
+            "type": "array"
+          },
+          "source": {
+            "$ref": "#/definitions/PluginSourceView"
+          }
+        },
+        "required": [
+          "directory",
+          "source",
+          "materials",
+          "complete"
+        ],
+        "type": "object"
+      },
       "StopSourceMaintenanceHook": {
         "additionalProperties": false,
         "properties": {
@@ -6245,9 +6442,28 @@
             "type": "null"
           }
         ]
+      },
+      "startupDirectory": {
+        "anyOf": [
+          {
+            "$ref": "#/definitions/StartupDirectory"
+          },
+          {
+            "type": "null"
+          }
+        ]
+      },
+      "startupDropEvent": {
+        "$ref": "#/definitions/StartupDropEvent"
+      },
+      "startupPreflight": {
+        "$ref": "#/definitions/StartupPreflight"
       }
     },
     "required": [
+      "startupDirectory",
+      "startupPreflight",
+      "startupDropEvent",
       "startAction",
       "integration",
       "selection",

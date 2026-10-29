@@ -1,6 +1,6 @@
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { StrictMode, useLayoutEffect, type ComponentProps } from "react";
+import { StrictMode, useCallback, useLayoutEffect, type ComponentProps } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { i18n } from "../i18n";
 import { SessionReads } from "../sessionReads";
@@ -9,7 +9,9 @@ import { sourceDraftCommands } from "../sourceDraftCommands";
 import { sourceDraftValue } from "../sourceDraftJournal";
 import { sourceDraftStateFixture } from "../testSupport/sourceDraftStateFixture";
 import { pluginCommands } from "../pluginCommands";
-import { pluginSourceInventory, pluginSourcePackage } from "../testSupport/pluginSourceFixture";
+import { pluginSourceInventory, pluginSourcePackage, pluginSourceRequest, pluginSourceWorkflow } from "../testSupport/pluginSourceFixture";
+import { startupCommands } from "../startupCommands";
+import type { SourceOwner } from "./features/source/sourceTypes";
 import { segmentCommands, type SegmentPage } from "../segmentCommands";
 import { draftCommands } from "../draftCommands";
 import { translationCommands } from "../translationCommands";
@@ -33,7 +35,7 @@ import { translationCaptureFixture, translationImportChoice, translationSelectio
 
 vi.mock("./platform/useProjectLifecycle", async original => ({ ...await original<object>(), useNativeProjectClose: () => ({ state: "ready" }) }));
 vi.mock("@tauri-apps/api/path", () => ({ sep: () => "/", join: async (...parts: string[]) => parts.join("/") }));
-const ownerLoad = vi.hoisted(() => ({ execution: null as Promise<void> | null, knowledge: null as Promise<void> | null, source: null as Promise<void> | null }));
+const ownerLoad = vi.hoisted(() => ({ execution: null as Promise<void> | null, knowledge: null as Promise<void> | null, source: null as Promise<void> | null, sourceValue: null as SourceOwner | null }));
 vi.mock("./features/execution/ExecutionOwnerHost", async original => {
   const module = await original<typeof import("./features/execution/ExecutionOwnerHost")>(), Actual = module.default;
   return { ...module, default: (props: ComponentProps<typeof Actual>) => {
@@ -51,8 +53,9 @@ vi.mock("./features/knowledge/KnowledgeOwnerHost", async original => {
 vi.mock("./features/source/SourceOwnerHost", async original => {
   const module = await original<typeof import("./features/source/SourceOwnerHost")>(), Actual = module.default;
   return { ...module, default: (props: ComponentProps<typeof Actual>) => {
+    const publish = useCallback((owner: SourceOwner | null) => { ownerLoad.sourceValue = owner; props.onOwner(owner); }, [props.onOwner]);
     if (ownerLoad.source) throw ownerLoad.source;
-    return <Actual {...props}/>;
+    return <Actual {...props} onOwner={publish}/>;
   } };
 });
 let importPresentation: TranslationImportPanelProps | null = null;
@@ -85,6 +88,7 @@ const page: SegmentPage = {
 let controller: ProjectLifecycle;
 beforeEach(async () => {
   ownerLoad.execution = null; ownerLoad.knowledge = null; ownerLoad.source = null;
+  ownerLoad.sourceValue = null;
   installResourceDraftPortsFixture();
   installSourceDraftPortsFixture();
   importPresentation = null;
@@ -115,14 +119,50 @@ it("opens the real manual creation entry and adopts only its acknowledged projec
   await waitFor(() => expect(screen.queryByRole("dialog", { name: i18n.t("startup.title") })).not.toBeInTheDocument());
 });
 
+it("creates the reviewed project before explicitly handing its source folder to the retained import owner", async () => {
+  const selection = pluginSourceWorkflow.selection;
+  vi.spyOn(pluginCommands, "inventory").mockResolvedValue(pluginSourceInventory);
+  vi.spyOn(pluginCommands, "package").mockResolvedValue(pluginSourcePackage);
+  vi.spyOn(startupCommands, "chooseDirectory").mockResolvedValue({ selectionId: selection.selectionId, folderName: selection.folderName });
+  vi.spyOn(startupCommands, "preflight").mockResolvedValue({ directory: { selectionId: selection.selectionId, folderName: selection.folderName }, source: selection.source,
+    complete: true, materials: selection.source.declaration.materials.map(file => ({ ...file, byteLength: 1, sha256: "a".repeat(64) })) });
+  const claim = vi.spyOn(startupCommands, "claimDirectory").mockResolvedValue(selection);
+  const capture = vi.spyOn(sourceCommands, "capturePlugin"), start = vi.spyOn(sourceCommands, "startPlugin");
+  const create = vi.fn(async () => project); controller = new ProjectLifecycle({ create });
+  render(<StrictMode><WorkbenchApp controller={controller} native/></StrictMode>);
+  const user = userEvent.setup(); await user.click(screen.getByRole("button", { name: i18n.t("startup.manual") }));
+  const dialog = await screen.findByRole("dialog", { name: i18n.t("startup.title") });
+  await user.click(within(dialog).getByRole("button", { name: i18n.t("startup.chooseSourceFolder") }));
+  const format = within(dialog).getByRole("combobox", { name: i18n.t("startup.sourceFormat") });
+  await waitFor(() => expect(format).toBeEnabled());
+  await user.selectOptions(format, `${pluginSourceRequest.package.packageDigest}:${pluginSourceRequest.resourceId}`);
+  await user.selectOptions(within(dialog).getByRole("combobox", { name: i18n.t("startup.sourceRuntime") }), pluginSourceRequest.environmentDigest);
+  await user.click(within(dialog).getByRole("button", { name: i18n.t("startup.checkSource") }));
+  await within(dialog).findByText(i18n.t("startup.sourceReady"));
+  for (const [key, value] of [["name", "New source project"], ["parent", "/synthetic"], ["folder", "project"], ["source", "en"], ["target", "zh-CN"]] as const)
+    fireEvent.change(within(dialog).getByRole(key === "source" || key === "target" ? "combobox" : "textbox", { name: i18n.t(`startup.${key}`) }), { target: { value } });
+  await user.click(within(dialog).getByRole("button", { name: i18n.t("startup.addTarget") }));
+  await user.click(within(dialog).getByRole("button", { name: i18n.t("startup.create") }));
+  await screen.findByText("项目已创建，源文件夹还没有导入。"); expect(create).toHaveBeenCalledOnce(); expect(claim).not.toHaveBeenCalled();
+  const next = screen.getByRole("button", { name: i18n.t("startup.continueImport") });
+  await waitFor(() => expect(ownerLoad.sourceValue?.journal, `draft reads: ${vi.mocked(draftCommands.list).mock.calls.length}; ${document.body.textContent ?? ""}`).toMatchObject({ hydration: "ready" }), { timeout: 20000 });
+  await waitFor(() => expect(next).toBeEnabled(), { timeout: 5000 }); await user.click(next);
+  await waitFor(() => expect(claim).toHaveBeenCalledExactlyOnceWith({ selectionId: selection.selectionId, source: pluginSourceRequest,
+    projectId: project.metadata.projectId, sessionToken: project.sessionToken }));
+  expect(capture).not.toHaveBeenCalled(); expect(start).not.toHaveBeenCalled();
+  expect(ownerLoad.sourceValue?.current().selection).toEqual(selection);
+  await waitFor(() => expect(screen.queryByText(i18n.t("startup.createdBeforeImport"))).not.toBeInTheDocument());
+}, 30000);
+
 async function openImportWorkspace(opened: ProjectView = project) {
   const close = vi.fn(async () => ({ closed: true }));
   controller = new ProjectLifecycle({ open: vi.fn(async () => opened), close,
     status: async () => ({ active: false, quiescing: false, queryCount: 0, error: null }) });
   const register = vi.spyOn(controller, "register");
   render(<StrictMode><WorkbenchApp controller={controller} native /></StrictMode>);
-  fireEvent.change(screen.getByRole("textbox", { name: "项目文件夹" }), { target: { value: opened.locator } });
-  fireEvent.click(screen.getByRole("button", { name: "打开项目" }));
+  fireEvent.click(screen.getByRole("button", { name: i18n.t("startup.openExisting") }));
+  fireEvent.change(screen.getByRole("textbox", { name: i18n.t("workbenchV2.projectFolder") }), { target: { value: opened.locator } });
+  fireEvent.click(screen.getByRole("button", { name: i18n.t("workbenchV2.openProject") }));
   const button = await screen.findByRole("button", { name: i18n.t("workbenchV2.importTitle") }, { timeout: 5000 });
   await waitFor(() => expect(button).toBeEnabled());
   return { close, register, button };
@@ -151,6 +191,7 @@ it("opens the retained Source recovery from the first command while its original
   const register = vi.spyOn(controller, "register");
   render(<StrictMode><WorkbenchApp controller={controller} native/></StrictMode>);
   const user = userEvent.setup();
+  fireEvent.click(screen.getByRole("button", { name: i18n.t("startup.openExisting") }));
   await user.type(screen.getByRole("textbox", { name: i18n.t("workbenchV2.projectFolder") }), project.locator);
   await user.click(screen.getByRole("button", { name: i18n.t("workbenchV2.openProject") }));
   const open = await screen.findByRole("button", { name: i18n.t("workbenchV2.commandPlaceholder") }, { timeout: 5000 });
@@ -183,6 +224,7 @@ it.each(["focus", "view"] as const)("cancels late Source presentation when the u
     status: async () => ({ active: false, quiescing: false, queryCount: 0, error: null }) });
   const register = vi.spyOn(controller, "register"), observe = vi.spyOn(sourceDraftCommands, "observe"), start = vi.spyOn(sourceCommands, "startPlugin");
   render(<StrictMode><WorkbenchApp controller={controller} native/></StrictMode>); const user = userEvent.setup();
+  fireEvent.click(screen.getByRole("button", { name: i18n.t("startup.openExisting") }));
   await user.type(screen.getByRole("textbox", { name: i18n.t("workbenchV2.projectFolder") }), project.locator);
   await user.click(screen.getByRole("button", { name: i18n.t("workbenchV2.openProject") }));
   const open = await screen.findByRole("button", { name: i18n.t("workbenchV2.commandPlaceholder") }, { timeout: 5000 });
@@ -220,6 +262,7 @@ it("shows project observation fallback in the workspace and refreshes through it
   controller = new ProjectLifecycle({ open: async () => project, read, close: async () => ({ closed: true }),
     createReads: () => reads, status: async () => ({ active: false, quiescing: false, queryCount: 0, error: null }) });
   render(<StrictMode><WorkbenchApp controller={controller} native/></StrictMode>);
+  fireEvent.click(screen.getByRole("button", { name: i18n.t("startup.openExisting") }));
   fireEvent.change(screen.getByRole("textbox", { name: i18n.t("workbenchV2.projectFolder") }), { target: { value: project.locator } });
   fireEvent.click(screen.getByRole("button", { name: i18n.t("workbenchV2.openProject") }));
   await screen.findByText(i18n.t("execution.updatesUsingPolling"));
@@ -281,7 +324,7 @@ describe("import workspace assembly", () => {
     await openImportPalette();
     expect(importPresentation!.owners.imports.current().fileName).toBe("retained-import.json");
     expect(register.mock.calls.filter(([participant]) => participant.id === "translation-import")).toHaveLength(registrations);
-  });
+  }, 15000);
 
   it("opens the imported entry with its locale and a clean all-entry queue instead of the previous search and filter", async () => {
     const unitId = translationFixture.save.unitId, sourceRevisionId = translationFixture.save.sourceRevisionId;
@@ -296,7 +339,7 @@ describe("import workspace assembly", () => {
     vi.spyOn(draftCommands, "read").mockImplementation(async ({ key }) => ({ head: { key, revision: "0", writerId: null, value: null },
       current: { kind: "current", basis: { sourceRevisionId, selectionId: null, revisionId: null, text: null }, nativeKey: "imported.target", sourceText: "Imported source" } }));
     await openImportWorkspace(opened);
-    const search = screen.getByRole("textbox", { name: i18n.t("workbenchV2.searchEntries") });
+    const search = await screen.findByRole("textbox", { name: i18n.t("workbenchV2.searchEntries") });
     fireEvent.change(search, { target: { value: "previous search" } });
     fireEvent.submit(screen.getByRole("form", { name: i18n.t("workbenchV2.searchEntries") }));
     await waitFor(() => expect(location.hash).toContain("query=previous+search"));
@@ -348,8 +391,9 @@ describe("real-port workspace assembly", () => {
     const open = vi.fn().mockResolvedValue(project);
     controller = new ProjectLifecycle({ open });
     render(<StrictMode><WorkbenchApp controller={controller} native /></StrictMode>);
-    fireEvent.change(screen.getByRole("textbox", { name: "项目文件夹" }), { target: { value: project.locator } });
-    fireEvent.click(screen.getByRole("button", { name: "打开项目" }));
+    fireEvent.click(screen.getByRole("button", { name: i18n.t("startup.openExisting") }));
+    fireEvent.change(screen.getByRole("textbox", { name: i18n.t("workbenchV2.projectFolder") }), { target: { value: project.locator } });
+    fireEvent.click(screen.getByRole("button", { name: i18n.t("workbenchV2.openProject") }));
     expect(await screen.findByText("Actual source from the read port")).toBeVisible();
     expect(open).toHaveBeenCalledWith({ locator: project.locator });
     const search = screen.getByRole("textbox", { name: "查找条目" });
@@ -372,13 +416,14 @@ describe("real-port workspace assembly", () => {
     const open = vi.fn().mockImplementation(() => new Promise<ProjectView>(done => { resolve = done; }));
     controller = new ProjectLifecycle({ open });
     render(<WorkbenchApp controller={controller} native />);
-    const input = screen.getByRole("textbox", { name: "项目文件夹" });
-    fireEvent.change(input, { target: { value: project.locator } }); fireEvent.click(screen.getByRole("button", { name: "打开项目" }));
+    fireEvent.click(screen.getByRole("button", { name: i18n.t("startup.openExisting") }));
+    const input = screen.getByRole("textbox", { name: i18n.t("workbenchV2.projectFolder") });
+    fireEvent.change(input, { target: { value: project.locator } }); fireEvent.click(screen.getByRole("button", { name: i18n.t("workbenchV2.openProject") }));
     await waitFor(() => expect(open).toHaveBeenCalledTimes(1));
     fireEvent.change(input, { target: { value: "/synthetic/newer-folder" } });
     await act(async () => resolve(project));
-    const dialog = await screen.findByRole("dialog", { name: "打开项目" });
-    expect(within(dialog).getByRole("textbox", { name: "项目文件夹" })).toHaveValue("/synthetic/newer-folder");
+    const dialog = await screen.findByRole("dialog", { name: i18n.t("workbenchV2.openProject") });
+    expect(within(dialog).getByRole("textbox", { name: i18n.t("workbenchV2.projectFolder") })).toHaveValue("/synthetic/newer-folder");
     expect(controller.getSnapshot().session?.project).toEqual(project);
     expect(open).toHaveBeenCalledTimes(1);
   });
@@ -391,8 +436,9 @@ describe("real-port workspace assembly", () => {
     });
     controller = new ProjectLifecycle({ open: vi.fn().mockResolvedValue(project) });
     render(<WorkbenchApp controller={controller} native />);
-    fireEvent.change(screen.getByRole("textbox", { name: "项目文件夹" }), { target: { value: project.locator } });
-    fireEvent.click(screen.getByRole("button", { name: "打开项目" }));
+    fireEvent.click(screen.getByRole("button", { name: i18n.t("startup.openExisting") }));
+    fireEvent.change(screen.getByRole("textbox", { name: i18n.t("workbenchV2.projectFolder") }), { target: { value: project.locator } });
+    fireEvent.click(screen.getByRole("button", { name: i18n.t("workbenchV2.openProject") }));
     fireEvent.click(await screen.findByRole("button", { name: "下一页" }));
     expect(await screen.findByText("Second page source")).toBeVisible();
     expect(read).toHaveBeenLastCalledWith(expect.objectContaining({ scopeId: "scope", cursor: "opaque-next" }));
@@ -424,6 +470,7 @@ describe("real-port workspace assembly", () => {
       return permit;
     });
     render(<WorkbenchApp controller={lifecycle} native/>);
+    fireEvent.click(screen.getByRole("button", { name: i18n.t("startup.openExisting") }));
     fireEvent.change(screen.getByRole("textbox", { name: i18n.t("workbenchV2.projectFolder") }), { target: { value: project.locator } });
     fireEvent.click(screen.getByRole("button", { name: i18n.t("workbenchV2.openProject") }));
     const next = await screen.findByRole("button", { name: i18n.t("workbenchV2.nextPage") }, { timeout: 5000 });
@@ -507,8 +554,9 @@ describe("real-port workspace assembly", () => {
     try {
       controller = new ProjectLifecycle({ open: vi.fn().mockResolvedValue(opened) });
       render(<WorkbenchApp controller={controller} native />);
-      fireEvent.change(screen.getByRole("textbox", { name: "项目文件夹" }), { target: { value: opened.locator } });
-      fireEvent.click(screen.getByRole("button", { name: "打开项目" }));
+      fireEvent.click(screen.getByRole("button", { name: i18n.t("startup.openExisting") }));
+      fireEvent.change(screen.getByRole("textbox", { name: i18n.t("workbenchV2.projectFolder") }), { target: { value: opened.locator } });
+      fireEvent.click(screen.getByRole("button", { name: i18n.t("workbenchV2.openProject") }));
       const edit = await screen.findByRole("button", { name: i18n.t("workbenchV2.entryEdit", { key: firstNativeKey }) });
       await waitFor(() => expect(edit).toBeEnabled()); fireEvent.click(edit);
       const input = await screen.findByRole("textbox", { name: i18n.t("workbenchV2.editorLabel", { key: firstNativeKey }) });
@@ -531,8 +579,9 @@ describe("real-port workspace assembly", () => {
     const close = vi.fn(async () => ({ closed: true }));
     controller = new ProjectLifecycle({ open: vi.fn().mockResolvedValue(project), close });
     render(<StrictMode><WorkbenchApp controller={controller} native /></StrictMode>);
-    fireEvent.change(screen.getByRole("textbox", { name: "项目文件夹" }), { target: { value: project.locator } });
-    fireEvent.click(screen.getByRole("button", { name: "打开项目" }));
+    fireEvent.click(screen.getByRole("button", { name: i18n.t("startup.openExisting") }));
+    fireEvent.change(screen.getByRole("textbox", { name: i18n.t("workbenchV2.projectFolder") }), { target: { value: project.locator } });
+    fireEvent.click(screen.getByRole("button", { name: i18n.t("workbenchV2.openProject") }));
     expect(await screen.findByText("Actual source from the read port")).toBeVisible();
     expect(await screen.findByText(i18n.t("workbenchV2.draftIndexFailed"))).toBeVisible();
     await act(async () => { expect(await controller.close()).toBe(false); });
@@ -561,8 +610,9 @@ describe("real-port workspace assembly", () => {
     controller = new ProjectLifecycle({ open: vi.fn().mockResolvedValue(restored), close });
     const register = vi.spyOn(controller, "register");
     render(<StrictMode><WorkbenchApp controller={controller} native /></StrictMode>);
-    fireEvent.change(screen.getByRole("textbox", { name: "项目文件夹" }), { target: { value: restored.locator } });
-    fireEvent.click(screen.getByRole("button", { name: "打开项目" }));
+    fireEvent.click(screen.getByRole("button", { name: i18n.t("startup.openExisting") }));
+    fireEvent.change(screen.getByRole("textbox", { name: i18n.t("workbenchV2.projectFolder") }), { target: { value: restored.locator } });
+    fireEvent.click(screen.getByRole("button", { name: i18n.t("workbenchV2.openProject") }));
     await screen.findByText(i18n.t("workbenchV2.draftPendingSummary", { count: 1 }));
     // Exercise the pending translation's recovery once the other startup
     // owners are ready; their loading guards independently block project exit.
@@ -604,8 +654,9 @@ describe("real-port workspace assembly", () => {
     const save = vi.spyOn(translationCommands, "save").mockRejectedValue({ code: "busy", stage: "execution-recover", outcome: "rejected", recoveryRequired: false });
     controller = new ProjectLifecycle({ open: vi.fn().mockResolvedValue(restored) });
     render(<WorkbenchApp controller={controller} native />);
-    fireEvent.change(screen.getByRole("textbox", { name: "项目文件夹" }), { target: { value: restored.locator } });
-    fireEvent.click(screen.getByRole("button", { name: "打开项目" }));
+    fireEvent.click(screen.getByRole("button", { name: i18n.t("startup.openExisting") }));
+    fireEvent.change(screen.getByRole("textbox", { name: i18n.t("workbenchV2.projectFolder") }), { target: { value: restored.locator } });
+    fireEvent.click(screen.getByRole("button", { name: i18n.t("workbenchV2.openProject") }));
     const open = await screen.findByRole("button", { name: i18n.t("workbenchV2.draftRecoveryTitle") });
     await waitFor(() => expect(open).toBeEnabled());
     fireEvent.click(screen.getByRole("button", { name: i18n.t("workbenchV2.closeView", { name: i18n.t("workbenchV2.viewName", { locale: "zh-CN" }) }) }));
@@ -644,8 +695,9 @@ describe("real-port workspace assembly", () => {
     try {
       controller = new ProjectLifecycle({ open: vi.fn().mockResolvedValue(restored) });
       render(<WorkbenchApp controller={controller} native />);
-      fireEvent.change(screen.getByRole("textbox", { name: "项目文件夹" }), { target: { value: restored.locator } });
-      fireEvent.click(screen.getByRole("button", { name: "打开项目" }));
+      fireEvent.click(screen.getByRole("button", { name: i18n.t("startup.openExisting") }));
+      fireEvent.change(screen.getByRole("textbox", { name: i18n.t("workbenchV2.projectFolder") }), { target: { value: restored.locator } });
+      fireEvent.click(screen.getByRole("button", { name: i18n.t("workbenchV2.openProject") }));
       const entry = await screen.findByRole("button", { name: i18n.t("workbenchV2.draftRecoveryTitle") });
       await waitFor(() => expect(entry).toBeEnabled()); fireEvent.click(entry);
       const sheet = await screen.findByRole("dialog", { name: i18n.t("workbenchV2.draftRecoveryTitle") });

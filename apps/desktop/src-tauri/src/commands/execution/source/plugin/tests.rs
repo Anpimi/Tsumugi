@@ -1,6 +1,28 @@
 use super::*;
 use serde_json::{Value, json};
 
+#[cfg(any(windows, target_os = "macos"))]
+#[test]
+fn startup_handoff_cannot_replace_a_newer_source_selection() {
+    let directory = tempfile::tempdir().unwrap();
+    let mut sessions = crate::commands::SessionManager::default();
+    sessions.create(crate::commands::CreateProjectRequest { destination: directory.path().join("project").to_string_lossy().into(),
+        display_name: "Startup handoff".into(), source_locale: "en-US".into(), target_locales: vec!["fr".into()] }).unwrap();
+    let bytes: Value = serde_json::from_str(include_str!("../../../../../../test/fixtures/pluginSourceWorkflow.contract.json")).unwrap();
+    let source: PluginSourceRequest = serde_json::from_value(bytes["select"]["source"].clone()).unwrap();
+    let view: PluginSourceView = serde_json::from_value(bytes["selection"]["source"].clone()).unwrap();
+    let selection = Arc::new(capture::Selection::authorize(directory.path().into()).unwrap());
+    let a = ExecutionId::new(); let b = ExecutionId::new();
+    let active = sessions.active.as_mut().unwrap();
+    accept_startup_selection(active, selection.clone(), a, source.clone(), view.clone()).unwrap();
+    {
+        let host = active.execution_parts().unwrap().0;
+        host.source.selection = Some((b, selection.clone())); host.source.plugin.choice = Some((b, source.clone()));
+    }
+    assert!(accept_startup_selection(active, selection, a, source, view).is_err());
+    assert_eq!(active.execution_parts().unwrap().0.source.selection.as_ref().unwrap().0, b);
+}
+
 #[test]
 fn source_workflow_wire_binds_each_consent_to_a_fixed_attempt() {
     let fixture: Value = serde_json::from_str(include_str!(

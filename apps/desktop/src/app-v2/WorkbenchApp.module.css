@@ -9,3 +9,13 @@
 .recent h2 { font-size: var(--text-sm); line-height: var(--line-sm); font-weight: var(--weight-regular); color: var(--color-text-secondary); }
 .viewTab { display: flex; align-items: center; }
 .viewTab[data-active] { color: var(--color-text-primary); background: var(--color-bg-subtle); border-radius: var(--radius-md); }
+.dropZone { display: flex; flex-direction: column; align-items: center; gap: var(--space-4); width: 100%; padding: var(--space-8); border: 1px dashed var(--color-border-default); border-radius: var(--radius-lg); background: var(--color-bg-subtle); color: var(--color-text-primary); cursor: pointer; font: inherit; }
+.dropZone small, .resume, .recent small, .recent time { color: var(--color-text-secondary); font-size: var(--text-xs); }
+.dropZone:focus-visible { outline: 2px solid var(--color-accent-solid); outline-offset: 3px; }
+.dropZone:disabled { cursor: default; opacity: .6; }
+.welcomeActions { display: flex; flex-wrap: wrap; gap: var(--space-4); margin-block-start: var(--space-7); }
+.recent { align-items: stretch; }
+.recent > button { display: grid; grid-template-columns: 1fr auto; gap: var(--space-2) var(--space-4); text-align: start; }
+.recent small { grid-column: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 36ch; }
+.recent time { grid-column: 2; grid-row: 1 / span 2; align-self: center; }
+@media (max-width: 560px) { .recent > button { grid-template-columns: 1fr; } .recent time { grid-column: 1; grid-row: auto; } }

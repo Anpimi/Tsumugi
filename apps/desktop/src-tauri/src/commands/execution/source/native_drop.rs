@@ -5,7 +5,8 @@ use crate::commands::plugins::PluginSourceRequest;
 use std::{path::PathBuf, time::Instant};
 use tauri::{Emitter, Manager};
 
-const TICKET_LIFETIME: Duration = Duration::from_secs(60);
+#[cfg(test)]
+const TICKET_LIFETIME: Duration = crate::commands::native_directory::LIFETIME;
 const EVENT: &str = "source-native-drop";
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -16,12 +17,8 @@ pub(super) struct DropScope {
     pub(super) generation: ExecutionId,
 }
 
-struct DropTicket {
-    id: ExecutionId,
-    scope: DropScope,
-    path: PathBuf,
-    issued: Instant,
-}
+impl crate::commands::native_directory::Scope for DropScope { fn window(&self) -> &str { &self.window } }
+type DropTicket = crate::commands::native_directory::Drop<DropScope>;
 
 #[derive(Default)]
 pub(super) struct NativeDropSession {
@@ -36,9 +33,7 @@ impl NativeDropSession {
     }
 
     fn clear_window(&mut self, window: &str) -> Option<ExecutionId> {
-        if self.ticket.as_ref().is_some_and(|ticket| ticket.scope.window == window) {
-            self.ticket = None;
-        }
+        DropTicket::clear_window(&mut self.ticket, window);
         self.picker.as_ref().filter(|(label, _)| label == window)?;
         self.picker.take().map(|(_, picker)| picker)
     }
@@ -59,29 +54,14 @@ impl NativeDropSession {
         paths: Vec<PathBuf>,
         now: Instant,
     ) -> Result<NativeSourceDropEvent, CommandError> {
-        // A new native drop supersedes the prior invitation, including rejected
-        // multi-file drops. Directory authorization still belongs to Selection.
-        self.ticket = None;
-        if paths.len() != 1 {
-            return Err(map_source(ExecutionError::new(
-                ErrorCode::InvalidInput,
-                "native-drop-one-directory",
-            )));
-        }
-        let path = paths.into_iter().next().expect("one native drop path");
-        let id = ExecutionId::new();
-        let folder_name = path
-            .file_name()
-            .unwrap_or(path.as_os_str())
-            .to_string_lossy()
-            .into_owned();
+        let (id, folder_name) = DropTicket::register(&mut self.ticket, scope.clone(), paths, now)
+            .map_err(|_| map_source(ExecutionError::new(ErrorCode::InvalidInput, "native-drop-one-directory")))?;
         let event = NativeSourceDropEvent::Ready {
             drop_ticket: id,
             folder_name,
             session_token: scope.session_token.clone(),
             project_id: scope.project_id,
         };
-        self.ticket = Some(DropTicket { id, scope, path, issued: now });
         Ok(event)
     }
 
@@ -91,15 +71,11 @@ impl NativeDropSession {
         scope: &DropScope,
         now: Instant,
     ) -> Result<PathBuf, CommandError> {
-        let ticket = self.ticket.as_ref().ok_or_else(stale)?;
-        if now.saturating_duration_since(ticket.issued) >= TICKET_LIFETIME {
-            self.clear();
-            return Err(stale());
+        match DropTicket::consume(&mut self.ticket, id, scope, now) {
+            Ok(path) => Ok(path),
+            Err(crate::commands::native_directory::Rejected::Expired) => { self.picker = None; Err(stale()) }
+            Err(_) => Err(stale()),
         }
-        if ticket.id != id || ticket.scope != *scope {
-            return Err(stale());
-        }
-        Ok(self.ticket.take().expect("checked native drop ticket").path)
     }
 }
 
@@ -157,7 +133,7 @@ pub(in crate::commands) fn on_window_event<R: tauri::Runtime>(
                 }
                 return Ok(None);
             }
-            let active = sessions.active.as_ref().ok_or_else(stale)?;
+            let Some(active) = sessions.active.as_ref() else { return Ok(None); };
             let token = active.token.clone();
             let project = ExecutionId::parse(&active.store.metadata()
                 .map_err(|error| map_persistence_error(error, CommandStage::ExecutionRead))?

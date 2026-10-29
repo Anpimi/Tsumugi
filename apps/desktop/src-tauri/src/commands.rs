@@ -14,8 +14,10 @@ mod drafts;
 mod execution;
 pub(crate) mod mcp;
 mod mcp_retrieval;
+mod native_directory;
 mod plugins;
 mod source_hooks;
+mod startup;
 
 use serde::{Deserialize, Serialize};
 use tauri::State;
@@ -441,6 +443,7 @@ struct ProjectServiceContext {
 
 #[derive(Default)]
 struct SessionManager {
+    startup: startup::StartupSession,
     mcp: mcp::Shares,
     mcp_retrieval: mcp_retrieval::Retrievals,
     source_hooks: source_hooks::SourceHooks,
@@ -591,6 +594,7 @@ impl SessionManager {
             .map_err(|error| map_persistence_error(error, CommandStage::Create))?;
         let token = new_session_token();
         let view = project_view(&token, &locator, &metadata, ReconciliationState::Settled);
+        self.startup.created(&view);
         self.active = Some(ActiveSession {
             services: self.services.clone(),
             token,
@@ -635,6 +639,7 @@ impl SessionManager {
         // A fresh host cannot inherit an earlier process's running authority.
         // Reading an already active locator above keeps its current session.
         candidate.pause_idle_automation(CommandStage::Open)?;
+        self.startup.retire();
         self.active = Some(candidate);
         Ok(view)
     }
@@ -1025,6 +1030,7 @@ impl SessionManager {
             .expect("active session checked above")
             .pause_idle_automation(CommandStage::Close)?;
         let active = self.active.take().expect("active session checked above");
+        self.startup.retire();
         active
             .store
             .close()
@@ -1216,6 +1222,7 @@ pub fn register_commands<R: tauri::Runtime>(builder: tauri::Builder<R>) -> tauri
     builder
         .on_window_event(|window, event| {
             use tauri::Manager;
+            startup::on_window_event(window, event);
             execution::source::native_drop::on_window_event(window, event);
             if window.label() == "main" && matches!(event, tauri::WindowEvent::Destroyed) {
                 window.state::<AppState>().disconnect_change_events();

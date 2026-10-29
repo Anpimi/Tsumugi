@@ -27,6 +27,10 @@ export declare function validateRequestSourceContext(value: unknown): value is R
 export declare function validateRequestSourceContextBlock(value: unknown): value is Requests["sourceContextBlock"];
 export declare function validateRequestStart(value: unknown): value is Requests["start"];
 export declare function validateRequestStartAction(value: unknown): value is Requests["startAction"];
+export declare function validateRequestStartupClaim(value: unknown): value is Requests["startupClaim"];
+export declare function validateRequestStartupDrop(value: unknown): value is Requests["startupDrop"];
+export declare function validateRequestStartupPreflight(value: unknown): value is Requests["startupPreflight"];
+export declare function validateRequestStartupSelect(value: unknown): value is Requests["startupSelect"];
 export declare function validateResponseAction(value: unknown): value is Responses["action"];
 export declare function validateResponseAdoptionAction(value: unknown): value is Responses["adoptionAction"];
 export declare function validateResponseAttempt(value: unknown): value is Responses["attempt"];
@@ -55,3 +59,6 @@ export declare function validateResponseSelection(value: unknown): value is Resp
 export declare function validateResponseSourceContext(value: unknown): value is Responses["sourceContext"];
 export declare function validateResponseSourceContextBlock(value: unknown): value is Responses["sourceContextBlock"];
 export declare function validateResponseStartAction(value: unknown): value is Responses["startAction"];
+export declare function validateResponseStartupDirectory(value: unknown): value is Responses["startupDirectory"];
+export declare function validateResponseStartupDropEvent(value: unknown): value is Responses["startupDropEvent"];
+export declare function validateResponseStartupPreflight(value: unknown): value is Responses["startupPreflight"];

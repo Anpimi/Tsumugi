@@ -33,7 +33,10 @@ fn native_drop_ticket_is_single_use_and_bound_to_every_current_scope_component()
     }
     assert!(tickets.consume(ExecutionId::new(), &scope, now).is_err());
     assert_eq!(tickets.consume(id, &scope, now).unwrap(), PathBuf::from("/native/materials"));
+    let picker = ExecutionId::new();
+    tickets.begin_selection("main".into(), picker);
     assert!(tickets.consume(id, &scope, now).is_err());
+    assert_eq!(tickets.picker, Some(("main".into(), picker)));
 }
 
 #[test]
@@ -42,7 +45,9 @@ fn expired_replaced_destroyed_and_rejected_drops_cannot_restore_a_ticket() {
     let now = Instant::now();
     let mut tickets = NativeDropSession::default();
     let expired = register(&mut tickets, &scope, now);
+    tickets.begin_selection("main".into(), ExecutionId::new());
     assert!(tickets.consume(expired, &scope, now + TICKET_LIFETIME).is_err());
+    assert!(tickets.picker.is_none());
     let replaced = register(&mut tickets, &scope, now);
     let current = register(&mut tickets, &scope, now);
     assert!(tickets.consume(replaced, &scope, now).is_err());

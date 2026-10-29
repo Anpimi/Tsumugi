@@ -47,6 +47,10 @@ export interface Requests {
   sourceContextBlock: SourceContextBlockReadRequest;
   start: StartRequest;
   startAction: StartRequest;
+  startupClaim: StartupClaimRequest;
+  startupDrop: StartupDropRequest;
+  startupPreflight: StartupPreflightRequest;
+  startupSelect: StartupSelectRequest;
 }
 export interface SourceAdoptRequest {
   actionId: ExecutionId;
@@ -441,3 +445,17 @@ export interface StartRequest {
   sessionToken: string;
   sourceLanguage: string;
 }
+export interface StartupClaimRequest {
+  projectId: ExecutionId;
+  selectionId: ExecutionId;
+  sessionToken: string;
+  source: PluginSourceRequest;
+}
+export interface StartupDropRequest {
+  dropTicket: ExecutionId;
+}
+export interface StartupPreflightRequest {
+  selectionId: ExecutionId;
+  source: PluginSourceRequest;
+}
+export interface StartupSelectRequest {}

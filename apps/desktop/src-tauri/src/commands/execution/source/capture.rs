@@ -17,6 +17,81 @@ use tsumugi_core::content::{self, MAX_MANIFEST_BYTES, MAX_SOURCE_BYTES, Translat
 mod destination;
 pub(crate) use destination::Destination;
 
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+#[cfg_attr(feature = "wire-schema", derive(schemars::JsonSchema))]
+pub(in crate::commands) struct DeclaredMaterial {
+    pub logical_path: String,
+    pub role: String,
+    pub max_bytes: u32,
+    pub byte_length: Option<u32>,
+    pub sha256: Option<String>,
+}
+
+#[cfg(any(windows, target_os = "macos"))]
+impl Selection {
+    /// Read only the installed declaration's fixed files. This does not parse
+    /// content, choose a language, create a source bundle or execute a component.
+    pub(in crate::commands) fn inspect_declared(&self, binding: &tsumugi_plugin_sdk::SourceImportBinding) -> Result<Vec<DeclaredMaterial>, ExecutionError> {
+        self.inspect_declared_inner(binding, || {})
+    }
+    fn inspect_declared_inner(&self, binding: &tsumugi_plugin_sdk::SourceImportBinding, observed: impl FnOnce()) -> Result<Vec<DeclaredMaterial>, ExecutionError> {
+        use sha2::{Digest, Sha256};
+        struct Opened {
+            path: PathBuf, file: File, bytes: Vec<u8>, max_bytes: usize,
+            #[cfg(target_os = "macos")]
+            stamp: platform::Stamp,
+        }
+        binding.validate().map_err(|_| error(ErrorCode::InvalidInput, "source-import-binding"))?;
+        self.verify()?;
+        let started = Instant::now();
+        let check = || if started.elapsed() > Duration::from_secs(30) { Err(error(ErrorCode::Busy, "capture-timeout")) } else { Ok(()) };
+        let mut result = Vec::new();
+        let mut identities = Vec::new();
+        let mut held = Vec::new();
+        for material in &binding.declaration.materials {
+            check()?;
+            let path = self.root.join(&material.logical_path);
+            let mut item = DeclaredMaterial { logical_path: material.logical_path.clone(), role: material.role.clone(), max_bytes: material.max_bytes, byte_length: None, sha256: None };
+            let mut file = match platform::open(&path, false) {
+                Ok(file) => file,
+                Err(failure) if failure.stage == "missing-companion" => { result.push(item); continue; }
+                Err(failure) => return Err(failure),
+            };
+            let identity = platform::identity(&file)?;
+            if platform::final_path(&file)? != path || identities.contains(&identity) { return Err(error(ErrorCode::Unauthorized, "unauthorized-selection")); }
+            identities.push(identity);
+            #[cfg(target_os = "macos")]
+            let stamp = platform::stamp(&file)?;
+            let bytes = read(&mut file, material.max_bytes as usize, &check)?;
+            item.byte_length = Some(u32::try_from(bytes.len()).map_err(|_| error(ErrorCode::LimitExceeded, "limit-exceeded"))?);
+            item.sha256 = Some(format!("{:x}", Sha256::digest(&bytes)));
+            result.push(item);
+            held.push(Opened { path, file, bytes, max_bytes: material.max_bytes as usize,
+                #[cfg(target_os = "macos")]
+                stamp,
+            });
+        }
+        observed();
+        for mut entry in held {
+            if entry.bytes != read(&mut entry.file, entry.max_bytes, &check)? || platform::final_path(&entry.file)? != entry.path {
+                return Err(error(ErrorCode::DependencyConflict, "source-changed"));
+            }
+            #[cfg(target_os = "macos")]
+            platform::verify_file(&entry.file, &entry.path, entry.stamp)?;
+        }
+        self.verify()?; check()?;
+        Ok(result)
+    }
+}
+
+#[cfg(not(any(windows, target_os = "macos")))]
+impl Selection {
+    pub(in crate::commands) fn inspect_declared(&self, _: &tsumugi_plugin_sdk::SourceImportBinding) -> Result<Vec<DeclaredMaterial>, ExecutionError> {
+        Err(error(ErrorCode::InvalidInput, "native-source-unavailable"))
+    }
+}
+
 fn error(code: ErrorCode, reason: &str) -> ExecutionError {
     ExecutionError::new(code, reason)
 }
@@ -1195,6 +1270,34 @@ mod source_import_tests {
         assert_eq!(bundle.files[1].utf8, "opaque companion");
         fs::write(root.path().join("materials/raw.txt"), b"new bytes").unwrap();
         assert_eq!(bundle.files[0].utf8, "\u{feff}raw 👩🏽‍💻 é\r\n");
+    }
+    #[test]
+    fn source_preflight_uses_declared_files_detects_change_and_reports_missing_without_interpreting_content() {
+        let root = fixture(); let selected = Selection::authorize(root.path().into()).unwrap();
+        fs::write(root.path().join("unrelated.txt"), "excluded").unwrap();
+        let first = selected.inspect_declared(&binding()).unwrap();
+        assert_eq!(first.len(), 2); assert!(first.iter().all(|file| file.byte_length.is_some() && file.sha256.is_some()));
+        fs::write(root.path().join("materials/raw.txt"), [0xff]).unwrap();
+        let changed = selected.inspect_declared(&binding()).unwrap(); assert_ne!(first[0].sha256, changed[0].sha256);
+        assert!(selected.capture_declared(&binding(), "en-US", &Cancellation::default()).is_err());
+        fs::remove_file(root.path().join("metadata/header.txt")).unwrap();
+        assert!(selected.inspect_declared(&binding()).unwrap()[1].byte_length.is_none());
+        fs::write(root.path().join("materials/raw.txt"), vec![b'x'; 131073]).unwrap();
+        assert!(selected.inspect_declared(&binding()).is_err());
+        #[cfg(target_os = "macos")]
+        {
+            fs::write(root.path().join("materials/raw.txt"), "small material").unwrap();
+            std::os::unix::fs::symlink(root.path().join("materials/raw.txt"), root.path().join("metadata/header.txt")).unwrap();
+            assert!(selected.inspect_declared(&binding()).is_err());
+        }
+    }
+    #[test]
+    fn source_preflight_rechecks_the_whole_declared_set_before_returning_its_basis() {
+        let root = fixture(); let selected = Selection::authorize(root.path().into()).unwrap();
+        let result = selected.inspect_declared_inner(&binding(), || {
+            fs::write(root.path().join("materials/raw.txt"), "changed after the first pass").unwrap();
+        });
+        assert_eq!(result.unwrap_err().stage, "source-changed");
     }
     #[test]
     fn source_import_capture_refuses_missing_oversized_invalid_utf8_and_cancelled_material() {

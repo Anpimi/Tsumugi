@@ -6,6 +6,7 @@ import { useSourceDraftSession } from "./SourceDraftSession";
 import SourceDraftRecovery from "./SourceDraftRecovery";
 import { sourceDraftCommands, canonicalSourceDraft } from "./sourceDraftCommands";
 import { sourceCommands } from "./sourceCommands";
+import { startupCommands } from "./startupCommands";
 import { executionCommands, type Receipt } from "./executionCommands";
 import type { CommandError, ProjectView } from "./projectCommands";
 import { Field, TextInput } from "./design-system/Field";
@@ -40,6 +41,46 @@ beforeEach(async () => {
 });
 afterEach(cleanup);
 async function open(value = project) { const result = renderWorkbench(<Probe/>, value); await waitFor(() => expect(owner.journal.hydration).toBe("ready")); return result; }
+
+it("hands the prepared startup directory to the original Source draft without capturing, declaring or starting import", async () => {
+  const claim = vi.spyOn(startupCommands, "claimDirectory").mockResolvedValue(pluginSourceWorkflow.selection);
+  const capture = vi.spyOn(sourceCommands, "capturePlugin"), start = vi.spyOn(sourceCommands, "startPlugin");
+  const view = await open(), request = { projectId: project.metadata.projectId, sessionToken: project.sessionToken,
+    selectionId: pluginSourceWorkflow.selection.selectionId, source: pluginSourceRequest };
+  await act(async () => { expect(await owner.claimStartup(request)).toBe(true); await owner.flush(); });
+  expect(claim).toHaveBeenCalledExactlyOnceWith(request);
+  expect(owner.current()).toMatchObject({ source: pluginSourceRequest, selection: pluginSourceWorkflow.selection,
+    selectionLabel: pluginSourceWorkflow.selection.folderName, declared: false, preflight: null, producerConsent: null, confirmed: false });
+  expect(capture).not.toHaveBeenCalled(); expect(start).not.toHaveBeenCalled();
+  expect(executionCommands.identity).not.toHaveBeenCalled();
+  view.unmount(); await open({ ...project, sessionToken: "reopened-startup-project" });
+  expect(owner.current().selection).toBeNull(); expect(owner.current().selectionLabel).toBe(pluginSourceWorkflow.selection.folderName);
+  expect(owner.current().declared).toBe(false); expect(claim).toHaveBeenCalledOnce();
+});
+
+it("does not replace Source input B or a later choice with a delayed startup handoff", async () => {
+  const reply = deferred<typeof pluginSourceWorkflow.selection>();
+  const claim = vi.spyOn(startupCommands, "claimDirectory").mockReturnValue(reply.promise);
+  await open();
+  const request = { projectId: project.metadata.projectId, sessionToken: project.sessionToken,
+    selectionId: pluginSourceWorkflow.selection.selectionId, source: pluginSourceRequest };
+  let pending!: Promise<boolean>; act(() => { pending = owner.claimStartup(request); });
+  await waitFor(() => expect(claim).toHaveBeenCalledOnce());
+  act(() => owner.edit("actor", "Newer human B 人工"));
+  await act(async () => { reply.resolve(pluginSourceWorkflow.selection); expect(await pending).toBe(false); });
+  expect(owner.current().actor).toBe("Newer human B 人工"); expect(owner.current().selection).toBeNull();
+  await act(async () => { expect(await owner.claimStartup(request)).toBe(false); }); expect(claim).toHaveBeenCalledOnce();
+});
+
+it("refuses another project's startup selection and keeps an existing Source configuration", async () => {
+  const claim = vi.spyOn(startupCommands, "claimDirectory"); await open();
+  const request = { projectId: project.metadata.projectId, sessionToken: project.sessionToken,
+    selectionId: pluginSourceWorkflow.selection.selectionId, source: pluginSourceRequest };
+  await act(async () => { expect(await owner.claimStartup({ ...request, sessionToken: "other-session" })).toBe(false); });
+  act(() => owner.setSource(pluginSourceRequest));
+  await act(async () => { expect(await owner.claimStartup(request)).toBe(false); });
+  expect(owner.current().source).toEqual(pluginSourceRequest); expect(claim).not.toHaveBeenCalled();
+});
 
 it("checkpoints exact adoption A before dispatch, retains newer B, and restores B under a new session", async () => {
   const reply = deferred<Receipt>();
