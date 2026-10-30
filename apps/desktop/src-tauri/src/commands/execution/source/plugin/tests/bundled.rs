@@ -11,6 +11,11 @@ use std::{
 };
 use tauri::Manager;
 
+#[path = "bundled_maintenance.rs"]
+mod maintenance;
+
+type TestWindow = tauri::WebviewWindow<tauri::test::MockRuntime>;
+
 struct Materials {
     plugin: &'static str,
     files: &'static [(&'static str, &'static str)],
@@ -65,10 +70,16 @@ fn removable(path: &Path) {
     }
 }
 
-fn journey(material: Materials) {
-    let temporary = OwnedTemporary(tempfile::tempdir().unwrap());
+fn bundled_application(
+    temporary: &Path,
+) -> (
+    tauri::App<tauri::test::MockRuntime>,
+    TestWindow,
+    Value,
+    String,
+) {
     let prepared = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("resources");
-    let resources = temporary.path().join("resources");
+    let resources = temporary.join("resources");
     fs::create_dir(&resources).unwrap();
     copy_tree(
         &prepared.join("bundled-plugins"),
@@ -89,7 +100,7 @@ fn journey(material: Materials) {
     let state = app.state::<AppState>();
     state
         .plugins
-        .configure(temporary.path().join("application"))
+        .configure(temporary.join("application"))
         .unwrap();
     state
         .plugins
@@ -104,9 +115,21 @@ fn journey(material: Materials) {
     let offer = &inventory["defaultsOffer"];
     assert_eq!(offer["availability"], "available");
     assert_eq!(offer["packages"].as_array().unwrap().len(), 2);
+    let environment = offer["runtimeEnvironmentDigest"]
+        .as_str()
+        .unwrap()
+        .to_owned();
     let installed = call(&window, "install_plugin_defaults", json!({"id":offer["id"],"selectionDigest":offer["selectionDigest"],"expectedRevision":inventory["settingsRevision"],"actionId":ExecutionId::new()})).unwrap();
     assert_eq!(installed["packages"].as_array().unwrap().len(), 2);
     assert_eq!(installed["runtimes"].as_array().unwrap().len(), 1);
+    drop(state);
+    (app, window, installed, environment)
+}
+
+fn journey(material: Materials) {
+    let temporary = OwnedTemporary(tempfile::tempdir().unwrap());
+    let (app, window, installed, environment) = bundled_application(temporary.path());
+    let state = app.state::<AppState>();
     let selected = installed["packages"]
         .as_array()
         .unwrap()
@@ -117,10 +140,6 @@ fn journey(material: Materials) {
         plugin: serde_json::from_value(selected["plugin"].clone()).unwrap(),
         package_digest: selected["packageDigest"].as_str().unwrap().into(),
     };
-    let environment = offer["runtimeEnvironmentDigest"]
-        .as_str()
-        .unwrap()
-        .to_owned();
     let source_choice = PluginSourceRequest {
         package: package.clone(),
         resource_id: "source-profile".into(),
