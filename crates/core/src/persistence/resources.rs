@@ -2034,9 +2034,16 @@ impl ProjectStore {
         }
         let mut selected_statement = connection
             .prepare(
-                "SELECT o.unit_id,o.revision_id,o.native_key,r.text,s.event_id,s.revision_id,
+                "WITH first_occurrences AS MATERIALIZED (
+                   SELECT o.snapshot_id,o.unit_id,MIN(o.ordinal) AS ordinal
+                   FROM source_effective_occurrences o
+                   JOIN content_scope c ON c.current_snapshot=o.snapshot_id
+                   GROUP BY o.snapshot_id,o.unit_id)
+                 SELECT o.unit_id,o.revision_id,o.native_key,r.text,s.event_id,s.revision_id,
                         COALESCE(b.last_change_rowid,0)
-                 FROM source_effective_occurrences o
+                 FROM first_occurrences first
+                 JOIN source_effective_occurrences o ON o.snapshot_id=first.snapshot_id
+                   AND o.unit_id=first.unit_id AND o.ordinal=first.ordinal
                  JOIN source_units u ON u.unit_id=o.unit_id
                  JOIN source_revisions r ON r.revision_id=o.revision_id
                  JOIN content_scope c ON c.current_snapshot=o.snapshot_id
@@ -2046,8 +2053,6 @@ impl ProjectStore {
                    AND (?3 IS NULL OR o.unit_id IN (SELECT value FROM json_each(?3)))
                    AND s.sequence=(SELECT MAX(x.sequence) FROM translation_selections x
                                    WHERE x.unit_id=s.unit_id AND x.locale=s.locale)
-                   AND o.ordinal=(SELECT MIN(first.ordinal) FROM source_effective_occurrences first
-                                  WHERE first.snapshot_id=o.snapshot_id AND first.unit_id=o.unit_id)
                  ORDER BY o.unit_id LIMIT 2001",
             )
             .map_err(sql)?;
@@ -3493,6 +3498,90 @@ mod tests {
                 text: text.into(),
             })
             .unwrap();
+    }
+
+    #[test]
+    fn resource_impacts_keep_first_occurrence_subsets_and_latest_selection_baseline() {
+        let directory = tempfile::tempdir().unwrap();
+        let mut store = ProjectStore::create(
+            directory.path().join("project"),
+            ProjectMetadata::create("Shared resource impacts", "en", ["zh-CN", "fr-FR"]).unwrap(),
+        ).unwrap();
+        crate::content::tests::adopt_shared_source_fixture(&mut store);
+        let project = ExecutionId::parse(&store.metadata().unwrap().project_id().to_string()).unwrap();
+        let snapshot = store.content_scope().unwrap().current_snapshot.unwrap();
+        let rows = store.source_content(snapshot, 0, 3).unwrap().rows;
+        let shared = rows[0].unit_id.unwrap();
+        let tail = rows[2].unit_id.unwrap();
+        assert_eq!(rows[1].unit_id, Some(shared));
+        assert_ne!(rows[0].occurrence.key, rows[1].occurrence.key);
+        let old = store.save_translation_revision(&SaveTranslationRevision {
+            reuse_origin: None,
+            project_id: project,
+            action_id: ExecutionId::new(),
+            unit_id: shared,
+            locale: "zh-CN".into(),
+            source_revision_id: rows[0].source_revision_id.unwrap(),
+            expected_selection_id: None,
+            text: "Earlier {{token}}".into(),
+        }).unwrap();
+        selected_translation(&mut store, project, tail, "zh-CN", "Case translation");
+        selected_translation(&mut store, project, shared, "fr-FR", "French {{token}}");
+        for (source, unit) in [("Shared", shared), ("Case-sensitive", tail)] {
+            store.save_term(&SaveTerm {
+                project_id: project,
+                action_id: ExecutionId::new(),
+                term_id: None,
+                locale: "zh-CN".into(),
+                source: source.into(),
+                aliases: vec![],
+                target: "Terminology".into(),
+                protected: false,
+                scope_unit_id: Some(unit),
+                expected_revision_id: None,
+                reason: "Synthetic scoped impact".into(),
+            }).unwrap();
+        }
+
+        let original = store.resource_impacts(project, "zh-CN", 0, 100).unwrap().items;
+        assert_eq!(original.len(), 2);
+        assert_eq!(original.iter().map(|item| item.unit_id).collect::<BTreeSet<_>>(),
+            BTreeSet::from([shared, tail]));
+        let first = original.iter().find(|item| item.unit_id == shared).unwrap();
+        assert_eq!(first.native_key, rows[0].occurrence.key);
+        assert_eq!(first.source_revision_id, rows[0].source_revision_id.unwrap());
+        assert_eq!(first.source_text, rows[0].occurrence.text);
+        assert_eq!(first.selection_event_id, old.event_id);
+        assert_eq!(first.translation_revision_id, old.revision_id);
+        for unit in [shared, tail] {
+            let subset = store.capture_resource_impacts(project, "zh-CN", Some(&[unit]))
+                .unwrap().evaluate().unwrap();
+            assert_eq!(subset, original.iter().filter(|item| item.unit_id == unit)
+                .cloned().collect::<Vec<_>>());
+        }
+        assert!(store.capture_resource_impacts(project, "zh-CN", Some(&[]))
+            .unwrap().evaluate().unwrap().is_empty());
+        assert!(store.resource_impacts(project, "fr-FR", 0, 100).unwrap().items.is_empty());
+
+        let latest = store.save_translation_revision(&SaveTranslationRevision {
+            reuse_origin: None,
+            project_id: project,
+            action_id: ExecutionId::new(),
+            unit_id: shared,
+            locale: "zh-CN".into(),
+            source_revision_id: rows[0].source_revision_id.unwrap(),
+            expected_selection_id: Some(old.event_id),
+            text: "Revised {{token}}".into(),
+        }).unwrap();
+        let captured = store.capture_resource_impacts(project, "zh-CN", None).unwrap();
+        assert_eq!(captured.selections.len(), 2);
+        let current = captured.selections.iter().find(|row| row.0 == shared.to_string()).unwrap();
+        assert_eq!(current.4, latest.event_id.to_string());
+        assert_eq!(current.5, latest.revision_id.to_string());
+        assert!(current.6 > 0);
+        assert_eq!(captured.evaluate().unwrap(),
+            original.into_iter().filter(|item| item.unit_id == tail).collect::<Vec<_>>());
+        assert_eq!(store.translation_history(project, shared, "zh-CN", 0, 10).unwrap().total, 2);
     }
 
     #[test]

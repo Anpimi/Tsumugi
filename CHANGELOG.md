@@ -136,7 +136,7 @@ Current workspace version metadata: **`0.2.0-alpha.1`**. Because the published `
 
 ### Fixed
 
-- Read review targets in batches when collecting items that need a decision, reducing repeated project-wide reads in larger workspaces while preserving finding history and partial results.
+- Reduce repeated reads and source scans for project progress and items that need a decision, while preserving complete checks, finding history and clear indicators when results are incomplete.
 
 - Fix ⌘S on Mac and Ctrl+S on Windows in the opt-in workspace so the current editor confirms its translation. Keys already handled by another control keep their existing behavior.
 
