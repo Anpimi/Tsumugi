@@ -414,7 +414,7 @@ function ProjectWorkspace({ session, lifecycle, gate, readOnly, requestOpen, req
       queueMicrotask(() => {
         queued = false;
         if (!alive || next || !available()) return;
-        next = createWorkspaceRouter({ store, gate, guard: (intent, current) => lifecycle.prepareLeave(intent, current), component: WorkspaceShell, onError: () => { if (alive) setNavigationFailed(true); } });
+        next = createWorkspaceRouter({ projectId: session.project.metadata.projectId, store, gate, guard: (intent, current) => lifecycle.prepareLeave(intent, current), component: WorkspaceShell, onError: () => { if (alive) setNavigationFailed(true); } });
         setRuntime(next);
         void next.ready.then(accepted => { if (alive && !accepted) setNavigationFailed(true); }).catch(() => { if (alive) setNavigationFailed(true); });
       });
@@ -422,7 +422,7 @@ function ProjectWorkspace({ session, lifecycle, gate, readOnly, requestOpen, req
     const unlistenGate = gate.subscribe(initialize), unlistenLifecycle = lifecycle.subscribe(initialize);
     initialize();
     return () => { alive = false; unlistenGate(); unlistenLifecycle(); next?.dispose(); };
-  }, [store, gate, lifecycle]);
+  }, [store, gate, lifecycle, session.project.metadata.projectId]);
   useLayoutEffect(() => lifecycle.register({ id: "project-mcp-sharing", area: "resources", scope: { kind: "project", ...executionContext(session.project) },
     inspect: intent => ["navigate", "language", "close-view", "restore"].includes(intent.kind) ? { status: "ready", revision: "retained-mcp-sharing" }
       : mcpParticipant.current?.inspect(intent) ?? { status: "blocked", revision: "mcp-owner-loading" },

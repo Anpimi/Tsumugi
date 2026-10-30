@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { createWorkspaceStore } from "./workspaceStore";
 import { workspaceViewHref } from "./workspaceRouter";
+const projectId = "project-a";
 const selected = (id: string, locale = "zh-CN") => ({ kind: "ids" as const, locale, sourceSnapshotId: "snapshot", unitIds: [id] });
 
 describe("workspace view state", () => {
@@ -12,7 +13,7 @@ describe("workspace view state", () => {
     store.getState().patch("runs", { scroll: { top: 360, left: 0 } }); store.getState().activate("runs");
     expect(store.getState().views.runs).toMatchObject({ runExpanded: ["plan-a"], scroll: { top: 360, left: 0 } });
     expect(store.getState().views.entry.runReturn?.planId).toBe("plan-a");
-    expect(workspaceViewHref(store.getState().views.entry)).not.toMatch(/plan-a|conversation-a/);
+    expect(workspaceViewHref(store.getState().views.entry, projectId)).not.toMatch(/plan-a|conversation-a/);
   });
 
   it("keeps an exact delivery target separate from entry state and copies caller references", () => {
@@ -27,7 +28,7 @@ describe("workspace view state", () => {
     expect(store.getState().views.entries.deliveryTarget).toBeNull();
     store.getState().activate("delivery");
     expect(store.getState().views.delivery.deliveryTarget).toEqual({ releaseId: "release-b", deliveryId: "delivery-b", actionId: "action-b" });
-    expect(workspaceViewHref(store.getState().views.delivery)).not.toMatch(/releaseId|deliveryId|actionId/);
+    expect(workspaceViewHref(store.getState().views.delivery, projectId)).not.toMatch(/releaseId|deliveryId|actionId/);
   });
   it("keeps a project decision and its page separate from the entry editing queue", () => {
     const store = createWorkspaceStore({ initialLocale: "zh-CN", initialViews: [{ id: "inbox", kind: "decisions", locale: "zh-CN", focus: "delivery-unknown:original" }] });
@@ -39,7 +40,7 @@ describe("workspace view state", () => {
     store.getState().open({ id: "entry", kind: "entries", locale: "zh-CN", focus: "unit-a" });
     store.getState().activate("inbox");
     expect(store.getState().views.inbox.decisionPrevious).toEqual([null]);
-    expect(workspaceViewHref(store.getState().views.inbox)).not.toMatch(/decisionCursor|afterId|decisionPrevious/);
+    expect(workspaceViewHref(store.getState().views.inbox, projectId)).not.toMatch(/decisionCursor|afterId|decisionPrevious/);
     store.getState().patch("inbox", { locale: "fr-FR", focus: "delivery-unknown:other" });
     expect(store.getState().views.inbox).toMatchObject({ editing: false, queueActive: false, queueAnchor: null });
   });
@@ -59,7 +60,7 @@ describe("workspace view state", () => {
     expect(store.getState().views.one.candidateAfterOrdinal).toBe("100");
     store.getState().patch("one", { locale: "zh-CN" });
     expect(store.getState().views.one.candidateAfterOrdinal).toBe("0");
-    expect(workspaceViewHref(store.getState().views.one)).not.toMatch(/compare|candidate|detailTab/);
+    expect(workspaceViewHref(store.getState().views.one, projectId)).not.toMatch(/compare|candidate|detailTab/);
   });
   it("keeps review history pages per view and returns to the first page for another entry or language", () => {
     const store = createWorkspaceStore({ initialLocale: "zh-CN", initialViews: [{ id: "one", kind: "entries", locale: "zh-CN", focus: "unit-a" }] });
@@ -72,7 +73,7 @@ describe("workspace view state", () => {
     store.getState().patch("one", { reviewHistoryOffset: 20 });
     store.getState().patch("one", { locale: "ja" });
     expect(store.getState().views.one.reviewHistoryOffset).toBe(0);
-    expect(workspaceViewHref(store.getState().views.one)).not.toContain("reviewHistory");
+    expect(workspaceViewHref(store.getState().views.one, projectId)).not.toContain("reviewHistory");
   });
   it("keeps the entry presentation mode local to each tab and out of the URL", () => {
     const store = createWorkspaceStore({ initialLocale: "zh-CN", initialViews: [{ id: "one", kind: "entries", locale: "zh-CN" }] });
@@ -80,7 +81,7 @@ describe("workspace view state", () => {
     store.getState().patch("one", { entryMode: "import" });
     store.getState().open({ id: "two", kind: "entries", locale: "ja" });
     expect(store.getState().views.one.entryMode).toBe("import"); expect(store.getState().views.two.entryMode).toBe("table");
-    expect(workspaceViewHref(store.getState().views.one)).toBe("/view/one?kind=entries&locale=zh-CN&preset=all");
+    expect(workspaceViewHref(store.getState().views.one, projectId)).toBe("/view/one?projectId=project-a&kind=entries&locale=zh-CN&preset=all");
     store.getState().patch("one", { locale: "ja" }); expect(store.getState().views.one.entryMode).toBe("import");
   });
   it("keeps submitted search, unfinished input and position separate for each tab and session", () => {

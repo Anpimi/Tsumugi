@@ -28,7 +28,7 @@ import translationFixture from "../../test/fixtures/translation-commands.json";
 import type { DraftBasis, DraftHead } from "../draftCommands";
 import type { ProjectView } from "../projectCommands";
 import WorkbenchApp from "./WorkbenchApp";
-import { ProjectLifecycle } from "./platform/projectLifecycle";
+import { ProjectLifecycle, type ProjectLifecyclePorts } from "./platform/projectLifecycle";
 import type { TranslationImportPanelProps } from "./features/import/TranslationImportPanel";
 import { Button } from "../design-system/Button";
 import { fixtureIdentity } from "../testSupport/executionFixture";
@@ -277,10 +277,10 @@ it("creates the reviewed project before explicitly handing its source folder to 
   await waitFor(() => expect(screen.queryByText(i18n.t("startup.createdBeforeImport"))).not.toBeInTheDocument());
 }, 30000);
 
-async function openImportWorkspace(opened: ProjectView = project) {
+async function openImportWorkspace(opened: ProjectView = project, ports: Partial<ProjectLifecyclePorts> = {}) {
   const close = vi.fn(async () => ({ closed: true }));
   controller = new ProjectLifecycle({ open: vi.fn(async () => opened), close,
-    status: async () => ({ active: false, quiescing: false, queryCount: 0, error: null }) });
+    status: async () => ({ active: false, quiescing: false, queryCount: 0, error: null }), ...ports });
   const register = vi.spyOn(controller, "register");
   render(<StrictMode><WorkbenchApp controller={controller} native /></StrictMode>);
   fireEvent.click(screen.getByRole("button", { name: i18n.t("startup.openExisting") }));
@@ -290,6 +290,42 @@ async function openImportWorkspace(opened: ProjectView = project) {
   await waitFor(() => expect(button).toBeEnabled());
   return { close, register, button };
 }
+
+it("creates an empty project without restoring the previous project's focused route or extra view", async () => {
+  const created: ProjectView = { ...project, locator: "/synthetic/new-empty", sessionToken: "created-session",
+    metadata: { ...project.metadata, projectId: fixtureIdentity(905), displayName: "Created empty project", targetLocales: ["ja"] } };
+  vi.mocked(sourceCommands.scope).mockImplementation(async request => ({ currentSnapshot: request.projectId === created.metadata.projectId ? null : "snapshot", revision: "1" }));
+  const create = vi.fn(async () => created);
+  const { register } = await openImportWorkspace(project, { create });
+  const originalSession = controller.getSnapshot().session!;
+  fireEvent.click(await screen.findByRole("button", { name: i18n.t("workbenchV2.showEntryDetails", { key: "dialogue.hello" }) }));
+  const detailDrawer = screen.queryByRole("dialog", { name: i18n.t("workbenchV2.agent") });
+  if (detailDrawer) {
+    fireEvent.click(within(detailDrawer).getByRole("button", { name: i18n.t("workbenchV2.close") }));
+    await waitFor(() => expect(detailDrawer).not.toBeInTheDocument());
+  }
+  await waitFor(() => expect(location.hash).toContain("focus=unit"));
+  await waitFor(() => {
+    const participants = new Map(register.mock.calls.map(([participant]) => [participant.id, participant]));
+    expect([...participants.values()].filter(participant => participant.inspect({ kind: "create-project" }).status !== "ready")
+      .map(participant => participant.id)).toEqual([]);
+  }, { timeout: 5000 });
+  await act(async () => {
+    const changed = await controller.create({ destination: created.locator, displayName: created.metadata.displayName, sourceLocale: "en", targetLocales: ["ja"] });
+    expect(changed, JSON.stringify(controller.getSnapshot().failure)).toBe(true);
+  });
+  expect(create).toHaveBeenCalledTimes(1);
+  expect(originalSession.reads.retired).toBe(true);
+  expect(controller.getSnapshot().retainedSession).toBeNull();
+  expect(await screen.findByRole("button", { name: i18n.t("workbenchV2.noSourceImport") }, { timeout: 5000 })).toBeEnabled();
+  const views = within(screen.getByRole("navigation", { name: i18n.t("workbenchV2.views") }));
+  expect(views.getAllByRole("button", { name: i18n.t("workbenchV2.viewName", { locale: "ja" }) })).toHaveLength(1);
+  expect(views.queryByRole("button", { name: i18n.t("workbenchV2.viewName", { locale: "zh-CN" }) })).not.toBeInTheDocument();
+  expect(location.hash).toContain(`projectId=${created.metadata.projectId}`);
+  expect(location.hash).not.toContain("focus=unit");
+  expect(screen.queryByText("Actual source from the read port")).not.toBeInTheDocument();
+  expect(vi.mocked(segmentCommands.page).mock.calls.every(([request]) => request.projectId === project.metadata.projectId)).toBe(true);
+}, 15000);
 async function openImportPalette() {
   const open = screen.getByRole("button", { name: i18n.t("workbenchV2.commandPlaceholder") });
   await waitFor(() => expect(open).toBeEnabled()); fireEvent.click(open);

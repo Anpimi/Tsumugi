@@ -14,6 +14,7 @@ export interface WorkspaceTransition {
 export type WorkspaceGuard = (transition: WorkspaceTransition, current: () => boolean) => Promise<SessionExitPermit | null>;
 
 export interface WorkspaceSearch {
+  projectId: string;
   kind: ViewKind;
   locale: string;
   preset: string;
@@ -27,31 +28,33 @@ function text(value: unknown, fallback: string): string {
 
 export function validateWorkspaceSearch(input: Record<string, unknown>, defaultLocale: string): WorkspaceSearch {
   const kind = viewKinds.find(value => value === input.kind) ?? "entries";
-  return { kind, locale: text(input.locale, defaultLocale), preset: text(input.preset, "all"), query: text(input.query, ""), ...(typeof input.focus === "string" && input.focus !== "" ? { focus: input.focus } : {}) };
+  return { projectId: text(input.projectId, ""), kind, locale: text(input.locale, defaultLocale), preset: text(input.preset, "all"), query: text(input.query, ""), ...(typeof input.focus === "string" && input.focus !== "" ? { focus: input.focus } : {}) };
 }
 
 /** This whitelist is deliberately smaller than workspace or project state. */
-export function workspaceViewHref(view: WorkspaceView | null): string {
-  if (!view) return "/";
-  const search = new URLSearchParams({ kind: view.kind, locale: view.locale, preset: view.preset });
+export function workspaceViewHref(view: WorkspaceView | null, projectId: string): string {
+  const search = new URLSearchParams({ projectId });
+  if (!view) return `/?${search}`;
+  search.set("kind", view.kind); search.set("locale", view.locale); search.set("preset", view.preset);
   if (view.query) search.set("query", view.query);
   if (view.focus) search.set("focus", view.focus);
   return `/view/${encodeURIComponent(view.id)}?${search}`;
 }
 
-export function parseWorkspaceHref(href: string, defaultLocale: string): NewWorkspaceView | null | undefined {
+export function parseWorkspaceHref(href: string, defaultLocale: string, projectId: string): NewWorkspaceView | null | undefined {
   const queryIndex = href.indexOf("?");
   const pathname = queryIndex < 0 ? href : href.slice(0, queryIndex);
   const query = queryIndex < 0 ? "" : href.slice(queryIndex + 1);
+  const search = validateWorkspaceSearch(Object.fromEntries(new URLSearchParams(query)), defaultLocale);
+  if (search.projectId !== projectId) return undefined;
   if (pathname === "/") return null;
   const match = /^\/view\/([A-Za-z0-9][A-Za-z0-9_-]{0,95})\/?$/.exec(pathname);
   if (!match) return undefined;
-  const search = validateWorkspaceSearch(Object.fromEntries(new URLSearchParams(query)), defaultLocale);
-  return { id: match[1], ...search, focus: search.focus ?? null };
+  return { id: match[1], kind: search.kind, locale: search.locale, preset: search.preset, query: search.query, focus: search.focus ?? null };
 }
 
-function viewFromHref(href: string, store: WorkspaceStore, defaultLocale: string): WorkspaceView | null | undefined {
-  const input = parseWorkspaceHref(href, defaultLocale);
+function viewFromHref(href: string, store: WorkspaceStore, defaultLocale: string, projectId: string): WorkspaceView | null | undefined {
+  const input = parseWorkspaceHref(href, defaultLocale, projectId);
   if (input === null || input === undefined) return input;
   const id = input.id;
   if (id === undefined) return undefined;
@@ -61,7 +64,8 @@ function viewFromHref(href: string, store: WorkspaceStore, defaultLocale: string
     queueActive: input.kind === "entries" && input.focus != null, editing: input.kind === "entries" && input.focus != null } : {}) }, id);
 }
 
-export function createWorkspaceRouter({ store, gate, guard, onError, history: suppliedHistory, component = () => null }: {
+export function createWorkspaceRouter({ projectId, store, gate, guard, onError, history: suppliedHistory, component = () => null }: {
+  projectId: string;
   store: WorkspaceStore;
   gate: InteractionGate;
   guard: WorkspaceGuard;
@@ -81,7 +85,7 @@ export function createWorkspaceRouter({ store, gate, guard, onError, history: su
     parseSearch: search => Object.fromEntries(new URLSearchParams(search)),
     stringifySearch: search => {
       const values = new URLSearchParams();
-      for (const key of ["kind", "locale", "preset", "query", "focus"]) {
+      for (const key of ["projectId", "kind", "locale", "preset", "query", "focus"]) {
         const value: unknown = search[key];
         if (typeof value === "string" && value !== "") values.set(key, value);
       }
@@ -181,7 +185,7 @@ export function createWorkspaceRouter({ store, gate, guard, onError, history: su
 
   // Browser back/forward, router links and direct router.navigate share this guard.
   const unblock = history.block({ enableBeforeUnload: false, blockerFn: async ({ nextLocation }) => {
-    const to = viewFromHref(nextLocation.href, store, defaultLocale);
+    const to = viewFromHref(nextLocation.href, store, defaultLocale, projectId);
     if (to === undefined) return true;
     const from = getWorkspaceView(store.getState(), store.getState().activeViewId);
     const kind = from && to?.id === from.id && to.locale !== from.locale ? "language" : "navigate";
@@ -189,7 +193,7 @@ export function createWorkspaceRouter({ store, gate, guard, onError, history: su
   } });
 
   async function navigate(to: WorkspaceView | null, kind: WorkspaceTransition["kind"], replace = false, viewId?: string, commit?: () => boolean, patch?: ViewPatch): Promise<boolean> {
-    const href = workspaceViewHref(to);
+    const href = workspaceViewHref(to, projectId);
     const ticket = await authorize(to, kind, href, viewId, commit, patch);
     if (!ticket) return false;
     // Only this already-approved commit skips the blocker; the permit remains held.
@@ -225,7 +229,7 @@ export function createWorkspaceRouter({ store, gate, guard, onError, history: su
       return navigate(getWorkspaceView(state, nextId), "close-view", true, viewId, () => store.getState().close(viewId));
     },
   };
-  const restored = viewFromHref(history.location.href, store, defaultLocale);
+  const restored = viewFromHref(history.location.href, store, defaultLocale, projectId);
   const ready = navigate(restored === undefined || restored === null ? getWorkspaceView(state, state.activeViewId) : restored, "restore", true);
   return { router, navigation, ready, dispose: () => {
     disposed = true;
