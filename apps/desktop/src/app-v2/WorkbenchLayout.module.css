@@ -24,7 +24,7 @@
 .viewTabs > * { white-space: nowrap; flex-shrink: 0; }
 .frame[data-focus-mode] .activity, .frame[data-focus-mode] .viewTabs, .frame[data-focus-mode] .toolbar { display: none; }
 .dock { display: flex; width: 100%; height: 100%; }
-.dockTabs { display: flex; flex-direction: column; min-height: 0; width: 100%; flex: 1; }
+.dockTabs { display: flex; flex-direction: column; min-height: 0; width: 100%; block-size: 100%; flex: 1; }
 .dockContent { min-height: 0; overflow: auto; flex: 1; }
 .dockContent[data-state="inactive"] { display: none; }
 .dockToggle { display: none; }

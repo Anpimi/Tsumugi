@@ -136,6 +136,8 @@ Current workspace version metadata: **`0.2.0-alpha.1`**. Because the published `
 
 ### Fixed
 
+- Keep the assistant input and save action visible at the bottom of a narrow workspace drawer while long briefs and conversation history scroll separately.
+
 - Closing a source import sheet opened from the project menu restores mouse interaction with the workspace. Menus and dialogs now share modal pointer and focus management.
 
 - Project brief updates no longer expire the fixed queue being edited. Selected and delivery-blocking entry counts come from one delivery assessment; unresolved source matches count as blockers, and several reasons on one entry count once.
