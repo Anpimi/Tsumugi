@@ -58,6 +58,104 @@ fn large_fixture(count: usize) -> (tempfile::TempDir, ProjectStore, ExecutionId)
 }
 
 #[test]
+fn eligibility_batches_cover_tail_units_and_reject_tail_corruption() {
+    thread_local! {
+        static TARGET_QUERIES: RefCell<Vec<Option<String>>> = const { RefCell::new(Vec::new()) };
+    }
+    fn traced_targets(event: TraceEvent<'_>) {
+        if let TraceEvent::Stmt(statement, sql) = &event {
+            if sql.contains("first_occurrences AS MATERIALIZED") {
+                TARGET_QUERIES.with(|queries| {
+                    queries.borrow_mut().push(statement.expanded_sql());
+                });
+            }
+        }
+        traced(event);
+    }
+
+    let (_directory, mut store, project) = large_fixture(101);
+    let (_, units) = all_units(store.connection().unwrap(), project).unwrap();
+    let tail = units[100];
+    translate(&mut store, project, tail, "zh-CN", "Tail translation");
+    let approval = super::tests::approve(&mut store, project, tail, "zh-CN");
+    SQL.with(|statements| statements.borrow_mut().clear());
+    TARGET_QUERIES.with(|queries| queries.borrow_mut().clear());
+    store
+        .connection()
+        .unwrap()
+        .trace_v2(TraceEventCodes::SQLITE_TRACE_STMT, Some(traced_targets));
+    let eligibility = store.review_eligibility(project, &["zh-CN".into(), "fr-FR".into()]);
+    store
+        .connection()
+        .unwrap()
+        .trace_v2(TraceEventCodes::empty(), None);
+    let eligibility = eligibility.unwrap();
+    assert!(!eligibility.ready);
+    assert_eq!(eligibility.locales.len(), 2);
+    for (locale, selected, blockers) in [("fr-FR", 0, 202), ("zh-CN", 1, 201)] {
+        let outcome = eligibility
+            .locales
+            .iter()
+            .find(|item| item.locale == locale)
+            .unwrap();
+        assert_eq!(outcome.checked_units, 101);
+        assert_eq!(outcome.selected_units, selected);
+        assert_eq!(outcome.blocking_units, 101);
+        assert_eq!(outcome.blocker_count, blockers);
+        assert_eq!(outcome.blockers.len(), 100);
+        assert_eq!(outcome.exception_count, 0);
+        assert!(outcome.exceptions.is_empty());
+    }
+    let queries = TARGET_QUERIES.with(|queries| std::mem::take(&mut *queries.borrow_mut()));
+    assert_eq!(queries.len(), 4);
+    for (index, query) in queries.into_iter().enumerate() {
+        let query = query.unwrap();
+        let locale = if index < 2 { "fr-FR" } else { "zh-CN" };
+        assert!(query.contains(&format!("s.locale='{locale}'")));
+        let wanted = query.split_once("FROM json_each('").unwrap().1;
+        let wanted = wanted.split_once("'))").unwrap().0;
+        let wanted: Vec<ExecutionId> = serde_json::from_str(wanted).unwrap();
+        let expected = if index % 2 == 0 {
+            &units[..100]
+        } else {
+            &units[100..]
+        };
+        assert_eq!(wanted, expected);
+    }
+    let statements = SQL.with(|statements| std::mem::take(&mut *statements.borrow_mut()));
+    for boundary in ["BEGIN", "COMMIT"] {
+        assert_eq!(
+            statements.iter().filter(|sql| sql.starts_with(boundary)).count(),
+            1,
+        );
+    }
+
+    assert_eq!(
+        store.connection().unwrap().execute(
+            "UPDATE review_decisions SET basis_json='{}' WHERE decision_id=?1",
+            [approval.decision_id.to_string()],
+        ).unwrap(),
+        1,
+    );
+    assert_eq!(
+        store
+            .review_eligibility(project, &["zh-CN".into(), "fr-FR".into()])
+            .unwrap_err()
+            .code,
+        ErrorCode::CorruptLedger,
+    );
+    let cancellation = Cancellation::default();
+    cancellation.request();
+    assert_eq!(
+        store
+            .review_eligibility_with_cancel(project, &["zh-CN".into()], &cancellation)
+            .unwrap_err()
+            .code,
+        ErrorCode::Cancelled,
+    );
+}
+
+#[test]
 fn ai_and_arena_previews_share_one_checked_read_with_independent_resource_policies() {
     use crate::ai::{AiConfig, arena::ArenaConfig};
 

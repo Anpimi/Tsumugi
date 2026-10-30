@@ -1827,56 +1827,58 @@ impl ProjectStore {
                 let mut blocking_units = 0u32;
                 let mut blocker_count = 0u32;
                 let mut exception_count = 0u32;
-                for target in queries::targets_in_with_cancel(
-                    connection,
-                    project_id,
-                    &units,
-                    locale,
-                    cancellation,
-                )? {
-                    let unit_id = target.unit_id;
-                    let (mut unit_blockers, unit_exceptions) =
-                        assess(&target, impacts.contains_key(&unit_id));
-                    if unresolved.contains(&unit_id) {unit_blockers.push("correspondence-unresolved".into());}
-                    selected_units += u32::from(target.selection_id.is_some());
-                    blocking_units += u32::from(!unit_blockers.is_empty());
-                    blocker_count += unit_blockers.len() as u32;
-                    exception_count += unit_exceptions.len() as u32;
-                    let decision_id = target
-                        .current_decision
-                        .as_ref()
-                        .map(|value| value.decision_id);
-                    let check_id = target.current_check.as_ref().map(|value| value.run_id);
-                    let fallback_id = target
-                        .current_fallback
-                        .as_ref()
-                        .map(|value| value.fallback_id);
-                    let waiver_ids: Vec<_> = target
-                        .current_waivers
-                        .iter()
-                        .map(|value| value.waiver_id)
-                        .collect();
-                    let impact_ids = impacts.get(&unit_id).cloned();
-                    bases.push((
-                        locale.clone(),
-                        unit_id,
-                        target.basis.clone(),
-                        decision_id,
-                        check_id,
-                        fallback_id,
-                        waiver_ids,
-                        impact_ids,
-                        unit_blockers.clone(),
-                        unit_exceptions.clone(),
-                    ));
-                    for reason in unit_blockers {
-                        if blockers.len() < 100 {
-                            blockers.push(eligibility_reason(&target, &reason));
+                for batch in units.chunks(100) {
+                    for target in queries::targets_in_with_cancel(
+                        connection,
+                        project_id,
+                        batch,
+                        locale,
+                        cancellation,
+                    )? {
+                        let unit_id = target.unit_id;
+                        let (mut unit_blockers, unit_exceptions) =
+                            assess(&target, impacts.contains_key(&unit_id));
+                        if unresolved.contains(&unit_id) {unit_blockers.push("correspondence-unresolved".into());}
+                        selected_units += u32::from(target.selection_id.is_some());
+                        blocking_units += u32::from(!unit_blockers.is_empty());
+                        blocker_count += unit_blockers.len() as u32;
+                        exception_count += unit_exceptions.len() as u32;
+                        let decision_id = target
+                            .current_decision
+                            .as_ref()
+                            .map(|value| value.decision_id);
+                        let check_id = target.current_check.as_ref().map(|value| value.run_id);
+                        let fallback_id = target
+                            .current_fallback
+                            .as_ref()
+                            .map(|value| value.fallback_id);
+                        let waiver_ids: Vec<_> = target
+                            .current_waivers
+                            .iter()
+                            .map(|value| value.waiver_id)
+                            .collect();
+                        let impact_ids = impacts.get(&unit_id).cloned();
+                        bases.push((
+                            locale.clone(),
+                            unit_id,
+                            target.basis.clone(),
+                            decision_id,
+                            check_id,
+                            fallback_id,
+                            waiver_ids,
+                            impact_ids,
+                            unit_blockers.clone(),
+                            unit_exceptions.clone(),
+                        ));
+                        for reason in unit_blockers {
+                            if blockers.len() < 100 {
+                                blockers.push(eligibility_reason(&target, &reason));
+                            }
                         }
-                    }
-                    for reason in unit_exceptions {
-                        if exceptions.len() < 100 {
-                            exceptions.push(eligibility_reason(&target, &reason));
+                        for reason in unit_exceptions {
+                            if exceptions.len() < 100 {
+                                exceptions.push(eligibility_reason(&target, &reason));
+                            }
                         }
                     }
                 }
