@@ -862,19 +862,23 @@ export interface TranslationReuseOrigin {
 }
 export interface Eligibility {
   basis: string;
+  epoch: ExecutionId;
   locales: EligibilityLocale[];
   policyVersion: string;
   ready: boolean;
+  sequence: Revision;
   sourceSnapshotId: ExecutionId;
 }
 export interface EligibilityLocale {
   blockerCount: number;
   blockers: EligibilityReason[];
+  blockingUnits: number;
   checkedUnits: number;
   exceptionCount: number;
   exceptions: EligibilityReason[];
   locale: string;
   ready: boolean;
+  selectedUnits: number;
 }
 export interface EligibilityReason {
   code: string;

@@ -79,7 +79,7 @@ beforeEach(async () => {
     }
     if (command === "read_delivery_record") return { ...wire.responses.delivery, actionId: request.actionId, deliveryId: request.deliveryId, releaseId: request.releaseId };
     if (command === "read_content_scope") return { currentSnapshot: id(707), revision: "1" };
-    if (command === "read_review_eligibility") return { basis: "basis", sourceSnapshotId: id(707), ready: true, policyVersion: "balanced-1", locales: (request.locales as string[]).map(locale => ({ locale, ready: true, blockers: [], exceptions: [], checkedUnits: 2, blockerCount: 0, exceptionCount: 0 })) };
+    if (command === "read_review_eligibility") return { basis: "basis", sourceSnapshotId: id(707), epoch: id(1), sequence: "1", ready: true, policyVersion: "balanced-1", locales: (request.locales as string[]).map(locale => ({ locale, ready: true, blockers: [], exceptions: [], checkedUnits: 2, selectedUnits: 2, blockingUnits: 0, blockerCount: 0, exceptionCount: 0 })) };
     if (command === "prepare_plugin_build") { prepared = request as unknown as PluginBuildPrepareRequest; return { ...pluginBuildWorkflow.review, attemptId: prepared.attemptId, choices: prepared.choices, build: pluginBuildView, eligibilityBasis: prepared.expectedEligibilityBasis, sourceSnapshotId: id(707) }; }
     throw new Error(command);
   });

@@ -4,7 +4,7 @@ import type { Requests, ReviewFindingWrite, ReviewFindingActionRequest, ReviewPa
 import * as validators from "./generated/review.validators";
 import { jsonIdentity } from "./pluginToolChoices";
 import { checkerIdentity, contractIdentity, ruleIdentity } from "./reviewIdentity";
-import type { Responses, AdvisoryFinding, ReviewBasis, ReviewFindingDecision, ReviewFindingView, ReviewSummaryPage, ReviewScopeCapture } from "./generated/review.responses";
+import type { Responses, AdvisoryFinding, ReviewBasis, ReviewFindingDecision, ReviewFindingView, ReviewSummaryPage, ReviewScopeCapture, Eligibility } from "./generated/review.responses";
 export type ReviewDiagnosticLocation = Responses["diagnosticLocation"];
 
 export type { ReviewFindingWrite, ReviewWrite, WaiverWrite, FallbackWrite, ReviewCheckRequest, ReviewCheckStartRequest } from "./generated/review.requests";
@@ -198,5 +198,13 @@ export const reviewCommands = {
     return confirmReviewFallback(await checkedInvoke("allow_source_fallback", { ...session, fallback }, validators.validateResponseFallback), fallback);
   },
   work: (request: ReviewWorkRequest) => checkedInvoke("read_review_work", request, validators.validateResponseWork),
-  eligibility: (request: EligibilityRequest) => checkedInvoke("read_review_eligibility", request, validators.validateResponseEligibility),
+  eligibility: (request: EligibilityRequest) => checkedInvoke("read_review_eligibility", request,
+    (report): report is Eligibility => validators.validateResponseEligibility(report)
+      && new Set(report.locales.map(value => value.locale)).size === report.locales.length
+      && report.locales.every(value => request.locales.includes(value.locale)
+        && value.selectedUnits <= value.checkedUnits && value.blockingUnits <= value.checkedUnits
+        && value.blockingUnits <= value.blockerCount && (value.blockingUnits === 0) === (value.blockerCount === 0)
+        && value.ready === (value.blockingUnits === 0))
+      && (!report.ready || report.locales.every(value => value.ready))
+      && (report.locales.length < request.locales.length || report.ready === report.locales.every(value => value.ready))),
 };

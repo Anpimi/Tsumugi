@@ -65,8 +65,8 @@ beforeEach(() => {
     if (command === "read_plugin_build") return pluginBuildView;
     if (command === "read_plugin_execution_start") return null;
     if (command === "read_content_scope") return { currentSnapshot: release.sourceSnapshotId, revision: "1" };
-    if (command === "read_review_eligibility") return { policyVersion: release.policyVersion, sourceSnapshotId: release.sourceSnapshotId,
-      basis: release.eligibilityBasis, ready: true, locales: (args.request.locales as string[]).map(locale => ({ locale, ready: true, blockers: [], exceptions: [], checkedUnits: 2, blockerCount: 0, exceptionCount: 0 })) };
+    if (command === "read_review_eligibility") return { policyVersion: release.policyVersion, sourceSnapshotId: release.sourceSnapshotId, epoch: fixtureIdentity(1), sequence: "1",
+      basis: release.eligibilityBasis, ready: true, locales: (args.request.locales as string[]).map(locale => ({ locale, ready: true, blockers: [], exceptions: [], checkedUnits: 2, selectedUnits: 2, blockingUnits: 0, blockerCount: 0, exceptionCount: 0 })) };
     if (command === "create_execution_identity") return buildIdentity;
     if (command === "prepare_plugin_build") return { ...pluginBuildWorkflow.review, attemptId: args.request.attemptId, choices: args.request.choices, eligibilityBasis: args.request.expectedEligibilityBasis, sourceSnapshotId: release.sourceSnapshotId };
     if (command === "choose_delivery_folder") return selection;

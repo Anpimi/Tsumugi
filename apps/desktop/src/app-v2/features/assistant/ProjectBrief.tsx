@@ -6,7 +6,7 @@ import { executionContext } from "../../../executionCommands";
 import { languageName } from "../../../i18n/languageNames";
 import type { ProjectView } from "../../../projectCommands";
 import type { RecentWorkspacePosition } from "../../../recentProjects";
-import { segmentCommands, type SegmentPage, type SegmentQuery } from "../../../segmentCommands";
+import { reviewCommands } from "../../../reviewCommands";
 import { useSessionQuery, useSessionReads } from "../../../SessionReadProvider";
 import { sourceReads } from "../../../sourceQueries";
 import styles from "./ProjectBrief.module.css";
@@ -24,19 +24,6 @@ export interface ProjectBriefProps {
   onDecisions: () => void;
 }
 
-interface LocaleProgress {
-  locale: string;
-  total: number | null;
-  selected: number | null;
-  blocking: number | null;
-  incomplete: boolean;
-}
-const all: SegmentQuery = { text: "", selection: "all", status: "all" };
-const selected: SegmentQuery = { text: "", selection: "selected", status: "all" };
-const blocking: SegmentQuery = { text: "", selection: "all", status: "blocking" };
-const sameObservation = (left: SegmentPage, right: SegmentPage) => left.sourceSnapshotId === right.sourceSnapshotId
-  && left.epoch === right.epoch && left.sequence === right.sequence;
-
 /** Counts are observations of existing read owners, never execution or review authority. */
 export default function ProjectBrief({ project, visible, disabled, briefEligible, previousPosition, decisions,
   onContinue, onEntries, onImport, onDecisions }: ProjectBriefProps) {
@@ -47,27 +34,17 @@ export default function ProjectBrief({ project, visible, disabled, briefEligible
   const source = useSessionQuery({ ...sourceReads.scope(context), enabled: active });
   const snapshot = !source.error && !source.isFetching ? source.data?.currentSnapshot : undefined;
   const progress = useSessionQuery({ key: ["project-brief-progress", locales, source.data?.revision, snapshot],
-    scopes: ["source", "translation", "review", "resources"], enabled: active && !!snapshot,
-    read: async () => Promise.all(locales.map(async (locale): Promise<LocaleProgress> => {
-      const unknown: LocaleProgress = { locale, total: null, selected: null, blocking: null, incomplete: true };
-      const read = (query: SegmentQuery) => segmentCommands.page({ ...context, locale, query, scopeId: null, cursor: null, limit: 1 });
-      let base: SegmentPage;
-      try { base = await read(all); } catch { return unknown; }
-      if (reads.retired || base.sourceSnapshotId !== snapshot) return unknown;
-      // A segment scope is bound to its complete query. Each filter therefore
-      // owns a scope; only counts from the same committed observation combine.
-      const results = await Promise.allSettled([read(selected), read(blocking)]);
-      const count = (result: PromiseSettledResult<SegmentPage>) => result.status === "fulfilled"
-        && sameObservation(base, result.value) && result.value.total <= base.total ? result.value.total : null;
-      const selectedCount = count(results[0]), blockingCount = count(results[1]);
-      return { locale, total: base.total, selected: selectedCount, blocking: blockingCount,
-        incomplete: selectedCount === null || blockingCount === null };
-    })) });
+    scopes: ["source", "translation", "review", "resources"], enabled: active && !!snapshot && locales.length > 0,
+    // One canonical observation supplies all counts without creating retained
+    // segment scopes that could evict the user's fixed editing queue.
+    read: () => reviewCommands.eligibility({ ...context, locales: [...locales] }) });
   if (!visible || !briefEligible) return null;
   const current = active && !disabled;
-  const values = !source.error && !source.isFetching && !progress.error && !progress.isFetching ? progress.data : undefined;
-  const empty = snapshot === null || !!values?.length && values.every(value => value.total === 0);
-  const incomplete = !!source.error || !!progress.error || values?.some(value => value.incomplete);
+  const report = !source.error && !source.isFetching && !progress.error && !progress.isFetching
+    && progress.data?.sourceSnapshotId === snapshot ? progress.data : undefined;
+  const empty = snapshot === null || !!report && locales.length > 0 && locales.every(locale => report.locales.find(value => value.locale === locale)?.checkedUnits === 0);
+  const incomplete = !!source.error || !!progress.error || !!snapshot && !progress.isPending && !progress.isFetching
+    && (!report || locales.some(locale => !report.locales.some(value => value.locale === locale)));
   const position = previousPosition && locales.includes(previousPosition.locale) ? previousPosition : null;
   const page = decisions.page?.projectId === context.projectId ? decisions.page : undefined;
   const decisionCount = decisions.loading ? t("decisionsLoading") : decisions.error !== null ? t("decisionsFailed")
@@ -78,14 +55,13 @@ export default function ProjectBrief({ project, visible, disabled, briefEligible
     {source.isFetching || snapshot && progress.isFetching ? <LoadingState label={t("loading")}/> : null}
     {empty ? <p>{t("empty")}</p> : <>
       {!locales.length ? <p>{t("noLanguages")}</p> : <ul className={styles.languages}>{locales.map(locale => {
-        const value = values?.find(item => item.locale === locale), name = languageName(locale, i18n.resolvedLanguage ?? i18n.language);
+        const value = report?.locales.find(item => item.locale === locale), name = languageName(locale, i18n.resolvedLanguage ?? i18n.language);
         return <li key={locale}>
           <h4>{name}</h4>
-          <p>{value?.total === undefined || value.total === null ? t("progressUnknown") : value.selected === null
-            ? t("selectionUnknown", { total: value.total }) : t("progress", { selected: value.selected, total: value.total })}</p>
-          {value?.selected != null && value.total !== null && value.total > 0
-            ? <ProgressBar label={t("progressLabel", { locale: name })} value={value.selected} max={value.total}/> : null}
-          <p className={styles.help}>{value?.blocking == null ? t("blockingUnknown") : t("blocking", { count: value.blocking })}</p>
+          <p>{value ? t("progress", { selected: value.selectedUnits, total: value.checkedUnits }) : t("progressUnknown")}</p>
+          {value && value.checkedUnits > 0
+            ? <ProgressBar label={t("progressLabel", { locale: name })} value={value.selectedUnits} max={value.checkedUnits}/> : null}
+          <p className={styles.help}>{value ? t("blocking", { count: value.blockingUnits }) : t("blockingUnknown")}</p>
         </li>;
       })}</ul>}
       <p>{decisionCount}</p><p className={styles.help}>{t("reviewSeparate")}</p>

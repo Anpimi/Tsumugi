@@ -4,9 +4,11 @@ import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { i18n } from "../../../i18n";
 import type { workbenchEn } from "../../../i18n/workbench";
 import fixture from "../../../../test/fixtures/translation-commands.json";
+import reviewFixture from "../../../../test/fixtures/reviewCommands.contract.json";
 import { SessionReadProvider } from "../../../SessionReadProvider";
 import { SessionReads } from "../../../sessionReads";
 import { sourceCommands } from "../../../sourceCommands";
+import { reviewCommands } from "../../../reviewCommands";
 import { segmentCommands, type SegmentPage, type SegmentQueueWindow, type SegmentRow, type SegmentSourceComparison } from "../../../segmentCommands";
 import type { DraftBasis, DraftHead, DraftKey, DraftValue } from "../../../draftCommands";
 import type { TranslationSaveReceipt, TranslationSaveRequest } from "../../../translationCommands";
@@ -16,6 +18,7 @@ import { InteractionGate } from "../../workspace/interactionGate";
 import { createWorkspaceCommandDispatcher, registerWorkspaceCommands } from "../../workspace/workspaceCommands";
 import { createWorkspaceStore, getWorkspaceView, type NewWorkspaceView, type WorkspaceView } from "../../workspace/workspaceStore";
 import { TranslationDrafts, type TranslationDraftPorts } from "../editor/translationDrafts";
+import ProjectBrief from "../assistant/ProjectBrief";
 import EntriesView, { type EntriesHandle } from "./EntriesView";
 
 type WorkbenchTextKey = { [K in keyof typeof workbenchEn]: typeof workbenchEn[K] extends string ? K : never }[keyof typeof workbenchEn];
@@ -218,6 +221,58 @@ it("confirms and advances through the same fixed queue, including its next windo
   expect(h.view()).toMatchObject({ focus: "unit-c", queueAnchor: "unit-c", queueScopeId: "fixed-scope" });
   expect(h.page.mock.calls.filter(([request]) => request.scopeId === null)).toHaveLength(1);
   expect(h.queue.mock.calls.every(([request]) => request.scopeId === "fixed-scope")).toBe(true);
+});
+
+it("keeps the original editing queue when the adjacent project brief refreshes after confirmation", async () => {
+  const h = await harness(), field = await h.open();
+  const selection = { kind: "ids" as const, locale: "zh-CN", sourceSnapshotId: "snapshot", unitIds: [unitA, "unit-b"] };
+  act(() => { h.store.getState().patch("view-one", { selection }); });
+  const retained = ["fixed-scope"], pageRead = h.page.getMockImplementation()!, queueRead = h.queue.getMockImplementation()!;
+  let captures = 0;
+  const expired = () => ({ code: "dependency-conflict", stage: "execution-read", outcome: "rejected", recoveryRequired: false, diagnostic: "review-scope-expired" });
+  // Core retains at most eight unique read scopes. Statistics must not consume
+  // that membership budget and evict a queue already being edited.
+  h.page.mockImplementation(async request => {
+    if (request.scopeId && !retained.includes(request.scopeId)) throw expired();
+    const scopeId = request.scopeId ?? `statistics-scope-${++captures}`;
+    if (!request.scopeId) { retained.push(scopeId); if (retained.length > 8) retained.shift(); }
+    const page = await pageRead(request);
+    return { ...page, scopeId, rows: page.rows.slice(0, request.limit),
+      total: request.query.selection === "selected" ? h.ports.save.mock.calls.filter(([saved]) => saved.locale === request.locale).length : units.length };
+  });
+  h.queue.mockImplementation(async request => {
+    if (!retained.includes(request.scopeId)) throw expired();
+    return queueRead(request);
+  });
+  const eligibility = vi.spyOn(reviewCommands, "eligibility").mockImplementation(async request => {
+    const report = copy(reviewFixture.responses.eligibility), entry = report.locales[0];
+    return { ...report, sourceSnapshotId: "snapshot", locales: request.locales.map(locale => ({ ...entry, locale, checkedUnits: units.length,
+      selectedUnits: h.ports.save.mock.calls.filter(([saved]) => saved.locale === locale).length, blockingUnits: units.length, blockerCount: units.length })) };
+  });
+  render(<SessionReadProvider context={context} reads={h.reads} bridge={false}>
+    <ProjectBrief project={project} visible briefEligible disabled={false} decisions={{ page: undefined, loading: false, error: null }}
+      onContinue={vi.fn()} onEntries={vi.fn()} onImport={vi.fn()} onDecisions={vi.fn()}/>
+  </SessionReadProvider>);
+  await screen.findAllByText("Selected translations: 0 / 4");
+  fireEvent.change(field, { target: { value: "你好\n世界" } });
+  await act(async () => { await h.ref.current?.confirm(true); });
+  await screen.findByRole("textbox", { name: i18n.t("workbenchV2.editorLabel", { key: "key.unit-b" }) });
+  await screen.findAllByText("Selected translations: 1 / 4");
+  // A later change notification observes the same committed save again.
+  act(() => { h.reads.invalidate(["translation", "review"]); });
+  await waitFor(() => expect(h.reads.client.isFetching()).toBe(0));
+  expect(screen.queryByText(w("viewChanged"))).not.toBeInTheDocument();
+  expect(h.view()).toMatchObject({ focus: "unit-b", queueActive: true, queueScopeId: "fixed-scope", selection });
+  expect(h.ports.save).toHaveBeenCalledOnce();
+  expect(eligibility).toHaveBeenCalledTimes(3);
+  expect(captures).toBe(0);
+  expect(h.page.mock.calls.filter(([request]) => request.scopeId === null && request.limit === 50)).toHaveLength(1);
+  // A genuinely expired queue still requires the user's explicit refresh.
+  retained.splice(0);
+  act(() => { h.reads.invalidate(["translation", "review"]); });
+  expect(await screen.findByText(w("viewChanged"))).toBeVisible();
+  expect(h.view()).toMatchObject({ focus: "unit-b", queueActive: true, queueScopeId: "fixed-scope", selection });
+  expect(captures).toBe(0);
 });
 
 it("keeps B and stays on the row when A's confirmation arrives", async () => {

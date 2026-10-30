@@ -69,8 +69,8 @@ function historyPage(target: ReviewTarget, version: string, nextOffset: number |
   })], waivers: [], fallbacks: [], nextOffset };
 }
 function eligibilityResult(locales: string[], marker: string, ready = false): Eligibility {
-  return { policyVersion: "balanced-1", sourceSnapshotId: fixtureIdentity(600), basis: marker, ready,
-    locales: locales.map(locale => ({ locale, ready, checkedUnits: 1, blockerCount: ready ? 0 : 1, exceptionCount: 0,
+  return { policyVersion: "balanced-1", sourceSnapshotId: fixtureIdentity(600), epoch: fixtureIdentity(1), sequence: "1", basis: marker, ready,
+    locales: locales.map(locale => ({ locale, ready, checkedUnits: 1, selectedUnits: 1, blockingUnits: ready ? 0 : 1, blockerCount: ready ? 0 : 1, exceptionCount: 0,
       blockers: ready ? [] : [{ unitId: targets.first.unitId, nativeKey: marker, code: "qa-missing-or-stale", reference: null }],
       exceptions: [] })) };
 }
@@ -106,9 +106,9 @@ beforeEach(async () => {
     // Recovery scenarios install a saved action explicitly when it is present.
     if (["read_review_decision_action", "read_review_waiver_action", "read_review_fallback_action"].includes(command)) return null;
     if (command === "read_review_work") return { items: [], total: 0, nextOffset: null, coverage: "current" };
-    if (command === "read_review_eligibility") return { policyVersion: "balanced-1", sourceSnapshotId: fixtureIdentity(600), basis: "eligibility",
+    if (command === "read_review_eligibility") return { policyVersion: "balanced-1", sourceSnapshotId: fixtureIdentity(600), epoch: fixtureIdentity(1), sequence: "1", basis: "eligibility",
       ready: false, locales: [{ locale: "zh-CN", ready: false, blockers: [{ unitId: targets.first.unitId, nativeKey: "first", code: "qa-missing-or-stale", reference: null }],
-        exceptions: [], checkedUnits: 1, blockerCount: 1, exceptionCount: 0 }] };
+        exceptions: [], checkedUnits: 1, selectedUnits: 1, blockingUnits: 1, blockerCount: 1, exceptionCount: 0 }] };
     if (["read_review_decision_action", "read_review_waiver_action", "read_review_fallback_action", "read_review_check_action"].includes(command)) return null;
     throw new Error(command);
   });

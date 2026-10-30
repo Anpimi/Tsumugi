@@ -79,8 +79,8 @@ beforeEach(async () => {
       case "read_content_scope": return { currentSnapshot: sourceId, revision: "1" };
       case "list_releases": return releases;
       case "list_deliveries": return [];
-      case "read_review_eligibility": return { policyVersion: "balanced-1", sourceSnapshotId: sourceId, basis: "a".repeat(64), ready: true,
-        locales: project.metadata.targetLocales.map(locale => ({ locale, ready: true, blockers: [], exceptions: [], checkedUnits: 2, blockerCount: 0, exceptionCount: 0 })) };
+      case "read_review_eligibility": return { policyVersion: "balanced-1", sourceSnapshotId: sourceId, epoch: fixtureIdentity(1), sequence: "1", basis: "a".repeat(64), ready: true,
+        locales: project.metadata.targetLocales.map(locale => ({ locale, ready: true, blockers: [], exceptions: [], checkedUnits: 2, selectedUnits: 2, blockingUnits: 0, blockerCount: 0, exceptionCount: 0 })) };
       case "create_execution_identity": return fixtureIdentity(serial++);
       case "prepare_plugin_build": {
         captured = check(raw, validation.validateRequestPluginBuild);

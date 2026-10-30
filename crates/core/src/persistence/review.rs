@@ -3,7 +3,7 @@
 
 use super::{ProjectStore, resources};
 use crate::execution::{
-    Cancellation, ConflictEvidence, ErrorCode, ExecutionError, ExecutionId, MAX_INPUT_BYTES, codec,
+    Cancellation, ConflictEvidence, ErrorCode, ExecutionError, ExecutionId, MAX_INPUT_BYTES, Revision, codec,
 };
 use rusqlite::{Connection, OptionalExtension, TransactionBehavior, params};
 use serde::{Deserialize, Serialize};
@@ -381,6 +381,8 @@ pub struct EligibilityLocale {
     pub blockers: Vec<EligibilityReason>,
     pub exceptions: Vec<EligibilityReason>,
     pub checked_units: u32,
+    pub selected_units: u32,
+    pub blocking_units: u32,
     pub blocker_count: u32,
     pub exception_count: u32,
 }
@@ -391,6 +393,9 @@ pub struct EligibilityLocale {
 pub struct Eligibility {
     pub policy_version: String,
     pub source_snapshot_id: ExecutionId,
+    #[cfg_attr(feature = "wire-schema", schemars(with = "ExecutionId"))]
+    pub epoch: String,
+    pub sequence: Revision,
     pub basis: String,
     pub ready: bool,
     pub locales: Vec<EligibilityLocale>,
@@ -1808,6 +1813,7 @@ impl ProjectStore {
                 check_project(connection, project_id, locale)?;
             }
             let (source_snapshot_id, units) = all_units(connection, project_id)?;
+            let observation = self.changes_since(Revision::new(0)?);
             let unresolved=super::content::maintenance::unresolved_occurrences_in(connection,source_snapshot_id,MAX_SCOPE+1)?.into_iter().map(|(_,unit)|unit).collect::<BTreeSet<_>>();
             let mut outcomes = Vec::new();
             let mut bases = Vec::new();
@@ -1816,6 +1822,8 @@ impl ProjectStore {
                 let impacts = self.impact_map(project_id, locale)?;
                 let mut blockers = Vec::new();
                 let mut exceptions = Vec::new();
+                let mut selected_units = 0u32;
+                let mut blocking_units = 0u32;
                 let mut blocker_count = 0u32;
                 let mut exception_count = 0u32;
                 for target in queries::targets_in_with_cancel(
@@ -1829,6 +1837,8 @@ impl ProjectStore {
                     let (mut unit_blockers, unit_exceptions) =
                         assess(&target, impacts.contains_key(&unit_id));
                     if unresolved.contains(&unit_id) {unit_blockers.push("correspondence-unresolved".into());}
+                    selected_units += u32::from(target.selection_id.is_some());
+                    blocking_units += u32::from(!unit_blockers.is_empty());
                     blocker_count += unit_blockers.len() as u32;
                     exception_count += unit_exceptions.len() as u32;
                     let decision_id = target
@@ -1875,6 +1885,8 @@ impl ProjectStore {
                     blockers,
                     exceptions,
                     checked_units: units.len() as u32,
+                    selected_units,
+                    blocking_units,
                     blocker_count,
                     exception_count,
                 });
@@ -1884,6 +1896,8 @@ impl ProjectStore {
             Ok(Eligibility {
                 policy_version: POLICY_VERSION.to_owned(),
                 source_snapshot_id,
+                epoch: observation.epoch,
+                sequence: observation.sequence,
                 basis: digest(&(POLICY_VERSION, source_snapshot_id, &bases))?,
                 ready,
                 locales: outcomes,
@@ -3965,6 +3979,66 @@ pub(super) mod tests {
         let passed = check(&mut store, project, unit, "zh-CN");
         assert_eq!(passed.outcome, ReviewCheckOutcome::Completed);
         assert!(passed.rules.iter().all(|rule| rule.status == "passed"));
+    }
+
+    #[test]
+    fn eligibility_progress_counts_share_clock_without_expiring_segment_scope() {
+        let directory = tempfile::tempdir().unwrap();
+        let mut store = ProjectStore::create(
+            directory.path().join("project"),
+            ProjectMetadata::create("Eligibility progress", "en", ["zh-CN", "fr-FR"]).unwrap(),
+        )
+        .unwrap();
+        let project = parse_id(store.metadata().unwrap().project_id().to_string()).unwrap();
+        let source = (0..105)
+            .map(|index| (format!("entry-{index:03}"), format!("Source {index}")))
+            .collect::<BTreeMap<_, _>>();
+        adopt_source(&mut store, &serde_json::to_vec(&source).unwrap());
+        let units = store.review_page(project, "zh-CN", 0, 2).unwrap().rows;
+        // An explicitly selected empty translation still counts as selected.
+        translate(&mut store, project, units[0].unit_id, "zh-CN", "");
+        translate(&mut store, project, units[1].unit_id, "zh-CN", "Translated");
+        check(&mut store, project, units[1].unit_id, "zh-CN");
+        approve(&mut store, project, units[1].unit_id, "zh-CN");
+        let query = crate::SegmentQuery {
+            text: String::new(),
+            selection: crate::SegmentSelectionFilter::All,
+            status: crate::SegmentStatusFilter::All,
+        };
+        let page = store
+            .read_segment_page(project, "zh-CN", &query, None, None, 1)
+            .unwrap();
+        let before = store.changes_since(Revision::new(0).unwrap());
+        let mut first_basis = None;
+        // More observations than the retained-scope capacity must leave the
+        // person's original queue usable without capturing a replacement.
+        for _ in 0..9 {
+            let eligibility = store
+                .review_eligibility(project, &["zh-CN".into(), "fr-FR".into()])
+                .unwrap();
+            assert_eq!(eligibility.source_snapshot_id, page.source_snapshot_id);
+            assert_eq!(eligibility.epoch, before.epoch);
+            assert_eq!(eligibility.sequence, before.sequence);
+            let fr = &eligibility.locales[0];
+            let zh = &eligibility.locales[1];
+            assert_eq!((fr.locale.as_str(), fr.checked_units, fr.selected_units, fr.blocking_units), ("fr-FR", 105, 0, 105));
+            assert_eq!((zh.locale.as_str(), zh.checked_units, zh.selected_units, zh.blocking_units), ("zh-CN", 105, 2, 104));
+            assert_eq!(zh.blockers.len(), 100);
+            assert!(zh.blocker_count > zh.blocking_units);
+            if let Some(basis) = &first_basis {
+                assert_eq!(&eligibility.basis, basis);
+            } else {
+                first_basis = Some(eligibility.basis);
+            }
+        }
+        let queue = store
+            .read_segment_queue_window(project, "zh-CN", page.scope_id, None, 1)
+            .unwrap();
+        assert_eq!(queue.scope_id, page.scope_id);
+        assert_eq!(queue.total, 105);
+        assert_eq!(queue.rows[0].content.unit_id, page.rows[0].content.unit_id);
+        let after = store.changes_since(Revision::new(0).unwrap());
+        assert_eq!((after.epoch, after.sequence), (before.epoch, before.sequence));
     }
 
     #[test]

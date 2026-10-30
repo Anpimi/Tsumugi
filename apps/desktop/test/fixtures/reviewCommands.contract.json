@@ -521,6 +521,8 @@
       "actor": "Synthetic reviewer"
     },
     "eligibility": {
+      "epoch": "40000000-0000-4000-8000-000000000031",
+      "sequence": "7",
       "basis": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
       "policyVersion": "balanced-1",
       "ready": false,
@@ -538,6 +540,8 @@
           ],
           "exceptions": [],
           "checkedUnits": 1,
+          "selectedUnits": 1,
+          "blockingUnits": 1,
           "blockerCount": 1,
           "ready": false,
           "locale": "zh-CN"

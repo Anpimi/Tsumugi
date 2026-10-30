@@ -132,6 +132,8 @@ Current workspace version metadata: **`0.2.0-alpha.1`**. Because the published `
 
 ### Fixed
 
+- Project brief updates no longer expire the fixed queue being edited. Selected and delivery-blocking entry counts come from one delivery assessment; unresolved source matches count as blockers, and several reasons on one entry count once.
+
 - Closing the opt-in workspace no longer blocks its own window close when the closed project session is retired. New application input during shutdown still keeps the window open with a recovery message.
 
 - Native plugin workers allow up to 10 seconds for the startup handshake when a runtime has just been extracted. The original operation deadline, permissions and cancellation checks still apply.

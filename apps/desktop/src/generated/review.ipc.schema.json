@@ -3642,6 +3642,9 @@
           "basis": {
             "type": "string"
           },
+          "epoch": {
+            "$ref": "#/definitions/ExecutionId"
+          },
           "locales": {
             "items": {
               "$ref": "#/definitions/EligibilityLocale"
@@ -3654,6 +3657,9 @@
           "ready": {
             "type": "boolean"
           },
+          "sequence": {
+            "$ref": "#/definitions/Revision"
+          },
           "sourceSnapshotId": {
             "$ref": "#/definitions/ExecutionId"
           }
@@ -3661,6 +3667,8 @@
         "required": [
           "policyVersion",
           "sourceSnapshotId",
+          "epoch",
+          "sequence",
           "basis",
           "ready",
           "locales"
@@ -3681,6 +3689,12 @@
               "$ref": "#/definitions/EligibilityReason"
             },
             "type": "array"
+          },
+          "blockingUnits": {
+            "format": "uint32",
+            "maximum": 4294967295,
+            "minimum": 0,
+            "type": "integer"
           },
           "checkedUnits": {
             "format": "uint32",
@@ -3705,6 +3719,12 @@
           },
           "ready": {
             "type": "boolean"
+          },
+          "selectedUnits": {
+            "format": "uint32",
+            "maximum": 4294967295,
+            "minimum": 0,
+            "type": "integer"
           }
         },
         "required": [
@@ -3713,6 +3733,8 @@
           "blockers",
           "exceptions",
           "checkedUnits",
+          "selectedUnits",
+          "blockingUnits",
           "blockerCount",
           "exceptionCount"
         ],

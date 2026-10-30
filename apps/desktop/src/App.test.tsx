@@ -1576,8 +1576,8 @@ describe("project lifecycle workbench", () => {
       if (command === "read_plugin_build") return pluginBuildView;
       if (command === "read_content_scope") return { revision: "1", currentSnapshot: releaseFixture.responses.releases[0].sourceSnapshotId };
       if (command === "read_review_eligibility") return { ready: true, basis: pluginBuildWorkflow.prepare.expectedEligibilityBasis,
-        policyVersion: "balanced-1", sourceSnapshotId: releaseFixture.responses.releases[0].sourceSnapshotId,
-        locales: [{ locale: "zh-CN", ready: true, blockers: [], exceptions: [], checkedUnits: 2, blockerCount: 0, exceptionCount: 0 }] };
+        policyVersion: "balanced-1", sourceSnapshotId: releaseFixture.responses.releases[0].sourceSnapshotId, epoch: fixtureIdentity(1), sequence: "1",
+        locales: [{ locale: "zh-CN", ready: true, blockers: [], exceptions: [], checkedUnits: 2, selectedUnits: 2, blockingUnits: 0, blockerCount: 0, exceptionCount: 0 }] };
       if (command === "list_releases" || command === "list_execution_tasks") return [];
       if (command === "execution_status") return { active: false, quiescing: false, queryCount: 0, error: null };
       if (command === "create_execution_identity") return fixtureIdentity(700 + mocks.invoke.mock.calls.filter(([name]) => name === "create_execution_identity").length);
@@ -1880,8 +1880,8 @@ describe("project lifecycle workbench", () => {
       if (command === "read_review_eligibility") {
         if (!args.request.locales) throw new Error("Missing assessed languages");
         const marker = `explicit-${++assessments}`;
-        return { policyVersion: "balanced-1", sourceSnapshotId: fixtureIdentity(600), basis: marker, ready: false,
-          locales: args.request.locales.map(locale => ({ locale, ready: false, checkedUnits: 1, blockerCount: 1, exceptionCount: 0,
+        return { policyVersion: "balanced-1", sourceSnapshotId: fixtureIdentity(600), epoch: fixtureIdentity(1), sequence: "1", basis: marker, ready: false,
+          locales: args.request.locales.map(locale => ({ locale, ready: false, checkedUnits: 1, selectedUnits: 1, blockingUnits: 1, blockerCount: 1, exceptionCount: 0,
             blockers: [{ unitId: fixtureIdentity(501), nativeKey: marker, code: "qa-missing-or-stale", reference: null }], exceptions: [] })) } satisfies Eligibility;
       }
       return original(command, args);

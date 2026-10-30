@@ -45,8 +45,8 @@ beforeEach(async () => {
     if (command === "prepare_plugin_build") return { ...pluginBuildWorkflow.review,attemptId:args!.request.attemptId,choices:args!.request.choices,eligibilityBasis:args!.request.expectedEligibilityBasis,sourceSnapshotId:fixtureIdentity(707) };
     if (command === "cancel_plugin_build_preparation") return false;
     if (command === "read_content_scope") return { currentSnapshot: fixtureIdentity(707), revision: "1" };
-    if (command === "read_review_eligibility") return { policyVersion: "balanced-1", sourceSnapshotId: fixtureIdentity(707), basis: "basis", ready: true,
-      locales: [{ locale: "zh-CN", ready: true, blockers: [], exceptions: [], checkedUnits: 532, blockerCount: 0, exceptionCount: 0 }] };
+    if (command === "read_review_eligibility") return { policyVersion: "balanced-1", sourceSnapshotId: fixtureIdentity(707), epoch: fixtureIdentity(1), sequence: "1", basis: "basis", ready: true,
+      locales: [{ locale: "zh-CN", ready: true, blockers: [], exceptions: [], checkedUnits: 532, selectedUnits: 532, blockingUnits: 0, blockerCount: 0, exceptionCount: 0 }] };
     if (command === "create_execution_identity") return fixtureIdentity(1);
     if (command === "choose_delivery_folder") return { selectionId: fixtureIdentity(704), folderName: "export" };
     if (command === "preview_delivery") return { previewId: fixtureIdentity(705), releaseId: fixtureIdentity(702), selectionId: fixtureIdentity(704), folderName: "export",

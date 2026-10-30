@@ -57,8 +57,8 @@ beforeEach(async () => {
   vi.spyOn(executionCommands, "identity").mockImplementation(async () => fixtureIdentity(serial++));
   vi.spyOn(sourceCommands, "scope").mockResolvedValue({ revision: "1", currentSnapshot: savedRelease.sourceSnapshotId });
   vi.spyOn(reviewCommands, "eligibility").mockImplementation(async request => ({ policyVersion: savedRelease.policyVersion,
-    sourceSnapshotId: savedRelease.sourceSnapshotId, basis: savedRelease.eligibilityBasis, ready: true,
-    locales: request.locales.map(locale => ({ locale, ready: true, blockers: [], exceptions: [], checkedUnits: 2, blockerCount: 0, exceptionCount: 0 })) }));
+    sourceSnapshotId: savedRelease.sourceSnapshotId, epoch: fixtureIdentity(1), sequence: "1", basis: savedRelease.eligibilityBasis, ready: true,
+    locales: request.locales.map(locale => ({ locale, ready: true, blockers: [], exceptions: [], checkedUnits: 2, selectedUnits: 2, blockingUnits: 0, blockerCount: 0, exceptionCount: 0 })) }));
   vi.spyOn(pluginCommands, "build").mockResolvedValue(pluginBuildView);
   vi.spyOn(releaseCommands, "preparePlugin").mockImplementation(async request => checked({ ...pluginBuildWorkflow.review,
     attemptId: request.attemptId, choices: request.choices, eligibilityBasis: request.expectedEligibilityBasis, sourceSnapshotId: savedRelease.sourceSnapshotId }, validateResponsePluginBuild));

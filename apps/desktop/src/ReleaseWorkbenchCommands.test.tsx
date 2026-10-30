@@ -67,8 +67,8 @@ beforeEach(async()=>{
     if(command==="read_content_scope")return{currentSnapshot:release.sourceSnapshotId,revision:"1"};
     if(command==="read_review_eligibility"){
       const locales=request.locales;if(!Array.isArray(locales)||!locales.every(value=>typeof value==="string"))throw new Error("Expected explicit locale capture");
-      return {policyVersion:release.policyVersion,sourceSnapshotId:release.sourceSnapshotId,basis:release.eligibilityBasis,ready:true,
-        locales:locales.map(locale=>({locale,ready:true,blockers:[],exceptions:[],checkedUnits:2,blockerCount:0,exceptionCount:0}))};
+      return {policyVersion:release.policyVersion,sourceSnapshotId:release.sourceSnapshotId,epoch:fixtureIdentity(1),sequence:"1",basis:release.eligibilityBasis,ready:true,
+        locales:locales.map(locale=>({locale,ready:true,blockers:[],exceptions:[],checkedUnits:2,selectedUnits:2,blockingUnits:0,blockerCount:0,exceptionCount:0}))};
     }
     if(command==="create_execution_identity")return fixture.responses.identity;
     if(command==="prepare_plugin_build")return {...pluginBuildWorkflow.review,attemptId:request.attemptId,choices:request.choices,eligibilityBasis:request.expectedEligibilityBasis,sourceSnapshotId:release.sourceSnapshotId};
@@ -242,8 +242,8 @@ it("reconciles a checked historical delivery with exact files and action identit
 it.each(["current","wrong-target","hidden"] as const)("routes only the current checked blocker target during %s without a business mutation",async mode=>{
   const unitId=reviewFixture.responses.target.unitId,response=deferred<unknown>(),original=invoke.getMockImplementation()!,navigate=vi.fn().mockResolvedValue(true);
   invoke.mockImplementation(async(command:string,args)=>{
-    if(command==="read_review_eligibility")return{policyVersion:release.policyVersion,sourceSnapshotId:release.sourceSnapshotId,basis:release.eligibilityBasis,ready:false,
-      locales:[{locale:"zh-CN",ready:false,blockers:[{unitId,nativeKey:"Blocked entry",code:"missing-approval",reference:null}],exceptions:[],checkedUnits:1,blockerCount:1,exceptionCount:0}]};
+    if(command==="read_review_eligibility")return{policyVersion:release.policyVersion,sourceSnapshotId:release.sourceSnapshotId,epoch:fixtureIdentity(1),sequence:"1",basis:release.eligibilityBasis,ready:false,
+      locales:[{locale:"zh-CN",ready:false,blockers:[{unitId,nativeKey:"Blocked entry",code:"missing-approval",reference:null}],exceptions:[],checkedUnits:1,selectedUnits:1,blockingUnits:1,blockerCount:1,exceptionCount:0}]};
     if(command==="read_review_target")return response.promise;return original(command,args);
   });
   const {user,view}=await open(navigate);await user.click(screen.getByRole("checkbox",{name:"zh-CN"}));await user.type(screen.getByRole("textbox",{name:i18n.t("releasePlugin.paths",{locale:"zh-CN"})}),"i18n/zh.json");await user.click(screen.getByRole("button",{name:i18n.t("release.check")}));

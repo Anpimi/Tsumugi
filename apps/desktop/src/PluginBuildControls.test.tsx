@@ -43,8 +43,8 @@ beforeEach(async () => {
       case "list_deliveries": return [];
       case "create_execution_identity": return fixtureIdentity(serial++);
       case "read_content_scope": return {currentSnapshot:fixtureIdentity(707),revision:"1"};
-      case "read_review_eligibility": return { basis: "basis", sourceSnapshotId: fixtureIdentity(707), ready: true, policyVersion: "balanced-1",
-        locales: (request.locales as string[]).map(locale => ({ locale, ready: true, blockers: [], exceptions: [], checkedUnits: 2, blockerCount: 0, exceptionCount: 0 })) };
+      case "read_review_eligibility": return { basis: "basis", sourceSnapshotId: fixtureIdentity(707), epoch: fixtureIdentity(1), sequence: "1", ready: true, policyVersion: "balanced-1",
+        locales: (request.locales as string[]).map(locale => ({ locale, ready: true, blockers: [], exceptions: [], checkedUnits: 2, selectedUnits: 2, blockingUnits: 0, blockerCount: 0, exceptionCount: 0 })) };
       case "prepare_plugin_build": {
         captured = request as unknown as PluginBuildPrepareRequest;
         return { ...pluginBuildWorkflow.review, attemptId: captured.attemptId, choices: captured.choices, build: pluginBuildView, inputDigest: "b".repeat(64), sourceSnapshotId: fixtureIdentity(707), eligibilityBasis: captured.expectedEligibilityBasis };
