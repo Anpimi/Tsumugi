@@ -86,8 +86,10 @@ export function WorkbenchPreview({ screen: initialScreen = "entries", state = "n
       </div>
       <Button variant="ghost" className={styles.tray} onClick={() => navigate("decisions")}><CircleDot />{t("tray", { count: 5 })}<ArrowUpRight /></Button>
       <div className={styles.composer}>
-        {context ? <div className={styles.context}><span>{t("context")}</span><IconButton size="xs" label={t("removeContext")} onClick={() => setContext(false)}><X /></IconButton></div> : null}
-        <TextArea ref={composer} aria-label={t("message")} placeholder={t("messagePlaceholder")} value={message} onChange={(event) => setMessage(event.target.value)} rows={2} />
+        <div className={styles.composerBody}>
+          {context ? <div className={styles.context}><span>{t("context")}</span><IconButton size="xs" label={t("removeContext")} onClick={() => setContext(false)}><X /></IconButton></div> : null}
+          <TextArea ref={composer} aria-label={t("message")} placeholder={t("messagePlaceholder")} value={message} onChange={(event) => setMessage(event.target.value)} rows={2} />
+        </div>
         <div className={styles.composerFooter}><span>{t("noModel")}</span><IconButton label={t("send")} disabled title={t("noModel")}><ArrowUp /></IconButton></div>
       </div>
     </div>;

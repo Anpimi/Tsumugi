@@ -136,6 +136,8 @@ Current workspace version metadata: **`0.2.0-alpha.1`**. Because the published `
 
 ### Fixed
 
+- Keep the assistant save action reachable with enlarged text by scrolling message fields and recovery guidance separately from its action bar. The Workbench document language now follows the interface language, including the welcome screen.
+
 - Switching projects keeps the previous project's entry position out of the new workspace. Unfinished input remains with its original project; same-project workspace links can still restore their view.
 
 - Keep the assistant input and save action visible at the bottom of a narrow workspace drawer while long briefs and conversation history scroll separately.

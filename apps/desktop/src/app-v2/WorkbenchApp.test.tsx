@@ -123,6 +123,16 @@ beforeEach(async () => {
 });
 afterEach(() => { cleanup(); controller?.dispose(); });
 
+it("synchronizes the document language on the welcome screen", async () => {
+  document.documentElement.lang = "en";
+  render(<WorkbenchApp native={false}/>);
+  expect(document.documentElement.lang).toBe("zh-CN");
+  await act(async () => { await i18n.changeLanguage("en-US"); });
+  expect(document.documentElement.lang).toBe("en-US");
+  await act(async () => { await i18n.changeLanguage("zh-CN"); });
+  expect(document.documentElement.lang).toBe("zh-CN");
+});
+
 it("shows the offline project brief and continues the previous entry without submitting work", async () => {
   const position = { unitId: page.rows[0].content.unitId, locale: project.metadata.targetLocales[0], nativeKey: "chapter.{{name}}" };
   localStorage.setItem(RECENT_PROJECTS_STORAGE_KEY, JSON.stringify([{ locator: project.locator, lastOpenedAt: Date.now() - 9 * 60 * 60 * 1000, position }]));
@@ -881,6 +891,7 @@ describe("real-port workspace assembly", () => {
 
 
 it("opens application settings and external query commands through the real workspace while retaining project language and query input", async () => {
+  document.documentElement.lang = "zh-CN";
   controller = new ProjectLifecycle({ open: vi.fn().mockResolvedValue(project) });
   render(<WorkbenchApp controller={controller} native/>);
   fireEvent.click(screen.getByRole("button", { name: i18n.t("startup.openExisting") }));
@@ -891,6 +902,7 @@ it("opens application settings and external query commands through the real work
   await waitFor(() => expect(settings).toBeEnabled()); settings.focus(); fireEvent.click(settings);
   await screen.findByRole("dialog", { name: i18n.t("settingsWorkbench.title") });
   await act(async () => { fireEvent.change(screen.getByRole("combobox", { name: i18n.t("settingsWorkbench.language") }), { target: { value: "en-US" } }); });
+  expect(document.documentElement.lang).toBe("en-US");
   expect(controller.getSnapshot().session?.project.metadata.targetLocales).toEqual(["zh-CN"]);
   fireEvent.click(screen.getByRole("button", { name: i18n.t("settingsWorkbench.close") }));
   await waitFor(() => expect(settings).toHaveFocus());

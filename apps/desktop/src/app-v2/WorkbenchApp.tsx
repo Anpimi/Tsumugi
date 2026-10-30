@@ -1407,8 +1407,10 @@ function WorkspaceWelcome(props: ComponentProps<typeof Welcome>) {
 }
 
 export default function WorkbenchApp({ controller: suppliedController, native = isTauri() }: { controller?: ProjectLifecycle; native?: boolean } = {}) {
-  const { t } = useTranslation(undefined, { keyPrefix: "workbenchV2" });
+  const { t, i18n } = useTranslation(undefined, { keyPrefix: "workbenchV2" });
+  const resolvedLanguage = i18n.resolvedLanguage ?? i18n.language ?? "en-US";
   const { t: startup } = useTranslation(undefined, { keyPrefix: "startup" });
+  useEffect(() => { document.documentElement.lang = resolvedLanguage; }, [resolvedLanguage]);
   const [startupDrop, setStartupDrop] = useState<SourceDrop | null>(null), [startupDropFailure, setStartupDropFailure] = useState<CommandFailure | null>(null);
   const [startupHandoff, setStartupHandoff] = useState<StartupClaimRequest | null>(null);
   const [restoreCandidate] = useState(readLastOpenProject);

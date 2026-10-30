@@ -230,72 +230,74 @@ export default function ConversationPanel({ projectBrief, showWorkPlans = true, 
     </div>
     {decisionTray}
     {input ? <div className={styles.composer}>
-      {recoveryChanged ? <Banner tone="warning" role="status">{t("recoveryChanged")}</Banner> : null}
-      {revocationRecovery && recoveryTarget ? <ConversationRunRevocations owner={owner} input={input}
-        link={{ conversationId: input.key.conversationId, planId: revocationRecovery.request.planId }}
-        recovery={{ actionId: recoveryTarget.actionId, targetRef: recoveryRegion }} canRead={() => {
-          const live = presentation.current, latest = owner.getSnapshot();
-          return live.visible && !live.blocked && !reads.retired && !latest.retired && live.activeId === recoveryTarget.conversationId
-            && latest.activeId === recoveryTarget.conversationId && live.viewId === viewId && live.parentDialogId === parentDialogId
-            && gate.canDispatch({ viewId, source: "button", dialogId: parentDialogId });
-        }}
-        onFinished={origin => {
-          const live = presentation.current;
-          if (live.visible && !live.blocked && live.activeId === recoveryTarget.conversationId
-            && (document.activeElement === origin || document.activeElement === document.body)) composer.current?.focus();
-        }}/> : null}
-      {input.notice ? <p role="status" className={local.notice}>{t(input.notice)}</p> : null}
-      {input.failure?.kind === "journal" ? <Banner tone="error"><p>{t("journalFailed")}</p><CommandFailureDetails failure={input.failure.cause}/>
-        <Button size="sm" disabled={blocked || input.journalBusy} onClick={() => void owner.retryJournal(activeId!)}>{t("retryJournal")}</Button></Banner> : null}
-      {pending ? <section ref={primaryRecovery ? recoveryRegion : undefined} tabIndex={primaryRecovery ? -1 : undefined}
-        className={primaryRecovery ? local.recovery : undefined} data-conversation-recovery={primaryRecovery ? "primary" : undefined}
-        aria-label={primaryRecovery ? t("recoveryPrimary") : undefined}>
-        {primaryRecovery ? <><h3>{t("recoveryPrimary")}</h3><p>{t("recoveryRequest", { request: recoveryRequestName(pending) })}</p><p>{t("recoveryHelp")}</p></> : null}
-      {pending.kind === "team-question-response" ? <><p>{t("teamQuestionPendingHelp")}</p><Disclosure title={<>{t("teamOriginal")}</>}>
-        <p>{pending.question.publication.body}</p><Field label={t("teamQuestionOriginalResponse")}><TextArea readOnly value={pending.request.response.response.kind === "text" ? pending.request.response.response.body
-          : pending.request.response.response.kind === "dismiss" ? pending.request.response.response.reason : pending.question.publication.question?.kind === "open"
-            ? pending.question.publication.question.options.find(option => pending.request.response.response.kind === "choice" && option.optionId === pending.request.response.response.optionId)?.label ?? "" : ""}/></Field>
-      </Disclosure></> : null}
-      {pending.kind === "team-recovery" ? <><p>{t("teamRecoveryPendingHelp")}</p><Disclosure title={<>{t("teamOriginal")}</>}>
-        <Field label={t("teamOriginalBody")}><TextArea readOnly value={pending.request.recovery.work.instructions}/></Field>
-        {pending.request.recovery.members.map(member => <div key={member.memberId}><p>{t("teamOriginalRecipient", { name: member.displayName, endpoint: member.config.endpoint, model: member.config.model })}</p><p>{member.role}</p></div>)}
-      </Disclosure></> : null}
-      {isConversationTeamPending(pending) ? <><p>{t("teamPendingHelp")}</p><Disclosure title={<>{t("teamOriginal")}</>}>
-        <p>{t("teamOriginalTarget", { entry: pending.targetName, locale: pending.kind === "team-message" ? pending.request.message.target.locale : pending.request.publication.target.locale })}</p>
-        {pending.kind === "team-message" ? <><p>{t("teamOriginalRecipient", { ...pending.destination })}</p><p>{pending.destination.role}</p></> : null}
-        <Field label={t("teamOriginalBody")}><TextArea readOnly value={pending.kind === "team-message" ? pending.request.message.body : pending.request.publication.body}/></Field>
-      </Disclosure></> : null}
-      {!input.busy && input.failure?.kind !== "journal" ? <Banner tone={input.outcome === "mismatch" ? "error" : "warning"}>
-        <p>{t(input.outcome === "blocked" ? runPending ? "runBlocked" : "absentBlocked" : input.outcome === "absent" ? replayable ? runPending ? "runAbsent" : "absent" : "absentBlocked" : input.outcome === "mismatch" ? "mismatch" : input.outcome === "recorded" ? "finishing" : runPending ? "runPending" : "pending")}</p>
-        <CommandFailureDetails failure={input.failure?.cause ?? null}/>
-        <div className={local.actions}><Button size="sm" disabled={blocked || (!!input.busy || input.journalBusy)} onClick={async event => {
-          const origin = event.currentTarget, conversationId = activeId!;
-          await owner.check(conversationId);
-          const live = presentation.current;
-          if (live.visible && !live.blocked && live.activeId === conversationId && (document.activeElement === origin || document.activeElement === document.body)) composer.current?.focus();
-        }}>{t("check")}</Button>
-          {input.outcome === "absent" && replayable ? <Button size="sm" disabled={blocked || (!!input.busy || input.journalBusy)} onClick={() => {
-            const conversationId = activeId!;
-            const current = () => {
-              const live = presentation.current;
-              return live.visible && !live.blocked && live.activeId === conversationId &&
-                live.viewId === viewId && live.parentDialogId === parentDialogId &&
-                gate.canDispatch({ viewId, source: "button", dialogId: parentDialogId });
-            };
-            if (current()) void owner.retry(conversationId, current);
-          }}>{t(runPending ? "runRetryOriginal" : "retryOriginal")}</Button> : null}</div>
-      </Banner> : null}</section> : null}
-      <Field label={t("message")} error={byteLength > 8192 ? t("messageTooLong") : undefined} description={t("localOnly")}>
-        <TextArea ref={composer} rows={3} value={input.value.text} readOnly={blocked} placeholder={t("placeholder")}
-          onFocus={() => gate.setInputOwner(viewId, "conversation-composer")} onBlur={() => { composing.current = false; gate.releaseOwner("conversation-composer"); }}
-          onCompositionStart={() => { composing.current = true; gate.setInputOwner(viewId, "conversation-composer"); gate.setComposing("conversation-composer", true); }}
-          onCompositionEnd={() => { composing.current = false; gate.setComposing("conversation-composer", false); }}
-          onChange={event => owner.edit(activeId!, event.target.value)} onKeyDown={event => {
-            if (event.key !== "Enter" || !(event.metaKey || event.ctrlKey) || event.altKey || event.shiftKey || event.nativeEvent.isComposing || composing.current || event.keyCode === 229) return;
-            if (!gate.canDispatch({ viewId, source: "keyboard", inputOwner: "conversation-composer", dialogId: parentDialogId })) return;
-            event.preventDefault(); event.stopPropagation(); if (!blocked) void owner.append(activeId!);
-          }}/>
-      </Field>
+      <div className={styles.composerBody}>
+        {recoveryChanged ? <Banner tone="warning" role="status">{t("recoveryChanged")}</Banner> : null}
+        {revocationRecovery && recoveryTarget ? <ConversationRunRevocations owner={owner} input={input}
+          link={{ conversationId: input.key.conversationId, planId: revocationRecovery.request.planId }}
+          recovery={{ actionId: recoveryTarget.actionId, targetRef: recoveryRegion }} canRead={() => {
+            const live = presentation.current, latest = owner.getSnapshot();
+            return live.visible && !live.blocked && !reads.retired && !latest.retired && live.activeId === recoveryTarget.conversationId
+              && latest.activeId === recoveryTarget.conversationId && live.viewId === viewId && live.parentDialogId === parentDialogId
+              && gate.canDispatch({ viewId, source: "button", dialogId: parentDialogId });
+          }}
+          onFinished={origin => {
+            const live = presentation.current;
+            if (live.visible && !live.blocked && live.activeId === recoveryTarget.conversationId
+              && (document.activeElement === origin || document.activeElement === document.body)) composer.current?.focus();
+          }}/> : null}
+        {input.notice ? <p role="status" className={local.notice}>{t(input.notice)}</p> : null}
+        {input.failure?.kind === "journal" ? <Banner tone="error"><p>{t("journalFailed")}</p><CommandFailureDetails failure={input.failure.cause}/>
+          <Button size="sm" disabled={blocked || input.journalBusy} onClick={() => void owner.retryJournal(activeId!)}>{t("retryJournal")}</Button></Banner> : null}
+        {pending ? <section ref={primaryRecovery ? recoveryRegion : undefined} tabIndex={primaryRecovery ? -1 : undefined}
+          className={primaryRecovery ? local.recovery : undefined} data-conversation-recovery={primaryRecovery ? "primary" : undefined}
+          aria-label={primaryRecovery ? t("recoveryPrimary") : undefined}>
+          {primaryRecovery ? <><h3>{t("recoveryPrimary")}</h3><p>{t("recoveryRequest", { request: recoveryRequestName(pending) })}</p><p>{t("recoveryHelp")}</p></> : null}
+        {pending.kind === "team-question-response" ? <><p>{t("teamQuestionPendingHelp")}</p><Disclosure title={<>{t("teamOriginal")}</>}>
+          <p>{pending.question.publication.body}</p><Field label={t("teamQuestionOriginalResponse")}><TextArea readOnly value={pending.request.response.response.kind === "text" ? pending.request.response.response.body
+            : pending.request.response.response.kind === "dismiss" ? pending.request.response.response.reason : pending.question.publication.question?.kind === "open"
+              ? pending.question.publication.question.options.find(option => pending.request.response.response.kind === "choice" && option.optionId === pending.request.response.response.optionId)?.label ?? "" : ""}/></Field>
+        </Disclosure></> : null}
+        {pending.kind === "team-recovery" ? <><p>{t("teamRecoveryPendingHelp")}</p><Disclosure title={<>{t("teamOriginal")}</>}>
+          <Field label={t("teamOriginalBody")}><TextArea readOnly value={pending.request.recovery.work.instructions}/></Field>
+          {pending.request.recovery.members.map(member => <div key={member.memberId}><p>{t("teamOriginalRecipient", { name: member.displayName, endpoint: member.config.endpoint, model: member.config.model })}</p><p>{member.role}</p></div>)}
+        </Disclosure></> : null}
+        {isConversationTeamPending(pending) ? <><p>{t("teamPendingHelp")}</p><Disclosure title={<>{t("teamOriginal")}</>}>
+          <p>{t("teamOriginalTarget", { entry: pending.targetName, locale: pending.kind === "team-message" ? pending.request.message.target.locale : pending.request.publication.target.locale })}</p>
+          {pending.kind === "team-message" ? <><p>{t("teamOriginalRecipient", { ...pending.destination })}</p><p>{pending.destination.role}</p></> : null}
+          <Field label={t("teamOriginalBody")}><TextArea readOnly value={pending.kind === "team-message" ? pending.request.message.body : pending.request.publication.body}/></Field>
+        </Disclosure></> : null}
+        {!input.busy && input.failure?.kind !== "journal" ? <Banner tone={input.outcome === "mismatch" ? "error" : "warning"}>
+          <p>{t(input.outcome === "blocked" ? runPending ? "runBlocked" : "absentBlocked" : input.outcome === "absent" ? replayable ? runPending ? "runAbsent" : "absent" : "absentBlocked" : input.outcome === "mismatch" ? "mismatch" : input.outcome === "recorded" ? "finishing" : runPending ? "runPending" : "pending")}</p>
+          <CommandFailureDetails failure={input.failure?.cause ?? null}/>
+          <div className={local.actions}><Button size="sm" disabled={blocked || (!!input.busy || input.journalBusy)} onClick={async event => {
+            const origin = event.currentTarget, conversationId = activeId!;
+            await owner.check(conversationId);
+            const live = presentation.current;
+            if (live.visible && !live.blocked && live.activeId === conversationId && (document.activeElement === origin || document.activeElement === document.body)) composer.current?.focus();
+          }}>{t("check")}</Button>
+            {input.outcome === "absent" && replayable ? <Button size="sm" disabled={blocked || (!!input.busy || input.journalBusy)} onClick={() => {
+              const conversationId = activeId!;
+              const current = () => {
+                const live = presentation.current;
+                return live.visible && !live.blocked && live.activeId === conversationId &&
+                  live.viewId === viewId && live.parentDialogId === parentDialogId &&
+                  gate.canDispatch({ viewId, source: "button", dialogId: parentDialogId });
+              };
+              if (current()) void owner.retry(conversationId, current);
+            }}>{t(runPending ? "runRetryOriginal" : "retryOriginal")}</Button> : null}</div>
+        </Banner> : null}</section> : null}
+        <Field label={t("message")} error={byteLength > 8192 ? t("messageTooLong") : undefined} description={t("localOnly")}>
+          <TextArea ref={composer} rows={3} value={input.value.text} readOnly={blocked} placeholder={t("placeholder")}
+            onFocus={() => gate.setInputOwner(viewId, "conversation-composer")} onBlur={() => { composing.current = false; gate.releaseOwner("conversation-composer"); }}
+            onCompositionStart={() => { composing.current = true; gate.setInputOwner(viewId, "conversation-composer"); gate.setComposing("conversation-composer", true); }}
+            onCompositionEnd={() => { composing.current = false; gate.setComposing("conversation-composer", false); }}
+            onChange={event => owner.edit(activeId!, event.target.value)} onKeyDown={event => {
+              if (event.key !== "Enter" || !(event.metaKey || event.ctrlKey) || event.altKey || event.shiftKey || event.nativeEvent.isComposing || composing.current || event.keyCode === 229) return;
+              if (!gate.canDispatch({ viewId, source: "keyboard", inputOwner: "conversation-composer", dialogId: parentDialogId })) return;
+              event.preventDefault(); event.stopPropagation(); if (!blocked) void owner.append(activeId!);
+            }}/>
+        </Field>
+      </div>
       <div className={styles.composerFooter}><span role="status">{t(input.failure?.kind === "journal" ? "inputUnsaved" : input.busy === "submit" ? runPending ? "runSending" : pending?.kind === "planning" ? "askStarting" : pending?.kind === "proposal-work-plan" ? "planConfirming" : pending?.kind === "proposal-capture" || pending?.kind === "proposal-revision" ? "proposalSaving" : "savingMessage" : input.busy === "check" ? input.runBusy ? "runChecking" : pending ? "checking" : "proposalChecking" : input.journalBusy || input.dirty ? "savingInput" : "inputSaved")}</span>
         <Button variant="secondary" size="sm" disabled={blocked || (!!input.busy || input.journalBusy) || !!input.planning.busy || !!pending || !!input.failure || !isConversationMessageText(input.value.text)}
           onClick={() => void owner.append(activeId!)}>{t("saveMessage")}</Button></div>
