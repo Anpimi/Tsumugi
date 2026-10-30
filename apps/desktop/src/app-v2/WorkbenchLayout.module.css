@@ -34,8 +34,8 @@
 .toolbarSearch input { background: transparent; border-color: transparent; min-width: 0; height: var(--control-sm); }
 .count { white-space: nowrap; font-size: var(--text-sm); font-variant-numeric: tabular-nums; }
 .scroll { min-height: 0; overflow: auto; flex: 1; }
-.tableHeader, .entry { display: grid; grid-template-columns: 3rem 3rem minmax(0, 1fr) minmax(0, 1fr); }
-.tableHeader { position: sticky; inset-block-start: 0; z-index: 1; color: var(--color-text-secondary); background: var(--color-bg-surface); font-size: var(--text-sm); line-height: var(--line-sm); overflow-wrap: anywhere; border-block-end: 1px solid var(--color-border-subtle); }
+.tableHeader, .entry { display: grid; grid-template-columns: calc(3rem * var(--font-scale, 1)) calc(3rem * var(--font-scale, 1)) minmax(0, 1fr) minmax(0, 1fr); }
+.tableHeader { position: sticky; inset-block-start: 0; z-index: 1; color: var(--color-text-secondary); background: var(--color-bg-surface); font-size: var(--text-sm); line-height: var(--line-sm); border-block-end: 1px solid var(--color-border-subtle); }
 .tableHeader > span { padding: var(--space-4) var(--space-3); }
 .entry { position: relative; border-block-end: 1px solid var(--color-border-subtle); font-size: var(--text-editor); line-height: var(--line-editor); }
 .entry[hidden] { display: none; }
