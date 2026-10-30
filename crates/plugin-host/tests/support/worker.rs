@@ -55,6 +55,9 @@ fn main() {
         raw(&serde_json::to_vec(&frame).unwrap());
         hang();
     }
+    if mode == "delayed-ready" {
+        std::thread::sleep(Duration::from_millis(3500));
+    }
     write_frame(ProcessBody::Ready(activation.clone()));
     loop {
         if mode == "no-read" {

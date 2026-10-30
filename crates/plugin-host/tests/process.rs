@@ -552,6 +552,46 @@ fn wrong_request_is_rejected_before_dispatch_without_harming_another_scope() {
     });
 }
 #[test]
+fn timeouts_allow_delayed_default_handshakes_and_preserve_explicit_limits() {
+    runtime().block_on(async {
+        let package = image("delayed-ready");
+        let dir = tempfile::tempdir().unwrap();
+        let mut default_options = options();
+        default_options.limits = HostLimits::default();
+        let mut session = ProcessSession::launch(
+            &package,
+            "query.call",
+            dir.path(),
+            &RuntimeLauncher::Native,
+            default_options,
+            || true,
+        )
+        .await
+        .unwrap();
+        assert!(session.is_accepting());
+        let closed = session.close().await;
+        assert!(closed.cooperative_acknowledgement);
+        assert!(closed.direct_child_reaped);
+        assert_eq!(std::fs::read_dir(dir.path()).unwrap().count(), 0);
+
+        let mut limited_options = options();
+        limited_options.limits.handshake_timeout_ms = 100;
+        let started = tokio::time::Instant::now();
+        let limited = ProcessSession::launch(
+            &package,
+            "query.call",
+            dir.path(),
+            &RuntimeLauncher::Native,
+            limited_options,
+            || true,
+        )
+        .await;
+        assert!(matches!(limited, Err(HostError::Timeout)));
+        assert!(started.elapsed() < Duration::from_secs(2));
+        assert_eq!(std::fs::read_dir(dir.path()).unwrap().count(), 0);
+    });
+}
+#[test]
 fn timeouts_bound_a_worker_that_stops_reading_or_returning_results() {
     runtime().block_on(async {
         for mode in ["no-read", "no-result"] {

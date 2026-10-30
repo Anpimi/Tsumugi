@@ -127,7 +127,8 @@ impl Default for HostLimits {
             max_session_output_bytes: 64 * 1024 * 1024,
             max_stderr_bytes: 16 * 1024,
             max_invocations: 128,
-            handshake_timeout_ms: 3000,
+            // Cold startup of a freshly materialized runtime is part of this bound.
+            handshake_timeout_ms: 10000,
             invocation_timeout_ms: 10000,
             stop_timeout_ms: 500,
             cleanup_timeout_ms: 500,

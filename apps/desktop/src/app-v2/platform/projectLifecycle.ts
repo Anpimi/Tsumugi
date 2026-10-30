@@ -112,7 +112,9 @@ export class ProjectLifecycle {
   private finish(ticket: Ticket) { if (this.owns(ticket)) { this.intent = null; this.update({ phase: "idle" }); } }
 
   private async guard(ticket: Ticket, intent: LeaveIntent, current: () => boolean): Promise<SessionExitPermit | null> {
-    const registrations = () => this.registrations(ticket.session);
+    // A checked close ACK settles the project leave decision. Retiring its
+    // reads may block or unmount those owners; application input stays guarded.
+    const registrations = () => this.registrations(ticket.closed ? null : ticket.session);
     const captured = registrations();
     const expected = new Map(captured.map(entry => [entry.token, { ...entry.participant.inspect(intent) }]));
     let valid = true;
@@ -121,6 +123,7 @@ export class ProjectLifecycle {
       const added = latest.find(entry => !expected.has(entry.token));
       if (added) return added;
       return captured.find(entry => {
+        if (ticket.closed && entry.participant.scope.kind === "project") return false;
         if (!latest.some(value => value.token === entry.token)) return true;
         if (entry.token === settling) return false;
         const value = entry.participant.inspect(intent), before = expected.get(entry.token);
@@ -321,9 +324,9 @@ export class ProjectLifecycle {
         if (!allowed) { this.retain(ticket.session); this.update({ failure: { code: "leave-changed" } }); return false; }
       }
       if (!destroy) return true;
-      if (!current()) { this.retain(ticket.session); return false; }
+      if (!current()) { this.retain(ticket.session); this.update({ failure: this.state.failure ?? { code: "leave-changed" } }); return false; }
       if (!await this.cleanupApplication(ticket) || !current()) {
-        if (!current()) this.retain(ticket.session);
+        if (!current()) { this.retain(ticket.session); this.update({ failure: this.state.failure ?? { code: "leave-changed" } }); }
         return false;
       }
       this.update({ phase: "destroying" });

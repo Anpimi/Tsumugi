@@ -101,6 +101,50 @@ describe("project creation through the existing lifecycle", () => {
 });
 
 describe("real draft owner during native shutdown", () => {
+  it("keeps native close authority when retiring real session reads blocks its project participant", async () => {
+    const { controller, ports } = fixture(); await controller.open(first.locator);
+    const session = controller.getSnapshot().session!;
+    // Source and resource owners derive their blocked state from live session reads.
+    const participant: LifecycleParticipant = { id: "source-maintenance", area: "source", scope: { kind: "project", ...session.reads.context },
+      inspect: () => ({ status: session.reads.retired ? "blocked" : "ready", revision: String(session.reads.retired) }),
+      prepareLeave: vi.fn(async () => false), reveal: vi.fn() };
+    controller.register(participant);
+    ports.stopCleanup.mockImplementationOnce(async request => {
+      expect(session.reads.retired).toBe(true);
+      expect(participant.inspect({ kind: "close-window" }).status).toBe("blocked");
+      expect(controller.getSnapshot().closingSession).toBe(session);
+      return { ...request, state: "stopped" };
+    });
+    const destroy = vi.fn(async () => {});
+    expect(await controller.closeWindow(destroy)).toBe(true);
+    expect(ports.close).toHaveBeenCalledExactlyOnceWith({ sessionToken: first.sessionToken });
+    expect(ports.stopCleanup).toHaveBeenCalledOnce(); expect(destroy).toHaveBeenCalledOnce();
+    expect(controller.getSnapshot()).toMatchObject({ session: null, retainedSession: null, closingSession: null, pending: null, failure: null });
+    expect(participant.prepareLeave).not.toHaveBeenCalled(); controller.dispose();
+  });
+
+  it.each(["input", "replacement", "registration", "unregistration"] as const)("keeps application %s protected while a retired project drains", async change => {
+    const stopped = deferred<ApplicationShutdownView>(), { controller, ports } = fixture();
+    await controller.open(first.locator); const session = controller.getSnapshot().session!;
+    const input = { status: "ready" as const, revision: "A" };
+    const participant: LifecycleParticipant = { id: "application-input", area: "overview", scope: { kind: "application" },
+      inspect: () => ({ ...input }), prepareLeave: vi.fn(async () => false) };
+    const unregister = controller.register(participant);
+    ports.stopCleanup.mockImplementationOnce(() => stopped.promise);
+    const destroy = vi.fn(async () => {}), closing = controller.closeWindow(destroy);
+    await vi.waitFor(() => expect(ports.stopCleanup).toHaveBeenCalledOnce());
+    expect(session.reads.retired).toBe(true);
+    if (change === "input") input.revision = "Newer B";
+    if (change === "replacement") controller.register({ ...participant, inspect: () => ({ status: "ready", revision: "Replacement" }) });
+    if (change === "registration") controller.register({ ...participant, id: "new-application-input" });
+    if (change === "unregistration") unregister();
+    stopped.resolve({ actionId: ports.actionId.mock.results[0].value, state: "stopped" });
+    expect(await closing).toBe(false);
+    expect(controller.getSnapshot()).toMatchObject({ session: null, retainedSession: session, failure: { code: "leave-changed" }, cleanup: { state: "stopped" } });
+    expect(ports.close).toHaveBeenCalledOnce(); expect(ports.actionId).toHaveBeenCalledOnce();
+    expect(destroy).not.toHaveBeenCalled(); controller.dispose();
+  });
+
   it("destroys the window after a durable owner retires while the application drains", async () => {
     const stopped = deferred<ApplicationShutdownView>(), { controller, ports } = fixture();
     await controller.open(first.locator);

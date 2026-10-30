@@ -6,6 +6,9 @@ import { useSessionReads } from "./SessionReadProvider";
 import { sourceHookKey } from "./SourceMaintenanceHook";
 import type { SourceMaintenanceHookObservation } from "./sourceMaintenanceHookCommands";
 import type { ProjectView } from "./projectCommands";
+import { Button } from "./design-system/Button";
+import { Field, Select } from "./design-system/Field";
+import styles from "./SourceMaintenanceHookControls.module.css";
 
 export function SourceMaintenanceHookChoice({ project, disabled }: { project: ProjectView; disabled: boolean }) {
   const { t, i18n } = useTranslation(), owner = useSourceDraftSession().hook, { state } = owner;
@@ -16,22 +19,23 @@ export function SourceMaintenanceHookChoice({ project, disabled }: { project: Pr
     return () => window.clearTimeout(timer);
   }, [state.enabled, state.activation]);
   const expired = !!state.activation && state.activation.expiresAtMs <= now;
-  return <fieldset disabled={disabled}>
-    <legend>{t("sourceHook.choiceTitle")}</legend><p>{t("sourceHook.choiceHelp")}</p>
-    <label className="source-field">{t("sourceHook.locale")}<select value={state.locale} onChange={event => owner.editLocale(event.target.value)}>
+  return <fieldset className={styles.choice} disabled={disabled}>
+    <legend className={styles.legend}>{t("sourceHook.choiceTitle")}</legend><div className={styles.content}>
+    <p className={styles.help}>{t("sourceHook.choiceHelp")}</p>
+    <Field label={t("sourceHook.locale")}><Select value={state.locale} onChange={event => owner.editLocale(event.target.value)}>
       <option value="">{t("sourceHook.chooseLocale")}</option>
       {state.locale && !project.metadata.targetLocales.includes(state.locale) ? <option value={state.locale} disabled>{state.locale}</option> : null}
       {project.metadata.targetLocales.map(locale => <option key={locale} value={locale}>{locale}</option>)}
-    </select></label>
-    <label className="source-check"><input type="checkbox" checked={state.enabled} disabled={!project.metadata.targetLocales.includes(state.locale)}
-      onChange={event => { void owner.enable(event.target.checked); }} />{t("sourceHook.consent")}</label>
+    </Select></Field>
+    <label className={styles.check}><input type="checkbox" checked={state.enabled} disabled={!project.metadata.targetLocales.includes(state.locale)}
+      onChange={event => { void owner.enable(event.target.checked); }} /><span>{t("sourceHook.consent")}</span></label>
     {state.preparing ? <p role="status">{t("sourceHook.preparing")}</p> : null}
     {state.activation ? <p>{t("sourceHook.expiry", { expiry: new Intl.DateTimeFormat(i18n.resolvedLanguage, { dateStyle: "medium", timeStyle: "medium" }).format(state.activation.expiresAtMs) })}</p> : null}
     {state.preparationFailure ? <div role="alert"><p>{t("sourceHook.prepareFailed")}</p><CommandFailureDetails failure={state.preparationFailure} /></div> : null}
     {expired ? <p role="alert">{t("sourceHook.expiredChoice")}</p> : null}
-    {state.enabled && (state.preparing || state.preparationFailure || expired || !state.activation) ? <button type="button" className="secondary-button"
-      onClick={() => { void owner.enable(true); }}>{t(state.preparing ? "sourceHook.retryDeclarationWait" : "sourceHook.reconfirm")}</button> : null}
-  </fieldset>;
+    {state.enabled && (state.preparing || state.preparationFailure || expired || !state.activation) ? <Button variant="secondary"
+      onClick={() => { void owner.enable(true); }}>{t(state.preparing ? "sourceHook.retryDeclarationWait" : "sourceHook.reconfirm")}</Button> : null}
+    </div></fieldset>;
 }
 
 export function SourceMaintenanceHookStatus({ active, onOpenMaintenance }: { active: boolean;
