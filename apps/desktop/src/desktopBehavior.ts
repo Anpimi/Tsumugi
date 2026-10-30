@@ -22,10 +22,11 @@ export function installDesktopBehavior() {
     if (!textControl && !editable) event.preventDefault();
   }
 
-  window.addEventListener("keydown", handleKeyDown, true);
+  // Application handlers on the document run before this browser-only fallback.
+  window.addEventListener("keydown", handleKeyDown);
   document.addEventListener("contextmenu", handleContextMenu);
   return () => {
-    window.removeEventListener("keydown", handleKeyDown, true);
+    window.removeEventListener("keydown", handleKeyDown);
     document.removeEventListener("contextmenu", handleContextMenu);
   };
 }

@@ -778,8 +778,8 @@ function WorkspaceShell() {
       const dialog = current.dialogs.at(-1);
       dispatcher.handleKeyDown(event, currentId, current.inputOwner?.ownerId, dialog === "draft-recovery" || dialog === "workspace-dock" ? dialog : undefined);
     };
-    window.addEventListener("keydown", onKeyDown);
-    return () => window.removeEventListener("keydown", onKeyDown);
+    document.addEventListener("keydown", onKeyDown);
+    return () => document.removeEventListener("keydown", onKeyDown);
   }, [dispatcher, currentId, gate, store, runtime]);
   useEffect(() => {
     if (!isTauri() || !commandsReady) return;

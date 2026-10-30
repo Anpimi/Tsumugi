@@ -20,6 +20,7 @@ import { conversationDraftCommands } from "../conversationDraftCommands";
 import { translationCommands } from "../translationCommands";
 import { validateSaveReceipt } from "../translationCommands";
 import { executionCommands } from "../executionCommands";
+import { installDesktopBehavior } from "../desktopBehavior";
 import { reviewCommands } from "../reviewCommands";
 import { validateResponseRead, validateResponseWritten, validateResponseCleared } from "../generated/draft.validators";
 import { validateResponseRecoverSave } from "../generated/translation.validators";
@@ -670,6 +671,71 @@ describe("real-port workspace assembly", () => {
     expect(lifecycle.getSnapshot().failure).toBeNull();
   });
 
+  it("dispatches platform Save from the editor with desktop browser suppression and respects target cancellation", async () => {
+    const retained: unknown = structuredClone(draftFixture.responses.read);
+    if (!validateResponseRead(retained) || !retained.head.value || retained.current.kind !== "current") throw new Error("Invalid editor save fixture");
+    retained.head.value.pending = null;
+    let head = retained.head;
+    const current = retained.current, key = head.key, nativeKey = current.nativeKey;
+    const opened = { ...project, metadata: { ...project.metadata, projectId: key.projectId } };
+    const row = { ...structuredClone(page.rows[0]), protection: { ...page.rows[0].protection, unitId: key.unitId },
+      content: { ...page.rows[0].content, unitId: key.unitId, sourceSnapshotId: translationFixture.start.expectedSourceSnapshotId,
+        sourceRevisionId: current.basis.sourceRevisionId, nativeKey, selectionId: null, revisionId: null, translationPreview: null } };
+    const captured = { ...page, projectId: key.projectId, sourceSnapshotId: row.content.sourceSnapshotId, rows: [row] };
+    vi.mocked(sourceCommands.scope).mockResolvedValue({ currentSnapshot: captured.sourceSnapshotId, revision: "1" });
+    vi.mocked(segmentCommands.page).mockResolvedValue(captured);
+    vi.spyOn(segmentCommands, "queueWindow").mockImplementation(async request => ({ projectId: key.projectId, locale: request.locale,
+      scopeId: captured.scopeId, sourceSnapshotId: captured.sourceSnapshotId, query: captured.query, queryFingerprint: captured.queryFingerprint,
+      epoch: captured.epoch, sequence: captured.sequence, total: 1, firstPosition: 0, previousUnitId: null, nextUnitId: null, rows: [row] }));
+    vi.spyOn(draftCommands, "read").mockImplementation(async () => ({ head: structuredClone(head), current: structuredClone(current) }));
+    vi.spyOn(draftCommands, "write").mockImplementation(async ({ write }) => {
+      expect(write.key).toEqual(key); expect(write.expectedRevision).toBe(head.revision);
+      const value: unknown = { key, writerId: write.writerId, revision: (BigInt(head.revision) + 1n).toString(), value: structuredClone(write.value) };
+      if (!validateResponseWritten(value)) throw new Error("Invalid editor save write fixture");
+      head = value; return structuredClone(head);
+    });
+    vi.spyOn(draftCommands, "clear").mockImplementation(async ({ clear }) => {
+      expect(clear.key).toEqual(key); expect(clear.expectedRevision).toBe(head.revision);
+      const value: unknown = { key, writerId: null, revision: (BigInt(head.revision) + 1n).toString(), value: null };
+      if (!validateResponseCleared(value)) throw new Error("Invalid editor save clear fixture");
+      head = value; return structuredClone(head);
+    });
+    vi.spyOn(executionCommands, "identity").mockResolvedValue(translationFixture.save.actionId);
+    const save = vi.spyOn(translationCommands, "save").mockImplementation(async request => {
+      const selection = { ...translationFixture.receipt.selection, actionId: request.actionId, unitId: request.unitId, locale: request.locale,
+        previousEventId: request.expectedSelectionId ?? null, sequence: "1" };
+      const receipt = validateSaveReceipt({ ...translationFixture.receipt, actionId: request.actionId, projectId: request.projectId, selection,
+        revision: { ...translationFixture.receipt.revision, actionId: request.actionId, unitId: request.unitId, locale: request.locale, sourceRevisionId: request.sourceRevisionId, text: request.text },
+        basis: { ...translationFixture.receipt.basis, sourceRevisionId: request.sourceRevisionId, selectionId: selection.eventId } }, request);
+      current.basis = { sourceRevisionId: request.sourceRevisionId, selectionId: selection.eventId, revisionId: selection.revisionId, text: request.text };
+      return receipt;
+    });
+    const removeDesktopBehavior = installDesktopBehavior();
+    try {
+      await openImportWorkspace(opened);
+      const edit = await screen.findByRole("button", { name: i18n.t("workbenchV2.entryEdit", { key: nativeKey }) });
+      await waitFor(() => expect(edit).toBeEnabled()); fireEvent.click(edit);
+      const input = await screen.findByRole("textbox", { name: i18n.t("workbenchV2.editorLabel", { key: nativeKey }) });
+      const text = "Save {{name}} — é 👩🏽‍💻\n第二行保持完整";
+      expect(input).toHaveFocus(); fireEvent.change(input, { target: { value: text } });
+      await waitFor(() => expect(screen.getByRole("button", { name: i18n.t("workbenchV2.editorConfirm") })).toBeEnabled());
+      const modifier = navigator.platform.includes("Mac") ? { metaKey: true } : { ctrlKey: true };
+      input.addEventListener("keydown", event => event.preventDefault(), { once: true });
+      const cancelled = new KeyboardEvent("keydown", { key: "s", bubbles: true, cancelable: true, ...modifier });
+      fireEvent(input, cancelled);
+      expect(cancelled.defaultPrevented).toBe(true); expect(save).not.toHaveBeenCalled(); expect(input).toHaveValue(text);
+      const accepted = new KeyboardEvent("keydown", { key: "s", bubbles: true, cancelable: true, ...modifier });
+      fireEvent(input, accepted);
+      expect(accepted.defaultPrevented).toBe(true);
+      await waitFor(() => expect(save).toHaveBeenCalledTimes(1));
+      expect(save).toHaveBeenCalledWith({ ...key, sessionToken: opened.sessionToken, actionId: translationFixture.save.actionId,
+        sourceRevisionId: retained.current.basis.sourceRevisionId, expectedSelectionId: null, text });
+      await waitFor(() => expect(head.value).toBeNull());
+      expect(screen.getByRole("textbox", { name: i18n.t("workbenchV2.editorLabel", { key: nativeKey }) })).toBe(input);
+      expect(input).toHaveValue(text); expect(input).toHaveFocus();
+    } finally { removeDesktopBehavior(); }
+  });
+
   it("keeps the editor focused on a narrow workspace until details are explicitly requested", async () => {
     const width = Object.getOwnPropertyDescriptor(window, "innerWidth");
     Object.defineProperty(window, "innerWidth", { configurable: true, writable: true, value: 900 });
@@ -924,7 +990,7 @@ it("opens application settings and external query commands through the real work
   expect(await screen.findByRole("textbox", { name: i18n.t("toolQuery.text", { position: "1" }) })).toHaveValue("Retained local query B");
   fireEvent.click(screen.getByRole("button", { name: i18n.t("mcpWorkbench.discardReference") }));
   const leave = await screen.findByRole("dialog", { name: i18n.t("toolQuery.leaveTitle") });
-  fireEvent.keyDown(window, { key: "o", ctrlKey: !navigator.platform.includes("Mac"), metaKey: navigator.platform.includes("Mac") });
+  fireEvent.keyDown(leave, { key: "o", ctrlKey: !navigator.platform.includes("Mac"), metaKey: navigator.platform.includes("Mac") });
   expect(screen.queryByRole("dialog", { name: i18n.t("workbenchV2.openProject") })).not.toBeInTheDocument();
   fireEvent.click(within(leave).getByRole("button", { name: i18n.t("resource.discardAndLeave") }));
   await waitFor(() => expect(screen.queryByRole("dialog", { name: i18n.t("toolQuery.leaveTitle") })).not.toBeInTheDocument());
