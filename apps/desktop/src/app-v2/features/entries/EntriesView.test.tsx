@@ -1,5 +1,5 @@
 import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
-import { createRef, useSyncExternalStore } from "react";
+import { createRef, useState, useSyncExternalStore } from "react";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { i18n } from "../../../i18n";
 import type { workbenchEn } from "../../../i18n/workbench";
@@ -52,7 +52,7 @@ function receipt(request: TranslationSaveRequest): TranslationSaveReceipt {
     revision: { ...fixture.receipt.revision, unitId: request.unitId, locale: request.locale, sourceRevisionId: request.sourceRevisionId, text: request.text, actionId: request.actionId, originKind: "manual" },
     basis: { ...fixture.receipt.basis, sourceRevisionId: request.sourceRevisionId, selectionId: fixture.receipt.selection.eventId } };
 }
-async function harness(initialView: Partial<NewWorkspaceView> = {}) {
+async function harness(initialView: Partial<NewWorkspaceView> = {}, options: { emptySource?: boolean; onImportSource?: () => void; onImport?: () => void } = {}) {
   const reads = new SessionReads(context); owners.push(reads);
   const store = createWorkspaceStore({ initialLocale: "zh-CN", initialViews: [{ id: "view-one", kind: "entries", locale: "zh-CN", preset: "unselected", ...initialView }] });
   const gate = new InteractionGate(); gate.setVisibleOwner("view-one");
@@ -68,7 +68,7 @@ async function harness(initialView: Partial<NewWorkspaceView> = {}) {
       scopeId: request.scopeId, sourceSnapshotId: "snapshot", total: units.length, firstPosition: start,
       rows: units.slice(start, start + 2).map(unit => row(unit, request.locale)), previousUnitId: units[start - 1] ?? null, nextUnitId: units[start + 2] ?? null } satisfies SegmentQueueWindow;
   });
-  const source = vi.spyOn(sourceCommands, "scope").mockResolvedValue({ currentSnapshot: "snapshot", revision: "1" });
+  const source = vi.spyOn(sourceCommands, "scope").mockResolvedValue({ currentSnapshot: options.emptySource ? null : "snapshot", revision: "1" });
   const comparison = vi.spyOn(segmentCommands, "sourceComparison").mockImplementation(async request => ({
     projectId: context.projectId, locale: request.locale, scopeId: request.scopeId, currentSnapshotId: "snapshot", baseSnapshotId: "previous-snapshot", nextAfter: null,
     rows: request.unitIds.map(unitId => ({ unitId, changeKind: "changed", old: { sourceRevisionId: "old-revision", text: `Previous ${unitId} é 👩🏽‍💻` },
@@ -108,18 +108,36 @@ async function harness(initialView: Partial<NewWorkspaceView> = {}) {
   registerWorkspaceCommands({ commands, store, gate, viewId: "view-one", scope, getCurrentScope: () => scope,
     navigation: { open: vi.fn(async () => true), activate: vi.fn(async () => true), close: vi.fn(async () => true), update: vi.fn(async () => true) },
     actions: { confirm: advance => ref.current?.confirm(advance), isEditing: () => ref.current?.isEditing() ?? false, canConfirm: () => ref.current?.canConfirm() ?? false }, onError: error => { throw error; } });
+  let setDisabled!: (value: boolean) => void;
   function Surface() {
+    const [disabled, updateDisabled] = useState(false); setDisabled = updateDisabled;
     const state = useSyncExternalStore(store.subscribe, store.getState, store.getState), view = getWorkspaceView(state, state.activeViewId);
     return view ? <div onKeyDown={event => dispatcher.handleKeyDown(event.nativeEvent, view.id, gate.getSnapshot().inputOwner?.ownerId)}>
-      <EntriesView ref={ref} project={project} view={view} disabled={false} drafts={drafts} gate={gate} patch={value => store.getState().patch(view.id, value)} navigate={navigate}
-        dispatch={(id, source, inputOwner) => dispatcher.dispatch(id, { viewId: view.id, source, inputOwner })} onRevealDraft={vi.fn()} />
+      <EntriesView ref={ref} project={project} view={view} disabled={disabled} drafts={drafts} gate={gate} patch={value => store.getState().patch(view.id, value)} navigate={navigate}
+        dispatch={(id, source, inputOwner) => dispatcher.dispatch(id, { viewId: view.id, source, inputOwner })} onRevealDraft={vi.fn()} onImportSource={options.onImportSource} onImport={options.onImport} />
     </div> : null;
   }
   render(<SessionReadProvider context={context} reads={reads} bridge={false}><Surface /></SessionReadProvider>);
   const view = () => getWorkspaceView(store.getState(), store.getState().activeViewId);
   const open = async (unit = unitA) => { fireEvent.click(await screen.findByRole("button", { name: i18n.t("workbenchV2.entryEdit", { key: `key.${unit}` }) })); return screen.findByRole<HTMLTextAreaElement>("textbox", { name: i18n.t("workbenchV2.editorLabel", { key: `key.${unit}` }) }); };
-  return { reads, store, gate, drafts, ports, ref, page, queue, source, comparison, navigate, navigationAllowed, view, open, commit };
+  return { reads, store, gate, drafts, ports, ref, page, queue, source, comparison, navigate, navigationAllowed, view, open, commit, setDisabled };
 }
+
+it.each(["en-US", "zh-CN"] as const)("offers source import in the %s empty state and respects disabled and interaction gates", async language => {
+  await i18n.changeLanguage(language);
+  const onImportSource = vi.fn(), onImport = vi.fn();
+  const h = await harness({}, { emptySource: true, onImportSource, onImport });
+  const button = await screen.findByRole("button", { name: language === "en-US" ? "Import source content" : "导入源内容" });
+  expect(screen.getByText(w("noSourceHelp"))).toBeVisible();
+  fireEvent.click(button); expect(onImportSource).toHaveBeenCalledTimes(1); expect(onImport).not.toHaveBeenCalled();
+  let release!: () => void; act(() => { release = h.gate.pushDialog("other-dialog"); });
+  expect(button).toBeDisabled(); fireEvent.click(button); expect(onImportSource).toHaveBeenCalledTimes(1);
+  act(() => { release(); h.setDisabled(true); });
+  expect(button).toBeDisabled(); fireEvent.click(button); expect(onImportSource).toHaveBeenCalledTimes(1);
+  act(() => h.setDisabled(false)); expect(button).toBeEnabled();
+  fireEvent.click(screen.getByRole("button", { name: w("importTitle") }));
+  expect(onImport).toHaveBeenCalledTimes(1); expect(onImportSource).toHaveBeenCalledTimes(1);
+});
 
 it.each(["en-US", "zh-CN"] as const)("uses real %s search labels, counts and interpolated row actions", async language => {
   await i18n.changeLanguage(language);

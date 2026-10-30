@@ -4,7 +4,7 @@ import { Dialog, Sheet } from "../../../design-system/Dialog";
 import { Button } from "../../../design-system/Button";
 import { Field, Select } from "../../../design-system/Field";
 import { Banner, LoadingState } from "../../../design-system/Feedback";
-import { CommandFailureDetails, type CommandFailure } from "../../../CommandFailure";
+import { commandFailure, CommandFailureDetails, type CommandFailure } from "../../../CommandFailure";
 import { PluginPermissions } from "../../../PluginPermissions";
 import { matchingPluginEnvironments, pluginEnvironmentVersion } from "../../../pluginEnvironments";
 import { useSessionQuery, useSessionReads } from "../../../SessionReadProvider";
@@ -103,7 +103,7 @@ export default function SourcePreparationSheet({ project, owner, open, disabled,
       {drop ? <Banner>{t("droppedFolder", { folder: drop.folderName })}</Banner> : null}
       {dropFailure ? <Banner tone="error">{t("dropFailed")}<CommandFailureDetails failure={dropFailure}/></Banner> : null}
       {state.failure ? <Banner tone="error">{t("operationFailed")}<CommandFailureDetails failure={state.failure}/></Banner> : null}
-      {inventory.isFetching ? <LoadingState label={t("readingImporters")}/> : inventory.error ? <Banner tone="error" action={<Button onClick={() => setInventoryRevision(value => value + 1)}>{t("retryRead")}</Button>}>{t("importersFailed")}</Banner> : null}
+      {inventory.isFetching ? <LoadingState label={t("readingImporters")}/> : inventory.error ? <Banner tone="error" action={<Button onClick={() => setInventoryRevision(value => value + 1)}>{t("retryRead")}</Button>}>{t("importersFailed")}<CommandFailureDetails failure={commandFailure(inventory.error)}/></Banner> : null}
       <Field label={old("source.integration")}><Select disabled={configurationLocked || !fresh(inventoryOptions.key)} value={choiceKey} onChange={event => chooseSource(event.target.value, "")}>
         <option value="">{old("sourcePlugin.choosePackage")}</option>{choices.map(choice => <option key={choice.key} value={choice.key}>{choice.label}</option>)}
       </Select></Field>
@@ -112,7 +112,7 @@ export default function SourcePreparationSheet({ project, owner, open, disabled,
         {runtimes.map(runtime => <option key={runtime.environmentDigest} value={runtime.environmentDigest}>{old(runtime.environment.profile === "node-system-libraries-v1" ? "sourcePlugin.runtimeOption" : "sourcePlugin.nativeRuntimeOption",
           { version: pluginEnvironmentVersion(runtime.environment), system: runtime.environment.platform.operatingSystem, architecture: runtime.environment.platform.architecture })}</option>)}
       </Select></Field>
-      {source.error ? <Banner tone="error" action={<Button onClick={() => void source.refetch()}>{t("retryRead")}</Button>}>{t("importerUnavailable")}</Banner> : null}
+      {source.error ? <Banner tone="error" action={<Button onClick={() => void source.refetch()}>{t("retryRead")}</Button>}>{t("importerUnavailable")}<CommandFailureDetails failure={commandFailure(source.error)}/></Banner> : null}
       {environment ? <><p>{environment.declaration.displayName}</p><ul>{environment.declaration.materials.map(file => <li key={file.logicalPath}>{old("sourcePlugin.material", { path: file.logicalPath, bytes: String(file.maxBytes) })}</li>)}</ul></> : null}
       <Button disabled={!canPrepare || configurationLocked} onClick={() => { if (!current()) return; const ticket = drop?.dropTicket; onDropConsumed();
         if (ticket) void owner.selectDropped(ticket); else void owner.select(); }}>{t(drop ? "useDroppedFolder" : "chooseFolder")}</Button>

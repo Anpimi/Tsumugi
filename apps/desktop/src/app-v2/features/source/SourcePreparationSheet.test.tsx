@@ -10,11 +10,12 @@ import { sourceDraftValue } from "../../../sourceDraftJournal";
 import { sourceReads } from "../../../sourceQueries";
 import { translationCommands } from "../../../translationCommands";
 import { i18n } from "../../../i18n";
-import type { ProjectView } from "../../../projectCommands";
-import { renderWorkbench } from "../../../testSupport/WorkbenchTestShell";
+import type { CommandError, ProjectView } from "../../../projectCommands";
+import { renderWorkbench, refreshWorkbenchReads } from "../../../testSupport/WorkbenchTestShell";
 import { installSourceDraftFixture } from "../../../testSupport/sourceDraftFixture";
 import { sourceDraftStateFixture } from "../../../testSupport/sourceDraftStateFixture";
 import { sourcePageFixture, sourceRowFixture } from "../../../testSupport/sourceFixture";
+import { pluginSourceInventory, pluginSourcePackage, pluginSourceRequest, pluginSourceView } from "../../../testSupport/pluginSourceFixture";
 import { fixtureIdentity as id } from "../../../testSupport/executionFixture";
 import { InteractionGate } from "../../workspace/interactionGate";
 import wire from "../../../../test/fixtures/sourceCommands.contract.json";
@@ -69,6 +70,76 @@ async function restoreCorrectionForNavigation() {
     expectedRevision: "0", writerId: id(2150), value: sourceDraftValue(inputs, "2") } });
   return inputs.source.correctionDraft;
 }
+
+it.each(["en-US", "zh-CN"] as const)("retains importer choices and diagnostic details until an inventory retry succeeds in %s", async language => {
+  await i18n.changeLanguage(language);
+  const failure: CommandError = { code: "busy", stage: "read", outcome: "rejected", recoveryRequired: false,
+    reason: "synthetic-inventory-busy", diagnosticId: id(2160), recoveryGuidance: "review-current" };
+  let unavailable = false;
+  invoke.mockImplementation(async command => {
+    if (command === "read_plugin_inventory") { if (unavailable) throw failure; return pluginSourceInventory; }
+    if (command === "read_plugin_package") return pluginSourcePackage;
+    if (command === "read_plugin_source") return pluginSourceView;
+    throw new Error(`Unexpected source preparation command: ${command}`);
+  });
+  renderWorkbench(<Harness saved={null}/>, project); const user = userEvent.setup();
+  const importer = await screen.findByRole("combobox", { name: i18n.t("source.integration") });
+  await waitFor(() => expect(importer).toBeEnabled());
+  const key = `${pluginSourceRequest.package.packageDigest}:${pluginSourceRequest.resourceId}`;
+  await user.selectOptions(importer, key);
+  const runtime = screen.getByRole("combobox", { name: i18n.t("sourcePlugin.runtime") });
+  await user.selectOptions(runtime, pluginSourceRequest.environmentDigest);
+  const choose = screen.getByRole("button", { name: i18n.t("sourceMaintenance.chooseFolder") });
+  await waitFor(() => expect(choose).toBeEnabled());
+  const source = structuredClone(owner.current().source);
+  unavailable = true; await refreshWorkbenchReads(["project"]);
+  expect(await screen.findByText(i18n.t("sourceMaintenance.importersFailed"))).toBeVisible();
+  expect(importer).toHaveValue(key); expect(runtime).toHaveValue(pluginSourceRequest.environmentDigest);
+  expect(importer).toBeDisabled(); expect(runtime).toBeDisabled(); expect(choose).toBeDisabled();
+  await user.click(screen.getByText(i18n.t("execution.diagnostic")));
+  expect(screen.getByText(failure.diagnosticId!)).toBeVisible(); expect(screen.getByText(failure.reason!)).toBeVisible();
+  expect(screen.getByText(i18n.t("commandError.recovery.review-current"))).toBeVisible();
+  unavailable = false; await user.click(screen.getByRole("button", { name: i18n.t("sourceMaintenance.retryRead") }));
+  await waitFor(() => expect(choose).toBeEnabled());
+  expect(screen.queryByText(i18n.t("sourceMaintenance.importersFailed"))).not.toBeInTheDocument();
+  expect(screen.queryByText(failure.diagnosticId!)).not.toBeInTheDocument();
+  expect(owner.current().source).toEqual(source); expect(importer).toHaveValue(key); expect(runtime).toHaveValue(pluginSourceRequest.environmentDigest);
+  expect(invoke.mock.calls.some(([command]) => ["select_plugin_source", "preflight_plugin_source", "start_plugin_source"].includes(command))).toBe(false);
+});
+
+it.each(["en-US", "zh-CN"] as const)("keeps the selected importer unavailable until its failed read is retried in %s", async language => {
+  await i18n.changeLanguage(language);
+  const failure: CommandError = { code: "busy", stage: "read", outcome: "rejected", recoveryRequired: false,
+    reason: "synthetic-integration-busy", diagnosticId: id(2161) };
+  let unavailable = false;
+  invoke.mockImplementation(async command => {
+    if (command === "read_plugin_inventory") return pluginSourceInventory;
+    if (command === "read_plugin_package") return pluginSourcePackage;
+    if (command === "read_plugin_source") { if (unavailable) throw failure; return pluginSourceView; }
+    throw new Error(`Unexpected source preparation command: ${command}`);
+  });
+  renderWorkbench(<Harness saved={null}/>, project); const user = userEvent.setup();
+  const importer = await screen.findByRole("combobox", { name: i18n.t("source.integration") });
+  await waitFor(() => expect(importer).toBeEnabled());
+  const key = `${pluginSourceRequest.package.packageDigest}:${pluginSourceRequest.resourceId}`;
+  await user.selectOptions(importer, key);
+  const runtime = screen.getByRole("combobox", { name: i18n.t("sourcePlugin.runtime") });
+  await user.selectOptions(runtime, pluginSourceRequest.environmentDigest);
+  const choose = screen.getByRole("button", { name: i18n.t("sourceMaintenance.chooseFolder") });
+  await waitFor(() => expect(choose).toBeEnabled());
+  const source = structuredClone(owner.current().source);
+  unavailable = true; await refreshWorkbenchReads(["source"]);
+  expect(await screen.findByText(i18n.t("sourceMaintenance.importerUnavailable"))).toBeVisible();
+  expect(choose).toBeDisabled(); expect(importer).toHaveValue(key); expect(runtime).toHaveValue(pluginSourceRequest.environmentDigest);
+  await user.click(screen.getByText(i18n.t("execution.diagnostic")));
+  expect(screen.getByText(failure.diagnosticId!)).toBeVisible(); expect(screen.getByText(failure.reason!)).toBeVisible();
+  unavailable = false; await user.click(screen.getByRole("button", { name: i18n.t("sourceMaintenance.retryRead") }));
+  await waitFor(() => expect(choose).toBeEnabled());
+  expect(screen.queryByText(i18n.t("sourceMaintenance.importerUnavailable"))).not.toBeInTheDocument();
+  expect(screen.queryByText(failure.diagnosticId!)).not.toBeInTheDocument();
+  expect(owner.current().source).toEqual(source); expect(importer).toHaveValue(key); expect(runtime).toHaveValue(pluginSourceRequest.environmentDigest);
+  expect(invoke.mock.calls.some(([command]) => ["select_plugin_source", "preflight_plugin_source", "start_plugin_source"].includes(command))).toBe(false);
+});
 
 it("returns to ordinary source preparation after closing a restored correction presentation", async () => {
   const restored = await restoreCorrectionForNavigation(), view = renderWorkbench(<Harness saved={null}/>, project);
