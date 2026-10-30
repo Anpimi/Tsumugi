@@ -140,6 +140,7 @@ export function createWorkspaceCommandDispatcher({ gate, getContext, modifier }:
     if (!context || context.viewId !== request.viewId || !gate.canDispatch(request)) return false;
     if (request.dialogId === "draft-recovery" && !id.startsWith("translation.")) return false;
     if (request.dialogId === "draft-recovery" && id === "translation.confirm-next") return false;
+    if (request.dialogId === "workspace-dock" && id !== "conversation.new-thread") return false;
     if (request.source === "keyboard" && id.startsWith("translation.")) {
       const actual = gate.getSnapshot().inputOwner?.ownerId;
       if (id === "translation.stage-focused-ai") {

@@ -20,6 +20,14 @@ import styles from "./ApplicationSettings.module.css";
 
 type Section = "general" | "appearance" | "connections" | "shortcuts" | "about";
 const sections: Section[] = ["general", "appearance", "connections", "shortcuts", "about"];
+const editorFontSizes = [14, 15, 16, 17, 18, 19, 20];
+const editorFontSizeStorageKey = "tsumugi.editorFontSize";
+function readEditorFontSize() {
+  try {
+    const size = Number(localStorage.getItem(editorFontSizeStorageKey));
+    return { size: editorFontSizes.includes(size) ? size : 15, problem: false };
+  } catch { return { size: 15, problem: true }; }
+}
 interface SettingsContext {
   open: (section?: Section, returnTo?: HTMLElement) => void;
   openExtensions: (returnTo?: HTMLElement) => void;
@@ -44,6 +52,7 @@ function ApplicationSettingsOwner({ lifecycle, gate, native, children }: { lifec
   const lifecycleState = useSyncExternalStore(lifecycle.subscribe, lifecycle.getSnapshot, lifecycle.getSnapshot);
   const interaction = useSyncExternalStore(gate.subscribe, gate.getSnapshot, gate.getSnapshot);
   const [open, setOpen] = useState(false), [section, setSection] = useState<Section>("general"), [extensionsOpen, setExtensionsOpen] = useState(false);
+  const [editorFont, setEditorFont] = useState(readEditorFontSize);
   const [shortcutInputs, setShortcutInputs] = useState<Record<string, string>>({}), [shortcutError, setShortcutError] = useState<Record<string, Exclude<BindingResult, { kind: "saved" }>>>({});
   const [shortcutNotice, setShortcutNotice] = useState<"saved" | "restored" | "storage" | null>(null), [shortcutExit, setShortcutExit] = useState(false);
   const [mcp, setMcp] = useState<ProjectReferenceHandle | null>(null), currentMcp = useRef<ProjectReferenceHandle | null>(null);
@@ -108,6 +117,11 @@ function ApplicationSettingsOwner({ lifecycle, gate, native, children }: { lifec
     const media = window.matchMedia("(prefers-color-scheme: dark)"), changed = () => setDark(media.matches);
     media.addEventListener("change", changed); return () => media.removeEventListener("change", changed);
   }, []);
+  useLayoutEffect(() => {
+    const root = document.documentElement, previous = root.style.getPropertyValue("--editor-font-size");
+    root.style.setProperty("--editor-font-size", `${editorFont.size}px`);
+    return () => { if (previous) root.style.setProperty("--editor-font-size", previous); else root.style.removeProperty("--editor-font-size"); };
+  }, [editorFont.size]);
   useEffect(() => {
     if (!open || section !== "about" || !native || !isTauri()) return;
     let alive = true; setVersion({ kind: "reading" });
@@ -117,6 +131,10 @@ function ApplicationSettingsOwner({ lifecycle, gate, native, children }: { lifec
   const composing = interaction.composingOwners.includes(compositionOwner), exitReview = owner.state.exitPrompt || owner.state.exitHeld;
   const closeDisabled = composing || exitReview;
   function close() { if (!closeDisabled) setOpen(false); }
+  function saveEditorFontSize(size: number) {
+    try { localStorage.setItem(editorFontSizeStorageKey, String(size)); setEditorFont({ size, problem: false }); }
+    catch { setEditorFont({ size, problem: true }); }
+  }
   function shortcutMessage(result: Exclude<BindingResult, { kind: "saved" }> | undefined) {
     return result ? result.kind === "conflict" ? t("settingsWorkbench.conflict", { command: t(result.command.nameKey) }) : t(`settingsWorkbench.${result.kind}`) : undefined;
   }
@@ -164,7 +182,10 @@ function ApplicationSettingsOwner({ lifecycle, gate, native, children }: { lifec
             <h2>{t("settingsWorkbench.mcp")}</h2><p>{t("settingsWorkbench.mcpHelp")}</p><p>{!lifecycleState.session ? t("settingsWorkbench.needsProject") : !mcp ? t("settingsWorkbench.projectLoading") : null}</p>
             <div className={styles.actions}><Button disabled={!mcp || !lifecycleState.session} onClick={() => handOff("query")}>{t("settingsWorkbench.query")}</Button><Button disabled={!mcp || !lifecycleState.session} onClick={() => handOff("share")}>{t("settingsWorkbench.share")}</Button></div>
           </section> : null}
-          {section === "appearance" ? <section className={styles.section}><h2>{t("settingsWorkbench.systemAppearance")}</h2><p>{t("settingsWorkbench.appearanceHelp")}</p><p role="status">{t(dark ? "settingsWorkbench.dark" : "settingsWorkbench.light")}</p></section> : null}
+          {section === "appearance" ? <section className={styles.section}><h2>{t("settingsWorkbench.systemAppearance")}</h2><p>{t("settingsWorkbench.appearanceHelp")}</p><p role="status">{t(dark ? "settingsWorkbench.dark" : "settingsWorkbench.light")}</p>
+            <Field label={t("settingsWorkbench.editorFontSize")} description={t("settingsWorkbench.editorFontSizeHelp")}><Select value={editorFont.size} onChange={event => { const size = Number(event.target.value); if (editorFontSizes.includes(size)) saveEditorFontSize(size); }}>{editorFontSizes.map(size => <option key={size} value={size}>{t("settingsWorkbench.fontSizeOption", { size })}</option>)}</Select></Field>
+            {editorFont.problem ? <Banner tone="warning" role="alert" action={<Button onClick={() => saveEditorFontSize(editorFont.size)}>{t("settingsWorkbench.retryFontSize")}</Button>}>{t("settingsWorkbench.fontSizeStorageFailed")}</Banner> : null}
+          </section> : null}
           <div hidden={section !== "connections"}><ConnectionManager hideTrigger presentation="embedded" visible={open && section === "connections"} disabled={!native || lifecycleState.phase !== "idle" || !!lifecycleState.pending || !!lifecycleState.cleanup} onReveal={() => reveal("connections")}/></div>
           {section === "shortcuts" ? <section className={styles.section}><h2>{t("settingsWorkbench.shortcuts")}</h2><p>{t("settingsWorkbench.shortcutHelp")}</p>
             {shortcutExit && Object.keys(shortcutInputs).length ? <Banner tone="warning" role="alert" action={<Button onClick={() => { setShortcutInputs({}); setShortcutError({}); setShortcutExit(false); }}>{t("settingsWorkbench.discardShortcuts")}</Button>}>{t("settingsWorkbench.unapplied")}</Banner> : null}

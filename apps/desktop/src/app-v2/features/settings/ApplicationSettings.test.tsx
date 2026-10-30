@@ -1,5 +1,5 @@
 import { Button } from "../../../design-system/Button";
-import { useLayoutEffect } from "react";
+import { useLayoutEffect, type ReactNode } from "react";
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { ApplicationReadProvider } from "../../../ApplicationReadProvider";
@@ -21,9 +21,9 @@ function Launcher({ mcp }: { mcp?: ProjectReferenceHandle }) {
   useLayoutEffect(() => mcp ? settings.registerMcp(mcp) : undefined, [settings.registerMcp, mcp]);
   return <Button onClick={() => settings.open()}>{label("title")}</Button>;
 }
-function harness(lifecycle = new ProjectLifecycle(), mcp?: ProjectReferenceHandle) {
+function harness(lifecycle = new ProjectLifecycle(), mcp?: ProjectReferenceHandle, children?: ReactNode) {
   const gate = new InteractionGate();
-  const ui = render(<ApplicationReadProvider><ApplicationSettingsProvider lifecycle={lifecycle} gate={gate} native><Launcher mcp={mcp}/></ApplicationSettingsProvider></ApplicationReadProvider>);
+  const ui = render(<ApplicationReadProvider><ApplicationSettingsProvider lifecycle={lifecycle} gate={gate} native><Launcher mcp={mcp}/>{children}</ApplicationSettingsProvider></ApplicationReadProvider>);
   return { ...ui, lifecycle, gate };
 }
 beforeEach(async () => {
@@ -34,6 +34,48 @@ beforeEach(async () => {
 });
 afterEach(() => { cleanup(); vi.restoreAllMocks(); });
 async function open() { fireEvent.click(screen.getByRole("button", { name: label("title") })); await screen.findByRole("dialog", { name: label("title") }); }
+
+it("persists the editor text size across remounts and language changes without replacing unfinished input", async () => {
+  const h = harness(undefined, undefined, <textarea aria-label="Entry draft" defaultValue="Draft A"/>);
+  const draft = screen.getByRole("textbox", { name: "Entry draft" });
+  fireEvent.change(draft, { target: { value: "Draft B 🧵\n第二行" } });
+  await open(); fireEvent.click(screen.getByRole("button", { name: "Appearance" }));
+  const size = screen.getByRole("combobox", { name: "Editor text size" });
+  expect(size).toHaveValue("15");
+  fireEvent.change(size, { target: { value: "20" } });
+  expect(document.documentElement.style.getPropertyValue("--editor-font-size")).toBe("20px");
+  expect(localStorage.getItem("tsumugi.editorFontSize")).toBe("20");
+  fireEvent.click(screen.getByRole("button", { name: label("close") }));
+  expect(screen.getByRole("textbox", { name: "Entry draft" })).toBe(draft);
+  expect(draft).toHaveValue("Draft B 🧵\n第二行");
+  h.unmount(); harness(); await open();
+  await act(async () => { await i18n.changeLanguage("zh-CN"); });
+  fireEvent.click(screen.getByRole("button", { name: "外观" }));
+  const restored = screen.getByRole("combobox", { name: "编辑正文字号" });
+  expect(restored).toHaveValue("20");
+  fireEvent.change(restored, { target: { value: "14" } });
+  expect(document.documentElement.style.getPropertyValue("--editor-font-size")).toBe("14px");
+  expect(localStorage.getItem("tsumugi.editorFontSize")).toBe("14");
+});
+
+it("keeps the chosen size usable when local storage fails and lets the user retry saving it", async () => {
+  harness(); await open(); fireEvent.click(screen.getByRole("button", { name: "Appearance" }));
+  const original = Storage.prototype.setItem;
+  let unavailable = true;
+  vi.spyOn(Storage.prototype, "setItem").mockImplementation(function (this: Storage, key, value) {
+    if (key === "tsumugi.editorFontSize" && unavailable) throw new Error("Storage unavailable");
+    original.call(this, key, value);
+  });
+  const size = screen.getByRole("combobox", { name: "Editor text size" });
+  fireEvent.change(size, { target: { value: "20" } });
+  expect(size).toHaveValue("20");
+  expect(document.documentElement.style.getPropertyValue("--editor-font-size")).toBe("20px");
+  expect(localStorage.getItem("tsumugi.editorFontSize")).toBeNull();
+  expect(screen.getByRole("alert")).toHaveTextContent("could not be saved on this device");
+  unavailable = false; fireEvent.click(screen.getByRole("button", { name: "Try saving again" }));
+  expect(localStorage.getItem("tsumugi.editorFontSize")).toBe("20");
+  expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+});
 
 it("retains a connection draft across settings close and project navigation, and obtains a held discard permit for window exit", async () => {
   const h = harness(); await open(); fireEvent.click(screen.getByRole("button", { name: label("connections") }));

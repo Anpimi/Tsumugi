@@ -2,7 +2,7 @@
 
 Import components from their files. Import `global.css` once from the standalone preview entry. The production entry does not load these styles yet.
 
-Set `data-theme="light"` or `data-theme="dark"` on `document.documentElement`. Radix menus and dialogs render outside their parent element, so setting the theme only on a preview wrapper leaves those menus in the wrong theme. Set `--font-scale` on the same root to inspect larger text; `2` doubles fonts and line heights. The default UI text is 13px and editor text is 15px. Editor settings can set `--editor-font-size` to a value from 14px to 20px.
+Set `data-theme="light"` or `data-theme="dark"` on `document.documentElement`. Radix menus and dialogs render outside their parent element, so setting the theme only on a preview wrapper leaves those menus in the wrong theme. Set `--font-scale` on the same root to inspect larger text; `2` doubles fonts and line heights. The default UI text is 13px and editor text is 15px. Application appearance settings persist a 14px–20px editor size on the current device and apply it through `--editor-font-size` on that root, without replacing editor instances or changing UI text size.
 
 | File | Exports and use |
 | --- | --- |

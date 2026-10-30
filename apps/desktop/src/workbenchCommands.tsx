@@ -44,6 +44,7 @@ type PlainWorkbenchCommandId = "source.import-upstream" | "translation.hide-cand
   | "workspace.open-project" | "workspace.close-project" | "workspace.close-window" | "workspace.new-view" | "workspace.close-view" | "workspace.pin-view"
   | "workspace.agent" | "workspace.details" | "workspace.decisions" | "workspace.delivery" | "workspace.project-settings" | "workspace.runs" | "workspace.strategy" | "workspace.focus-search" | "workspace.search" | "workspace.refresh" | "workspace.commands"
   | "workspace.references" | "workspace.settings" | "workspace.extensions" | "workspace.mcp-query" | "workspace.mcp-share"
+  | "conversation.new-thread"
   | "translation.save-and-next" | "translation.retry-save" | "translation.reconcile-save"
   | "translation.import" | "translation.refresh-import" | "translation.reset-import"
   | "translation.inspect-focused-candidates" | "translation.open-retained-candidate" | "translation.discard-retained-candidate-inputs" | "translation.stage-focused-ai" | "translation.refresh-candidates" | "translation.first-candidate-page" | "translation.next-candidate-page"

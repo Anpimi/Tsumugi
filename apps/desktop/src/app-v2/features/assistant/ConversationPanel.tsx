@@ -1,8 +1,10 @@
 import { Disclosure } from "../../../design-system/Disclosure";
-import { useEffect, useId, useLayoutEffect, useRef, useState, useSyncExternalStore, type ReactNode, type RefObject } from "react";
+import { useEffect, useId, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore, type ReactNode, type RefObject } from "react";
 import { useTranslation } from "react-i18next";
 import { ChevronDown, MessageSquare, Plus, RefreshCw, Sparkles } from "lucide-react";
 import { conversationCommands, isConversationMessageText } from "../../../conversationCommands";
+import { workspaceCommandMetadata } from "../../../commandBindings";
+import type { WorkbenchCommands } from "../../../workbenchCommands";
 import { commandFailure, CommandFailureDetails } from "../../../CommandFailure";
 import { Button, IconButton } from "../../../design-system/Button";
 import { Field, TextArea, TextInput } from "../../../design-system/Field";
@@ -27,7 +29,7 @@ import styles from "../../WorkbenchLayout.module.css";
 import local from "./ConversationPanel.module.css";
 
 export type ConversationRecoveryTarget = { conversationId: string; slot: "primary" | "revocation"; actionId: string; focus: boolean };
-interface Props { projectBrief?: (emptyThread: boolean) => ReactNode; showWorkPlans?: boolean; owner: ConversationSession; visible: boolean; disabled: boolean; gate: InteractionGate; viewId: string | null; parentDialogId?: string; selection?: WorkspaceSelection | null; onOpenCandidate?: OpenConversationRunCandidate; onOpenTeamCandidate?: OpenConversationTeamCandidate; onOpenKnowledgeProposal?: OpenKnowledgeProposal; decisionTray?: ReactNode; maintenanceBrief?: ReactNode; recoveryTarget?: ConversationRecoveryTarget | null; proposalTarget?: ConversationProposalTarget | null; questionTarget?: ConversationTeamQuestionTarget | null }
+interface Props { projectBrief?: (emptyThread: boolean) => ReactNode; showWorkPlans?: boolean; commands?: WorkbenchCommands; owner: ConversationSession; visible: boolean; disabled: boolean; gate: InteractionGate; viewId: string | null; parentDialogId?: string; selection?: WorkspaceSelection | null; onOpenCandidate?: OpenConversationRunCandidate; onOpenTeamCandidate?: OpenConversationTeamCandidate; onOpenKnowledgeProposal?: OpenKnowledgeProposal; decisionTray?: ReactNode; maintenanceBrief?: ReactNode; recoveryTarget?: ConversationRecoveryTarget | null; proposalTarget?: ConversationProposalTarget | null; questionTarget?: ConversationTeamQuestionTarget | null }
 const noNext = (last: { nextAfter: string | null }) => last.nextAfter ?? undefined;
 const pendingAction = (pending: ConversationDraftPending | null | undefined) => pending ? conversationPendingActionId(pending) : undefined;
 
@@ -101,7 +103,7 @@ function ThreadHistory({ showWorkPlans = true, owner, input, visible, disabled, 
   </>;
 }
 
-export default function ConversationPanel({ projectBrief, showWorkPlans = true, owner, visible, disabled, gate, viewId, parentDialogId, selection, onOpenCandidate, onOpenTeamCandidate, onOpenKnowledgeProposal, decisionTray, maintenanceBrief, recoveryTarget, proposalTarget, questionTarget }: Props) {
+export default function ConversationPanel({ projectBrief, showWorkPlans = true, commands, owner, visible, disabled, gate, viewId, parentDialogId, selection, onOpenCandidate, onOpenTeamCandidate, onOpenKnowledgeProposal, decisionTray, maintenanceBrief, recoveryTarget, proposalTarget, questionTarget }: Props) {
   const { t } = useTranslation(undefined, { keyPrefix: "conversation" });
   const reads = useSessionReads();
   const state = useSyncExternalStore(owner.subscribe, owner.getSnapshot, owner.getSnapshot);
@@ -123,6 +125,36 @@ export default function ConversationPanel({ projectBrief, showWorkPlans = true, 
   const presentation = useRef({ visible, blocked, activeId, viewId, parentDialogId });
   useLayoutEffect(() => { presentation.current = { visible, blocked, activeId, viewId, parentDialogId }; });
   useLayoutEffect(() => () => { presentation.current.visible = false; }, []);
+  const commandScope = useMemo(() => ({ ...owner.context, area: "translation" as const }), [owner]);
+  function canCreateThread(live = presentation.current) {
+    const latest = owner.getSnapshot();
+    return live.visible && !live.blocked && live.viewId === viewId && live.parentDialogId === parentDialogId
+      && !reads.retired && !latest.retired && latest.hydration === "ready"
+      && ![...latest.inputs.values()].some(value => value.value.pending?.kind === "create" && !value.failure && (value.dirty || value.journalBusy || !!value.busy))
+      && gate.canDispatch({ viewId, source: "button", dialogId: parentDialogId });
+  }
+  function createThread() {
+    if (!canCreateThread()) return;
+    const origin = document.activeElement;
+    void owner.create();
+    const createdId = owner.getSnapshot().activeId;
+    requestAnimationFrame(() => {
+      const live = presentation.current;
+      if (live.visible && !live.blocked && live.viewId === viewId && live.parentDialogId === parentDialogId
+        && owner.getSnapshot().activeId === createdId && gate.canDispatch({ viewId, source: "button", dialogId: parentDialogId })
+        && (document.activeElement === origin || document.activeElement === document.body)) composer.current?.focus();
+    });
+  }
+  useLayoutEffect(() => {
+    if (!commands) return;
+    return commands.register({ ...workspaceCommandMetadata("conversation.new-thread"), category: "ai", scope: commandScope, risk: "writes-project", confirmation: "none",
+      availability: () => ({ enabled: canCreateThread() }), handler: createThread });
+  }, [commands, owner, reads, gate, commandScope, viewId, parentDialogId]);
+  function dispatchNewThread() {
+    if (commands) commands.dispatch("conversation.new-thread", commandScope);
+    else createThread();
+  }
+  const createDisabled = !canCreateThread({ visible, blocked, activeId, viewId, parentDialogId });
   const byteLength = new TextEncoder().encode(input?.value.text ?? "").length;
   const pending = input?.value.pending;
   const runPending = isRunPending(pending);
@@ -177,7 +209,7 @@ export default function ConversationPanel({ projectBrief, showWorkPlans = true, 
   return <div className={styles.agent}>
     <div className={styles.agentHeader}><span>{t("lead")}</span>
       <div className={local.actions}><IconButton label={t("refresh")} disabled={blocked} onClick={() => { void threads.refetch(); void owner.initialize(); }}><RefreshCw/></IconButton>
-        <IconButton label={t("newThread")} disabled={blocked || state.hydration !== "ready"} onClick={() => { void owner.create(); requestAnimationFrame(() => composer.current?.focus()); }}><Plus/></IconButton></div>
+        <IconButton label={t("newThread")} disabled={createDisabled} onClick={dispatchNewThread}><Plus/></IconButton></div>
     </div>
     <div className={local.picker}><Menu label={t("chooseThread")} align="start" trigger={<Button className={local.threadButton} variant="secondary" aria-label={t("chooseThread")} disabled={blocked || known.size === 0}>
       <span>{activeId ? known.get(activeId) : t("chooseThreadPlaceholder")}</span><ChevronDown/></Button>}
@@ -192,7 +224,7 @@ export default function ConversationPanel({ projectBrief, showWorkPlans = true, 
       {threads.isError ? <Banner tone="error" action={<Button size="sm" onClick={() => void threads.refetch()}>{t("retryRead")}</Button>}>{t("threadsReadFailed")}</Banner> : null}
       {state.hydration === "failed" ? <Banner tone="error" action={<Button size="sm" onClick={() => void owner.initialize()}>{t("retryRead")}</Button>}>{t("draftsReadFailed")}<CommandFailureDetails failure={state.failure}/></Banner> : null}
       {!activeId ? <EmptyState icon={<MessageSquare/>} title={t("welcome")} description={t("welcomeHelp")}
-        action={<Button variant="secondary" disabled={blocked || state.hydration !== "ready"} onClick={() => void owner.create()}>{t("newThread")}</Button>}/>
+        action={<Button variant="secondary" disabled={createDisabled} onClick={dispatchNewThread}>{t("newThread")}</Button>}/>
         : !input ? state.inputFailure?.conversationId === activeId ? <ErrorState title={t("inputReadFailed")} description={<CommandFailureDetails failure={state.inputFailure.cause}/>} action={<Button onClick={() => void owner.open(activeId)}>{t("retryRead")}</Button>}/>
           : <LoadingState label={t("readingInput")}/> : exists ? <ThreadHistory showWorkPlans={showWorkPlans} onOpenCandidate={onOpenCandidate} onOpenTeamCandidate={onOpenTeamCandidate} onOpenKnowledgeProposal={onOpenKnowledgeProposal} key={activeId} owner={owner} input={input} visible={visible} disabled={blocked} gate={gate} viewId={viewId} parentDialogId={parentDialogId} selection={selection} proposalTarget={proposalTarget} proposalFocusTargets={proposalFocusTargets} questionTarget={questionTarget?.conversationId === activeId ? questionTarget : null}/> : <p role="status">{t("creatingThread")}</p>}
     </div>

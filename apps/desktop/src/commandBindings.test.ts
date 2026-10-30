@@ -29,6 +29,23 @@ describe("application command bindings", () => {
     expect(reopened.resolve("workspace.open-project", "Mod+O")).toBe("Mod+O");
   });
 
+  it("keeps a saved custom shortcut when the new conversation default would otherwise conflict", () => {
+    const previousCatalog = workspaceCommandCatalog.filter(command => command.id !== "conversation.new-thread");
+    const previous = new CommandBindings(previousCatalog);
+    expect(previous.set("workspace.open-project", "Mod+N")).toEqual({ kind: "saved" });
+    expect(previous.set("workspace.settings", "Mod+Alt+P")).toEqual({ kind: "saved" });
+    const stored = localStorage.getItem(COMMAND_BINDINGS_STORAGE_KEY);
+    const reopened = new CommandBindings(workspaceCommandCatalog);
+    expect(reopened.getSnapshot().problem).toBeNull();
+    expect(reopened.resolve("workspace.open-project", "Mod+O")).toBe("Mod+N");
+    expect(reopened.resolve("workspace.settings", "Mod+,")).toBe("Mod+Alt+P");
+    expect(reopened.resolve("conversation.new-thread", "Mod+N")).toBeNull();
+    expect(localStorage.getItem(COMMAND_BINDINGS_STORAGE_KEY)).toBe(stored);
+    expect(reopened.set("conversation.new-thread", "Mod+N")).toMatchObject({ kind: "conflict", command: { id: "workspace.open-project" } });
+    expect(reopened.set("conversation.new-thread", "Mod+Alt+N")).toEqual({ kind: "saved" });
+    expect(new CommandBindings(workspaceCommandCatalog).resolve("conversation.new-thread", "Mod+N")).toBe("Mod+Alt+N");
+  });
+
   it.each(["Mod+A", "mod+c", "Mod+X", "Mod+V", "Shift+Mod+V", "Mod+Z", "Mod+Shift+Z", "Mod+Y", "Mod+Q", "Alt+F4"])("keeps the editing or system shortcut %s reserved", input => {
     const bindings = new CommandBindings(workspaceCommandCatalog);
     expect(bindings.set("workspace.open-project", input)).toEqual({ kind: "reserved" });

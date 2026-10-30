@@ -12,6 +12,10 @@ Current workspace version metadata: **`0.2.0-alpha.1`**. Because the published `
 
 ### Added
 
+- Appearance settings in the opt-in workspace can set source and translation text to 14–20 px while keeping other controls at their existing size. The choice stays on the current device, and changing it preserves unfinished input.
+
+- The visible assistant panel can create a conversation with ⌘N on Mac or Ctrl+N on Windows. The button, command palette and rebindable shortcut use the same local conversation action; creating a conversation does not call a model. An existing custom use of this shortcut keeps its assignment.
+
 - Project settings in the opt-in workspace can rename an existing project and change its target languages, with separate saves, version checks and recovery of uncertain results. Removing a language keeps its saved translations and history. Renaming its folder requires an explicit choice. Knowledge exchange also restores the bounded, read-only TMX and TBX native file previews; full exchange import, adoption and export remain unavailable.
 
 - The opt-in workspace provides run templates and initial team setup in a proposal draft. Configure each member’s role, connection, scope and limits before saving a new revision. The Runs activity opens recorded work plans and context experiments; saved candidates can return to their original conversation and expanded plan without restarting work.

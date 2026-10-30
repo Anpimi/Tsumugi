@@ -775,7 +775,8 @@ function WorkspaceShell() {
         if (id) { event.preventDefault(); void runtime.navigation.activate(id); } return;
       }
       const current = gate.getSnapshot();
-      dispatcher.handleKeyDown(event, currentId, current.inputOwner?.ownerId, current.dialogs.at(-1) === "draft-recovery" ? "draft-recovery" : undefined);
+      const dialog = current.dialogs.at(-1);
+      dispatcher.handleKeyDown(event, currentId, current.inputOwner?.ownerId, dialog === "draft-recovery" || dialog === "workspace-dock" ? dialog : undefined);
     };
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
@@ -1192,7 +1193,7 @@ function WorkspaceShell() {
     return <TabsRoot value={view?.dock ?? "agent"} onValueChange={value => { if (view && (value === "agent" || value === "details")) store.getState().patch(view.id, { dock: value }); }} className={styles.dockTabs}>
       <TabsList aria-label={message("dockTabs")}><TabsTrigger value="agent"><Sparkles />{message("agent")}</TabsTrigger><TabsTrigger value="details">{message("detail")}</TabsTrigger></TabsList>
       <TabsContent value="agent" className={styles.dockContent}><FeatureBoundary fallback={conversationFallback(<ErrorState title={t("conversation.unavailable")}/>)}><Suspense fallback={conversationFallback(<LoadingState label={t("conversation.loading")}/>)}>
-        {conversations ? <ConversationPanel showWorkPlans={view?.kind !== "runs" || view.runsMode === "strategy" || !!conversationTeamQuestion} onOpenCandidate={openRunCandidate} onOpenTeamCandidate={openTeamCandidate} onOpenKnowledgeProposal={openKnowledgeProposal} owner={conversations} visible={(view?.dock ?? "agent") === "agent" && (!narrow || drawer)} disabled={disabled} gate={gate} viewId={currentId} parentDialogId={narrow && drawer ? "workspace-dock" : undefined}
+        {conversations ? <ConversationPanel commands={commandsReady ? commands : undefined} showWorkPlans={view?.kind !== "runs" || view.runsMode === "strategy" || !!conversationTeamQuestion} onOpenCandidate={openRunCandidate} onOpenTeamCandidate={openTeamCandidate} onOpenKnowledgeProposal={openKnowledgeProposal} owner={conversations} visible={(view?.dock ?? "agent") === "agent" && (!narrow || drawer)} disabled={disabled} gate={gate} viewId={currentId} parentDialogId={narrow && drawer ? "workspace-dock" : undefined}
           selection={view?.kind === "entries" && !importVisible ? view.selection : null} decisionTray={decisionTray()} projectBrief={projectBrief} maintenanceBrief={sourceBrief()} recoveryTarget={conversationRecovery} proposalTarget={conversationProposal} questionTarget={conversationTeamQuestion}/>
           : conversationFallback(conversationLoadFailed ? <ErrorState title={t("conversation.unavailable")} action={<Button onClick={retryConversations}>{t("conversation.retryRead")}</Button>}/> : <LoadingState label={t("conversation.loading")}/>)}
       </Suspense></FeatureBoundary></TabsContent>
