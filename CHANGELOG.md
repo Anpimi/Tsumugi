@@ -132,6 +132,8 @@ Current workspace version metadata: **`0.2.0-alpha.1`**. Because the published `
 
 ### Fixed
 
+- Closing a source import sheet opened from the project menu restores mouse interaction with the workspace. Menus and dialogs now share modal pointer and focus management.
+
 - Project brief updates no longer expire the fixed queue being edited. Selected and delivery-blocking entry counts come from one delivery assessment; unresolved source matches count as blockers, and several reasons on one entry count once.
 
 - Closing the opt-in workspace no longer blocks its own window close when the closed project session is retired. New application input during shutdown still keeps the window open with a recovery message.
