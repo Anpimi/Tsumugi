@@ -1,9 +1,56 @@
 use super::*;
 use crate::application::{AuthorizeWorkPlan, PlanOptions};
 use crate::execution::{AdoptionHandler, AdoptionReceipt, ExecutionState, FixedInput, FixedResult, ResultEnvelope};
-use crate::persistence::review::tests::{approve, fixture, translate};
+use crate::persistence::review::tests::{adopt_source, approve, fixture, translate};
 use crate::{CandidateDecisionWrite, CandidateDisposition, CaptureCorrectionTerm, GlossaryEntry, GlossaryFile,
     ResourceDecision, ResourceDecisionKind, ReviewFindingWrite};
+use rusqlite::trace::{TraceEvent, TraceEventCodes};
+use std::cell::RefCell;
+
+thread_local! {
+    static FINDING_SQL: RefCell<Vec<String>> = const { RefCell::new(Vec::new()) };
+}
+fn trace_finding_sql(event: TraceEvent<'_>) {
+    if let TraceEvent::Stmt(_, sql) = event {
+        FINDING_SQL.with(|statements| statements.borrow_mut().push(sql.to_owned()));
+    }
+}
+fn traced_findings<T>(store: &ProjectStore, read: impl FnOnce() -> T) -> (T, Vec<String>) {
+    FINDING_SQL.with(|statements| statements.borrow_mut().clear());
+    let c = store.connection().unwrap();
+    c.trace_v2(TraceEventCodes::SQLITE_TRACE_STMT, Some(trace_finding_sql));
+    let value = read();
+    c.trace_v2(TraceEventCodes::empty(), None);
+    let statements = FINDING_SQL.with(|statements| std::mem::take(&mut *statements.borrow_mut()));
+    (value, statements)
+}
+
+fn finding_fixture(count: usize) -> (tempfile::TempDir, ProjectStore, ExecutionId, Vec<ExecutionId>) {
+    let directory = tempfile::tempdir().unwrap();
+    let mut store = ProjectStore::create(directory.path().join("project"),
+        crate::ProjectMetadata::create("Finding projection", "en", ["zh-CN", "fr-FR"]).unwrap()).unwrap();
+    let project = ExecutionId::parse(&store.metadata().unwrap().project_id().to_string()).unwrap();
+    let source = (0..count).map(|index| (format!("entry-{index:04}"), format!("Source {index}"))).collect::<BTreeMap<_, _>>();
+    adopt_source(&mut store, &serde_json::to_vec(&source).unwrap());
+    let (units, complete) = units_in(store.connection().unwrap(), project).unwrap();
+    assert!(complete);
+    assert_eq!(units.len(), count);
+    (directory, store, project, units)
+}
+
+fn semantic_findings(store: &mut ProjectStore, project: ExecutionId, unit: ExecutionId, count: usize) {
+    use crate::ai::semantic_review::*;
+    translate(store, project, unit, "zh-CN", "Synthetic translation");
+    let prepared = store.prepare_ai_semantic_review(config(), &[AiSemanticReviewTarget {
+        unit_id: unit, locale: "zh-CN".into() }], &[AiSemanticReviewRule::Meaning]).unwrap();
+    adopt_output(store, prepared.input(), CAPABILITY, serde_json::to_value(AiSemanticReviewOutput {
+        unit_id: unit, target_locale: "zh-CN".into(), rules: vec![AiSemanticReviewRuleResult {
+            rule: AiSemanticReviewRule::Meaning, findings: (0..count).map(|index| AiSemanticReviewFinding {
+                code: format!("concern-{index}"), detail: format!("Synthetic concern {index}"),
+                severity: tsumugi_plugin_sdk::FindingSeverity::Warning, location: None, suggestion: None,
+            }).collect() }], usage: None, requests: 1, usage_incomplete: true }).unwrap(),
+        &AiSemanticReviewAdoptionHandler);
+}
 
 fn read(store: &ProjectStore, project: ExecutionId, source: DecisionSource) -> SourceProjection {
     let c = store.connection().unwrap();
@@ -165,4 +212,57 @@ fn advisory_rejection_resolves_and_repair_waits_for_the_original_recheck() {
     assert_eq!(repair.items.len(), 1);
     assert_eq!(repair.items[0].decision_id, pending.items[0].decision_id);
     assert_eq!(repair.items[0].state, DecisionState::AwaitingRecheck);
+}
+
+#[test]
+fn review_finding_projection_batches_targets_without_skipping_empty_units() {
+    let (_directory, mut store, project, units) = finding_fixture(201);
+    store.save_term(&crate::SaveTerm { project_id: project, action_id: ExecutionId::new(), term_id: None,
+        locale: "zh-CN".into(), source: "Source".into(), aliases: vec![], target: "Synthetic term".into(),
+        protected: false, scope_unit_id: None, expected_revision_id: None, reason: "Synthetic shared term".into() }).unwrap();
+    let (original, original_sql) = traced_findings(&store, || {
+        review::read_snapshot(store.connection().unwrap(), |_| units.iter().map(|unit|
+            store.review_findings(project, *unit, "zh-CN", 0, 50)).collect::<Result<Vec<_>, _>>()).unwrap()
+    });
+    assert!(original.iter().all(|page| page.findings.is_empty() && page.history.is_empty() && page.repairs.is_empty()));
+    let (projected, projected_sql) = traced_findings(&store, || read(&store, project, DecisionSource::ReviewFinding));
+    assert!(projected.complete);
+    assert!(projected.items.is_empty());
+    for marker in ["FROM term_current c JOIN term_revisions r", "first_occurrences AS MATERIALIZED"] {
+        assert_eq!(original_sql.iter().filter(|sql| sql.contains(marker)).count(), 201, "{marker}");
+        assert_eq!(projected_sql.iter().filter(|sql| sql.contains(marker)).count(), 3, "{marker}");
+    }
+    assert_eq!(projected_sql.iter().filter(|sql| sql.starts_with("BEGIN")).count(), 1);
+    assert_eq!(projected_sql.iter().filter(|sql| sql.starts_with("COMMIT")).count(), 1);
+}
+
+#[test]
+fn review_finding_limit_keeps_unvisited_batch_corruption_outside_the_partial_page() {
+    let (_directory, mut store, project, units) = finding_fixture(18);
+    // Sixteen complete semantic runs fill the 1,000-evidence prefix halfway
+    // through the last unit's second page. Later units have not been visited.
+    for unit in &units[..16] {
+        semantic_findings(&mut store, project, *unit, crate::ai::semantic_review::MAX_FINDINGS);
+    }
+    approve(&mut store, project, units[0], "zh-CN");
+    translate(&mut store, project, units[16], "zh-CN", "Later translation");
+    approve(&mut store, project, units[16], "zh-CN");
+    let original = read(&store, project, DecisionSource::ReviewFinding);
+    assert!(!original.complete);
+    assert_eq!(original.items.len(), SOURCE_LIMIT);
+
+    let c = store.connection().unwrap();
+    assert_eq!(c.execute("UPDATE review_decisions SET basis_json='{}' WHERE project_id=?1 AND unit_id=?2 AND locale='zh-CN'",
+        params![project.to_string(), units[16].to_string()]).unwrap(), 1);
+    assert_eq!(review::target_in(c, project, units[16], "zh-CN").unwrap_err().code, ErrorCode::CorruptLedger);
+    let partial = read(&store, project, DecisionSource::ReviewFinding);
+    assert!(!partial.complete);
+    assert_eq!(partial.items, original.items);
+
+    // The same damage must still fail once it belongs to a visited target.
+    let c = store.connection().unwrap();
+    assert_eq!(c.execute("UPDATE review_decisions SET basis_json='{}' WHERE project_id=?1 AND unit_id=?2 AND locale='zh-CN'",
+        params![project.to_string(), units[0].to_string()]).unwrap(), 1);
+    let failure = review::read_snapshot(c, |c| super::project(&store, c, project, "zh-CN", DecisionSource::ReviewFinding)).err().unwrap();
+    assert_eq!(failure.code, ErrorCode::CorruptLedger);
 }

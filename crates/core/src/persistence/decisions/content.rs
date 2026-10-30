@@ -211,51 +211,63 @@ fn finding_item(project: ExecutionId, unit: ExecutionId, locale: &str, target_ba
     })
 }
 
-fn review_findings(store: &ProjectStore, c: &Connection, project: ExecutionId, locale: &str) -> Result<SourceProjection, ExecutionError> {
+fn review_findings(c: &Connection, project: ExecutionId, locale: &str) -> Result<SourceProjection, ExecutionError> {
     let (units, mut complete) = units_in(c, project)?;
     let mut items = BTreeMap::new();
     let mut visited = 0usize;
-    for (unit_index, unit) in units.iter().copied().enumerate() {
-        let mut offset = 0;
-        loop {
-            let limit = (SOURCE_LIMIT - visited).min(50) as u32;
-            let page = store.review_findings(project, unit, locale, offset, limit)?;
-            visited += page.findings.len().max(page.history.len());
-            for finding in &page.findings {
-                if finding.decision.as_ref().is_some_and(|decision| decision.request.disposition == ReviewFindingDisposition::Rejected) { continue; }
-                let mut item = finding_item(project, unit, locale, &page.basis, finding)?;
-                if item.source_action_id.is_none() {
-                    let raw: String = c.query_row("SELECT action_id FROM review_checks WHERE project_id=?1 AND run_id=?2",
-                        params![project.to_string(), finding.run_id.to_string()], |row| row.get(0))
-                        .map_err(super::super::ledger::sql_error)?;
-                    item.source_action_id = Some(identity(raw)?);
+    for (batch_index, batch) in units.chunks(100).enumerate() {
+        // A failed batch may include corruption beyond the visited prefix.
+        // Recheck only actually visited targets so an earlier limit still returns
+        // the same partial page, while an encountered invalid target still fails.
+        let targets = review::targets_in(c, project, batch, locale).ok();
+        for (index, unit) in batch.iter().copied().enumerate() {
+            let unit_index = batch_index * 100 + index;
+            let individual;
+            let target = if let Some(targets) = &targets { &targets[index] } else {
+                individual = review::target_in(c, project, unit, locale)?;
+                &individual
+            };
+            let mut offset = 0;
+            loop {
+                let limit = (SOURCE_LIMIT - visited).min(50) as u32;
+                let page = review::findings_in(c, project, target, offset, limit)?;
+                visited += page.findings.len().max(page.history.len());
+                for finding in &page.findings {
+                    if finding.decision.as_ref().is_some_and(|decision| decision.request.disposition == ReviewFindingDisposition::Rejected) { continue; }
+                    let mut item = finding_item(project, unit, locale, &page.basis, finding)?;
+                    if item.source_action_id.is_none() {
+                        let raw: String = c.query_row("SELECT action_id FROM review_checks WHERE project_id=?1 AND run_id=?2",
+                            params![project.to_string(), finding.run_id.to_string()], |row| row.get(0))
+                            .map_err(super::super::ledger::sql_error)?;
+                        item.source_action_id = Some(identity(raw)?);
+                    }
+                    items.insert(item.decision_id.clone(), item);
                 }
-                items.insert(item.decision_id.clone(), item);
-            }
-            for repair in page.repairs {
-                let decision = &repair.decision;
-                let key = finding_identity(unit, locale, decision.purpose, &decision.request.issue_id);
-                match repair.status {
-                    ReviewRepairStatus::CurrentRuleClear | ReviewRepairStatus::Superseded => continue,
-                    ReviewRepairStatus::AwaitingCurrentRecheck | ReviewRepairStatus::CurrentRuleFindings => {}
+                for repair in page.repairs {
+                    let decision = &repair.decision;
+                    let key = finding_identity(unit, locale, decision.purpose, &decision.request.issue_id);
+                    match repair.status {
+                        ReviewRepairStatus::CurrentRuleClear | ReviewRepairStatus::Superseded => continue,
+                        ReviewRepairStatus::AwaitingCurrentRecheck | ReviewRepairStatus::CurrentRuleFindings => {}
+                    }
+                    let item = DecisionItem {
+                        decision_id: key.clone(), source: DecisionSource::ReviewFinding,
+                        state: if repair.status == ReviewRepairStatus::AwaitingCurrentRecheck { DecisionState::AwaitingRecheck } else { DecisionState::Pending },
+                        locale: Some(locale.into()), targets: vec![DecisionTarget::Entry { unit_id: unit }], targets_complete: true,
+                        basis: basis(&(project, locale, &page.basis, decision.decision_id, &repair.status, repair.recheck_run_id))?,
+                        source_action_id: Some(decision.request.action_id),
+                        action: DecisionAction::ReviewFinding { unit_id: unit, run_id: repair.recheck_run_id.unwrap_or(decision.request.run_id), issue_id: decision.request.issue_id.clone() },
+                        evidence: None,
+                    };
+                    items.insert(key, item);
                 }
-                let item = DecisionItem {
-                    decision_id: key.clone(), source: DecisionSource::ReviewFinding,
-                    state: if repair.status == ReviewRepairStatus::AwaitingCurrentRecheck { DecisionState::AwaitingRecheck } else { DecisionState::Pending },
-                    locale: Some(locale.into()), targets: vec![DecisionTarget::Entry { unit_id: unit }], targets_complete: true,
-                    basis: basis(&(project, locale, &page.basis, decision.decision_id, &repair.status, repair.recheck_run_id))?,
-                    source_action_id: Some(decision.request.action_id),
-                    action: DecisionAction::ReviewFinding { unit_id: unit, run_id: repair.recheck_run_id.unwrap_or(decision.request.run_id), issue_id: decision.request.issue_id.clone() },
-                    evidence: None,
-                };
-                items.insert(key, item);
+                if items.len() > SOURCE_LIMIT || visited >= SOURCE_LIMIT && (page.next_offset.is_some() || unit_index + 1 < units.len()) {
+                    complete = false;
+                    let items = items.into_values().take(SOURCE_LIMIT).collect();
+                    return Ok(SourceProjection { items, complete });
+                }
+                match page.next_offset { Some(next) => offset = next, None => break }
             }
-            if items.len() > SOURCE_LIMIT || visited >= SOURCE_LIMIT && (page.next_offset.is_some() || unit_index + 1 < units.len()) {
-                complete = false;
-                let items = items.into_values().take(SOURCE_LIMIT).collect();
-                return Ok(SourceProjection { items, complete });
-            }
-            match page.next_offset { Some(next) => offset = next, None => break }
         }
     }
     Ok(SourceProjection { items: items.into_values().collect(), complete })
@@ -275,7 +287,7 @@ pub(super) fn project(store: &ProjectStore, c: &Connection, project: ExecutionId
         DecisionSource::TranslationCandidate => candidates(c, project, locale),
         DecisionSource::ResourceProposal => all_resource_proposals(store, c, project, locale),
         DecisionSource::HumanReview => human_review(c, project, locale),
-        DecisionSource::ReviewFinding => review_findings(store, c, project, locale),
+        DecisionSource::ReviewFinding => review_findings(c, project, locale),
         _ => Err(failure(ErrorCode::InvalidInput, "decision-content-source")),
     }
 }

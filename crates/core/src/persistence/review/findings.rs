@@ -460,105 +460,122 @@ impl ProjectStore {
             .map_err(|_| failure(ErrorCode::StorageFailed, "review-read"))?;
         read_snapshot(c, |c| {
             let target = target_in(c, project, unit, locale)?;
-            let semantic = super::super::ai_semantic_review::current_run(c,project,unit,locale,&target.basis)?;
-            let semantic_run_id = semantic.as_ref().map(|run|run.run_id);
-            let mut current_runs = Vec::new();
-            if let Some(run) = &target.current_check {
-                current_runs.push(qa_run(run));
-            }
-            if let Some(run) = semantic { current_runs.push(semantic_run(run)); }
-            let mut findings = Vec::new();
-            for (run,requirement,finding) in current_runs.iter().flat_map(|run| run.entries.iter().map(move |(r,f)|(run,r,f)))
-                .skip(offset as usize).take(limit as usize+1) {
-                findings.push(AdvisoryFinding { run_id:run.run_id,purpose:run.purpose,ai_origin:run.ai_origin.clone(),
-                    requirement:requirement.clone(),finding:finding.clone(),
-                    decision:latest(c,project,unit,locale,&run.basis,&finding.issue_id)? });
-            }
-            let more_findings = findings.len() > limit as usize;
-            findings.truncate(limit as usize);
-            let mut statement = c.prepare("SELECT action_id FROM review_finding_decisions WHERE project_id=?1 AND unit_id=?2 AND locale=?3 ORDER BY rowid DESC LIMIT ?4 OFFSET ?5").map_err(sql)?;
-            let mut history = statement
-                .query_map(
-                    params![
-                        project.to_string(),
-                        unit.to_string(),
-                        locale,
-                        limit + 1,
-                        offset
-                    ],
-                    |r| r.get::<_, String>(0),
-                )
-                .map_err(sql)?
-                .map(|a| load(c, parse_id(a.map_err(sql)?)?).and_then(|v| v.ok_or_else(corrupt)))
-                .collect::<Result<Vec<_>, _>>()?;
-            let more = more_findings || history.len() > limit as usize;
-            let next_offset =
-                if more {
-                    Some(offset.checked_add(limit).ok_or_else(|| {
-                        failure(ErrorCode::LimitExceeded, "review-history-cursor")
-                    })?)
-                } else {
-                    None
-                };
-            history.truncate(limit as usize);
-            // Repair state accompanies this bounded history page. Older repair
-            // requests remain reachable through the same explicit next cursor.
-            let repairs = history.iter().filter(|d|d.request.disposition==ReviewFindingDisposition::RepairRequested).map(|decision| {
-                let latest = latest(c,project,unit,locale,&decision.request.expected_basis,&decision.request.issue_id)?;
-                if latest.as_ref().map(|d|d.decision_id)!=Some(decision.decision_id) {
-                    return Ok(ReviewFindingRepair{decision:decision.clone(),status:ReviewRepairStatus::Superseded,recheck_run_id:None});
-                }
-                if decision.purpose == ReviewRunPurpose::AiSemantic {
-                    let run = super::super::ai_semantic_review::current_run(c,project,unit,locale,&target.basis)?;
-                    let recheck = run.filter(|run| run.run_id != decision.request.run_id
-                        && decision.ai_origin.as_ref().is_some_and(|old|old.endpoint==run.evidence.endpoint && old.model==run.evidence.model && old.recipe==run.evidence.recipe)
-                        && run.rules.iter().any(|rule|rule.key==decision.requirement.key));
-                    let recheck = match recheck {
-                        Some(run) => {
-                            let newer:bool=c.query_row("SELECT newer.rowid>original.rowid FROM review_checks newer JOIN review_checks original ON original.run_id=?2 WHERE newer.run_id=?1",
-                                params![run.run_id.to_string(),decision.request.run_id.to_string()],|row|row.get(0)).map_err(sql)?;
-                            newer.then_some(run)
-                        }, None=>None,
-                    };
-                    let status=match recheck.as_ref().and_then(|run|run.rules.iter().find(|rule|rule.key==decision.requirement.key)) {
-                        None=>ReviewRepairStatus::AwaitingCurrentRecheck,
-                        Some(rule) if rule.findings.is_empty()=>ReviewRepairStatus::CurrentRuleClear,
-                        Some(_)=>ReviewRepairStatus::CurrentRuleFindings,
-                    };
-                    return Ok(ReviewFindingRepair { decision:decision.clone(),status,recheck_run_id:recheck.map(|run|run.run_id) });
-                }
-                let recheck = target.current_check.as_ref().filter(|run| run.run_id!=decision.request.run_id && run.basis==target.basis
-                    && run.outcome==ReviewCheckOutcome::Completed && checks::coverage_complete(run))
-                    .filter(|run| run.evidence.as_ref().is_some_and(|e| e.required_checks.requirements.iter().any(|r|r.key==decision.requirement.key && !r.mandatory && r.not_applicable.is_none())
-                        && e.results.iter().any(|r|r.key==decision.requirement.key && matches!(r.outcome,sdk::CheckOutcome::Completed{..}))));
-                let recheck = match recheck {
-                    Some(run) => {
-                        let newer: bool = c.query_row("SELECT newer.rowid>original.rowid FROM review_checks newer JOIN review_checks original ON original.run_id=?2 WHERE newer.run_id=?1",
-                            params![run.run_id.to_string(),decision.request.run_id.to_string()],|row|row.get(0)).map_err(sql)?;
-                        newer.then_some(run)
-                    }
-                    None => None,
-                };
-                let status = match recheck.and_then(|run|run.rules.iter().find(|rule|rule.key==decision.requirement.key)) {
-                    None => ReviewRepairStatus::AwaitingCurrentRecheck,
-                    Some(rule) if rule.findings.is_empty() => ReviewRepairStatus::CurrentRuleClear,
-                    Some(_) => ReviewRepairStatus::CurrentRuleFindings,
-                };
-                Ok(ReviewFindingRepair { recheck_run_id:recheck.map(|r|r.run_id),status,decision:decision.clone() })
-            }).collect::<Result<Vec<_>,ExecutionError>>()?;
-            Ok(ReviewFindingView {
-                unit_id: unit,
-                locale: locale.into(),
-                basis: target.basis,
-                run_id: target.current_check.map(|r| r.run_id),
-                semantic_run_id,
-                findings,
-                repairs,
-                history,
-                next_offset,
-            })
+            findings_in(c, project, &target, offset, limit)
         })
     }
+}
+
+/// Borrow a target validated by the original reader in this same SQLite snapshot.
+/// Batch callers retain the snapshot across all offsets and target projections.
+pub(in crate::persistence) fn findings_in(
+    c: &Connection,
+    project: ExecutionId,
+    target: &ReviewTarget,
+    offset: u32,
+    limit: u32,
+) -> Result<ReviewFindingView, ExecutionError> {
+    if limit == 0 || limit > 50 {
+        return Err(failure(ErrorCode::InvalidInput, "review-history-page"));
+    }
+    let unit = target.unit_id;
+    let locale = target.locale.as_str();
+    let semantic = super::super::ai_semantic_review::current_run(c,project,unit,locale,&target.basis)?;
+    let semantic_run_id = semantic.as_ref().map(|run|run.run_id);
+    let mut current_runs = Vec::new();
+    if let Some(run) = &target.current_check {
+        current_runs.push(qa_run(run));
+    }
+    if let Some(run) = semantic { current_runs.push(semantic_run(run)); }
+    let mut findings = Vec::new();
+    for (run,requirement,finding) in current_runs.iter().flat_map(|run| run.entries.iter().map(move |(r,f)|(run,r,f)))
+        .skip(offset as usize).take(limit as usize+1) {
+        findings.push(AdvisoryFinding { run_id:run.run_id,purpose:run.purpose,ai_origin:run.ai_origin.clone(),
+            requirement:requirement.clone(),finding:finding.clone(),
+            decision:latest(c,project,unit,locale,&run.basis,&finding.issue_id)? });
+    }
+    let more_findings = findings.len() > limit as usize;
+    findings.truncate(limit as usize);
+    let mut statement = c.prepare("SELECT action_id FROM review_finding_decisions WHERE project_id=?1 AND unit_id=?2 AND locale=?3 ORDER BY rowid DESC LIMIT ?4 OFFSET ?5").map_err(sql)?;
+    let mut history = statement
+        .query_map(
+            params![
+                project.to_string(),
+                unit.to_string(),
+                locale,
+                limit + 1,
+                offset
+            ],
+            |r| r.get::<_, String>(0),
+        )
+        .map_err(sql)?
+        .map(|a| load(c, parse_id(a.map_err(sql)?)?).and_then(|v| v.ok_or_else(corrupt)))
+        .collect::<Result<Vec<_>, _>>()?;
+    let more = more_findings || history.len() > limit as usize;
+    let next_offset =
+        if more {
+            Some(offset.checked_add(limit).ok_or_else(|| {
+                failure(ErrorCode::LimitExceeded, "review-history-cursor")
+            })?)
+        } else {
+            None
+        };
+    history.truncate(limit as usize);
+    // Repair state accompanies this bounded history page. Older repair
+    // requests remain reachable through the same explicit next cursor.
+    let repairs = history.iter().filter(|d|d.request.disposition==ReviewFindingDisposition::RepairRequested).map(|decision| {
+        let latest = latest(c,project,unit,locale,&decision.request.expected_basis,&decision.request.issue_id)?;
+        if latest.as_ref().map(|d|d.decision_id)!=Some(decision.decision_id) {
+            return Ok(ReviewFindingRepair{decision:decision.clone(),status:ReviewRepairStatus::Superseded,recheck_run_id:None});
+        }
+        if decision.purpose == ReviewRunPurpose::AiSemantic {
+            let run = super::super::ai_semantic_review::current_run(c,project,unit,locale,&target.basis)?;
+            let recheck = run.filter(|run| run.run_id != decision.request.run_id
+                && decision.ai_origin.as_ref().is_some_and(|old|old.endpoint==run.evidence.endpoint && old.model==run.evidence.model && old.recipe==run.evidence.recipe)
+                && run.rules.iter().any(|rule|rule.key==decision.requirement.key));
+            let recheck = match recheck {
+                Some(run) => {
+                    let newer:bool=c.query_row("SELECT newer.rowid>original.rowid FROM review_checks newer JOIN review_checks original ON original.run_id=?2 WHERE newer.run_id=?1",
+                        params![run.run_id.to_string(),decision.request.run_id.to_string()],|row|row.get(0)).map_err(sql)?;
+                    newer.then_some(run)
+                }, None=>None,
+            };
+            let status=match recheck.as_ref().and_then(|run|run.rules.iter().find(|rule|rule.key==decision.requirement.key)) {
+                None=>ReviewRepairStatus::AwaitingCurrentRecheck,
+                Some(rule) if rule.findings.is_empty()=>ReviewRepairStatus::CurrentRuleClear,
+                Some(_)=>ReviewRepairStatus::CurrentRuleFindings,
+            };
+            return Ok(ReviewFindingRepair { decision:decision.clone(),status,recheck_run_id:recheck.map(|run|run.run_id) });
+        }
+        let recheck = target.current_check.as_ref().filter(|run| run.run_id!=decision.request.run_id && run.basis==target.basis
+            && run.outcome==ReviewCheckOutcome::Completed && checks::coverage_complete(run))
+            .filter(|run| run.evidence.as_ref().is_some_and(|e| e.required_checks.requirements.iter().any(|r|r.key==decision.requirement.key && !r.mandatory && r.not_applicable.is_none())
+                && e.results.iter().any(|r|r.key==decision.requirement.key && matches!(r.outcome,sdk::CheckOutcome::Completed{..}))));
+        let recheck = match recheck {
+            Some(run) => {
+                let newer: bool = c.query_row("SELECT newer.rowid>original.rowid FROM review_checks newer JOIN review_checks original ON original.run_id=?2 WHERE newer.run_id=?1",
+                    params![run.run_id.to_string(),decision.request.run_id.to_string()],|row|row.get(0)).map_err(sql)?;
+                newer.then_some(run)
+            }
+            None => None,
+        };
+        let status = match recheck.and_then(|run|run.rules.iter().find(|rule|rule.key==decision.requirement.key)) {
+            None => ReviewRepairStatus::AwaitingCurrentRecheck,
+            Some(rule) if rule.findings.is_empty() => ReviewRepairStatus::CurrentRuleClear,
+            Some(_) => ReviewRepairStatus::CurrentRuleFindings,
+        };
+        Ok(ReviewFindingRepair { recheck_run_id:recheck.map(|r|r.run_id),status,decision:decision.clone() })
+    }).collect::<Result<Vec<_>,ExecutionError>>()?;
+    Ok(ReviewFindingView {
+        unit_id: unit,
+        locale: locale.into(),
+        basis: target.basis.clone(),
+        run_id: target.current_check.as_ref().map(|r| r.run_id),
+        semantic_run_id,
+        findings,
+        repairs,
+        history,
+        next_offset,
+    })
 }
 
 #[cfg(test)]

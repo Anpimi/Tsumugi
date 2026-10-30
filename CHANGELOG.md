@@ -136,6 +136,8 @@ Current workspace version metadata: **`0.2.0-alpha.1`**. Because the published `
 
 ### Fixed
 
+- Read review targets in batches when collecting items that need a decision, reducing repeated project-wide reads in larger workspaces while preserving finding history and partial results.
+
 - Fix ⌘S on Mac and Ctrl+S on Windows in the opt-in workspace so the current editor confirms its translation. Keys already handled by another control keep their existing behavior.
 
 - Keep the assistant save action reachable with enlarged text by scrolling message fields and recovery guidance separately from its action bar. Workspace controls wrap and compact columns grow with enlarged text to keep their labels readable. The Workbench document language now follows the interface language, including the welcome screen.

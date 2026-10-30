@@ -37,6 +37,7 @@ pub use checks::{SegmentQaCounts, SegmentQaSummary};
 mod actions;
 pub use actions::{ReviewDecisionActionRead, ReviewWaiverActionRead, ReviewFallbackActionRead};
 mod findings;
+pub(super) use findings::findings_in;
 pub use findings::{
     AdvisoryFinding, ReviewFindingDecision, ReviewFindingDisposition, ReviewFindingRepair,
     ReviewFindingView, ReviewFindingWrite, ReviewRepairStatus,
