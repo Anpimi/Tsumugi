@@ -12,7 +12,7 @@ Current workspace version metadata: **`0.2.0-alpha.1`**. Because the published `
 
 ### Added
 
-- Entry details in the opt-in workspace can edit context notes, capture saved context and adopted terms as fixed input, and inspect original source facts. Human fact corrections, rejection of inferred facts and restoration retain their history. A saved manual translation correction can explicitly become a unit-scoped term candidate for review. Unfinished input and original uncertain requests use the existing local recovery workflow; these actions do not call a model.
+- Entry details in the opt-in workspace can edit context notes, capture saved context and adopted terms as fixed input, and inspect original source facts. Human fact corrections, rejection of inferred facts and restoration retain their history. Draft actions are distinguished from saved decisions, and recovery names the original entry without an internal ID. A saved manual translation correction can explicitly become a unit-scoped term candidate for review. Unfinished input and original uncertain requests use the existing local recovery workflow; these actions do not call a model.
 
 - Appearance settings in the opt-in workspace can set source and translation text to 14–20 px while keeping other controls at their existing size. The choice stays on the current device, and changing it preserves unfinished input.
 

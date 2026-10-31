@@ -135,12 +135,16 @@ it.each(["en-US", "zh-CN"])("rejects only an inference and explicitly restores i
   expect(screen.getAllByRole("button", { name: k("reject") })).toHaveLength(1);
   expect(screen.getByText(i18n.t("sourceContext.rationale", { rationale: "addressed as captain" }))).toBeVisible();
   expect(invoke.mock.calls.filter(([command]) => command === "decide_context_fact")).toHaveLength(0);
-  await user.click(screen.getByRole("button", { name: k("reject") })); audit("Unconfirmed source inference");
+  await user.click(screen.getByRole("button", { name: k("reject") }));
+  expect(within(screen.getByRole("region", { name: i18n.t("contextFacts.editor") })).getByText(k("reject"))).toBeVisible();
+  expect(history).toHaveLength(0); audit("Unconfirmed source inference");
   await user.click(screen.getByRole("button", { name: k("save") }));
   await screen.findByText(i18n.t("workbenchV2.entryFactRejected"));
   expect(history[0].request).toMatchObject({ basis: { scope, fact: { fact: { text: "captain", origin: { kind: "inferred" } } } }, disposition: { kind: "reject-inference" }, actor: "Human reviewer" });
   expect(screen.getByText("captain")).toBeVisible();
-  await user.click(screen.getByRole("button", { name: k("restore") })); audit("Confirmed original observation");
+  await user.click(screen.getByRole("button", { name: k("restore") }));
+  expect(within(screen.getByRole("region", { name: i18n.t("contextFacts.editor") })).getByText(k("restore"))).toBeVisible();
+  expect(history).toHaveLength(1); audit("Confirmed original observation");
   await user.click(screen.getByRole("button", { name: k("save") }));
   await waitFor(() => expect(history).toHaveLength(2));
   expect(history[1].request).toMatchObject({ expectedDecisionId: history[0].request.actionId, disposition: { kind: "restore" } });

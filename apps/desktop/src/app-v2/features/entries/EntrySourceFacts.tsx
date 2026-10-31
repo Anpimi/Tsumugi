@@ -128,7 +128,7 @@ function FactPage({ context, page, owner, entryKey, current, canAct, onBlocked }
               {ready() ? <div className={styles.effective}><h5>{t("workbenchV2.entryFactEffectiveValue")}</h5>
                 {disposition?.kind === "replace" ? <><p className={styles.meta}>{t("contextFacts.manual")}</p><p className={styles.text}><TokenizedText text={disposition.text}/></p></>
                   : disposition?.kind === "reject-inference" ? <p>{t("workbenchV2.entryFactRejected")}</p> : <p>{t("workbenchV2.entryFactOriginalEffective")}</p>}
-                {decision ? <><p>{t(`contextFacts.operation.${decision.request.disposition.kind}`)}</p><p className={styles.text}>{decision.request.actor}: {decision.request.reason}</p></> : null}
+                {decision ? <>{decision.request.disposition.kind !== "replace" ? <p>{t(`contextFacts.operation.${decision.request.disposition.kind}`)}</p> : null}<p className={styles.text}>{decision.request.actor}: {decision.request.reason}</p></> : null}
               </div> : null}
               <div className={styles.actions}><Button size="sm" disabled={!canAct() || !ready() || owner.factBlocked() || !!owner.state.factDraft} onClick={() => begin(basis, { kind: "replace", text: disposition?.kind === "replace" ? disposition.text : fact.text })}>{t("contextFacts.replace")}</Button>
                 {fact.origin.kind === "inferred" ? <Button size="sm" disabled={!canAct() || !ready() || owner.factBlocked() || !!owner.state.factDraft || disposition?.kind === "reject-inference"} onClick={() => begin(basis, { kind: "reject-inference" })}>{t("contextFacts.reject")}</Button> : null}
@@ -170,7 +170,7 @@ function FactEditor({ context, target, owner, current, sourceCurrent, refresh, i
     onBlurCapture={event => { if (!event.currentTarget.contains(event.relatedTarget)) gate.releaseOwner(inputOwner); }}
     onCompositionStartCapture={() => gate.setComposing(inputOwner, true)} onCompositionEndCapture={() => gate.setComposing(inputOwner, false)}>
     <h4 ref={heading} tabIndex={-1}>{t("contextFacts.editor")}</h4><p>{t("contextFacts.scope", { key: active.key, locale: active.basis.scope.locale })}</p>
-    <p>{t(`contextFacts.operation.${active.disposition.kind}`)}</p><p className={styles.text}><TokenizedText text={active.basis.fact.fact.text}/></p><FactOrigin fact={active.basis.fact.fact}/>
+    <p>{t(`contextFacts.${active.disposition.kind === "reject-inference" ? "reject" : active.disposition.kind}`)}</p><p className={styles.text}><TokenizedText text={active.basis.fact.fact.text}/></p><FactOrigin fact={active.basis.fact.fact}/>
     <p className={styles.meta}>{t("contextFacts.fieldLimits")}</p>
     {active.disposition.kind === "replace" ? <Field label={t("contextFacts.value")} required><TextArea rows={3} readOnly={!inputAllowed()} value={active.disposition.text} onChange={event => change({ disposition: { kind: "replace", text: event.target.value } })}/></Field> : null}
     <Field label={t("contextFacts.actor")} required><TextInput readOnly={!inputAllowed()} value={active.actor} onChange={event => change({ actor: event.target.value })}/></Field>

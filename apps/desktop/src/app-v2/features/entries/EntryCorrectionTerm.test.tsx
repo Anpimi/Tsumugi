@@ -242,6 +242,7 @@ it("retains an unknown original request and resource B across views, then explic
   expect(screen.queryByRole("button", { name: r("retry") })).not.toBeInTheDocument();
   act(() => h.show({ knowledge: true }));
   expect(await screen.findByRole("textbox", { name: c("reason") })).toHaveValue("Preserved resource B");
+  expect(screen.getByText(i18n.t("correctionFeedback.scope", { unit: i18n.t("knowledge.proposalScopeEntry"), locale: evidence.basis.locale }))).toBeVisible();
   await act(async () => { await h.owner().flush(); });
   act(() => h.remount());
   await waitFor(() => expect(h.owner().journal.hydration).toBe("ready"));

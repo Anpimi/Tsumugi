@@ -198,7 +198,7 @@ export function CorrectionTermDraftForm({ project, owner, gate, viewId, disabled
     <header><h3>{t("correctionFeedback.title")}</h3><p>{t("correctionFeedback.help")}</p></header>
     {owner.journal.hydration !== "ready" || owner.journal.failure || owner.journal.conflict ? <ResourceDraftRecovery owner={owner} disabled={!present(false)}/> : null}
     {draft ? <>
-      <p>{t("correctionFeedback.scope", { unit: unitLabel ?? draft.evidence.basis.unitId, locale: draft.evidence.basis.locale })}</p>
+      <p>{t("correctionFeedback.scope", { unit: unitLabel ?? t("knowledge.proposalScopeEntry"), locale: draft.evidence.basis.locale })}</p>
       <p role="status">{t(upToDate() ? "correctionFeedback.current" : "correctionFeedback.stale")}</p>
       {basis.isFetching || source.isFetching ? <LoadingState label={t("correctionFeedback.checking")}/> : null}
       {basis.error || source.error ? <Banner tone="error" role="alert"><p>{t("correctionFeedback.readFailed")}</p><CommandFailureDetails failure={commandFailure(basis.error ?? source.error)}/></Banner> : null}
