@@ -3,7 +3,7 @@ import { ReviewDraftProvider, useReviewDraftSession } from "../../../ReviewDraft
 import { executionContext } from "../../../executionCommands";
 import type { ProjectView } from "../../../projectCommands";
 import { useSessionReads } from "../../../SessionReadProvider";
-import type { ProjectLifecycle, LeaveIntent } from "../../platform/projectLifecycle";
+import type { LifecycleParticipant, LeaveIntent } from "../../platform/projectLifecycle";
 import type { TranslationDrafts } from "../editor/translationDrafts";
 import type { ReviewOwner } from "./reviewTypes";
 import { reviewBlocked, reviewHasDraft } from "./reviewState";
@@ -11,13 +11,13 @@ import { reviewBlocked, reviewHasDraft } from "./reviewState";
 interface Props {
   project: ProjectView;
   drafts: TranslationDrafts;
-  lifecycle: ProjectLifecycle;
+  onParticipant: (participant: LifecycleParticipant | null) => void;
   onOwner: (owner: ReviewOwner | null) => void;
   onReveal: () => void;
 }
 const leavesProject = (intent: LeaveIntent) => ["open-project", "close-project", "close-window"].includes(intent.kind);
 
-function ReviewBridge({ project, lifecycle, onOwner, onReveal }: Omit<Props, "drafts">) {
+function ReviewBridge({ project, onParticipant, onOwner, onReveal }: Omit<Props, "drafts">) {
   const review = useReviewDraftSession(), reads = useSessionReads(), owner = useRef(review);
   const callbacks = useRef({ onOwner, onReveal }), published = useRef<{ owner: ReviewOwner; inFlight: boolean } | null>(null);
   const completion = useRef(review.state.completionVersion), context = executionContext(project);
@@ -41,10 +41,11 @@ function ReviewBridge({ project, lifecycle, onOwner, onReveal }: Omit<Props, "dr
       return { status: reviewBlocked(current) ? "blocked" as const : reviewHasDraft(current) ? "dirty" as const : "ready" as const,
         revision: JSON.stringify([current.current(), current.semantic.current(), current.inFlight()]) };
     }
-    return lifecycle.register({ id: "entry-review", area: "review", scope: { kind: "project", ...context }, inspect,
+    onParticipant({ id: "entry-review", area: "review", scope: { kind: "project", ...context }, inspect,
       prepareLeave: async (intent, proof, current) => proof() && current() && inspect(intent).status === "ready",
       reveal: () => callbacks.current.onReveal() });
-  }, [lifecycle, context.projectId, context.sessionToken]);
+    return () => onParticipant(null);
+  }, [onParticipant, context.projectId, context.sessionToken]);
   return null;
 }
 

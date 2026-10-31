@@ -239,6 +239,8 @@ function ProjectWorkspace({ session, lifecycle, gate, readOnly, requestOpen, req
   const [reviewRequested, setReviewRequested] = useState(false), [reviewOwner, setReviewOwner] = useState<ReviewOwner | null>(null), [reviewRecovery, setReviewRecovery] = useState(false);
   const [reviewBatchOpen, setReviewBatchOpen] = useState(false), [reviewBatchSelection, setReviewBatchSelection] = useState<WorkspaceSelection | null>(null);
   const reviewStatus = useRef({ requested: false, owner: null as ReviewOwner | null });
+  const reviewParticipant = useRef<LifecycleParticipant | null>(null);
+  const publishReviewParticipant = useCallback((participant: LifecycleParticipant | null) => { reviewParticipant.current = participant; }, []);
   const requestReview = useCallback(() => { reviewStatus.current.requested = true; setReviewRequested(true); }, []);
   const revealReview = useCallback(() => {
     requestReview(); setReviewRecovery(true);
@@ -372,11 +374,12 @@ function ProjectWorkspace({ session, lifecycle, gate, readOnly, requestOpen, req
         revision: candidateStatus.current.requested ? candidateStatus.current.owners ? "candidate-owner-ready" : "candidate-owner-loading" : "candidate-not-requested" },
     prepareLeave: async () => false, reveal: revealCandidates,
   }), [lifecycle, session.project.sessionToken, session.project.metadata.projectId, revealCandidates]);
-  useLayoutEffect(() => lifecycle.register({ id: "entry-review-loading", area: "review", scope: { kind: "project", ...executionContext(session.project) },
+  useLayoutEffect(() => lifecycle.register({ id: "entry-review", area: "review", scope: { kind: "project", ...executionContext(session.project) },
     inspect: intent => ["navigate", "language", "close-view", "restore"].includes(intent.kind) ? { status: "ready", revision: "retained-review-presentation" }
-      : { status: reviewStatus.current.requested && !reviewStatus.current.owner ? "blocked" : "ready",
-        revision: reviewStatus.current.requested ? reviewStatus.current.owner ? "review-owner-ready" : "review-owner-loading" : "review-not-requested" },
-    prepareLeave: async () => false, reveal: revealReview,
+      : reviewParticipant.current?.inspect(intent) ?? { status: reviewStatus.current.requested ? "blocked" : "ready",
+        revision: reviewStatus.current.requested ? "review-owner-loading" : "review-not-requested" },
+    prepareLeave: (intent, proof, current) => reviewParticipant.current?.prepareLeave(intent, proof, current) ?? Promise.resolve(false),
+    reveal: revealReview,
   }), [lifecycle, session.project.sessionToken, session.project.metadata.projectId, revealReview]);
   useLayoutEffect(() => lifecycle.register({ id: "saved-comparisons-loading", area: "translation", scope: { kind: "project", ...executionContext(session.project) },
     inspect: intent => ["navigate", "language", "close-view", "restore"].includes(intent.kind) ? { status: "ready", revision: "retained-comparison-presentation" }
@@ -460,7 +463,7 @@ function ProjectWorkspace({ session, lifecycle, gate, readOnly, requestOpen, req
           <ImportOwnerHost project={session.project} drafts={drafts} lifecycle={lifecycle} onOwners={publishImportOwners} onReveal={revealImport}/>
         </Suspense></FeatureBoundary> : null}
         {reviewRequested ? <FeatureBoundary fallback={<ErrorState title={t("reviewUnavailable")} />}><Suspense fallback={null}>
-          <ReviewOwnerHost project={session.project} drafts={drafts} lifecycle={lifecycle} onOwner={publishReviewOwner} onReveal={revealReview}/>
+          <ReviewOwnerHost project={session.project} drafts={drafts} onOwner={publishReviewOwner} onParticipant={publishReviewParticipant} onReveal={revealReview}/>
         </Suspense></FeatureBoundary> : null}
         {knowledgeRequested ? <FeatureBoundary key={knowledgeAttempt} fallback={<KnowledgeLoadFailure canRetry={!knowledgeHadOwner.current} onFailure={failKnowledgeLoad} onRetry={() => retryKnowledgeLoad(false)}/>}><Suspense fallback={null}>
           <KnowledgeOwnerHost project={session.project} lifecycle={lifecycle} onOwner={publishKnowledgeOwner} onReveal={revealKnowledge} onParticipant={publishKnowledgeParticipant}/>

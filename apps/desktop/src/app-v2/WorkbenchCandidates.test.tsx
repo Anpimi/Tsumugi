@@ -1,4 +1,4 @@
-import { StrictMode } from "react";
+import { StrictMode, type ComponentProps } from "react";
 import userEvent from "@testing-library/user-event";
 import { installWorkbenchInputJournalFixtures } from "../testSupport/inputJournalFixture";
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
@@ -28,8 +28,19 @@ import { validateResponseRevision } from "../generated/translation.validators";
 import { validateResponseConversationWritten } from "../generated/draft.validators";
 
 const nativeInvoke = vi.hoisted(() => vi.fn());
+const reviewOwnerLoad = vi.hoisted(() => ({ gate: null as Promise<void> | null, release: null as (() => void) | null, mounted: vi.fn() }));
 vi.mock("@tauri-apps/api/core", async original => ({ ...await original<object>(), invoke: nativeInvoke }));
 vi.mock("./platform/useProjectLifecycle", async original => ({ ...await original<object>(), useNativeProjectClose: () => ({ state: "ready" }) }));
+vi.mock("./features/review/ReviewOwnerHost", async original => {
+  if (reviewOwnerLoad.gate) await reviewOwnerLoad.gate;
+  const module = await original<typeof import("./features/review/ReviewOwnerHost")>();
+  const { createElement, useLayoutEffect } = await import("react"), OriginalHost = module.default;
+  function ObservedReviewOwnerHost(props: ComponentProps<typeof OriginalHost>) {
+    useLayoutEffect(() => { reviewOwnerLoad.mounted(); }, []);
+    return createElement(OriginalHost, props);
+  }
+  return { ...module, default: ObservedReviewOwnerHost };
+});
 const project: ProjectView = { sessionToken: "workbench-candidate-session", locator: "/synthetic/workbench-candidates", reconciliationState: "settled",
   metadata: { projectId: translationFixture.save.projectId, displayName: "Candidate workspace", metadataRevision: "1", sourceLocale: "en", targetLocales: ["zh-CN"] } };
 const target = reviewTargetFixture({ unitId: translationFixture.save.unitId, locale: translationFixture.save.locale,
@@ -65,6 +76,7 @@ function receipt(request: CandidateDecisionRequest): CandidateDecision {
 beforeEach(installWorkbenchInputJournalFixtures);
 beforeEach(async () => {
   nativeInvoke.mockReset();
+  reviewOwnerLoad.mounted.mockClear();
   localStorage.clear(); history.replaceState(null, "", "/"); await i18n.changeLanguage("en-US");
   // Both the inline row and Inspector are visible in the desktop layout.
   Object.defineProperty(window, "innerWidth", { configurable: true, writable: true, value: 1440 });
@@ -96,7 +108,7 @@ beforeEach(async () => {
   vi.spyOn(translationCommands, "decideCandidate").mockImplementation(async request => receipt(request));
   vi.spyOn(translationCommands, "candidateAction").mockResolvedValue(null);
 });
-afterEach(() => { cleanup(); controller?.dispose(); controller = undefined; if (originalWidth) Object.defineProperty(window, "innerWidth", originalWidth); });
+afterEach(() => { reviewOwnerLoad.release?.(); reviewOwnerLoad.gate = null; reviewOwnerLoad.release = null; cleanup(); controller?.dispose(); controller = undefined; if (originalWidth) Object.defineProperty(window, "innerWidth", originalWidth); });
 
 async function openCandidates() {
   const close = vi.fn(async () => ({ closed: true }));
@@ -183,6 +195,56 @@ async function openAssistantCandidate(width: number, ordinal: string) {
   expect(screen.getByRole("button", { name: i18n.t("conversation.runPause") })).toBeEnabled(); expect(screen.getByRole("button", { name: i18n.t("conversation.runStop") })).toBeEnabled();
   return { lifecycle, close, conversationId, planId: plan.planId, revision, revisionRead, composer, open, journal: () => copy(journal) };
 }
+
+it("keeps a single Inspector navigation current when the real review owner mounts after Details is ready", async () => {
+  reviewOwnerLoad.gate = new Promise<void>(resolve => { reviewOwnerLoad.release = resolve; });
+  controller = new ProjectLifecycle({ open: async () => project, close: async () => ({ closed: true }),
+    status: async () => ({ active: false, quiescing: false, queryCount: 0, error: null }) });
+  const lifecycle = controller, prepare = lifecycle.prepareLeave.bind(lifecycle), register = vi.spyOn(lifecycle, "register");
+  let holdInspector = false, entered!: () => void, resume!: () => void;
+  const inspector: { permit: Awaited<ReturnType<ProjectLifecycle["prepareLeave"]>> } = { permit: null };
+  const guarding = new Promise<void>(resolve => { entered = resolve; }), continueNavigation = new Promise<void>(resolve => { resume = resolve; });
+  vi.spyOn(lifecycle, "prepareLeave").mockImplementation(async (intent, current) => {
+    const permit = await prepare(intent, current);
+    if (holdInspector && intent.kind === "navigate") {
+      holdInspector = false; inspector.permit = permit; entered(); await continueNavigation;
+    }
+    return permit;
+  });
+  render(<StrictMode><WorkbenchApp controller={lifecycle} native /></StrictMode>);
+  fireEvent.click(screen.getByRole("button", { name: i18n.t("startup.openExisting") }));
+  fireEvent.change(screen.getByRole("textbox", { name: w("projectFolder") }), { target: { value: project.locator } });
+  fireEvent.click(screen.getByRole("button", { name: w("openProject") }));
+  const details = await screen.findByRole("button", { name: i18n.t("workbenchV2.showEntryDetails", { key: target.nativeKey }) }, { timeout: 5000 });
+  await waitFor(() => expect(details).toBeEnabled()); fireEvent.click(details);
+  const row = await screen.findByRole("listitem", { name: target.nativeKey });
+  const inspect = await within(row).findByRole("button", { name: w("candidateReject") });
+  await waitFor(() => {
+    expect(within(screen.getByRole("tablist", { name: w("dockTabs") })).getByRole("tab", { name: w("detail") })).toHaveAttribute("aria-selected", "true");
+    expect(row).toHaveAttribute("aria-current", "true");
+    expect(lifecycle.getSnapshot().phase).toBe("idle");
+    expect(inspect).toBeEnabled();
+  });
+  expect(reviewOwnerLoad.mounted).not.toHaveBeenCalled();
+  const registrationsBefore = register.mock.calls.length;
+  holdInspector = true; fireEvent.click(inspect);
+  try {
+    await act(async () => { await guarding; });
+    const permit = inspector.permit;
+    if (!permit) throw new Error("The single Inspector action must first receive a real navigation permit");
+    expect(permit.current()).toBe(true);
+    await act(async () => { reviewOwnerLoad.release?.(); });
+    await waitFor(() => expect(reviewOwnerLoad.mounted).toHaveBeenCalled());
+    const arrivals = register.mock.calls.slice(registrationsBefore).map(([participant]) => participant.id);
+    expect.soft(permit.current(), `The real review host must retain the issued permit; late participants: ${arrivals.join(", ")}`).toBe(true);
+  } finally { await act(async () => { resume(); await continueNavigation; }); }
+  const panel = await screen.findByRole("region", { name: w("candidateTitle") });
+  expect(panel).toBeVisible();
+  await waitFor(() => expect(within(panel).getByRole("button", { name: w("candidateAdopt") })).toBeEnabled());
+  expect(lifecycle.getSnapshot().failure).toBeNull();
+  expect(translationCommands.save).not.toHaveBeenCalled(); expect(translationCommands.select).not.toHaveBeenCalled();
+  expect(translationCommands.decideCandidate).not.toHaveBeenCalled(); expect(executionCommands.identity).not.toHaveBeenCalled();
+}, 15000);
 
 it.each([[1440, "9007199254740993"], [360, "75"]] as const)("assistant run candidate navigates the real %spx workspace to its exact saved candidate page", async (width, ordinal) => {
   const h = await openAssistantCandidate(width, ordinal); h.open.focus(); fireEvent.click(h.open);

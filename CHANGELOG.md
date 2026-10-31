@@ -138,6 +138,8 @@ Current workspace version metadata: **`0.2.0-alpha.1`**. Because the published `
 
 ### Fixed
 
+- Loading review controls in the opt-in workspace no longer interrupts an in-progress action to open candidate details. Review drafts and unfinished actions still protect project exit.
+
 - Renaming a project folder in the opt-in workspace updates the welcome screen's recent projects and Enter shortcut immediately, so closing the project can reopen its new location while retaining the saved entry position.
 
 - Opening a dialog or side panel with its close button focused no longer makes the first Escape dismiss only that button's tooltip. Escape closes the surface and restores the opener's focus.
