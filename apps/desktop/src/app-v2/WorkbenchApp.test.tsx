@@ -29,7 +29,7 @@ import { validateResponseRecoverSave } from "../generated/translation.validators
 import draftFixture from "../../test/fixtures/draftCommands.contract.json";
 import translationFixture from "../../test/fixtures/translation-commands.json";
 import type { DraftBasis, DraftHead } from "../draftCommands";
-import type { ProjectView } from "../projectCommands";
+import { projectCommands, type ProjectView } from "../projectCommands";
 import WorkbenchApp from "./WorkbenchApp";
 import { ProjectLifecycle, type ProjectLifecyclePorts } from "./platform/projectLifecycle";
 import type { TranslationImportPanelProps } from "./features/import/TranslationImportPanel";
@@ -169,6 +169,67 @@ it("opens project metadata through the shared command and protects name input wh
   fireEvent.click(sheet.getByRole("button", { name: i18n.t("projectMetadata.close") }));
   fireEvent.click(sheet.getByRole("button", { name: i18n.t("projectMetadata.stay") }));
   expect(name).toHaveValue("Project name B {{name}}");
+}, 15000);
+
+it("continues and reopens the moved project from Welcome after renaming its folder", async () => {
+  const position = { unitId: page.rows[0].content.unitId, locale: project.metadata.targetLocales[0], nativeKey: "chapter.{{name}}" };
+  localStorage.setItem(RECENT_PROJECTS_STORAGE_KEY, JSON.stringify([{ locator: project.locator, lastOpenedAt: Date.now(), position }]));
+  const moved: ProjectView = { ...project, locator: "/synthetic/Renamed project", metadata: { ...project.metadata, metadataRevision: "2", displayName: "Renamed project" } };
+  let disk = project;
+  const open = vi.fn(async ({ locator }: { locator: string }) => {
+    if (locator !== disk.locator) throw new Error("Synthetic project folder does not exist");
+    return disk;
+  });
+  const read = vi.fn(async () => disk);
+  const rename = vi.spyOn(projectCommands, "rename").mockImplementation(async () => {
+    disk = moved;
+    return { sessionToken: moved.sessionToken, locator: moved.locator, metadata: moved.metadata, outcome: "changed", directoryChanged: true };
+  });
+  const user = userEvent.setup();
+  const { register } = await openImportWorkspace(project, { open, read });
+  await user.click(screen.getByRole("button", { name: i18n.t("workbenchV2.commandPlaceholder") }));
+  const settings = await screen.findByRole("option", { name: i18n.t("projectMetadata.title") });
+  await waitFor(() => expect(settings).not.toHaveAttribute("aria-disabled", "true")); fireEvent.click(settings);
+  const sheet = within(await screen.findByRole("dialog", { name: i18n.t("projectMetadata.title") }));
+  fireEvent.change(sheet.getByRole("textbox", { name: i18n.t("projectMetadata.name") }), { target: { value: moved.metadata.displayName } });
+  await user.click(sheet.getByRole("checkbox", { name: i18n.t("projectMetadata.renameFolder") }));
+  await user.click(sheet.getByRole("button", { name: i18n.t("projectMetadata.saveName") }));
+  await sheet.findByText(i18n.t("projectMetadata.saved"));
+  await waitFor(() => expect(sheet.getByRole("button", { name: i18n.t("projectMetadata.close") })).toBeEnabled());
+  expect(rename).toHaveBeenCalledExactlyOnceWith({ sessionToken: project.sessionToken, expectedRevision: "1", displayName: moved.metadata.displayName, directoryName: moved.metadata.displayName });
+  expect(read).toHaveBeenCalledWith({ sessionToken: project.sessionToken });
+  expect(controller.getSnapshot().session?.project).toEqual(moved);
+  expect(readRecentProject(moved.locator)?.position).toEqual(position);
+  expect(readRecentProject(project.locator)).toBeNull();
+  await user.click(sheet.getByRole("button", { name: i18n.t("projectMetadata.close") }));
+
+  async function closeProject() {
+    await waitFor(() => {
+      for (const id of ["execution-tasks", "knowledge-resources"]) {
+        const participant = [...register.mock.calls].reverse().find(([value]) => value.id === id)?.[0];
+        expect(participant?.inspect({ kind: "close-project" }).status).toBe("ready");
+      }
+    });
+    await act(async () => { const closed = await controller.close(); expect(closed, JSON.stringify(controller.getSnapshot().failure)).toBe(true); });
+    await screen.findByRole("button", { name: i18n.t("startup.chooseAndPrepare") });
+  }
+  await closeProject();
+  expect(screen.getByTitle(moved.locator)).toBeVisible();
+  expect(screen.queryByTitle(project.locator)).not.toBeInTheDocument();
+  expect(screen.getByText(i18n.t("startup.continueRecent", { name: moved.metadata.displayName }))).toBeVisible();
+  fireEvent.keyDown(document.body, { key: "Enter" });
+  await waitFor(() => expect(open).toHaveBeenNthCalledWith(2, { locator: moved.locator }));
+  await screen.findByText("Actual source from the read port");
+  expect(controller.getSnapshot().session?.project.metadata.projectId).toBe(project.metadata.projectId);
+  await closeProject();
+  const recentPath = screen.getByTitle(moved.locator);
+  await user.click(screen.getByRole("button", { name: name => name.includes(moved.locator) }));
+  await waitFor(() => expect(open).toHaveBeenNthCalledWith(3, { locator: moved.locator }));
+  await screen.findByText("Actual source from the read port");
+  expect(recentPath).not.toBeInTheDocument();
+  expect(controller.getSnapshot().session?.project).toEqual(moved);
+  expect(readRecentProject(moved.locator)?.position).toEqual(position);
+  expect(readRecentProject(project.locator)).toBeNull();
 }, 15000);
 
 it("opens work plans from the enabled activity item and retains the runs view across entry navigation", async () => {

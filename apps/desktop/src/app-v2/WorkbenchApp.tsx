@@ -117,6 +117,7 @@ type ShellActions = { requestOpen: () => void; close: () => Promise<boolean>; re
   openImport: () => Promise<void>; canOpenImport: () => boolean;
   confirm: (advance: boolean) => Promise<void>; exitEditor: () => Promise<void>; toggleFocus: () => Promise<void>; isEditing: () => boolean; canConfirm: () => boolean; canAdvance: () => boolean };
 type SessionContext = { previousProject: RecentProject | null; session: ProjectSession; lifecycle: ProjectLifecycle; runtime: Runtime; store: ReturnType<typeof createWorkspaceStore>; gate: InteractionGate; readOnly: boolean; requestOpen: () => void; requestCreate: () => void;
+  onRecentProjectsChange: (projects: RecentProject[]) => void;
   sourceOwner: SourceOwner | null; sourceOpen: boolean; setSourceOpen: (open: boolean) => void;
   sourceTarget: SourceReviewTarget | null; setSourceTarget: (target: SourceReviewTarget | null) => void;
   sourceDrop: SourceDrop | null; clearSourceDrop: () => void; sourceDropFailure: CommandFailure | null;
@@ -166,7 +167,7 @@ function DeliveryLoadFailure({ onFailure }: { onFailure: () => void }) {
   return null;
 }
 
-function ProjectWorkspace({ session, lifecycle, gate, readOnly, requestOpen, requestCreate, startupHandoff, onStartupHandled }: { session: ProjectSession; lifecycle: ProjectLifecycle; gate: InteractionGate; readOnly: boolean; requestOpen: () => void; requestCreate: () => void; startupHandoff: StartupClaimRequest | null; onStartupHandled: () => void }) {
+function ProjectWorkspace({ session, lifecycle, gate, readOnly, requestOpen, requestCreate, onRecentProjectsChange, startupHandoff, onStartupHandled }: { session: ProjectSession; lifecycle: ProjectLifecycle; gate: InteractionGate; readOnly: boolean; requestOpen: () => void; requestCreate: () => void; onRecentProjectsChange: (projects: RecentProject[]) => void; startupHandoff: StartupClaimRequest | null; onStartupHandled: () => void }) {
   const [previousProject] = useState(() => readRecentProject(session.project.locator));
   const settings = useApplicationSettings(), mcp = useRef<ProjectReferenceHandle>(null), mcpParticipant = useRef<LifecycleParticipant | null>(null);
   const publishMcpParticipant = useCallback((value: LifecycleParticipant | null) => { mcpParticipant.current = value; }, []);
@@ -435,7 +436,7 @@ function ProjectWorkspace({ session, lifecycle, gate, readOnly, requestOpen, req
   }, [settings.registerMcp, runtime, drafts]);
   const { t } = useTranslation(undefined, { keyPrefix: "workbenchV2" });
   if (!runtime) return <LoadingState label={t("loadingEntries")} />;
-  return <WorkspaceContext.Provider value={{ previousProject, session, lifecycle, runtime, store, gate, readOnly, requestOpen, requestCreate, drafts, draftLoadFailed,
+  return <WorkspaceContext.Provider value={{ previousProject, session, lifecycle, runtime, store, gate, readOnly, requestOpen, requestCreate, onRecentProjectsChange, drafts, draftLoadFailed,
     sourceOwner: executionTasks ? sourceOwner : null, sourceOpen, setSourceOpen, sourceTarget, setSourceTarget, sourceDrop,
     clearSourceDrop: () => { setSourceDrop(null); setSourceDropFailure(null); }, sourceDropFailure,
     retryDrafts: () => { if (draftOwner.current) void draftOwner.current.initialize(); else setDraftAttempt(attempt => attempt + 1); }, recoveryKey, revealDraft: setRecoveryKey,
@@ -493,7 +494,7 @@ function ProjectWorkspace({ session, lifecycle, gate, readOnly, requestOpen, req
 function WorkspaceShell() {
   const settings = useApplicationSettings();
   const readStatus = useSessionReadStatus();
-  const { previousProject, session, lifecycle, runtime, store, gate, readOnly, requestOpen, requestCreate, drafts, draftLoadFailed, retryDrafts, recoveryKey, revealDraft,
+  const { previousProject, session, lifecycle, runtime, store, gate, readOnly, requestOpen, requestCreate, onRecentProjectsChange, drafts, draftLoadFailed, retryDrafts, recoveryKey, revealDraft,
     sourceOwner, sourceOpen, setSourceOpen, sourceTarget, setSourceTarget, sourceDrop, clearSourceDrop, sourceDropFailure,
     importOwners, importRecovery, requestImport, revealImport, hideImportRecovery,
     strategyOwner, requestStrategy, strategyReveal, strategyLoadFailed, retryStrategy,
@@ -1260,7 +1261,7 @@ function WorkspaceShell() {
         const locator = session.project.locator;
         const refreshed = await lifecycle.refresh(), latest = lifecycle.getSnapshot().session;
         if (!refreshed || !latest || latest.project.sessionToken !== session.project.sessionToken || latest.reads.retired) return false;
-        rememberProject(latest.project, locator); latest.reads.invalidate(["project"]); return true;
+        onRecentProjectsChange(rememberProject(latest.project, locator)); latest.reads.invalidate(["project"]); return true;
       }}/>
     {sourceOpen && !sourceOwner ? <Banner role="status">{t("sourceMaintenance.recoveryLoading")}</Banner> : null}
     {readStatus ? <Banner tone={readStatus.message === "execution.updatesUnavailable" ? "warning" : "info"} role={readStatus.message === "execution.updatesUnavailable" ? "alert" : "status"}
@@ -1432,6 +1433,7 @@ function WorkspaceShell() {
 
 function WorkspaceWelcome(props: ComponentProps<typeof Welcome>) {
   const settings = useApplicationSettings();
+  useLayoutEffect(() => props.gate.setVisibleOwner(null), [props.gate]);
   return <Welcome {...props} onSettings={() => settings.open()} onExtensions={() => settings.openExtensions()}/>;
 }
 
@@ -1529,7 +1531,7 @@ export default function WorkbenchApp({ controller: suppliedController, native = 
       {error ? <Banner tone="error" action={state.pending?.kind === "runtime" || state.pending?.session && (state.pending.kind === "open" || state.pending.kind === "close") ? <Button disabled={busy} onClick={() => void controller.checkPending()}>{t("checkResult")}</Button> : undefined}>{errorText}</Banner> : null}
       {state.retainedSession ? <Banner tone="warning" action={<Button onClick={() => setDiscard(true)}>{t("discardRetained")}</Button>}>{t("retained")}</Banner> : null}
       {presentation ? <SessionReadProvider key={`${presentation.project.metadata.projectId}:${presentation.project.sessionToken}`} context={executionContext(presentation.project)} reads={presentation.reads} bridge={!presentation.reads.retired}>
-        <ProjectWorkspace session={presentation} lifecycle={controller} gate={gate} readOnly={presentation !== state.session || !!state.retainedSession} requestOpen={() => setOpenPanel(true)} requestCreate={() => { setOpenPanel(false); setCreatePanel(true); }}
+        <ProjectWorkspace session={presentation} lifecycle={controller} gate={gate} readOnly={presentation !== state.session || !!state.retainedSession} requestOpen={() => setOpenPanel(true)} requestCreate={() => { setOpenPanel(false); setCreatePanel(true); }} onRecentProjectsChange={setRecent}
           startupHandoff={startupHandoff?.projectId === presentation.project.metadata.projectId && startupHandoff.sessionToken === presentation.project.sessionToken ? startupHandoff : null} onStartupHandled={() => setStartupHandoff(null)}/>
       </SessionReadProvider> : <WorkspaceWelcome recent={recent} restoreCandidate={restoreCandidate} native={native} blocked={blocked || createPanel || openPanel} gate={gate}
         onOpen={path => void open(path)} onChoose={() => setCreatePanel(true)} onManual={() => setCreatePanel(true)} onOpenExisting={() => setOpenPanel(true)}/>}
