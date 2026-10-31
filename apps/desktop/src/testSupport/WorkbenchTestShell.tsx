@@ -3,9 +3,8 @@ import { ApplicationReadProvider } from "../ApplicationReadProvider";
 import { ExecutionTaskSession } from "../ExecutionTaskSession";
 import { executionContext } from "../executionCommands";
 import type { ProjectView } from "../projectCommands";
-import { useState, useEffect, useMemo, isValidElement, type ReactNode } from "react";
+import { useState, useEffect, isValidElement, type ReactNode } from "react";
 import { render, act } from "@testing-library/react";
-import { WorkbenchNavigation, WorkspaceViewProvider, WorkspaceViewMemory, useWorkspaceViewChanges, type WorkspaceArea } from "../WorkbenchFrame";
 import { TranslationDraftSession } from "../TranslationDraftSession";
 import { McpSharingSession } from "../McpSharingSession";
 import { TranslationImportSession } from "../TranslationImportSession";
@@ -21,7 +20,6 @@ import { installSourceDraftFixture } from "./sourceDraftFixture";
 let currentReads: ReturnType<typeof useSessionReads> | undefined;
 function ReadControl() {
   const reads = useSessionReads();
-  useWorkspaceViewChanges();
   useEffect(() => { currentReads = reads; return () => { if (currentReads === reads) currentReads = undefined; }; }, [reads]);
   return null;
 }
@@ -30,15 +28,12 @@ export async function refreshWorkbenchReads(scopes: ChangeScope[] = ["execution"
   await act(async () => { currentReads?.invalidate(scopes); });
 }
 
-function WorkbenchTestShell({ children, project: retainedProject }: { children: ReactNode; project?: ProjectView }) {
-  const [area, setArea] = useState<WorkspaceArea>("overview");
+export function WorkbenchTestShell({ children, project: retainedProject }: { children: ReactNode; project?: ProjectView }) {
   const [commands] = useState(() => new WorkbenchCommands());
   const project = (isValidElement<{project?: ProjectView}>(children) ? children.props.project : undefined) ?? retainedProject;
-  const memory = useMemo(() => new WorkspaceViewMemory(), [project?.sessionToken, project?.metadata.projectId]);
-  return <ApplicationReadProvider><WorkbenchCommandsProvider commands={commands}><WorkspaceViewProvider value={{ area, memory, activate: setArea, deactivate: closing => setArea(current => current === closing ? "overview" : current) }}>
-    <WorkbenchNavigation area={area} hasProject disabled={false} onNavigate={setArea} />
+  return <ApplicationReadProvider><WorkbenchCommandsProvider commands={commands}>
     {project ? <SessionReadProvider key={`${project.metadata.projectId}:${project.sessionToken}`} context={executionContext(project)} bridge={false}><ReadControl/><TranslationDraftSession project={project}><McpSharingSession project={project}><ExecutionTaskSession project={project}><TranslationImportSession project={project}><ReviewDraftSession project={project}><ResourceDraftSession project={project}><SourceDraftSession project={project}><ArenaDraftSession project={project}><ReleaseDraftSession project={project}>{children}</ReleaseDraftSession></ArenaDraftSession></SourceDraftSession></ResourceDraftSession></ReviewDraftSession></TranslationImportSession></ExecutionTaskSession></McpSharingSession></TranslationDraftSession></SessionReadProvider> : children}
-  </WorkspaceViewProvider></WorkbenchCommandsProvider></ApplicationReadProvider>;
+  </WorkbenchCommandsProvider></ApplicationReadProvider>;
 }
 
 export function renderWorkbench(ui: ReactNode, project?: ProjectView) {

@@ -535,10 +535,13 @@ function useReleaseOwner(project: ProjectView) {
         ...(clearDraft && sameDraft ? {languages:[],names:{},configuration:{},buildDirty:false} : {buildDirty:value.languages.length > 0}) })); accepted = !clearDraft || sameDraft;
     },true); return accepted;
   }
-  function showSavedBuild(attemptId: string) {
+  function canShowSavedBuild(attemptId: string) {
     const before = current();
-    if (!validateResponseIdentity(attemptId) || !live() || reserved() || before.buildDirty || before.deliveryDirty || before.prepared || before.buildConsent || before.checkConsent
-      || before.checkReview || before.attempt || before.checkAttempt || before.workflow) return false;
+    return validateResponseIdentity(attemptId) && live() && !reserved() && !before.buildDirty && !before.deliveryDirty && !before.prepared && !before.buildConsent && !before.checkConsent
+      && !before.checkReview && !before.attempt && !before.checkAttempt && !before.workflow;
+  }
+  function showSavedBuild(attemptId: string) {
+    if (!canShowSavedBuild(attemptId)) return false;
     update(value => ({ ...value,savedAttempt:attemptId })); return true;
   }
   function closeSavedBuild() { if (!reserved()) update(before => ({ ...before,savedAttempt:null })); }
@@ -699,7 +702,7 @@ function useReleaseOwner(project: ProjectView) {
     version.current++; update(() => initial()); return true;
   }
   return { ...state, current, reserved, available, choices, setBuildSelection, setLanguage, setName, setConfiguration, assess, build,
-    setConsent, startBuild, prepareCheck, finishCheck, recordBuild, checkBuild, retryBuild, discardBuild, showSavedBuild, closeSavedBuild,
+    setConsent, startBuild, prepareCheck, finishCheck, recordBuild, checkBuild, retryBuild, discardBuild, canShowSavedBuild, showSavedBuild, closeSavedBuild,
     workflowWorking, workflowReadRequest, workflowReadKey, prepareWorkflow, setWorkflowConsent, startWorkflow, stopWorkflow,
     observeWorkflow, reconcileWorkflow, closeWorkflow,
     chooseRelease, chooseFolder, previewFolder, setOverwrite, exportFiles, checkExport, reconcile, reportFailure, reset };

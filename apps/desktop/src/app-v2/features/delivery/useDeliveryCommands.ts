@@ -53,6 +53,10 @@ export function useDeliveryCommands({ project, owner, commands: registry, gate: 
   function recordAvailability(payload?: ReleaseRecordCommandPayload): CommandAvailability {
     const allowed=gate();if(!allowed.enabled)return allowed;return payload && releaseRecord(payload) && !(owner.current().deliveryDirty && owner.current().chosen?.releaseId !== payload.releaseId) ? {enabled:true} : unavailable;
   }
+  function savedBuildAvailability(payload?: ReleaseRecordCommandPayload): CommandAvailability {
+    const allowed = gate(); if (!allowed.enabled) return allowed;
+    return payload && releaseRecord(payload) && owner.canShowSavedBuild(payload.attemptId) ? { enabled: true } : unavailable;
+  }
   function destinationPayload(): ReleaseDestinationCommandPayload | undefined {
     const value=owner.current();return value.chosen ? {...recordPayload(value.chosen),kind:"release-destination",selectionId:value.selection?.selectionId ?? null} : undefined;
   }
@@ -111,6 +115,7 @@ export function useDeliveryCommands({ project, owner, commands: registry, gate: 
     const metadata={category:"release" as const,scope:commandScope,binding:null,confirmation:"none" as const};
     const remove=[
       registry.register({...metadata,id:"release.choose-release",nameKey:"release.selected",risk:"opens-release",payloadKind:"release-record",availability:recordAvailability,handler:payload=>{const record=releaseRecord(payload);if(record)owner.chooseRelease(record);}}),
+      registry.register({...metadata,id:"release.open-saved-build",nameKey:"releasePlugin.savedView",risk:"opens-release",payloadKind:"release-record",availability:savedBuildAvailability,handler:payload=>{if(savedBuildAvailability(payload).enabled)owner.showSavedBuild(payload.attemptId);}}),
       registry.register({...metadata,id:"release.choose-destination",nameKey:"release.chooseFolder",risk:"captures-release",payloadKind:"release-destination",availability:payload=>destinationAvailability(payload),handler:()=>{void owner.chooseFolder();}}),
       registry.register({...metadata,id:"release.preview-destination",nameKey:"release.preview",risk:"captures-release",payloadKind:"release-destination",availability:payload=>destinationAvailability(payload,true),handler:()=>{void owner.previewFolder();}}),
       registry.register({...metadata,id:"release.confirm-overwrite",nameKey:"release.overwrite",risk:"captures-release",payloadKind:"release-preview",availability:payload=>previewAvailability(payload),handler:payload=>owner.setOverwrite(payload.overwrite)}),
@@ -121,7 +126,7 @@ export function useDeliveryCommands({ project, owner, commands: registry, gate: 
       registry.register({...metadata,id:"release.open-blocker",nameKey:"translation.openEditor",risk:"opens-translation",payloadKind:"release-blocker",availability:blockerAvailability,handler:payload=>{if(blockerAvailability(payload).enabled)void onOpenEntry?.(payload.unitId,payload.locale).catch(error=>{if(gate().enabled)owner.reportFailure(commandFailure(error),"build");});}}),
     ];return()=>remove.forEach(dispose=>dispose());
   });
-  return { releasesRead, deliveriesRead, commandScope, gate, recordPayload, recordAvailability,
+  return { releasesRead, deliveriesRead, commandScope, gate, recordPayload, recordAvailability, savedBuildAvailability,
     destinationPayload, destinationAvailability, previewPayload, previewAvailability, deliveryPendingPayload, deliveryPendingAvailability,
     deliveryPayload, deliveryAvailability, blockerPayload, blockerAvailability };
 }

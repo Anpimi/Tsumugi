@@ -136,6 +136,8 @@ export function DeliveryView(props: DeliveryViewProps) {
     <ul className={styles.historyList}>{releases.map(record => <li key={record.releaseId}>
       <Button variant="ghost" aria-pressed={chosen?.releaseId === record.releaseId} disabled={!delivery.recordAvailability(delivery.recordPayload(record)).enabled || owner.deliveryDirty && chosen?.releaseId !== record.releaseId}
         onClick={() => { if (canInteract()) { if (commands.dispatch("release.choose-release", commandScope, delivery.recordPayload(record))) { setPrimaryMode("export"); reveal("export"); } } }}>{t("chooseRecord", { date: formatDate(record.createdAt) })}</Button>
+      <Button variant="secondary" disabled={!delivery.savedBuildAvailability(delivery.recordPayload(record)).enabled}
+        onClick={() => { if (canInteract() && commands.dispatch("release.open-saved-build", commandScope, delivery.recordPayload(record))) reveal("history"); }}>{t("viewRecord", { date: formatDate(record.createdAt) })}</Button>
       <p>{record.artifacts.map(file => `${file.locale} → ${file.fileName}`).join(" · ")}</p>
       <Disclosure title={<>{t("diagnostics")}</>}><p>{t("snapshot")}: <code>{record.sourceSnapshotId}</code></p><p>{t("version")}: {record.builderVersion} · {record.validatorVersion}</p><code>{record.manifestSha256}</code><p>{t("exceptions")}</p>{record.exceptions.length ? <ul>{record.exceptions.map((item, index) => <li key={index}>{item.locale} · {item.nativeKey} · {global(`release.exceptionKind.${item.kind}`)}</li>)}</ul> : <p>{t("noExceptions")}</p>}</Disclosure>
     </li>)}</ul>
@@ -228,7 +230,7 @@ export function DeliveryView(props: DeliveryViewProps) {
       </li>)}</ol>
     </section>;
   }
-  return <PluginBuildControls project={project} open={visible} disabled={disabled} presentation="workbench" canInteract={canInteract} renderWorkbench={render}
+  return <PluginBuildControls project={project} open={visible} disabled={disabled} canInteract={canInteract} renderWorkbench={render}
     onRecorded={recorded} onOpenExtensions={() => { if (canInteract()) onOpenExtensions(); }}
     openBlocker={onOpenEntry ? (unitId, locale) => { const payload = delivery.blockerPayload(unitId, locale); if (payload) commands.dispatch("release.open-blocker", commandScope, payload); } : undefined}/>;
 }

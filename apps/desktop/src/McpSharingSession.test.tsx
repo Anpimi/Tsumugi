@@ -1,8 +1,7 @@
 import { useLayoutEffect, type ReactNode } from "react";
 import { act, cleanup, render, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
-import { ApplicationReadProvider } from "./ApplicationReadProvider";
-import { ProjectSessionOwners } from "./ProjectSessionWorkbench";
+import { WorkbenchTestShell } from "./testSupport/WorkbenchTestShell";
 import { McpSharingProvider, useMcpSharing, mcpShareStatusKey } from "./McpSharingSession";
 import { SessionReadProvider, useSessionReads } from "./SessionReadProvider";
 import { executionContext } from "./executionCommands";
@@ -19,7 +18,7 @@ function Probe() {
   useLayoutEffect(() => { owner = sharing; reads = queries; translations = draft; }); return null;
 }
 function Harness({ children }: { children?: ReactNode }) {
-  return <ApplicationReadProvider><ProjectSessionOwners project={mcpProject} bridge={false}><Probe />{children}</ProjectSessionOwners></ApplicationReadProvider>;
+  return <WorkbenchTestShell project={mcpProject}><Probe />{children}</WorkbenchTestShell>;
 }
 function AdaptedProbe() { const value = useMcpSharing(); useLayoutEffect(() => { owner = value; }); return null; }
 function AdaptedHarness({ revision }: { revision: number }) {

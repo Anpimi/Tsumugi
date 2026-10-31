@@ -7,7 +7,7 @@ import { useExecutionTaskSession } from "../../../ExecutionTaskSession";
 import { useWorkbenchCommands } from "../../../workbenchCommands";
 import { renderWorkbench as render } from "../../../testSupport/WorkbenchTestShell";
 import { fixtureIdentity as id } from "../../../testSupport/executionFixture";
-import { pluginBuildInventory, pluginBuildPackage, pluginBuildView, pluginBuildWorkflow } from "../../../testSupport/pluginBuildFixture";
+import { pluginBuildInventory, pluginBuildPackage, pluginBuildView, pluginBuildWorkflow, savedPluginBuild } from "../../../testSupport/pluginBuildFixture";
 import wire from "../../../../test/fixtures/releaseCommands.contract.json";
 import type { DeliveryView as ExportRecord, PluginBuildPrepareRequest } from "../../../releaseCommands";
 import type { ProjectView } from "../../../projectCommands";
@@ -22,11 +22,13 @@ const project: ProjectView = { locator: "/synthetic/delivery", sessionToken: wir
   metadata: { projectId: wire.requests.session.projectId, displayName: "Delivery sample", sourceLocale: "en-US", targetLocales: ["zh-CN", "fr-FR"], metadataRevision: "1" } };
 const release = wire.responses.releases[0];
 const w = (key: keyof typeof deliveryWorkbenchEn, values: Record<string, string | number> = {}) => i18n.t(`deliveryWorkbench.${key}`, values);
+let registry: ReturnType<typeof useWorkbenchCommands>;
 let gate: InteractionGate, owner: ReturnType<typeof useReleaseDraftSession>, stored: ExportRecord | null, serial: number;
 let installed: boolean, loseExport: boolean, readAttempts: number, prepared: PluginBuildPrepareRequest | null;
 function Harness({ visible = true, target = null, inbox, onOpenDecision }: { visible?: boolean; target?: DeliveryViewProps["target"]; project?: ProjectView; inbox?: DeliveryViewProps["inbox"]; onOpenDecision?: DeliveryViewProps["onOpenDecision"] }) {
   owner = useReleaseDraftSession();
   const tasks = useExecutionTaskSession(), commands = useWorkbenchCommands();
+  registry = commands;
   return <Delivery project={project} owner={owner} tasks={tasks} commands={commands} gate={gate} viewId="delivery-view" visible={visible} disabled={false}
     onOpenDecisions={() => {}} onOpenKnowledge={() => {}} onOpenExtensions={() => {}} target={target} inbox={inbox} onOpenDecision={onOpenDecision}/>;
 }
@@ -61,6 +63,7 @@ beforeEach(async () => {
   invoke.mockReset().mockImplementation(async (command: string, args: { request: Record<string, unknown> }) => {
     const request = args?.request;
     if (command === "list_releases") return [release];
+    if (command === "read_saved_plugin_build") return { ...structuredClone(savedPluginBuild), projectId: project.metadata.projectId, attemptId: request.attemptId };
     if (command === "list_deliveries") return stored ? [stored] : [];
     if (command === "read_plugin_inventory") return installed ? pluginBuildInventory : { ...pluginBuildInventory, packages: [], packageDecisions: [], runtimes: [], runtimeDecisions: [] };
     if (command === "read_plugin_package") return pluginBuildPackage;
@@ -197,4 +200,66 @@ it("explains a changed typed issue and explicitly refreshes the shared feed with
   expect(retry).toHaveBeenCalledOnce(); expect(onOpenDecision).toHaveBeenCalledExactlyOnceWith(item);
   expect(owner.current().pending).toBeNull();
   expect(invoke.mock.calls.some(([command]) => ["export_release", "reconcile_delivery", "read_decision_page"].includes(command))).toBe(false);
+});
+
+
+it.each(["en-US", "zh-CN"])("opens the full saved build evidence through History without new tool, folder or execution authority (%s)", async language => {
+  await i18n.changeLanguage(language);
+  const user = userEvent.setup(); render(<Harness project={project}/>);
+  const history = await screen.findByRole("button", { name: w("history") });
+  await waitFor(() => expect(history).toBeEnabled()); await user.click(history);
+  const date = new Intl.DateTimeFormat(i18n.resolvedLanguage, { dateStyle: "medium", timeStyle: "short" }).format(new Date(release.createdAt));
+  await user.click(await screen.findByRole("button", { name: w("viewRecord", { date }) }));
+  expect(await screen.findByRole("heading", { name: i18n.t("releasePlugin.savedTitle") })).toBeVisible();
+  const artifact = savedPluginBuild.locales[0].result?.artifacts[0];
+  if (!artifact) throw new Error("Expected complete saved artifact evidence");
+  expect(screen.getByLabelText(i18n.t("releasePlugin.savedSha", { path: artifact.logicalPath }))).toHaveTextContent(artifact.sha256);
+  expect(owner.current().savedAttempt).toBe(release.attemptId); expect(owner.current().chosen).toBeNull();
+  expect(invoke.mock.calls.filter(([command]) => command === "read_saved_plugin_build").map(([, args]) => args.request)).toEqual([
+    { projectId: project.metadata.projectId, sessionToken: project.sessionToken, attemptId: release.attemptId },
+  ]);
+  expect(invoke.mock.calls.some(([command]) => ["create_execution_identity", "choose_delivery_folder", "preview_delivery", "prepare_plugin_build", "start_plugin_build", "export_release"].includes(command))).toBe(false);
+  await user.click(screen.getByRole("button", { name: i18n.t("releasePlugin.savedBack") }));
+  expect(owner.current().savedAttempt).toBeNull();
+});
+
+it("retries the same saved evidence read locally and rejects a substituted release payload", async () => {
+  const original = invoke.getMockImplementation()!; let reads = 0;
+  invoke.mockImplementation(async (command, args) => {
+    if (command === "read_saved_plugin_build" && ++reads === 1) throw { code: "storage-failed" };
+    return original(command, args);
+  });
+  const user = userEvent.setup(); render(<Harness project={project}/>);
+  await user.click(await screen.findByRole("button", { name: w("history") }));
+  const scope = { projectId: project.metadata.projectId, sessionToken: project.sessionToken, area: "release" as const };
+  const payload = { kind: "release-record" as const, releaseId: release.releaseId, releaseActionId: release.actionId, attemptId: release.attemptId, manifestSha256: release.manifestSha256 };
+  await screen.findByRole("button", { name: recordName() });
+  act(() => { expect(registry.dispatch("release.open-saved-build", scope, { ...payload, attemptId: id(799) })).toBe(false); });
+  expect(reads).toBe(0);
+  act(() => { expect(registry.dispatch("release.open-saved-build", scope, payload)).toBe(true); });
+  await screen.findByText(i18n.t("releasePlugin.savedReadFailed"));
+  await user.click(screen.getByRole("button", { name: i18n.t("releasePlugin.savedRefresh") }));
+  await screen.findByRole("heading", { name: i18n.t("releasePlugin.savedTitle") });
+  expect(reads).toBe(2);
+  const requests = invoke.mock.calls.filter(([command]) => command === "read_saved_plugin_build").map(([, args]) => args.request);
+  expect(requests[1]).toEqual(requests[0]);
+  expect(invoke.mock.calls.some(([command]) => ["create_execution_identity", "choose_delivery_folder", "prepare_plugin_build", "start_plugin_build", "export_release"].includes(command))).toBe(false);
+});
+
+it("keeps newer build input and export setup when saved evidence is requested", async () => {
+  installed = true;
+  const { user } = await chooseSaved();
+  await prepareExport(user);
+  expect(owner.current().deliveryDirty).toBe(true);
+  const scope = { projectId: project.metadata.projectId, sessionToken: project.sessionToken, area: "release" as const };
+  const payload = { kind: "release-record" as const, releaseId: release.releaseId, releaseActionId: release.actionId, attemptId: release.attemptId, manifestSha256: release.manifestSha256 };
+  act(() => { expect(registry.dispatch("release.open-saved-build", scope, payload)).toBe(false); });
+  expect(owner.current().selection).not.toBeNull(); expect(owner.current().savedAttempt).toBeNull();
+  await user.click(screen.getByRole("button", { name: w("settings") }));
+  await user.click(screen.getByRole("checkbox", { name: "zh-CN" }));
+  await user.type(screen.getByRole("textbox", { name: i18n.t("releasePlugin.paths", { locale: "zh-CN" }) }), "deliverables/newer-B.txt");
+  const before = owner.current();
+  act(() => { expect(registry.dispatch("release.open-saved-build", scope, payload)).toBe(false); });
+  expect(owner.current()).toBe(before); expect(owner.current().names["zh-CN"]).toBe("deliverables/newer-B.txt");
+  expect(invoke.mock.calls.some(([command]) => command === "read_saved_plugin_build")).toBe(false);
 });

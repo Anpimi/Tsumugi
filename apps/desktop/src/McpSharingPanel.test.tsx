@@ -1,14 +1,11 @@
-import { createRef, useLayoutEffect, useState, type ReactNode } from "react";
+import { useLayoutEffect, type ReactNode } from "react";
 import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
-import { ApplicationReadProvider } from "./ApplicationReadProvider";
-import { ProjectSessionOwners, ProjectSessionWorkbench, type ProjectSessionHandle } from "./ProjectSessionWorkbench";
+import { WorkbenchTestShell } from "./testSupport/WorkbenchTestShell";
 import { McpSharingPanel } from "./McpSharingPanel";
 import * as sharingOwner from "./McpSharingSession";
 import { mcpCommands, type McpShareView } from "./mcpCommands";
 import { executionCommands } from "./executionCommands";
-import { WorkspaceViewMemory, WorkspaceViewProvider, type WorkspaceArea } from "./WorkbenchFrame";
-import { WorkbenchCommands, WorkbenchCommandsProvider } from "./workbenchCommands";
 import { mcpConfiguration, mcpPrepared, mcpProject, mcpTarget, mcpView } from "./testSupport/mcpSharingFixture";
 import { fixtureIdentity as id } from "./testSupport/executionFixture";
 import { installSourceDraftFixture } from "./testSupport/sourceDraftFixture";
@@ -19,18 +16,10 @@ import { i18n } from "./i18n";
 const invoke = vi.hoisted(() => vi.fn());
 vi.mock("@tauri-apps/api/core", () => ({ invoke }));
 vi.mock("@tauri-apps/api/event", () => ({ listen: vi.fn(async () => () => {}) }));
-let owner: ReturnType<typeof sharingOwner.useMcpSharing>, canonical: McpShareView | null, sequence: number, area: WorkspaceArea;
+let owner: ReturnType<typeof sharingOwner.useMcpSharing>, canonical: McpShareView | null, sequence: number;
 function Probe() { const value = sharingOwner.useMcpSharing(); useLayoutEffect(() => { owner = value; }); return null; }
 function Harness({ children, visible = true }: { children?: ReactNode; visible?: boolean }) {
-  return <ApplicationReadProvider><ProjectSessionOwners project={mcpProject} bridge={false}><Probe /><McpSharingPanel visible={visible}/>{children}</ProjectSessionOwners></ApplicationReadProvider>;
-}
-const handle = createRef<ProjectSessionHandle>();
-function ProductionHarness() {
-  const [current, show] = useState<WorkspaceArea>("overview"), [memory] = useState(() => new WorkspaceViewMemory()), [commands] = useState(() => new WorkbenchCommands());
-  useLayoutEffect(() => { area = current; });
-  return <ApplicationReadProvider><WorkbenchCommandsProvider commands={commands}><WorkspaceViewProvider value={{ area: current, memory, activate: show, deactivate: () => show("overview") }}>
-    <ProjectSessionWorkbench ref={handle} project={mcpProject} disabled={false} onActivate={show} onCoordinatingChange={() => {}} />
-  </WorkspaceViewProvider></WorkbenchCommandsProvider></ApplicationReadProvider>;
+  return <WorkbenchTestShell project={mcpProject}><Probe /><McpSharingPanel visible={visible}/>{children}</WorkbenchTestShell>;
 }
 function currentView() { if (!canonical) throw new Error("Synthetic sharing view missing"); return canonical; }
 function open() { render(<Harness />); act(() => { expect(owner.begin(mcpTarget)).toBe(true); }); }
@@ -183,22 +172,6 @@ it("stops automatic status reads after failure and pauses them while collapsed o
   await act(async () => { await vi.advanceTimersByTimeAsync(1000); }); expect(owner.state.readFailed).toBe(true); count = vi.mocked(mcpCommands.read).mock.calls.length;
   await act(async () => { await vi.advanceTimersByTimeAsync(10000); }); expect(mcpCommands.read).toHaveBeenCalledTimes(count);
   expect(screen.getByRole("button", { name: "Retry status check" })).toBeEnabled();
-});
-
-it("keeps the production sharing owner across areas and refuses project exit until the user explicitly closes its resolved draft", async () => {
-  const actual = sharingOwner.useMcpSharing;
-  vi.spyOn(sharingOwner, "useMcpSharing").mockImplementation(() => { const value = actual(); owner = value; return value; });
-  render(<ProductionHarness />); act(() => { owner.begin(mcpTarget); owner.edit({ recipientLabel: "Retained project recipient" }); });
-  await act(async () => { expect(await handle.current?.navigate({ kind: "area", area: "translation" })).toBe(true); });
-  expect(area).toBe("translation"); expect(screen.getByRole("textbox", { name: "External recipient" })).toHaveValue("Retained project recipient");
-  await act(async () => { expect(await handle.current?.navigate({ kind: "area", area: "overview" })).toBe(true); });
-  expect(area).toBe("overview"); expect(screen.getByRole("textbox", { name: "External recipient" })).toHaveValue("Retained project recipient");
-  await act(async () => { expect(await handle.current?.prepareExit()).toBeNull(); });
-  expect(area).toBe("translation"); expect(screen.getByRole("button", { name: "Close sharing draft" })).toBeEnabled();
-  fireEvent.click(screen.getByRole("button", { name: "Close sharing draft" }));
-  let permit!: Awaited<ReturnType<ProjectSessionHandle["prepareExit"]>>;
-  await act(async () => { permit = await handle.current?.prepareExit() ?? null; });
-  expect(permit?.current()).toBe(true); act(() => permit?.release()); expect(mcpCommands.authorize).not.toHaveBeenCalled();
 });
 
 it("keeps the same controls and field labels in Chinese", async () => {

@@ -1,4 +1,7 @@
 export const conversationTeamEn = {
+  toolResultOriginal: "Read original tool output",
+  toolResults: "Saved tool results", readToolResults: "Read saved tool results", hideToolResults: "Hide saved tool results", toolResultsHelp: "Read the original saved output. This does not run the tool, select a translation or restore permission.", toolResultAbsent: "No successful output is saved for this item.", refreshToolResults: "Refresh these results", firstToolResults: "First result page", nextToolResults: "Next result page",
+
   reply: "Reply to this post", title: "Team records", show: "Show team records", hide: "Hide team records", help: "Read the original member work, messages and discussion. Reading does not restore execution permission.",
   loading: "Reading team records…", failed: "Team records could not be read. Saved work is kept.", refresh: "Refresh team records", changed: "The team's recorded version changed. Return to the first pages before opening a candidate.", firstPages: "Return to first pages", stale: "These records need a fresh read before navigation.", partial: "This page shows saved records, not the whole team's progress or remaining work.",
   members: "Members", memberUnknown: "Recorded member", retired: "Members no longer in the current roster", role: "Role used for this work", memberRole: "Saved role and model", roleVersion: "Role version", model: "Model",
@@ -15,6 +18,9 @@ export const conversationTeamEn = {
   postKind: { "human-question": "Question or response", note: "Note", challenge: "Challenge", rejection: "Rejection", resolution: "Resolution record" },
 };
 export const conversationTeamZh = {
+  toolResultOriginal: "查看原工具输出",
+  toolResults: "已保存工具结果", readToolResults: "查看已保存工具结果", hideToolResults: "收起已保存工具结果", toolResultsHelp: "只回看原工具输出，不运行工具、不选用译文，也不恢复许可。", toolResultAbsent: "此条目没有已保存的成功输出。", refreshToolResults: "刷新这些结果", firstToolResults: "结果首页", nextToolResults: "下一页结果",
+
   reply: "回复这条讨论", title: "团队记录", show: "查看团队记录", hide: "收起团队记录", help: "查看原成员工作、消息与讨论。读取记录不会恢复运行许可。",
   loading: "正在读取团队记录…", failed: "没能读到团队记录，已保存工作仍会保留。", refresh: "刷新团队记录", changed: "团队记录版本已变化，请回到首页核对后再打开候选。", firstPages: "回到各记录首页", stale: "请刷新这些记录后再定位。", partial: "这里显示本页已保存记录，不代表整个团队的进度或剩余工作。",
   members: "成员", memberUnknown: "记录中的成员", retired: "已不在当前团队中的成员", role: "此工作采用的角色", memberRole: "已保存角色与模型", roleVersion: "角色版本", model: "模型",

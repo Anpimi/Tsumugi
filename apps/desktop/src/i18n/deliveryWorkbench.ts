@@ -1,4 +1,5 @@
 export const deliveryWorkbenchEn = {
+  viewRecord: "View build details from {{date}}",
   clearDestination: "Clear export settings", clearDestinationHelp: "Clear the selected folder and overwrite choice. Saved builds and completed exports are kept.",
   leaveChanged: "Your preparation changed while this confirmation was open. Keep it and review the current choices before leaving.", closeConfirmation: "Close confirmation",
   decisionChanged: "This record changed. Refresh before opening it again.", refreshIssues: "Refresh project issues",
@@ -19,6 +20,7 @@ export const deliveryWorkbenchEn = {
   fixedHelp: "This build uses the saved input shown here. Newer project edits are kept separately.", permissionHelp: "Review the requested access before starting. Preparing a build does not authorize execution.", buildDetails: "Build details", verificationDetails: "Verification details", refreshBuild: "Refresh build results", policy: "Saved readiness evidence", waitingForPermission: "Review and allow this exact operation to continue.",
 };
 export const deliveryWorkbenchZh = {
+  viewRecord: "查看 {{date}} 的构建详情",
   clearDestination: "清除导出设置", clearDestinationHelp: "清除已选目录和覆盖选择，保留所有已保存发布和已完成的导出。",
   leaveChanged: "确认期间准备内容已更改。请保留当前内容，核对后再决定是否离开。", closeConfirmation: "关闭确认",
   decisionChanged: "这条记录变了，请刷新后再打开。", refreshIssues: "刷新项目问题",

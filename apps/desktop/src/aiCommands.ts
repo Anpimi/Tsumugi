@@ -2,7 +2,7 @@ import { checkedInvoke } from "./ipc";
 import { sameConnection, sameConnectionReference, type AiConnection, type ModelConnectionReference } from "./connectionCommands";
 import type { AiConfig, AiPreviewRequest, AiStartRequest, AiReadRequest, AiEffectRetryRequest, AiCandidateEffectRequest } from "./generated/ai.requests";
 import * as validators from "./generated/ai.validators";
-import type { EditorTarget } from "./TranslationWorkbench";
+import type { EditorTarget } from "./sessionNavigation";
 import type { AiItemView as AiItem, AutomaticSelectionReceipt, EffectView } from "./generated/ai.responses";
 import type { TranslationRevision } from "./translationCommands";
 import { checkerIdentity, contractIdentity, providerIdentity, ruleIdentity } from "./reviewIdentity";

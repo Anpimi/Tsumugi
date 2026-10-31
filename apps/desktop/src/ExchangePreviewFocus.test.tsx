@@ -5,8 +5,8 @@ import { useEffect } from "react";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { SessionReadProvider, useSessionQuery, useSessionReads } from "./SessionReadProvider";
 import type { SessionReads } from "./sessionReads";
-import { TmxExchangePreviewPanel } from "./TmxExchangePreviewPanel";
-import { TbxExchangePreviewPanel } from "./TbxExchangePreviewPanel";
+import KnowledgeExchangePreview from "./app-v2/features/knowledge/KnowledgeExchangePreview";
+import type { ProjectView } from "./projectCommands";
 import { resourceCommands, type TmxFilePreview, type TbxFilePreview } from "./resourceCommands";
 import { i18n } from "./i18n";
 
@@ -17,6 +17,8 @@ vi.mock("@tauri-apps/api/event", () => ({ listen: wire.listen }));
 
 const context = { projectId: contract.request.projectId, sessionToken: contract.request.sessionToken };
 const sourceLocale = "en-US", locale = "zh-CN";
+const project: ProjectView = { ...context, locator: "/synthetic/exchange-focus", reconciliationState: "settled",
+  metadata: { projectId: context.projectId, displayName: "Synthetic exchange", sourceLocale, targetLocales: [locale], metadataRevision: "1" } };
 const provenance = { creationTool: null, creationToolVersion: null, originalTmFormat: null,
   creationId: null, creationDate: null, changeId: null, changeDate: null };
 const tmxReport: TmxFilePreview = { projectId: context.projectId, fileName: "selected.tmx",
@@ -39,8 +41,7 @@ function MutableProbe({ read }: { read: () => Promise<string> }) {
 }
 function Shell({ format, read }: { format: "tmx" | "tbx"; read: () => Promise<string> }) {
   return <SessionReadProvider context={context}><CaptureReads /><MutableProbe read={read} />
-    {format === "tmx" ? <TmxExchangePreviewPanel context={context} sourceLocale={sourceLocale} locale={locale} enabled />
-      : <TbxExchangePreviewPanel context={context} sourceLocale={sourceLocale} locale={locale} enabled />}
+    <KnowledgeExchangePreview project={project} locale={locale} format={format} visible disabled={false} current={() => true} onClose={() => {}}/>
   </SessionReadProvider>;
 }
 function currentReads() {

@@ -15,6 +15,7 @@ import { copyWorkspaceSelection, workspaceSelectionIds, type WorkspaceSelection 
 import { readReviewBatch } from "./reviewBatchReads";
 import type { RetainedReviewPendingPayload } from "./reviewTypes";
 import type { ReviewBatchApprovePayload, ReviewBatchControlPayload, ReviewBatchPagePayload, ReviewBatchPanelProps, ReviewBatchReadPayload, ReviewBatchReadRequest } from "./batchTypes";
+import ReviewBatchSemanticPanel, { type SemanticBatchReadRequest, type SemanticBatchBinding } from "./ReviewBatchSemanticPanel";
 import styles from "./ReviewBatchPanel.module.css";
 
 const unavailable: CommandAvailability = { enabled: false, reason: "unavailable" }, pageSize = 50;
@@ -23,7 +24,7 @@ const statusKeys = { "not-started": "reviewBatchNotStarted", pending: "reviewBat
   conflicted: "reviewBatchConflict", failed: "reviewBatchFailed" } as const;
 
 /** The project owner keeps the approval plan. Closing only hides this view. */
-export default function ReviewBatchPanel({ project, owner, selection, commands, gate, viewId, disabled, open, onOpenChange, parentDialogId, returnFocusRef }: ReviewBatchPanelProps) {
+export default function ReviewBatchPanel({ project, owner, selection, commands, gate, viewId, disabled, open, onOpenChange, parentDialogId, returnFocusRef, drafts }: ReviewBatchPanelProps) {
   const { t } = useTranslation(undefined, { keyPrefix: "workbenchV2" }), reads = useSessionReads(), state = owner.state;
   useSyncExternalStore(gate.subscribe, gate.getSnapshot, gate.getSnapshot);
   const context = executionContext(project), scope = { ...context, area: "translation" as const }, dialogId = "review-batch", inputOwner = `review-batch-${useId()}`;
@@ -32,6 +33,9 @@ export default function ReviewBatchPanel({ project, owner, selection, commands, 
   const release = useRef<(() => void) | null>(null), closeButton = useRef<HTMLButtonElement>(null), pageRegion = useRef<HTMLDivElement>(null);
   const returnFocus = useRef<{ identity: string; element: HTMLElement | null } | null>(null), pageFocus = useRef<{ identity: string; serial: number | null } | null>(null);
   const [intent, setIntent] = useState<ReadIntent | null>(null), [page, setPage] = useState(0), [stopRequested, setStopRequested] = useState(false);
+  const [semanticOpen, setSemanticOpen] = useState(false), [semanticRequest, setSemanticRequest] = useState<SemanticBatchReadRequest | null>(null);
+  const semanticBinding = useRef<SemanticBatchBinding | null>(null);
+  const [semanticLocales, setSemanticLocales] = useState<string[] | null>(null);
   const [actionFailed, setActionFailed] = useState(false);
   const intentRef = useRef(intent); useLayoutEffect(() => { intentRef.current = intent; live.current = { identity, open, disabled }; });
   useLayoutEffect(() => { mounted.current = true; return () => { mounted.current = false; }; }, []);
@@ -68,7 +72,7 @@ export default function ReviewBatchPanel({ project, owner, selection, commands, 
     if (!opening.current) {
       opening.current = true;
       const current = owner.current();
-      if (!current.batchItems.length || current.batchEnded) freezeRead();
+      if (!semanticOpen && (!current.batchItems.length || current.batchEnded)) freezeRead();
     }
     return () => { release.current?.(); release.current = null; gate.releaseOwner(inputOwner); };
   }, [open, identity, gate, inputOwner]);
@@ -103,7 +107,7 @@ export default function ReviewBatchPanel({ project, owner, selection, commands, 
   }
   function canApprove(payload: ReviewBatchApprovePayload | undefined): CommandAvailability {
     const current = owner.current();
-    return present() && idle() && currentRead() && !!payload && intent?.chosen === current.chosen && payload.chosen === current.chosen
+    return !semanticOpen && present() && idle() && currentRead() && !!payload && intent?.chosen === current.chosen && payload.chosen === current.chosen
       && payload.request === request && record?.dataUpdateCount === payload.queryVersion && payload.actor !== "" && payload.actor === current.actor.trim()
       && !!query.data?.targets.length && query.data.targets.length <= REVIEW_BATCH_PREPARE_LIMIT
       && query.data.targets.every(target => target.selectionId !== null && target.revisionId !== null && target.translationText !== null) ? { enabled: true } : unavailable;
@@ -192,14 +196,18 @@ export default function ReviewBatchPanel({ project, owner, selection, commands, 
       <span className={styles.meta}>{t("reviewBatchPage", { page: offset / pageSize + 1, total: Math.max(1, Math.ceil(items.length / pageSize)) })}</span>
       <Button size="sm" disabled={offset === 0 || !canPage(previous).enabled} onClick={() => commands.dispatch("review.batch-page", scope, previous)}>{t("candidateBatchPrevious")}</Button>
       <Button size="sm" disabled={offset >= maxOffset || !canPage(next).enabled} onClick={() => commands.dispatch("review.batch-page", scope, next)}>{t("nextPage")}</Button></div>
-      <div className={styles.actions}>{state.batchRunning ? <Button disabled={!canControl(control, "stop").enabled || stopRequested} onClick={() => commands.dispatch("review.batch-stop", scope, control)}>{t("reviewBatchStop")}</Button>
-        : showingResults || Object.keys(state.chosen).length ? <Button disabled={!canControl(control, "end").enabled} onClick={() => commands.dispatch("review.batch-end", scope, control)}>{t("reviewBatchEnd")}</Button> : null}
+      <div className={styles.actions}>{!semanticOpen && state.batchRunning ? <Button disabled={!canControl(control, "stop").enabled || stopRequested} onClick={() => commands.dispatch("review.batch-stop", scope, control)}>{t("reviewBatchStop")}</Button>
+        : !semanticOpen && (showingResults || Object.keys(state.chosen).length) ? <Button disabled={!canControl(control, "end").enabled} onClick={() => commands.dispatch("review.batch-end", scope, control)}>{t("reviewBatchEnd")}</Button> : null}
         <Button ref={closeButton} disabled={!canControl(control, "hide").enabled} onClick={close}>{t("close")}</Button>
-        {state.batchRunning || remaining > 0 || !showingResults && selectedCount > 0 ? <Button variant="primary" pending={state.batchRunning} disabled={!approvePayload || !canApprove(approvePayload).enabled}
+        {!semanticOpen && (state.batchRunning || remaining > 0 || !showingResults && selectedCount > 0) ? <Button variant="primary" pending={state.batchRunning} disabled={!approvePayload || !canApprove(approvePayload).enabled}
           onClick={() => { if (approvePayload && canApprove(approvePayload).enabled) { showResults(); commands.dispatch("review.batch-approve", scope, approvePayload); } }}>{state.batchRunning ? t("reviewBatchApproving")
             : state.actor.trim() && remaining > 0 ? t("reviewBatchConfirm", { count: remaining, actor: state.actor.trim() }) : t("reviewBatchApprove")}</Button> : null}
       </div></div>}>
-    <div ref={pageRegion} tabIndex={-1} role="region" aria-label={t("reviewBatchResults")} className={`${styles.content} ${styles.pageRegion}`}>
+    <div>{drafts ? <Button size="sm" disabled={!idle()} onClick={() => { if (idle() && owner.endBatch(owner.current().chosen))  { setSemanticOpen(value => !value); setSemanticRequest(null); setSemanticLocales(null); } }}>{t(semanticOpen ? "semanticBatchBack" : "semanticBatchSwitch")}</Button> : null}</div>
+    {semanticOpen && drafts ? <ReviewBatchSemanticPanel project={project} owner={owner} selection={selection} commands={commands} gate={gate} viewId={viewId}
+      disabled={disabled} open={open} onOpenChange={onOpenChange} drafts={drafts} request={semanticRequest} onRequest={setSemanticRequest} binding={semanticBinding}
+      locales={semanticLocales ?? semanticRequest?.locales ?? [selection?.kind === "ids" ? selection.locale : selection?.selection.capture.locale ?? project.metadata.targetLocales[0]].filter((value): value is string => !!value)} onLocalesChange={setSemanticLocales}/>: null}
+    <div hidden={semanticOpen} ref={pageRegion} tabIndex={-1} role="region" aria-label={t("reviewBatchResults")} className={`${styles.content} ${styles.pageRegion}`}>
       <p className={styles.meta}>{t("reviewBatchScope", { count: showingResults ? state.batchItems.length : selectedCount, locale: request?.selection.kind === "ids" ? request.selection.locale : request?.selection.selection.capture.locale ?? state.batchItems[0]?.target.locale ?? "" })}</p>
       {tooMany ? <Banner tone="warning">{t("reviewBatchLimit", { count: REVIEW_BATCH_PREPARE_LIMIT })}</Banner> : null}
       {unselected ? <Banner tone="warning">{t("reviewBatchUnselected")}</Banner> : null}

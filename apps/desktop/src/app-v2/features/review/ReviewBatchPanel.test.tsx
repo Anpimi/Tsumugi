@@ -25,7 +25,7 @@ import type { ReviewOwner } from "./reviewTypes";
 const invoke = vi.hoisted(() => vi.fn());
 vi.mock("@tauri-apps/api/core", () => ({ invoke }));
 const project: ProjectView = { sessionToken: "v2-review-batch", locator: "/synthetic/v2-review-batch", reconciliationState: "settled",
-  metadata: { projectId: fixtureIdentity(9300), displayName: "Synthetic batch approval", metadataRevision: "1", sourceLocale: "en", targetLocales: ["zh-CN"] } };
+  metadata: { projectId: fixtureIdentity(9300), displayName: "Synthetic batch approval", metadataRevision: "1", sourceLocale: "en", targetLocales: ["zh-CN", "ja"] } };
 const context = executionContext(project), scope = { ...context, area: "translation" as const }, snapshot = fixtureIdentity(9301);
 const resources: { reads: SessionReads; drafts: TranslationDrafts; gate: InteractionGate }[] = [];
 const calls = (command: string) => invoke.mock.calls.filter(([name]) => name === command);
@@ -42,10 +42,10 @@ async function harness({ count = 2, parentDialogId, unknown = false }: { count?:
   const targets = Array.from({ length: count }, (_, index) => fixture(index)), current = new Map(targets.map(target => [target.unitId, target]));
   const receipts = new Map<string, { request: ReviewWrite; receipt: ReviewDecision }>();
   let sequence = 10500, lostWrite = unknown, lostRead = unknown;
-  invoke.mockImplementation(async (command: string, args?: { request: { unitId?: string; actionId?: string; decision?: ReviewWrite } }) => {
+  invoke.mockImplementation(async (command: string, args?: { request: { unitId?: string; locale?: string; actionId?: string; decision?: ReviewWrite } }) => {
     if (command === "create_execution_identity") return fixtureIdentity(++sequence);
     if (command === "read_content_scope") return { currentSnapshot: snapshot, revision: "1" };
-    if (command === "read_review_target") { const target = current.get(args?.request.unitId ?? ""); if (!target) throw new Error("Missing synthetic member"); return structuredClone(target); }
+    if (command === "read_review_target") { const target = current.get(args?.request.unitId ?? ""); if (!target) throw new Error("Missing synthetic member"); return { ...structuredClone(target), locale: args?.request.locale ?? target.locale }; }
     if (command === "write_review_decision") {
       const request = args?.request.decision; if (!request) throw new Error("Missing approval request");
       if (lostWrite) { lostWrite = false; throw new Error("Lost approval ACK"); }
@@ -71,7 +71,7 @@ async function harness({ count = 2, parentDialogId, unknown = false }: { count?:
     useLayoutEffect(() => { retained = owner; changeOpen = setOpen; });
     const payload: ReviewBatchControlPayload = { kind: "review-batch-control", chosen: owner.state.chosen, items: owner.state.batchItems };
     return <><Button ref={trigger} onClick={() => commands.dispatch("review.batch-show", scope, payload)}>Inspect synthetic approval</Button>
-      <ReviewBatchPanel {...settings} project={project} owner={owner} selection={selection} commands={commands} gate={gate} viewId="entries" open={open} onOpenChange={setOpen} returnFocusRef={trigger}/></>;
+      <ReviewBatchPanel {...settings} drafts={drafts} project={project} owner={owner} selection={selection} commands={commands} gate={gate} viewId="entries" open={open} onOpenChange={setOpen} returnFocusRef={trigger}/></>;
   }
   const ui = () => <ApplicationReadProvider><SessionReadProvider context={context} reads={reads} bridge={false}>
     <ExecutionTaskProvider project={project} mutations={mutations}><ReviewDraftProvider project={project} mutations={mutations}><Content/></ReviewDraftProvider></ExecutionTaskProvider>
@@ -213,4 +213,44 @@ it("keeps composition editable while disabling approval and immediately respects
   act(() => h.show({ disabled: false })); const release = h.gate.pushDialog("another-dialog");
   act(() => h.show({})); expect(confirm(2, "Reviewer B")).toBeDisabled(); release();
   expect(calls("write_review_decision")).toHaveLength(0);
+});
+
+
+it("captures the selected entries in multiple languages for the retained semantic owner without approving or starting a model", async () => {
+  const h = await harness(); await h.open(); const user = userEvent.setup();
+  await user.click(screen.getByRole("button", { name: i18n.t("workbenchV2.semanticBatchSwitch") }));
+  await user.click(screen.getByRole("checkbox", { name: "ja" }));
+  await user.click(screen.getByRole("button", { name: i18n.t("workbenchV2.semanticBatchCapture") }));
+  await waitFor(() => expect(Object.values(h.owner().current().chosen)).toHaveLength(4));
+  expect(h.owner().semantic.current().mode).toBe("chosen");
+  expect(Object.values(h.owner().current().chosen).map(value => value.locale).sort()).toEqual(["ja", "ja", "zh-CN", "zh-CN"]);
+  expect(calls("write_review_decision")).toHaveLength(0); expect(calls("prepare_ai_semantic_review")).toHaveLength(0);
+  await user.click(screen.getByRole("checkbox", { name: `${h.targets[0].nativeKey} → ja` }));
+  expect(Object.values(h.owner().current().chosen)).toHaveLength(3);
+  await user.click(screen.getAllByRole("button", { name: i18n.t("workbenchV2.close") }).at(-1)!);
+  await h.open();
+  expect(h.owner().semantic.current().mode).toBe("chosen");
+  expect(Object.values(h.owner().current().chosen)).toHaveLength(3);
+});
+
+
+it("keeps unapplied semantic language choices after the dialog content unmounts and still requires capture", async () => {
+  const h = await harness(); await h.open(); const user = userEvent.setup();
+  await user.click(screen.getByRole("button", { name: i18n.t("workbenchV2.semanticBatchSwitch") }));
+  await user.click(screen.getByRole("button", { name: i18n.t("workbenchV2.semanticBatchCapture") }));
+  await waitFor(() => expect(Object.values(h.owner().current().chosen)).toHaveLength(2));
+  await user.click(screen.getByRole("checkbox", { name: "ja" }));
+  expect(screen.getByRole("checkbox", { name: "ja" })).toBeChecked();
+  expect(screen.getByText(i18n.t("workbenchV2.semanticBatchRecapture"))).toBeVisible();
+  await user.click(screen.getAllByRole("button", { name: i18n.t("workbenchV2.close") }).at(-1)!);
+  await waitFor(() => expect(screen.queryByRole("checkbox", { name: "ja" })).not.toBeInTheDocument());
+  await h.open();
+  expect(screen.getByRole("checkbox", { name: "ja" })).toBeChecked();
+  expect(screen.getByText(i18n.t("workbenchV2.semanticBatchRecapture"))).toBeVisible();
+  expect(Object.values(h.owner().current().chosen)).toHaveLength(2);
+  expect(Object.values(h.owner().current().chosen).every(target => target.locale === "zh-CN")).toBe(true);
+  expect(calls("write_review_decision")).toHaveLength(0); expect(calls("prepare_ai_semantic_review")).toHaveLength(0);
+  await user.click(screen.getByRole("button", { name: i18n.t("workbenchV2.semanticBatchCapture") }));
+  await waitFor(() => expect(Object.values(h.owner().current().chosen)).toHaveLength(4));
+  expect(screen.queryByText(i18n.t("workbenchV2.semanticBatchRecapture"))).not.toBeInTheDocument();
 });

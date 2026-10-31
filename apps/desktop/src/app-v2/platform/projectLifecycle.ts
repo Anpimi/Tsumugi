@@ -1,8 +1,7 @@
 import { executionCommands, executionContext, type ApplicationShutdownRequest, type ApplicationShutdownView, type RuntimeStatus, type SessionRequest } from "../../executionCommands";
 import { hasUnknownOutcome, isCommandError, projectCommands, type CloseProjectView, type CreateProjectRequest, type OpenProjectRequest, type ProjectView, type ReadProjectRequest } from "../../projectCommands";
-import { SessionNavigation, type ExitDisposition, type SessionExitPermit } from "../../sessionNavigation";
+import { SessionNavigation, type ExitDisposition, type SessionExitPermit, type WorkspaceArea } from "../../sessionNavigation";
 import { SessionReads } from "../../sessionReads";
-import type { WorkspaceArea } from "../../WorkbenchFrame";
 
 export interface ProjectSession {
   project: ProjectView;

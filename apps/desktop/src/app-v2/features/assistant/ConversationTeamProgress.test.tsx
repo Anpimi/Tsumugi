@@ -1,4 +1,7 @@
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import * as teamReads from "./conversationTeamReads";
+import toolFixture from "../../../../test/fixtures/workPlanAgentTools.contract.json";
+import type { AttemptDetail, ExecutionOutputView } from "../../../executionCommands";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { validateResponseWorkPlanTeamExecution, validateResponseWorkPlanTeamHistory, validateResponseWorkPlanTeamPost } from "../../../generated/ai.validators";
 import { validateResponseProposalWorkPlanLink } from "../../../generated/conversations.validators";
@@ -85,7 +88,7 @@ async function expand() {
 function section(key: TextKey) { return screen.getByRole("region", { name: t(key) }); }
 const allowedReads = new Set(["read_work_plan_team_execution", "read_work_plan_team_history", "read_work_plan_team_post", "read_work_plan_team_work_tools"]);
 beforeEach(async () => { invoke.mockReset(); await i18n.changeLanguage("en-US"); });
-afterEach(() => { cleanup(); disposals.splice(0).forEach(dispose => dispose()); expect(invoke.mock.calls.every(([command]) => allowedReads.has(command))).toBe(true); });
+afterEach(() => { vi.restoreAllMocks(); cleanup(); disposals.splice(0).forEach(dispose => dispose()); expect(invoke.mock.calls.every(([command]) => allowedReads.has(command))).toBe(true); });
 
 describe("conversation team records", () => {
   it.each([
@@ -182,4 +185,23 @@ describe("conversation team records", () => {
     fireEvent.click(within(section("history")).getByRole("button", { name: t("refreshHistory") })); await within(section("history")).findByText("Earlier saved team discussion.");
     expect(draft).toHaveFocus(); expect(draft).toHaveValue("Retained B");
   });
+});
+
+
+it("opens original saved tool output from the team work and offers only result reads", async () => {
+  const h = harness();
+  const detail = structuredClone(toolFixture.responses.attempt) as AttemptDetail, output = structuredClone(toolFixture.responses.output) as ExecutionOutputView;
+  const reading = vi.spyOn(teamReads, "readConversationTeamToolResults").mockResolvedValue({ detail, outputs: [output] });
+  await expand(); const work = within(section("works")).getAllByRole("article")[0];
+  fireEvent.click(within(work).getByRole("button", { name: t("readTools") }));
+  const open = await within(work).findByRole("button", { name: t("readToolResults") });
+  fireEvent.click(open);
+  fireEvent.click(await within(work).findByText(t("toolResultOriginal")));
+  await within(work).findByText("{}");
+  expect(reading).toHaveBeenCalledWith(h.context, h.status.plan.planId,
+    { taskId: h.page.works[0].receipt.taskId, attemptId: h.page.works[0].receipt.attemptId, inputDigest: h.page.works[0].receipt.inputDigest },
+    expect.objectContaining({ name: "Captured glossary query 中文" }), h.status.plan.locale, 0, expect.any(Function));
+  expect(within(work).getByText(t("toolResultsHelp"))).toBeVisible();
+  expect(within(work).getByRole("button", { name: t("nextToolResults") })).toBeDisabled();
+  h.visible(false); expect(screen.queryByText("{}")).not.toBeInTheDocument();
 });

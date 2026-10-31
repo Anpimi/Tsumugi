@@ -52,7 +52,7 @@ async function harness(initial = target, parentDialogId?: string) {
   await drafts.initialize(); resources.push({ reads, drafts, gate });
   const mutations: MutationCoordinator = { reserveMutation: () => drafts.reserveMutation("retained-for-navigation"), releaseMutation: token => drafts.releaseMutation(token) };
   let retained: ReviewOwner | null = null, retainedTasks: ReturnType<typeof useExecutionTaskSession> | null = null;
-  type Presentation = Pick<EntrySemanticPanelProps, "target" | "read" | "visible" | "disabled" | "parentDialogId"> & { recovery: boolean };
+  type Presentation = Pick<EntrySemanticPanelProps, "target" | "read" | "visible" | "disabled" | "parentDialogId" | "batchTargets"> & { recovery: boolean };
   function seed(value: ReviewTarget) {
     const key = ["synthetic-semantic-details", value.unitId, value.locale] as const;
     reads.client.setQueryData(reads.key(key), { current: value }); return { key, data: reads.client.getQueryData(reads.key(key)) };
@@ -62,7 +62,7 @@ async function harness(initial = target, parentDialogId?: string) {
     const owner = useReviewDraftSession(), tasks = useExecutionTaskSession();
     useLayoutEffect(() => { retained = owner; retainedTasks = tasks; });
     const shared = { project, owner, commands, gate, viewId: "entries", disabled: props.disabled, parentDialogId: props.parentDialogId };
-    return <><EntrySemanticPanel {...shared} target={props.target} read={props.read} drafts={drafts} visible={props.visible && !props.recovery}/>
+    return <><EntrySemanticPanel {...shared} target={props.target} batchTargets={props.batchTargets} read={props.read} drafts={drafts} visible={props.visible && !props.recovery}/>
       <SemanticRecoveryPanel {...shared} visible={props.recovery}/></>;
   }
   const ui = () => <ApplicationReadProvider><SessionReadProvider context={context} reads={reads} bridge={false}>
@@ -216,4 +216,31 @@ it("retains Task recording uncertainty across views and reconciles only the orig
   expect(mocks.lookup).toHaveBeenLastCalledWith(request); expect(mocks.identity).toHaveBeenCalledOnce(); expect(mocks.prepare).toHaveBeenCalledOnce(); expect(mocks.adopt).toHaveBeenCalledOnce();
   expect(h.drafts.getSnapshot().mutationReserved).toBe(false); expect(h.drafts.getSnapshot().summaries).toEqual([]);
   expect(h.owner().current().drafts[reviewDraftKey(target)]).toBe("New reason B"); expect(h.owner().semantic.current().config.model).toBe("new-model-B");
+});
+
+
+it("previews a fixed set of saved translations across languages with separate consent and pair limits", async () => {
+  const h = await harness(), second = semanticTargetFixture({ locale: "ja", translationText: "" });
+  const targets = [target, second];
+  act(() => {
+    for (const value of targets) h.owner().toggleChosen({ ...value, sourcePreview: value.sourceText, translationPreview: value.translationText, currentCheck: null }, true);
+    h.owner().semantic.setMode("chosen"); h.show({ batchTargets: targets });
+  });
+  vi.mocked(aiSemanticReviewCommands.prepare).mockImplementationOnce(async request => {
+    const value = semanticPreparedFixture(target, request.config);
+    return { ...value, preview: { ...value.preview, items: targets.map(value => semanticPreparedFixture(value, request.config).preview.items[0]) } };
+  });
+  const user = userEvent.setup();
+  await user.click(screen.getByRole("button", { name: i18n.t("semanticReview.prepare") }));
+  const preview = within(await screen.findByRole("region", { name: i18n.t("semanticReview.preview") }));
+  expect(aiSemanticReviewCommands.prepare).toHaveBeenCalledWith(expect.objectContaining({ targets: targets.map(value => ({ unitId: value.unitId, locale: value.locale })) }));
+  expect(preview.getByText(i18n.t("workbenchV2.editorEmptySelection"))).toBeVisible();
+  expect(preview.getByRole("button", { name: i18n.t("semanticReview.start") })).toBeDisabled();
+  await user.click(preview.getByRole("checkbox", { name: i18n.t("semanticReview.consent") }));
+  expect(preview.getByRole("button", { name: i18n.t("semanticReview.start") })).toBeEnabled();
+  act(() => h.reads.client.setQueryData(h.reads.key(h.read().key), h.read().data));
+  expect(preview.getByRole("button", { name: i18n.t("semanticReview.start") })).toBeDisabled();
+  expect(aiSemanticReviewCommands.start).not.toHaveBeenCalled();
+  act(() => h.owner().semantic.setConfig(value => ({ ...value, maxItems: 1 })));
+  expect(screen.getByRole("button", { name: i18n.t("semanticReview.prepare") })).toBeDisabled();
 });

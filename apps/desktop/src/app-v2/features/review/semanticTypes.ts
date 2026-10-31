@@ -1,14 +1,15 @@
 import type { TaskActivity } from "../../../ExecutionTaskSession";
 import type { ProjectView } from "../../../projectCommands";
-import type { ReviewBasis } from "../../../reviewCommands";
+import type { ReviewTarget, ReviewBasis } from "../../../reviewCommands";
 import type { WorkbenchCommands } from "../../../workbenchCommands";
 import type { InteractionGate } from "../../workspace/interactionGate";
 import type { EntryReviewPanelProps, ReviewOwner } from "./reviewTypes";
 
-export type EntrySemanticPanelProps = EntryReviewPanelProps;
+export type EntrySemanticPanelProps = EntryReviewPanelProps & { batchTargets?: readonly ReviewTarget[] };
 export type EntrySemanticPreparation = NonNullable<ReviewOwner["semantic"]["state"]["prepared"]>;
 export type EntrySemanticPending = NonNullable<ReviewOwner["semantic"]["state"]["pending"]>;
 export interface EntrySemanticCapture {
+  targets?: string;
   unitId: string;
   locale: string;
   sourceSnapshotId: string;
@@ -43,6 +44,7 @@ export interface EntrySemanticCancelPayload {
   queryVersion: number | null;
 }
 export interface SemanticRecoveryPanelProps {
+  commandPrefix?: "review.entry-semantic" | "review.batch-semantic";
   project: ProjectView;
   owner: ReviewOwner;
   commands: WorkbenchCommands;

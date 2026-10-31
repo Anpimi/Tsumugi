@@ -1,8 +1,7 @@
-import { createRef, useLayoutEffect, useState, type Ref } from "react";
+import { useLayoutEffect, useState } from "react";
 import { act, cleanup, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
-import { ReleaseWorkbench, type ReleaseHandle } from "./ReleaseWorkbench";
 import { useReleaseDraftSession } from "./ReleaseDraftSession";
 import { useExecutionTaskSession } from "./ExecutionTaskSession";
 import Delivery from "./app-v2/features/delivery/DeliveryView";
@@ -46,8 +45,8 @@ function DeliveryConsumer() {
   return <Delivery project={project} owner={value} tasks={tasks} commands={commands} gate={gate} viewId="workflow-delivery" visible disabled={false}
     onOpenDecisions={() => {}} onOpenKnowledge={() => {}} onOpenExtensions={() => {}}/>;
 }
-function Harness({ consumer = true, handle, presentation = "legacy" }: { consumer?: boolean; handle?: Ref<ReleaseHandle>; presentation?: "legacy" | "workbench" }) {
-  return <><Probe/>{consumer ? presentation === "workbench" ? <DeliveryConsumer/> : <ReleaseWorkbench project={project} disabled={false} ref={handle}/> : null}</>;
+function Harness({ consumer = true }: { consumer?: boolean }) {
+  return <><Probe/>{consumer ? <DeliveryConsumer/> : null}</>;
 }
 function deliveryPrimary() {
   const header = screen.getByRole("heading", { name: i18n.t("deliveryWorkbench.title"), level: 1 }).closest("header");
@@ -134,28 +133,23 @@ beforeEach(async () => {
 });
 afterEach(() => { cleanup(); vi.restoreAllMocks(); });
 
-async function ready(presentation: "legacy" | "workbench" = "legacy") {
-  const user = userEvent.setup(), handle = createRef<ReleaseHandle>(), view = render(<Harness handle={handle} presentation={presentation}/>, project);
-  if (presentation === "workbench") {
-    await waitFor(() => expect(deliveryPrimary()).toBeEnabled());
-    await user.click(deliveryPrimary());
-    await waitFor(() => expect(screen.getByRole("combobox", { name: i18n.t("deliveryWorkbench.builder") })).toBeEnabled());
-  } else {
-    await user.click(screen.getByRole("button", { name: i18n.t("release.title") }));
-    await screen.findByText(/Example text artifact/);
-  }
+async function ready() {
+  const user = userEvent.setup(), view = render(<Harness/>, project);
+  await waitFor(() => expect(deliveryPrimary()).toBeEnabled());
+  await user.click(deliveryPrimary());
+  await waitFor(() => expect(screen.getByRole("combobox", { name: i18n.t("deliveryWorkbench.builder") })).toBeEnabled());
   for (const locale of project.metadata.targetLocales) {
     await user.click(screen.getByRole("checkbox", { name: locale }));
     await user.type(screen.getByRole("textbox", { name: i18n.t("releasePlugin.paths", { locale }) }), `${locale}.txt`);
   }
-  await user.click(presentation === "workbench" ? deliveryPrimary() : screen.getByRole("button", { name: i18n.t("release.check") }));
+  await user.click(deliveryPrimary());
   await screen.findByText(i18n.t("release.ready", { count: 0 }));
-  await user.click(presentation === "workbench" ? deliveryPrimary() : screen.getByRole("button", { name: i18n.t("releasePlugin.capture") }));
+  await user.click(deliveryPrimary());
   await user.click(await screen.findByRole("checkbox", { name: i18n.t("releasePlugin.builderConsent") }));
-  await user.click(presentation === "workbench" ? deliveryPrimary() : screen.getByRole("button", { name: i18n.t("release.build") }));
-  if (presentation === "workbench") await user.click(screen.getByRole("button", { name: i18n.t("deliveryWorkbench.verification") }));
+  await user.click(deliveryPrimary());
+  await user.click(screen.getByRole("button", { name: i18n.t("deliveryWorkbench.verification") }));
   await waitFor(() => expect(screen.getByRole("button", { name: i18n.t("releaseWorkflow.prepare") })).toBeEnabled());
-  return { user, handle, view };
+  return { user, view };
 }
 async function prepareBatch(user: ReturnType<typeof userEvent.setup>) {
   await user.click(screen.getByRole("button", { name: i18n.t("releaseWorkflow.prepare") }));
@@ -183,9 +177,10 @@ it.each(["en-US", "zh-CN"])("runs only an explicit materialized batch and waits 
   await runBatch(user); const request = owner.current().workflow?.start;
   expect(request?.start.consents).toHaveLength(2); expect(new Set(request?.start.consents.map(item => item.grantId)).size).toBe(2);
   await completeSelected();
-  await waitFor(() => expect(screen.getByRole("button", { name: i18n.t("releasePlugin.recordRelease") })).toBeEnabled());
+  await waitFor(() => expect(deliveryPrimary()).toHaveAccessibleName(i18n.t("deliveryWorkbench.saveBuild")));
+  expect(deliveryPrimary()).toBeEnabled();
   expect(calls("adopt_execution")).toHaveLength(0); expect(calls("export_release")).toHaveLength(0);
-  await user.click(screen.getByRole("button", { name: i18n.t("releasePlugin.recordRelease") }));
+  await user.click(deliveryPrimary());
   await screen.findByText(i18n.t("releasePlugin.recorded"));
   expect(calls("adopt_execution")).toHaveLength(1); expect(calls("export_release")).toHaveLength(0);
 });
@@ -194,7 +189,7 @@ it("marks unselected languages explicitly and never turns selected completion in
   const { user } = await ready(); await prepareBatch(user); await runBatch(user, false); await completeSelected();
   await screen.findByText(i18n.t("releaseWorkflow.phase.completed"));
   expect(screen.getByText(i18n.t("releaseWorkflow.step.not-selected"))).toBeInTheDocument();
-  expect(screen.queryByRole("button", { name: i18n.t("releasePlugin.recordRelease") })).not.toBeInTheDocument();
+  expect(deliveryPrimary()).not.toHaveAccessibleName(i18n.t("deliveryWorkbench.saveBuild"));
   expect(owner.current().workflow?.start?.start.consents).toHaveLength(1);
 });
 
@@ -248,7 +243,7 @@ it("reads original step evidence after the finite intent has retired without rec
 });
 
 it.each(["prepare", "start"])("stops a hung %s through the original identity and ignores its late ACK without clearing newer B", async phase => {
-  const { user, handle } = await ready();
+  const { user } = await ready();
   if (phase === "start") await prepareBatch(user);
   const command = phase === "prepare" ? "prepare_artifact_check_workflow" : "start_artifact_check_workflow";
   const hold = deferred<unknown>(), original = invoke.getMockImplementation()!;
@@ -264,7 +259,6 @@ it.each(["prepare", "start"])("stops a hung %s through the original identity and
   await user.click(screen.getByRole("button", { name: i18n.t("releaseWorkflow.stop") }));
   await waitFor(() => expect(calls("stop_artifact_check_workflow")).toHaveLength(1));
   expect(owner.current().workflow?.pending).toBe(phase); expect(owner.reserved()).toBe(true);
-  let allowed = true; await act(async () => { allowed = await handle.current!.allowLeave(); }); expect(allowed).toBe(false);
   currentWorkflow().callbacksDrained = true;
   if (phase === "start") { const first = currentWorkflow().steps.find(item => item.selected); if (first) first.phase = "unknown"; currentWorkflow().currentTask = null; }
   await user.click(screen.getByRole("button", { name: i18n.t("releaseWorkflow.refresh") }));
@@ -342,6 +336,7 @@ it("upgrades an initial preparing read only when the complete original materiali
   view.rerender(<Harness consumer={false}/>);
   expect(clears).toHaveBeenCalledWith(pendingTimers[0]);
   materialized = true; view.rerender(<Harness/>);
+  await user.click(screen.getByRole("button", { name: i18n.t("deliveryWorkbench.verification") }));
   await waitFor(() => expect(screen.getByRole("checkbox", { name: i18n.t("releaseWorkflow.consentAll") })).toBeEnabled(), { timeout: 2500 });
   expect(owner.current().workflow?.review?.steps).toHaveLength(2); expect(owner.reserved()).toBe(false);
   timers.mockRestore(); clears.mockRestore();
@@ -391,7 +386,7 @@ it("shows saved negative proof and checker provenance as read-only history witho
 
 
 it("advances the workbench primary action through separately approved multi-language verification and explicit release recording", async () => {
-  const { user } = await ready("workbench");
+  const { user } = await ready();
   expect(captured?.choices).toEqual(project.metadata.targetLocales.map(locale => ({ locale, outputPaths: [`${locale}.txt`], configuration: [] })));
   expect(calls("prepare_plugin_build")).toHaveLength(1); expect(calls("start_plugin_build")).toHaveLength(1);
   await prepareBatch(user);

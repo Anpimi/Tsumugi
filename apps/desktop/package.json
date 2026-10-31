@@ -5,9 +5,6 @@
   "scripts": {
     "dev": "vite --host 127.0.0.1 --port 1420",
     "dev:workbench-preview": "vite --config vite.workbench-preview.config.ts",
-    "dev:workbench": "vite --config vite.workbench.config.ts",
-    "build:workbench": "tsc --noEmit && vite build --config vite.workbench.config.ts",
-    "tauri:workbench": "tauri dev --config src-tauri/tauri.workbench.conf.json",
     "build:workbench-preview": "tsc --noEmit && vite build --config vite.workbench-preview.config.ts",
     "storybook": "storybook dev --host 127.0.0.1 -p 6006 --no-open --disable-telemetry",
     "build-storybook": "storybook build --disable-telemetry",
@@ -37,7 +34,6 @@
     "lucide-react": "1.47.0",
     "react": "19.3.0",
     "react-dom": "19.3.0",
-    "react-hook-form": "7.88.0",
     "react-i18next": "16.6.6",
     "react-resizable-panels": "4.14.6",
     "zustand": "5.0.16"

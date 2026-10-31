@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import { SessionNavigation, type ExitDisposition, type SessionNavigationPorts, type WorkspaceDestination } from "./sessionNavigation";
-import type { WorkspaceArea } from "./WorkbenchFrame";
+import type { WorkspaceArea } from "./sessionNavigation";
 import { reviewDiagnosticFixture } from "./testSupport/reviewDiagnosticFixture";
 import { semanticDiagnosticFixture } from "./testSupport/semanticDiagnosticFixture";
 

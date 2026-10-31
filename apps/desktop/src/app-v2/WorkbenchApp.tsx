@@ -1293,11 +1293,11 @@ function WorkspaceShell() {
       {message(reviewOwner.state.batchRunning ? "reviewBatchRunning" : reviewOwner.state.pending ? "reviewBatchUnknown"
         : reviewOwner.state.batchItems.every(item => item.status === "recorded") ? "reviewBatchComplete" : "reviewBatchPaused")}
     </Banner> : null}
-    {reviewOwner && commandsReady && commands ? <Suspense fallback={null}><ReviewBatchPanel project={session.project} owner={reviewOwner} commands={commands} gate={gate} viewId={currentId}
+    {reviewOwner && commandsReady && commands ? <Suspense fallback={null}><ReviewBatchPanel drafts={drafts ?? undefined} project={session.project} owner={reviewOwner} commands={commands} gate={gate} viewId={currentId}
       selection={reviewBatchSelection} disabled={disabled} open={reviewBatchOpen} onOpenChange={setReviewBatchOpen} parentDialogId={narrow && drawer ? "workspace-dock" : undefined}
       returnFocusRef={reviewBatchReturnFocus}/></Suspense> : null}
     {reviewOwner && commandsReady && commands ? <Suspense fallback={null}><ReviewRecovery project={session.project} owner={reviewOwner} commands={commands} gate={gate} viewId={currentId}
-      disabled={disabled} visible={reviewRecovery || !reviewPanelVisible} semanticVisible={!reviewPanelVisible || view?.detailTab !== "issues"} onOpen={(unitId, locale) => { void inspectReview(unitId, locale).catch(() => setCommandFailed(true)); }}/></Suspense> : null}
+      disabled={disabled} visible={reviewRecovery || !reviewPanelVisible} semanticVisible={!reviewBatchOpen && (!reviewPanelVisible || view?.detailTab !== "issues")} onOpen={(unitId, locale) => { void inspectReview(unitId, locale).catch(() => setCommandFailed(true)); }}/></Suspense> : null}
     {candidateOwners && commandsReady && commands ? <Suspense fallback={null}><CandidateRecovery project={session.project} owners={candidateOwners} commands={commands} gate={gate} viewId={currentId}
       disabled={disabled} visible showDecisions={!candidatePanelVisible && !candidateBatchOwnsPending} showProtection={!protectionPanelVisible} onOpen={(unitId, locale) => { void inspectCandidate(unitId, locale, null).catch(() => setCommandFailed(true)); }}/></Suspense> : null}
     {comparisonOwner && commandsReady && commands ? <Suspense fallback={null}><ComparisonRecovery project={session.project} owner={comparisonOwner} commands={commands} gate={gate} viewId={currentId}

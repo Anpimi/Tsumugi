@@ -1,4 +1,4 @@
-/* Import only from the standalone workbench or component preview entry. */
+/* Import from the desktop bootstrap or component preview entry. */
 @import "./tokens.css";
 
 *,

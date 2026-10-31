@@ -1,5 +1,5 @@
 import { installWorkbenchInputJournalFixtures } from "./testSupport/inputJournalFixture";
-import { createRef, useLayoutEffect, type ReactNode } from "react";
+import { useLayoutEffect, type ReactNode } from "react";
 import { act, cleanup, render as renderHeadless, screen } from "@testing-library/react";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import fixture from "../test/fixtures/executionCommands.contract.json";
@@ -10,7 +10,6 @@ import type { ProjectView } from "./projectCommands";
 import { renderWorkbench as render, refreshWorkbenchReads } from "./testSupport/WorkbenchTestShell";
 import { fixtureIdentity } from "./testSupport/executionFixture";
 import { i18n } from "./i18n";
-import { ExecutionTasks, type TasksHandle } from "./ExecutionTasks";
 import { executionCommands, executionContext, type AttemptDetail, type ContinuationRequest, type ContinuationReceipt } from "./executionCommands";
 import { SessionReadProvider, useSessionQuery, useSessionReads } from "./SessionReadProvider";
 import { useTranslationDraftSession } from "./TranslationDraftSession";
@@ -853,8 +852,8 @@ it("deduplicates recorded clicks for the captured attempt and creates a fresh re
   expect(requests[0].requestId).not.toBe(requests[1].requestId);
   expect(requests.every(request => !Object.hasOwn(request, "attemptId"))).toBe(true);
 });
-it("keeps the existing Tasks project-leave guard active for another workspace's unresolved cancellation", async () => {
-  const view = render(<Probe />, project), ref = createRef<TasksHandle>();
+it("keeps another workspace's cancellation unresolved until its original retry is acknowledged", async () => {
+  render(<Probe />, project);
   invoke.mockResolvedValueOnce(fixtureIdentity(123)).mockRejectedValueOnce(new Error("Disconnected"));
   await act(async () => { await owner.cancel({ ...target, origin: "ai" }); });
   invoke.mockImplementation(async command => {
@@ -863,12 +862,10 @@ it("keeps the existing Tasks project-leave guard active for another workspace's 
     if (command === "cancel_execution_task") return "5";
     throw new Error(command);
   });
-  view.rerender(<ExecutionTasks ref={ref} project={project} disabled={false} />);
-  await act(async () => { expect(await ref.current!.allowLeave()).toBe(false); });
-  expect(screen.getByRole("heading", { name: "Tasks" })).toBeInTheDocument();
-  expect(screen.getByRole("button", { name: "Retry the original cancellation" })).toBeEnabled();
+  expect(owner.unresolved()).toBe(true);
+  expect(owner.state[target.taskId].target.origin).toBe("ai");
   await act(async () => { await owner.retry(target.taskId); });
-  expect(await ref.current!.allowLeave()).toBe(true);
+  expect(owner.unresolved()).toBe(false);
 });
 
 it("checks original project, session, task, attempt and explicit business proof before dispatch", async () => {

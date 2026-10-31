@@ -1,5 +1,6 @@
-import type { WorkspaceArea } from "./WorkbenchFrame";
-import type { EditorTarget } from "./TranslationWorkbench";
+export type WorkspaceArea = "overview" | "source" | "translation" | "resources" | "review" | "release" | "ai" | "arena" | "tasks";
+export interface EditorTarget { unitId: string; sourceRevisionId: string; key: string; sourceText: string }
+
 import type { ContentSelection } from "./contentSelection";
 import type { ContextEditorTarget, CorrectionEditorTarget } from "./workbenchCommands";
 import type { ReviewEditorHandoff, ReviewEditorReturn } from "./reviewDiagnosticNavigation";

@@ -92,17 +92,16 @@ A build validates both project readiness and the generated output files before r
 
 ## Desktop Workbench
 
-The desktop app organizes work into dedicated views accessible from the sidebar. Switching views preserves scroll positions, filters, and unsaved drafts; leaving an unsaved translation prompts to save, keep editing, or discard.
+The desktop workspace organizes work into views accessible from the activity bar. Open projects or create one from the start screen; switching views retains their working context and protects unfinished input.
 
-- **Source Content**: Import and inspect source snapshots, compare upstream updates, and resolve content lineage. See [Source Import and Maintenance](docs/source-import.md).
-- **Translations**: Paged, searchable editor covering native keys, source text, and active translations across the full source snapshot, with collapsible panels for glossary terms, context, and revision history. Also supports importing existing translation files. See [Translation Import and Editing](docs/translation-import.md).
-- **Glossary & Context**: Manage project terms, step through local glossary files, pin unit context, and inspect translations affected by terminology changes. See [Glossary and Context](docs/resources.md).
-- **Review & QA**: Record human approvals or change requests, run built-in or plugin QA checks, manage waivers, and check build readiness per target language. See [Review and QA](docs/review-qa.md).
-- **AI Translation, Arena & Work Plans**: Run scoped AI translations, compare candidates in Arena, or coordinate multi-member Agent work plans.
-- **Tasks**: Monitor persisted execution progress, cancel running work, reconcile interrupted operations, and adopt completed outputs.
-- **Build & Export**: Build verified language files from approved translations and export them to local folders.
+- **Entries**: Search, edit and review translations, import source content or translations, and inspect entry details. See [Translation Import and Editing](docs/translation-import.md), [Source Import and Maintenance](docs/source-import.md), and [Review and QA](docs/review-qa.md).
+- **Knowledge**: Manage terms, project knowledge and translation memory. See [Glossary and Context](docs/resources.md).
+- **Runs**: Review work plans and context experiments, and return to the original conversation or saved candidate. See [Agent Work Plans](docs/work-plans.md).
+- **Delivery**: Check readiness, build and export recorded releases. See [Local Build and Export](docs/build-release.md).
+- **Your decisions**: Review pending candidates, resource proposals, source matches, reviews and uncertain results. See [Review and QA](docs/review-qa.md#your-decisions-in-the-workspace).
+- **Extensions** and **Settings**: Manage extensions, connections, appearance and other application preferences.
 
-In the opt-in desktop workspace, the right-hand conversation panel can create and select threads, page through messages, save messages, recover local input and uncertain requests, and read the thread’s recorded planning replies and proposals. Saving a message does not call a model.
+The conversation panel can create and select threads, page through messages, save messages, recover local input and uncertain requests, and read the thread’s recorded planning replies and proposals. Saving a message does not call a model.
 
 To ask the assistant, explicitly select 1–16 saved messages and optionally attach 1–100 selected entries with a fixed target language. Review the connection, exact material and limits, then consent to one request. Filters do not expand the attached set. Terms and context are shared only when selected; current translation text is not included.
 
@@ -110,11 +109,11 @@ A valid planning suggestion can be saved as a proposal, then edited and saved as
 
 The conversation panel can show the plan status, the most recently started work and accumulated model usage, and explicitly start, pause, stop, or take over a linked plan. Pause, stop, and takeover can be requested even while another conversation request is awaiting a result. Check an uncertain control request in the panel; it is not automatically retried. For an ordinary plan that has started, expand **View generated results** to read the recorded translations and open a saved candidate in its entry.
 
-The displayed progress and results belong to that recorded start; team member progress and results are not yet shown. Ordinary paused or taken-over plans can be continued after a fresh review; team and MCP plans require their dedicated recovery flow or a new plan. Start is available only while the current session retains the direct confirmation receipt. See [Agent Work Plans](docs/work-plans.md) for result handling, recovery and limits.
+The displayed progress and results belong to that recorded start; a single start does not represent every team member. Team plans also provide recorded member details and results. Ordinary paused or taken-over plans can be continued after a fresh review; team and MCP plans require their dedicated recovery flow or a new plan. Start is available only while the current session retains the direct confirmation receipt. See [Agent Work Plans](docs/work-plans.md) for result handling, recovery and limits.
 
-In the opt-in desktop workspace, the entries view can filter by translation, review, issue, impact, delivery-blocking, and AI candidate status. Select the current page or capture all matching entries as a fixed set; changing the filter does not expand that selection. Use the arrow keys or J/K to move through the editing queue and Enter to edit the focused entry. The full-page display shows the current loaded page.
+The entries view can filter by translation, review, issue, impact, delivery-blocking, and AI candidate status. Select the current page or capture all matching entries as a fixed set; changing the filter does not expand that selection. Use the arrow keys or J/K to move through the editing queue and Enter to edit the focused entry. The full-page display shows the current loaded page.
 
-**Your decisions** in the opt-in workspace groups the project’s pending candidates, reviews, mappings and result checks. Its activity badge and the Agent tray use the same counts, including a clear indication when some sources are unavailable. Opening a candidate, finding or local request checks its exact original identity and keeps other tabs and input. Resource, mapping, execution and delivery items offer read-only details; reading them does not approve, retry or settle the operation. Full resource, source-correction and delivery controls are still being connected. See [Review and QA](docs/review-qa.md#your-decisions-in-the-opt-in-workspace).
+**Your decisions** groups the project’s pending candidates, reviews, mappings and result checks. Its activity badge and the Agent tray share counts, including an indication when some sources are unavailable. Items open their original records while retaining other tabs and input. Handle term proposals in Knowledge, source corrections in the source workflow, and delivery recovery in Delivery; opening a record alone does not approve or retry an operation. See [Review and QA](docs/review-qa.md#your-decisions-in-the-workspace).
 
 Browser-style shortcuts (refresh, back/forward navigation, print, view source, save page) are disabled in the workbench so they do not interfere with editing. `Ctrl+S` (`Cmd+S` on macOS) saves the active editor draft, and standard text selection/copy (`Ctrl+C` / `Cmd+C`) and input context menus work as expected.
 

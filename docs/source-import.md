@@ -1,26 +1,26 @@
 # Source import
 
-The **Source content** view imports and maintains project source snapshots using an installed source plugin and runtime. See the [README](../README.md#development) for current database schema compatibility and the [versioning policy](versioning.md) for application release versioning.
+The source import workflow imports and maintains project source snapshots using an installed source plugin and runtime. See the [README](../README.md#development) for current database schema compatibility and the [versioning policy](versioning.md) for application release versioning.
 
 ## Preparing extensions and capturing source files
 
 Before importing source files, open **Extensions** to review, install, and enable the source package, and independently approve and install its required runtime (the initial bundled JavaScript runtime targets Apple silicon Macs running macOS 13.5 or later). Each executable role—producer, semantic checker, and format reviewer—maintains its own `Project` or `Attempt` execution binding.
 
-To import a source snapshot:
+To import a source snapshot, choose **Import an upstream version** in the Project menu, or **Import source content** in an empty Entries view:
 
-1. **Select format and directory**: In **Source content**, select the installed source format and runtime, choose the project's source language, and click **Choose source folder**. Directory access is granted strictly through the native OS folder picker; the package's declarative source Resource defines which relative file paths, byte limits, and revision rules apply (parsers are never inferred from plugin names or file extensions).
+1. **Select format and directory**: Select the installed source format and runtime, click **Choose source folder**, and confirm the project’s source language. Directory access is granted strictly through the native OS folder picker; the package's declarative source Resource defines which relative file paths, byte limits, and revision rules apply (parsers are never inferred from plugin names or file extensions).
 2. **Capture and fingerprint**: Click **Check source files** to capture and fingerprint the declared input files into the project without executing any plugin code.
 3. **Extract for preview**: Review the captured file list, package/runtime identities, and requested permissions, then grant explicit execution consent (valid for up to 10 minutes) and click **Import for preview**. The extractor plugin processes the captured bytes stored in the project rather than rereading the external filesystem. Note that plugin child processes run under your current OS user account and are not sandboxed at the OS kernel level.
-4. **Run mandatory source checks and apply**: A successful extraction produces a saved source proposal. Click **Review independent check execution** to prepare the proposal for the semantic checker, consent to **Run independent source checks**, and then click **Record fixed check validation**. Once Core verifies that both the extraction and mandatory semantic checks succeeded under valid grants, confirm and apply the complete source snapshot across all pages.
+4. **Run mandatory source checks and apply**: A successful extraction produces a saved source proposal. Choose **Review independent check** to prepare the proposal for the semantic checker, consent to **Run independent check**, and then choose **Record this check result**. Once Core verifies that both the extraction and mandatory semantic checks succeeded under valid grants, confirm and apply the complete source snapshot across all pages.
 
 ## Updating source content and maintaining identity
 
-When a project already has an adopted source snapshot, use **Update source content** to capture an updated set of source files and compare it against the current snapshot:
+When a project already has an adopted source snapshot, use **Import an upstream version** in the Project menu to capture an updated set of source files and compare it against the current snapshot:
 
 - **Change classification**: The comparison identifies unchanged strings, same-key text edits, reordered entries, additions, removals, candidate renames, and ambiguous (`1:N` or `N:1`) mappings. Identical text under a different key is surfaced as a candidate rename and requires a reviewer's name and reason to confirm or reject; unresolved or rejected items become new content units.
-- **Continuation rules**: Under the versioned revision policy, an unchanged string with the same key keeps its content unit, source revision, and existing translation approvals/QA even if reordered. A same-key string whose source text changed requires an explicit continuation decision to retain its content unit, and its prior translation approval and QA checks are invalidated until re-verified in **Review and QA**.
-- **Impact estimation and work queue**: Before applying the update, **Review estimated impact** summarizes per-language effects across the complete snapshot. After applying, **Current translation impact** computes the exact review and QA work needed per entry and links directly to **Review and QA** and the translation editor.
-- **Snapshot history and identity correction**: **Source snapshot history** retains all verified snapshots, file fingerprints, and continuation decisions. To amend an earlier identity decision, reimport the current source files, select the earlier snapshot as the historical comparison basis, and record the updated continuation or rejection decision (reimporting identical files without an identity change is rejected as a no-op).
+- **Continuation rules**: Under the versioned revision policy, an unchanged string with the same key keeps its content unit, source revision, and existing translation approvals/QA even if reordered. A same-key string whose source text changed requires an explicit continuation decision to retain its content unit, and its prior translation approval and QA checks are invalidated until re-verified in the entry’s **Issues** tab.
+- **Impact estimation and work queue**: Before applying the update, **Review what will be kept** summarizes per-language effects across the complete snapshot. After applying, the source brief shows current impact and **View affected entries** opens the related entries for review and editing.
+- **Snapshot history and identity correction**: **Source snapshot history** retains all verified snapshots, file fingerprints, and continuation decisions. To amend an earlier identity decision, reimport the current source files, select the earlier snapshot as the historical comparison basis, and record the updated continuation or rejection decision (reimporting identical files without an identity change is rejected as a no-op). For an adopted match, open its saved source details and choose **Correct this entry match** to review and record a correction; saved translations and approvals remain with their original entries.
 
 ### Optional maintenance notice
 
@@ -32,10 +32,10 @@ Before applying a checked source snapshot, you can optionally enable a **mainten
 
 ## Inspecting original source records in the editor
 
-In the translation editor, expand **Terms, context and history** to view extracted source facts, neighboring strings, and captured format metadata:
+In the entry details, open **Terms and context** to view extracted source facts and applicable context; source details also retain neighboring strings and captured format metadata:
 
 - Source details display the original native key label, captured filename, and half-open character/byte range (`UTF-8` bytes, `UTF-16` code units, or graphemes).
-- Clicking **View original record** loads the full stored record text on demand (up to an 8 MiB encoded response limit, without truncating text to fit a summary page). Each read verifies that the current source snapshot and entry selection have not changed.
+- Clicking **View raw record** loads the full stored record text on demand (up to an 8 MiB encoded response limit, without truncating text to fit a summary page). Each read verifies that the current source snapshot and entry selection have not changed.
 
 ## Capture security and payload limits
 
@@ -53,9 +53,9 @@ Tsumugi captures declared source files through native directory handles to preve
 
 ## Task persistence and recovery
 
-Started imports run as persistent background tasks accessible in **Tasks**:
+Started imports run as persistent background tasks; the source preparation workflow shows their status and recovery actions:
 
-- **Lost start or apply confirmations**: If a start acknowledgement is lost or uncertain, the app queries the original saved request once in read-only mode (and **Check saved import start** repeats that check). **Retry the same import** is enabled only when the lookup confirms the request was never started. Similarly, if applying a snapshot returns an uncertain response, query the saved receipt before retrying.
+- **Lost start or apply confirmations**: If a start acknowledgement is lost or uncertain, the app queries the original saved request once in read-only mode (and **Check the action result** repeats the relevant check). **Retry this action** is enabled only when the lookup confirms the request was never started. Similarly, if applying a snapshot returns an uncertain response, query the saved receipt before retrying.
 - **Reopening and grant lifecycles**: Closing a project or restarting the app preserves all saved tasks, captured bytes, and receipts, and ends active execution grants. Cancelled, expired, or closed plugin grants require preparing a new authorized attempt (a cancelled checker can be re-prepared against an already captured source proposal without re-running extraction). See the [execution test-host guide](execution-test-host.md#continuation-identity-and-current-storage) for continuation storage details.
 
 ## Native fault checks

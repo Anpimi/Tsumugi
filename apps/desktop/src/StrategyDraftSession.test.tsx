@@ -4,7 +4,6 @@ import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { renderWorkbench as render } from "./testSupport/WorkbenchTestShell";
 import { StrategyDraftSession, useStrategyDraftSession } from "./StrategyDraftSession";
 import { confirmArenaView } from "./ArenaDraftSession";
-import { AiPreparationSession, useAiPreparation } from "./AiPreparationSession";
 import { useSessionReads } from "./SessionReadProvider";
 import { defaultAiConfig, editedAiConfig, sameAiConfig, type AiConfig } from "./aiCommands";
 import { strategyCommands, strategyKeys, type ContextStrategyCandidate, type ContextStrategyDefaultRevision, type StrategyEvaluationView, type StrategySuite, type Prepared, type StrategyCheckReceipt, type StrategyActionReceipt } from "./strategyCommands";
@@ -32,13 +31,12 @@ vi.mock("@tauri-apps/api/event", () => ({ listen: vi.fn(async () => () => {}) })
 const bridgeStops: (() => void)[] = [];
 const project: ProjectView = { sessionToken: "strategy-session", locator: "isolated", reconciliationState: "settled",
   metadata: { projectId: resourceWire.responses.correctionBasis.basis.projectId, displayName: "Synthetic strategies", sourceLocale: "en", targetLocales: ["zh-CN", "ja"], metadataRevision: "1" } };
-let owner: ReturnType<typeof useStrategyDraftSession>, ai: ReturnType<typeof useAiPreparation>, reads: ReturnType<typeof useSessionReads>;
+let owner: ReturnType<typeof useStrategyDraftSession>, reads: ReturnType<typeof useSessionReads>;
 let evidence: CorrectionTermEvidence;
 let journal: ReturnType<typeof installStrategyDraftFixture>;
 function Probe() { const value = useStrategyDraftSession(), session = useSessionReads(); useLayoutEffect(() => { owner = value; reads = session; }); return null; }
-function AiProbe() { const value = useAiPreparation(); useLayoutEffect(() => { ai = value; }); return null; }
-function Harness({ current = project, withAi = false, showProbe = true }: { current?: ProjectView; withAi?: boolean; showProbe?: boolean }) {
-  return <StrategyDraftSession project={current}>{showProbe ? <Probe /> : null}{withAi ? <AiPreparationSession initialLocale="zh-CN" targetLocales={current.metadata.targetLocales}><AiProbe /></AiPreparationSession> : null}</StrategyDraftSession>;
+function Harness({ current = project, showProbe = true }: { current?: ProjectView; showProbe?: boolean }) {
+  return <StrategyDraftSession project={current}>{showProbe ? <Probe /> : null}</StrategyDraftSession>;
 }
 function deferred<T>() { let resolve!: (value: T) => void, reject!: (value: unknown) => void; const promise = new Promise<T>((done, fail) => { resolve = done; reject = fail; }); return { promise, resolve, reject }; }
 function candidate(actionId = fixtureIdentity(2400), reason = "Preserve the speaker context"): ContextStrategyCandidate {
@@ -231,30 +229,6 @@ it("requires explicit exception scope and a current saved correction before cand
   expect(owner.state.reason).toBe("Saved correction A");
 });
 
-it("captures a future default once and applies withdrawal only to a fully reset draft", async () => {
-  const saved = candidate(), first = revision(saved);
-  const defaultRead = vi.spyOn(strategyCommands, "default").mockResolvedValue(first);
-  vi.spyOn(strategyCommands, "candidate").mockResolvedValue(saved);
-  render(<Harness withAi />, project); await waitFor(() => expect(ai.strategyDefault).toBe("ready"));
-  expect(ai.config.contextStrategy).toEqual(first.reference); expect(ai.config.sourceContext).toEqual(saved.sourceContext);
-  act(() => ai.setConfig(value => ({ ...value, model: "user model", maxRequests: 7, shareTerms: false, shareContext: true })));
-  expect(ai.config.contextStrategy).toEqual(first.reference);
-  defaultRead.mockResolvedValue({ ...first, revisionId: fixtureIdentity(2450), actionId: fixtureIdentity(2450), previousRevisionId: first.revisionId, reference: null, evaluationId: null });
-  act(() => reads.invalidate(["arena"])); expect(ai.config.model).toBe("user model"); expect(ai.config.contextStrategy).toEqual(first.reference);
-  act(() => { expect(ai.reset()).toBe(true); }); await waitFor(() => expect(ai.strategyDefault).toBe("ready"));
-  expect(ai.config.contextStrategy).toBeNull(); expect(ai.config.sourceContext).toEqual(defaultAiConfig.sourceContext);
-});
-
-it("does not overwrite input edited while a new draft's default read is pending", async () => {
-  const response = deferred<ContextStrategyDefaultRevision | null>(), saved = candidate();
-  vi.spyOn(strategyCommands, "default").mockReturnValue(response.promise); vi.spyOn(strategyCommands, "candidate").mockResolvedValue(saved);
-  render(<Harness withAi />, project);
-  const manual = { ...defaultAiConfig.sourceContext, neighbors: true, maxItems: 7 };
-  act(() => ai.setConfig(value => ({ ...value, sourceContext: manual, model: "Newer B" })));
-  await act(async () => { response.resolve(revision(saved)); });
-  expect(ai.config.model).toBe("Newer B"); expect(ai.config.sourceContext).toEqual(manual); expect(ai.config.contextStrategy).toBeNull();
-});
-
 it("compares complete strategy identity and detaches only edited context content", () => {
   const saved = candidate(), first: AiConfig = { ...defaultAiConfig, sourceContext: saved.sourceContext, contextStrategy: revision(saved).reference };
   expect(sameAiConfig(first, { ...first, contextStrategy: { ...revision(saved).reference!, revisionId: fixtureIdentity(2451) } })).toBe(false);
@@ -417,15 +391,6 @@ it.each([false, true])("orchestrates fixed Arena and Review requests with a real
   expect(owner.state.pending).toBeNull(); expect(owner.state.evaluationId).toBe(prepared.evaluation.evaluationId);
   expect(owner.state.prepared).toBeNull(); expect(owner.state.notice).toBe("recordedReadFailed");
 
-});
-
-it("rejects a default that became stale while its immutable candidate was being read", async () => {
-  const saved = candidate(), response = deferred<ContextStrategyCandidate>();
-  vi.spyOn(strategyCommands, "default").mockResolvedValue(revision(saved)); vi.spyOn(strategyCommands, "candidate").mockReturnValue(response.promise);
-  render(<Harness withAi />, project); await waitFor(() => expect(strategyCommands.candidate).toHaveBeenCalledOnce());
-  act(() => reads.invalidate(["arena"]));
-  await act(async () => { response.resolve(saved); });
-  expect(ai.strategyDefault).toBe("failed"); expect(ai.config.contextStrategy).toBeNull(); expect(ai.config.sourceContext).toEqual(defaultAiConfig.sourceContext);
 });
 
 it("keeps stale candidate evidence visible and refuses a new evaluation set", async () => {

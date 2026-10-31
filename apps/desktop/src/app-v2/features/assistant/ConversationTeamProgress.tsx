@@ -1,3 +1,4 @@
+import { createToolQuery } from "../../../../../../crates/plugin-sdk/javascript/tool-query.mjs";
 import { Disclosure } from "../../../design-system/Disclosure";
 import { useId, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { useTranslation } from "react-i18next";
@@ -5,12 +6,12 @@ import { AiOutputUsage } from "../../../AiUsage";
 import { commandFailure, CommandFailureDetails, type CommandFailure } from "../../../CommandFailure";
 import type { SessionRequest } from "../../../executionCommands";
 import { useSessionQuery, useSessionReads } from "../../../SessionReadProvider";
-import { workPlanCommands, type TeamDiscussionPost, type TeamExecutionView, type TeamMemberRole, type TeamWorkReference, type WorkPlanStatusView } from "../../../workPlanCommands";
+import { workPlanCommands, type TeamDiscussionPost, type TeamExecutionView, type TeamMemberRole, type TeamWorkReference, type TeamToolHistoryAttempt, checkedTeamToolHistoryTask, type WorkPlanStatusView } from "../../../workPlanCommands";
 import { Button } from "../../../design-system/Button";
 import { Banner, LoadingState } from "../../../design-system/Feedback";
 import { TokenizedText } from "../../../design-system/TokenizedText";
 import type { ConversationPlanLink } from "./conversationRun";
-import { conversationTeamCandidateTarget, readConversationTeamExecution, readConversationTeamHistory, readConversationTeamPost, type OpenConversationTeamCandidate } from "./conversationTeamReads";
+import { conversationTeamCandidateTarget, readConversationTeamToolResults, readConversationTeamExecution, readConversationTeamHistory, readConversationTeamPost, type OpenConversationTeamCandidate } from "./conversationTeamReads";
 import styles from "./ConversationTeamProgress.module.css";
 
 export interface ConversationTeamProgressProps {
@@ -75,6 +76,7 @@ function ToolReferences({ context, status, work, frame, visible, current }: {
       {read.error ? <ReadFailure label={t("toolsFailed")} error={read.error}/> : null}
       {page?.attempts.map(row => <article key={row.reference.attemptId}>
         <h6>{row.name}</h6><p>{t("toolsCounts", { succeeded: row.progress.succeeded, unknown: row.progress.unknown, saved: row.storedResultItems })}</p>
+        <ToolResultInspection context={context} planId={status.plan.planId} locale={status.plan.locale} work={work} row={row} binding={status.plan.tools?.entries.find(tool => tool.handle === row.toolHandle)?.binding} current={fresh}/>
         <Disclosure title={<>{t("diagnostics")}</>}><code>{row.reference.taskId}</code><p><code>{row.reference.attemptId}</code></p></Disclosure>
       </article>)}
       {fresh() && page?.attempts.length === 0 ? <p>{t("noTools")}</p> : null}
@@ -83,6 +85,52 @@ function ToolReferences({ context, status, work, frame, visible, current }: {
         <Button size="sm" disabled={!fresh() || after === null} onClick={() => { if (fresh()) setCursor({ frame, value: null }); }}>{t("firstTools")}</Button>
         <Button size="sm" disabled={!fresh() || !page?.nextAfter} onClick={() => { if (fresh() && page?.nextAfter) setCursor({ frame, value: page.nextAfter }); }}>{t("nextTools")}</Button>
       </div>
+    </> : null}
+  </section>;
+}
+
+function ToolResultInspection({ context, planId, locale, work, row, binding, current }: {
+  context: SessionRequest; planId: string; locale: string; work: TeamWorkReference; row: TeamToolHistoryAttempt; binding?: NonNullable<WorkPlanStatusView["plan"]["tools"]>["entries"][number]["binding"]; current: () => boolean;
+}) {
+  const { t } = useTranslation(undefined, { keyPrefix: "conversationTeam" }), reads = useSessionReads();
+  const presentation = useMemo(() => { try { return binding ? createToolQuery(binding) : null; } catch { return null; } }, [binding]);
+  const region = useRef<HTMLElement>(null), focusOrigin = useRef<HTMLButtonElement | null>(null), regionId = useId();
+  const [open, setOpen] = useState(false), [offset, setOffset] = useState(0), mounted = useRef(false), live = useRef(current);
+  useLayoutEffect(() => { live.current = current; });
+  useLayoutEffect(() => { mounted.current = true; return () => { mounted.current = false; }; }, []);
+  const present = () => mounted.current && !reads.retired && live.current() && checkedTeamToolHistoryTask(context, planId, work, row);
+  const key = ["conversation-team-tool-results", planId, locale, work, row, offset];
+  const read = useSessionQuery({ key, scopes: ["execution", "project"], enabled: open && current(), structuralSharing: false,
+    read: () => readConversationTeamToolResults(context, planId, work, row, locale, offset, present) });
+  const data = !read.error && present() ? read.data : undefined;
+  function fresh() { const query = reads.client.getQueryState(reads.key(key)); return present() && !!query && query.data === data && query.status === "success"
+    && query.fetchStatus === "idle" && !query.isInvalidated && query.error === null; }
+  useLayoutEffect(() => {
+    const origin = focusOrigin.current;
+    if (!origin || read.isPending || read.isFetching) return;
+    focusOrigin.current = null;
+    if (present() && document.activeElement === origin) region.current?.focus();
+  }, [read.isPending, read.isFetching, read.dataUpdatedAt, read.errorUpdatedAt]);
+  return <section id={regionId} ref={region} tabIndex={-1} aria-label={t("toolResults")}>
+    <Button size="sm" aria-controls={regionId} aria-expanded={open} disabled={!current() || !checkedTeamToolHistoryTask(context, planId, work, row)}
+      onClick={event => { if (present()) { focusOrigin.current = open ? null : event.currentTarget; setOpen(value => !value); } }}>{t(open ? "hideToolResults" : "readToolResults")}</Button>
+    {open ? <><p>{t("toolResultsHelp")}</p>
+      {read.isPending || read.isFetching ? <p role="status">{t("toolsLoading")}</p> : null}
+      {read.error ? <ReadFailure label={t("toolsFailed")} error={read.error}/> : null}
+      {data ? data.detail.items.map(item => { const output = data.outputs.find(output => output.itemId === item.status.itemId && output.resultId === item.resultId);
+        let rows: string[][] | null = null;
+        if (presentation && output?.outcome === "succeeded") { try { rows = presentation.entries(output.output); } catch { /* Keep the saved original output available for inspection. */ } }
+        return <article key={item.status.itemId}><h6>{item.scope.locale}</h6><p>{t(`execution.${item.status.execution}`)} · {t(`validation.${item.status.validation}`)}</p>
+          {output?.outcome === "succeeded" ? presentation && rows !== null ? rows.length ? <table><thead><tr>{presentation.query.output.columns.map((column, index) => <th scope="col" key={index}>{column.label}</th>)}</tr></thead>
+            <tbody>{rows.map((row, index) => <tr key={index}>{row.map((cell, column) => <td key={column}><TokenizedText text={cell}/></td>)}</tr>)}</tbody></table> : <p>{presentation.query.output.emptyDescription}</p>
+            : <Disclosure title={<>{t("toolResultOriginal")}</>}><pre className={styles.text}><TokenizedText text={JSON.stringify(output.output, null, 2)}/></pre></Disclosure> : <p>{t("toolResultAbsent")}</p>}
+          {output?.diagnostic ? <p>{output.diagnostic.code}</p> : null}
+          {output ? <Disclosure title={<>{t("diagnostics")}</>}><pre>{JSON.stringify({ taskId: row.reference.taskId, attemptId: output.attemptId, itemId: output.itemId,
+            resultId: output.resultId, toolHandle: row.toolHandle, capabilityId: output.capabilityId, capabilityVersion: output.capabilityVersion, plugin: output.plugin?.channel }, null, 2)}</pre></Disclosure> : null}
+        </article>; }) : null}
+      <div className={styles.actions}><Button size="sm" disabled={!present() || read.isFetching} onClick={() => { if (present()) void read.refetch(); }}>{t("refreshToolResults")}</Button>
+        <Button size="sm" disabled={!fresh() || offset === 0} onClick={() => { if (fresh()) setOffset(0); }}>{t("firstToolResults")}</Button>
+        <Button size="sm" disabled={!fresh() || data?.detail.nextOffset == null} onClick={() => { if (fresh() && data?.detail.nextOffset != null) setOffset(data.detail.nextOffset); }}>{t("nextToolResults")}</Button></div>
     </> : null}
   </section>;
 }

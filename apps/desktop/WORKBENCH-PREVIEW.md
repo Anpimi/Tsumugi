@@ -2,21 +2,14 @@
 
 ## Desktop workspace
 
-The new desktop entry reads existing project folders through the application's normal Core and Host commands. It supports entry views, project-wide text search, language selection, filters for entries with or without a selected translation, and details. An explicitly selected empty translation belongs to the selected filter. Each view keeps its own unsubmitted search and position; views share the project's read cache. Project switching and window closing go through the existing session exit checks.
+The default desktop entry opens or creates projects and provides entries, knowledge, runs, delivery, and the decision inbox. It uses the normal Core and Host commands and the application's existing project and local draft storage. The standard application identifier is `com.tsumugi.workbench`; preferences and local journals from earlier separate preview or QA profiles are not copied automatically.
 
 ```sh
-pnpm --dir apps/desktop tauri:workbench
+pnpm --dir apps/desktop tauri dev
+pnpm --dir apps/desktop build
 ```
 
-This entry uses a separate application identifier and local preferences. It does not migrate project storage or replace the default desktop entry. Open an existing project folder; there is no project creation or editing in this entry yet. Agent chat, review actions, delivery, and durable draft recovery are still being connected. The browser build explains that project files require the desktop app.
-
-```sh
-pnpm --dir apps/desktop build:workbench
-```
-
-Pages use opaque cursors tied to a fixed query and read basis. A content change or expired scope requires an explicit refresh; paging never silently captures a different result set. Each page response contains at most 100 rows and 256 KiB of encoded JSON. Text previews contain at most 256 Unicode scalars and report truncation; details keep the complete text.
-
-Rows include candidate counts, manual protection, current QA coverage and findings, applicable terminology, and source or resource changes from the existing Core owners. Reference lists contain at most eight items and report their full count and truncation. Selection, human review, QA, and applicability stay separate: saving a translation does not approve it, and missing current check evidence does not mean it passed. Resource-change history can remain after a human recheck; the current blockers indicate whether further review is required. The entry list shows the relevant candidate, protection, terminology, and change notices. Full editing and review actions remain in the existing workbench.
+The browser build explains that project files require the desktop app. For editing and local recovery, see [Translation Import and Editing](../../docs/translation-import.md) and [Local draft journal](../../docs/local-drafts.md). For work plans, reviews and delivery, see [Agent Work Plans](../../docs/work-plans.md), [Review and QA](../../docs/review-qa.md) and [Local Build and Export](../../docs/build-release.md).
 
 ## Visual samples
 
@@ -41,7 +34,7 @@ pnpm --dir apps/desktop lint:workbench
 pnpm --dir apps/desktop check:workbench-contrast
 ```
 
-The preview has its own HTML entry and build output. The desktop application's production entry still uses the existing UI. Shared components live in `src/design-system`; screen samples live in `src/app-v2/preview`. Screen code uses shared controls, semantic colors, and type tokens. ESLint and Stylelint enforce those limits in the new screen directory.
+The visual preview has its own HTML entry and build output; the desktop application's production entry opens the workspace described above. Shared components live in `src/design-system`; screen samples live in `src/app-v2/preview`. Screen code uses shared controls, semantic colors, and type tokens. ESLint and Stylelint enforce those limits in the new screen directory.
 
 The contrast check reads the actual theme tokens. Tertiary text is limited to plain surfaces; selected and hovered row metadata uses secondary text. Untranslated status marks use the non-text contrast threshold. This keeps the original palette while making text readable on each background.
 

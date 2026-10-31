@@ -17,13 +17,13 @@ import { useWorkbenchCommands, type CommandAvailability, type ReleaseWorkflowCom
   type ReleaseWorkflowConsentCommandPayload, type ReleaseWorkflowPrepareCommandPayload,
   type ExecutionCancellationCommandPayload, type ExecutionCancellationRetryCommandPayload } from "./workbenchCommands";
 
-export function ArtifactCheckWorkflowControls({ project, open, disabled, detail, buildKey, readProof, presentation = "legacy", canInteract }: {
+export function ArtifactCheckWorkflowControls({ project, open, disabled, detail, buildKey, readProof, canInteract }: {
   project: ProjectView; open: boolean; disabled: boolean; detail: AttemptDetail | null;
-  presentation?: "legacy" | "workbench"; canInteract?: () => boolean;
+  canInteract?: () => boolean;
   buildKey: readonly unknown[]; readProof: () => ReleaseReadProof;
 }) {
   const { t } = useTranslation(), owner = useReleaseDraftSession(), reads = useSessionReads(), registry = useWorkbenchCommands(), tasks = useExecutionTaskSession();
-  const mounted = useRef(false), errorRegion = useRef<HTMLDivElement>(null);
+  const mounted = useRef(false);
   useLayoutEffect(() => { mounted.current = true; return () => { mounted.current = false; }; }, []);
   const capture = owner.workflow, request = owner.workflowReadRequest();
   const key = request ? owner.workflowReadKey(request) : ["release-check-workflow", null];
@@ -36,7 +36,6 @@ export function ArtifactCheckWorkflowControls({ project, open, disabled, detail,
     && !sameArtifactWorkflowMaterialization(capture.review, observation.view);
   // A read can settle an original uncertain command. It never starts a step.
   useEffect(() => { if (open && request && observation) owner.observeWorkflow(request, observation); });
-  useEffect(() => { if (open && status.error && presentation === "legacy") errorRegion.current?.focus(); }, [open, status.error, presentation]);
   // The finite Host intent is not a reliable change event. Poll only its read
   // projection while visible and progressing; errors require an explicit retry.
   useEffect(() => {
@@ -156,7 +155,7 @@ export function ArtifactCheckWorkflowControls({ project, open, disabled, detail,
   }
   if (!detail && !capture) return null;
   const allApproved = !!capture?.review?.steps.length && capture.review.steps.every(item => capture.approved.includes(item.step.attemptId));
-  return <section className={presentation === "workbench" ? styles.root : undefined} aria-label={t("releaseWorkflow.title")}
+  return <section className={styles.root} aria-label={t("releaseWorkflow.title")}
     onChangeCapture={event => { if (canInteract?.() === false) { event.preventDefault(); event.stopPropagation(); } }}
     onClickCapture={event => { if (canInteract?.() === false) { event.preventDefault(); event.stopPropagation(); } }}>
     <h4>{t("releaseWorkflow.title")}</h4><p>{t("releaseWorkflow.help")}</p>
@@ -167,7 +166,7 @@ export function ArtifactCheckWorkflowControls({ project, open, disabled, detail,
         && (observation?.view?.phase === "preparing" || capture.pending === "prepare" && !capture.uncertain && !owner.failure)
         ? <p role="status">{t("releaseWorkflow.materializing")}</p> : null}
       {capture.pending || capture.stopPending ? <p role="status">{t("releaseWorkflow.pending")}</p> : null}
-      {status.error ? <Banner tone="warning" role="alert" ref={errorRegion} tabIndex={-1}><p>{t("releaseWorkflow.readFailed")}</p><CommandFailureDetails failure={commandFailure(status.error)}/></Banner> : null}
+      {status.error ? <Banner tone="warning" role="alert" tabIndex={-1}><p>{t("releaseWorkflow.readFailed")}</p><CommandFailureDetails failure={commandFailure(status.error)}/></Banner> : null}
       {materializationChanged ? <p role="alert">{t("releaseWorkflow.readFailed")}</p> : null}
       {observation?.view ? <p role="status">{t(`releaseWorkflow.phase.${observation.view.phase}`)}</p> : null}
       {observation?.view?.error ? <CommandFailureDetails failure={observation.view.error}/> : null}
@@ -194,7 +193,7 @@ export function ArtifactCheckWorkflowControls({ project, open, disabled, detail,
         {proof?.checks ? <details><summary>{t("execution.diagnostic")}</summary><pre>{JSON.stringify(proof.checks, null, 2)}</pre></details> : null}
         {item.error ? <CommandFailureDetails failure={item.error}/> : null}
       </li>; })}</ol> : null}
-      {!capture.start && !capture.stop ? <Button variant={presentation === "workbench" ? "secondary" : "primary"} disabled={!controlAvailability(controlPayload(), "run").enabled} onClick={() => dispatchControl("release.run-check-workflow")}>{t("releaseWorkflow.run")}</Button> : null}
+      {!capture.start && !capture.stop ? <Button variant="secondary" disabled={!controlAvailability(controlPayload(), "run").enabled} onClick={() => dispatchControl("release.run-check-workflow")}>{t("releaseWorkflow.run")}</Button> : null}
       <Button variant="secondary" disabled={!controlAvailability(controlPayload(), "stop").enabled} onClick={() => dispatchControl("release.stop-check-workflow")}>{t("releaseWorkflow.stop")}</Button>
       <p>{t("releaseWorkflow.stopHelp")}</p>
       {task ? <section aria-label={t("releaseWorkflow.currentTask")}><p>{t("releaseWorkflow.currentTask")} · {view?.steps.find(item => item.step.attemptId === task.attemptId)?.step.locale}</p><details><summary>{t("execution.diagnostic")}</summary><code>{task.taskId}</code></details><Button disabled={!cancelAvailability(cancellation()).enabled} onClick={() => { const payload = cancellation(); if (payload) registry.dispatch("release.cancel-workflow-task", scope, payload); }}>{t("execution.cancel")}</Button>

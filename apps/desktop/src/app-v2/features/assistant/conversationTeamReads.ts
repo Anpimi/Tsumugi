@@ -3,7 +3,7 @@ import { executionCommands, type SessionRequest } from "../../../executionComman
 import type { TeamMemberAuthor, TeamMemberRole, TeamWorkView } from "../../../generated/ai.responses";
 import { jsonIdentity } from "../../../pluginToolChoices";
 import { translationCommands, type TranslationRevision } from "../../../translationCommands";
-import { workPlanCommands, type TeamDiscussionPost, type TeamExecutionView, type TeamHistoryPage, type WorkPlanStatusView } from "../../../workPlanCommands";
+import { checkedTeamToolHistoryTask, workPlanCommands, type TeamDiscussionPost, type TeamExecutionView, type TeamHistoryPage, type WorkPlanStatusView } from "../../../workPlanCommands";
 import { runMatchesLink, type ConversationPlanLink } from "./conversationRun";
 
 const pageSize = 16;
@@ -163,4 +163,41 @@ export async function resolveConversationTeamCandidate(context: SessionRequest, 
   match(output.projectId === request.projectId && output.attemptId === receipt.attemptId && output.itemId === revision.itemId && output.resultId === revision.resultId
     && output.outcome === "succeeded" && output.capabilityId === "tsumugi.ai.team-work" && output.capabilityVersion === "1" && jsonIdentity(output.output) === jsonIdentity(work.output));
   return revision;
+}
+
+/** Inspect one page of an original recorded tool task. No scope or permit is recreated. */
+export async function readConversationTeamToolResults(context: SessionRequest, planId: string, work: import("../../../workPlanCommands").TeamWorkReference,
+  row: import("../../../workPlanCommands").TeamToolHistoryAttempt, locale: string, offset: number, current: () => boolean) {
+  const check = () => match(current() && checkedTeamToolHistoryTask(context, planId, work, row));
+  check();
+  match(Number.isInteger(offset) && offset >= 0 && offset < row.unitIds.length && row.unitIds.length <= 100);
+  const original = structuredClone(row), limit = 16;
+  // Core verifies the fixed input digest. The decoded history row binds that
+  // digest to the original work and tool handle, rather than a caller-made ID.
+  const proof = await executionCommands.pluginStartAction({ ...context, attemptId: original.reference.attemptId, inputDigest: original.reference.inputDigest, operation: "plugin-tool-query" });
+  check();
+  match(proof && proof.projectId === context.projectId && proof.taskId === original.reference.taskId && proof.attemptId === original.reference.attemptId
+    && proof.inputDigest === original.reference.inputDigest);
+  const detail = await executionCommands.attempt({ ...context, attemptId: original.reference.attemptId, offset, limit });
+  check();
+  const count = Math.min(limit, original.unitIds.length - offset), next = offset + count;
+  match(detail.taskId === original.reference.taskId && detail.attemptId === original.reference.attemptId && detail.operation === "plugin-tool-query"
+    && detail.recovery.attemptId === original.reference.attemptId && detail.progress.total === original.unitIds.length && detail.items.length === count
+    && detail.nextOffset === (next < original.unitIds.length ? next : null)
+    && new Set(detail.items.map(item => item.status.itemId)).size === count && new Set(detail.items.map(item => item.scope.id)).size === count
+    && detail.items.every(item => item.scope.kind === "translation-unit" && original.unitIds.includes(item.scope.id) && item.scope.locale === locale));
+  const outputs = await Promise.all(detail.items.filter(item => item.resultId !== null).map(async item => {
+    check();
+    const output = await executionCommands.output({ ...context, attemptId: original.reference.attemptId, resultId: item.resultId! });
+    check();
+    match(output.projectId === context.projectId && output.attemptId === original.reference.attemptId && output.itemId === item.status.itemId
+      && output.resultId === item.resultId && output.plugin);
+    const plugin = output.plugin, invocation = plugin.result;
+    match(invocation.context.projectId === context.projectId && invocation.context.attemptId === original.reference.attemptId
+      && invocation.context.itemId === item.status.itemId && invocation.context.dispatchId === output.dispatchToken
+      && invocation.context.inputDigest === original.reference.inputDigest && invocation.resultId === output.resultId
+      && jsonIdentity(invocation.provider) === jsonIdentity(plugin.channel));
+    return output;
+  }));
+  check(); return { detail, outputs };
 }

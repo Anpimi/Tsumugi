@@ -14,7 +14,7 @@ import { reviewDraftKey } from "../../../ReviewDraftSession";
 import { sameReviewBasis } from "../../../reviewDiagnosticNavigation";
 import { useSessionReads } from "../../../SessionReadProvider";
 import { ProjectFactPreview, SourceContextChoice, SourceContextPreview } from "../../../SourceContextPreparation";
-import type { CommandAvailability } from "../../../workbenchCommands";
+import { semanticCommandId, type CommandAvailability, type SemanticEntryCommandId } from "../../../workbenchCommands";
 import { Button } from "../../../design-system/Button";
 import { Banner } from "../../../design-system/Feedback";
 import { TextInput } from "../../../design-system/Field";
@@ -28,19 +28,21 @@ import styles from "./EntrySemanticPanel.module.css";
 
 const unavailable: CommandAvailability = { enabled: false, reason: "unavailable" };
 function sameCapture(left: EntrySemanticCapture, right: EntrySemanticCapture) {
-  return left.unitId === right.unitId && left.locale === right.locale && left.sourceSnapshotId === right.sourceSnapshotId && left.sourceRevisionId === right.sourceRevisionId
+  return left.targets === right.targets && left.unitId === right.unitId && left.locale === right.locale && left.sourceSnapshotId === right.sourceSnapshotId && left.sourceRevisionId === right.sourceRevisionId
     && left.selectionId === right.selectionId && left.revisionId === right.revisionId && left.basis === right.basis && left.sequence === right.sequence
     && sameReviewBasis(left.basisEvidence, right.basisEvidence);
 }
 
 /** Current saved content supplies evidence; the original project owners keep configuration and requests. */
-export default function EntrySemanticPanel({ project, target, owner, drafts, commands, gate, viewId, disabled, visible, parentDialogId, read }: EntrySemanticPanelProps) {
+export default function EntrySemanticPanel({ project, target, owner, drafts, commands, gate, viewId, disabled, visible, parentDialogId, read, batchTargets }: EntrySemanticPanelProps) {
   const { t } = useTranslation(), { t: w } = useTranslation(undefined, { keyPrefix: "workbenchV2" }), reads = useSessionReads(), tasks = useExecutionTaskSession();
+  const batch = batchTargets !== undefined, selectedTargets = batchTargets ?? [target];
+  const commandId = <Id extends SemanticEntryCommandId>(id: Id) => semanticCommandId(id, batch);
   const semantic = owner.semantic, state = semantic.state, context = executionContext(project), commandScope = { ...context, area: "translation" as const };
   useSyncExternalStore(gate.subscribe, gate.getSnapshot, gate.getSnapshot);
   useSyncExternalStore(drafts.subscribe, drafts.getSnapshot, drafts.getSnapshot);
   const scope = JSON.stringify([context.projectId, context.sessionToken, target.unitId, target.locale, viewId, parentDialogId]);
-  const identity = JSON.stringify([scope, target.basis, target.basisEvidence, target.sourceText, target.translationText]);
+  const identity = JSON.stringify([scope, target.basis, target.basisEvidence, target.sourceText, target.translationText, batchTargets]);
   const mounted = useRef(false), flight = useRef(false), root = useRef<HTMLElement>(null), feedbackRegion = useRef<HTMLDivElement>(null), previewRegion = useRef<HTMLElement>(null);
   const focus = useRef<{ identity: string; origin: Element | null; preparation: boolean } | null>(null), bound = useRef<{ data: unknown; version: number; identity: string } | null>(null);
   const live = useRef({ scope, identity, disabled, visible });
@@ -50,6 +52,7 @@ export default function EntrySemanticPanel({ project, target, owner, drafts, com
   useLayoutEffect(() => { live.current = { scope, identity, disabled, visible }; });
   useLayoutEffect(() => { mounted.current = true; return () => { mounted.current = false; gate.releaseOwner(inputOwner); }; }, [gate, inputOwner]);
   useLayoutEffect(() => { if (!visible) gate.releaseOwner(inputOwner); }, [visible, gate, inputOwner]);
+  const preparedRead = useRef<{ preparation: EntrySemanticPreparation; version: number; data: unknown } | null>(null);
   const queryIdentity = JSON.stringify(read.key);
   const parent = useMemo(() => {
     const cache = reads.client.getQueryCache(), filters = { queryKey: reads.key(read.key), exact: true };
@@ -73,7 +76,7 @@ export default function EntrySemanticPanel({ project, target, owner, drafts, com
   }
   function currentRead() { return semanticReadCurrent(reads, read.key, read.data); }
   useEffect(() => {
-    if (!present() || !currentRead() || !parentState || !project.metadata.targetLocales.includes(target.locale)) return;
+    if (batch || !present() || !currentRead() || !parentState || !project.metadata.targetLocales.includes(target.locale)) return;
     const before = owner.current(), selected = before.selected, projection = before.projection;
     if (bound.current?.identity === identity && bound.current.data === read.data && bound.current.version === parentState.dataUpdateCount
       && projection?.unitId === target.unitId && projection.locale === target.locale && projection.basis === target.basis) return;
@@ -84,12 +87,14 @@ export default function EntrySemanticPanel({ project, target, owner, drafts, com
   });
   function capture(): EntrySemanticCapture | null {
     const current = semantic.current(), projection = owner.current().projection, targets = semantic.targets();
-    if (current.mode !== "current" || !target.selectionId || !target.revisionId || target.translationText === null || !projection
-      || projection.unitId !== target.unitId || projection.locale !== target.locale || projection.basis !== target.basis
-      || projection.sourceText !== target.sourceText || projection.translationText !== target.translationText || !sameReviewBasis(projection.basisEvidence, target.basisEvidence)
-      || targets.length !== 1 || targets[0].unitId !== target.unitId || targets[0].locale !== target.locale) return null;
+    if (current.mode !== (batch ? "chosen" : "current") || !selectedTargets.length || selectedTargets.some(value => !value.selectionId || !value.revisionId || value.translationText === null
+      || !project.metadata.targetLocales.includes(value.locale)) || targets.length !== selectedTargets.length
+      || targets.some(value => !selectedTargets.some(selected => selected.unitId === value.unitId && selected.locale === value.locale))) return null;
+    if (!batch && (!projection || projection.unitId !== target.unitId || projection.locale !== target.locale || projection.basis !== target.basis
+      || projection.sourceText !== target.sourceText || projection.translationText !== target.translationText || !sameReviewBasis(projection.basisEvidence, target.basisEvidence))) return null;
     return { unitId: target.unitId, locale: target.locale, sourceSnapshotId: target.sourceSnapshotId, sourceRevisionId: target.sourceRevisionId,
-      selectionId: target.selectionId, revisionId: target.revisionId, basis: target.basis, basisEvidence: target.basisEvidence, sequence: current.sequence };
+      selectionId: target.selectionId!, revisionId: target.revisionId!, basis: target.basis, basisEvidence: target.basisEvidence, sequence: current.sequence,
+      ...(batch ? { targets: JSON.stringify(selectedTargets) } : {}) };
   }
   function matches(payload: EntrySemanticCapture) { const current = capture(); return current !== null && sameCapture(payload, current); }
   function idle() {
@@ -98,14 +103,14 @@ export default function EntrySemanticPanel({ project, target, owner, drafts, com
       && !current.batchRunning && !semantic.reserved() && shared.hydration === "ready" && !shared.mutationReserved;
   }
   function preparationMatches(preparation: EntrySemanticPreparation) {
-    const current = capture(), items = preparation.value.preview.items;
-    return current !== null && semantic.current().prepared === preparation && semantic.preparationCurrent(preparation) && items.length === 1
-      && items[0].source.unitId === target.unitId && items[0].source.targetLocale === target.locale && items[0].basis === target.basis
-      && sameReviewBasis(items[0].reviewBasis, target.basisEvidence) && items[0].source.sourceText === target.sourceText && items[0].translationText === target.translationText;
+    const current = capture(), items = preparation.value.preview.items, query = reads.client.getQueryState(reads.key(read.key)), evidence = preparedRead.current;
+    return current !== null && evidence?.preparation === preparation && evidence.data === read.data && query?.dataUpdateCount === evidence.version && semantic.current().prepared === preparation && semantic.preparationCurrent(preparation) && items.length === selectedTargets.length
+      && selectedTargets.every(target => items.some(item => item.source.unitId === target.unitId && item.source.targetLocale === target.locale && item.basis === target.basis
+        && sameReviewBasis(item.reviewBasis, target.basisEvidence) && item.source.sourceText === target.sourceText && item.translationText === target.translationText));
   }
   function prepareAvailability(payload: EntrySemanticPreparePayload | undefined): CommandAvailability {
     const config = semantic.current().config;
-    return idle() && currentRead() && !!payload && matches(payload) && semantic.current().rules.length > 0 && validAiLimits(config) && config.endpoint.trim() !== "" && config.model.trim() !== "" ? { enabled: true } : unavailable;
+    return idle() && currentRead() && !!payload && matches(payload) && semantic.current().rules.length > 0 && selectedTargets.length <= config.maxItems && validAiLimits(config) && config.endpoint.trim() !== "" && config.model.trim() !== "" ? { enabled: true } : unavailable;
   }
   function startAvailability(payload: EntrySemanticStartPayload | undefined): CommandAvailability {
     return idle() && currentRead() && !!payload && matches(payload) && preparationMatches(payload.preparation) && semantic.current().consent ? { enabled: true } : unavailable;
@@ -121,7 +126,12 @@ export default function EntrySemanticPanel({ project, target, owner, drafts, com
     const active = document.activeElement, origin = active && root.current?.contains(active) ? active : null;
     flight.current = true; setWorking(true); setFeedback(null);
     try {
-      if (payload.kind === "entry-semantic-prepare") await semantic.prepare(proof); else await semantic.start(proof);
+      if (payload.kind === "entry-semantic-prepare") {
+        preparedRead.current = null;
+        await semantic.prepare(proof);
+        const prepared = semantic.current().prepared, query = reads.client.getQueryState(reads.key(read.key));
+        if (prepared && proof() && query) preparedRead.current = { preparation: prepared, version: query.dataUpdateCount, data: read.data };
+      } else await semantic.start(proof);
       if (sameView()) {
         if (payload.kind === "entry-semantic-prepare") { const prepared = semantic.current().prepared;
           setFeedback({ scope, kind: proof() && prepared && preparationMatches(prepared) ? "prepared" : "changed" }); }
@@ -133,7 +143,10 @@ export default function EntrySemanticPanel({ project, target, owner, drafts, com
   function rowFor(payload: EntrySemanticRecordPayload) {
     const value = resultCurrent();
     if (!value || value.detail.taskId !== payload.taskId || value.detail.attemptId !== payload.attemptId || result.record?.dataUpdateCount !== payload.queryVersion) return null;
-    const row = value.rows.find(row => row.itemId === payload.itemId), item = value.detail.items.find(item => item.status.itemId === payload.itemId);
+    const row = value.rows.find(row => row.itemId === payload.itemId);
+    const target = selectedTargets.find(target => target.unitId === row?.item.source.unitId && target.locale === row.item.source.targetLocale);
+    if (!target) return null;
+    const item = value.detail.items.find(item => item.status.itemId === payload.itemId);
     const unit = value.detail.recovery.units.find(unit => unit.unitId === payload.recoveryUnitId && unit.itemIds.length === 1 && unit.itemIds[0] === payload.itemId
       && unit.resultIds.length === 1 && unit.resultIds[0] === payload.resultId && unit.actions.includes("adopt-result"));
     return row?.current && row.output && !row.run && item?.resultId === payload.resultId && row.item.source.unitId === target.unitId && row.item.source.targetLocale === target.locale
@@ -172,14 +185,14 @@ export default function EntrySemanticPanel({ project, target, owner, drafts, com
     if (!visible) return;
     const meta = { category: "review" as const, scope: commandScope, binding: null, confirmation: "none" as const };
     const remove = [
-      commands.register({ ...meta, id: "review.entry-semantic-current", nameKey: "workbenchV2.entrySemanticUseCurrent", payloadKind: "entry-semantic-scope", risk: "changes-view", availability: scopeAvailability, handler: value => { if (scopeAvailability(value).enabled) semantic.setMode("current"); } }),
-      commands.register({ ...meta, id: "review.entry-semantic-prepare", nameKey: "semanticReview.prepare", payloadKind: "entry-semantic-prepare", risk: "captures-ai", availability: prepareAvailability, handler: value => { void perform(value); } }),
-      commands.register({ ...meta, id: "review.entry-semantic-start", nameKey: "semanticReview.start", payloadKind: "entry-semantic-start", risk: "runs-ai", availability: startAvailability, handler: value => { void perform(value); } }),
-      commands.register({ ...meta, id: "review.entry-semantic-consent", nameKey: "semanticReview.consent", payloadKind: "entry-semantic-consent", risk: "changes-view", availability: consentAvailability, handler: value => { if (consentAvailability(value).enabled) semantic.setConsent(value.approved); } }),
-      commands.register({ ...meta, id: "review.entry-semantic-show-attempt", nameKey: "semanticReview.history", payloadKind: "entry-semantic-read", risk: "changes-view", availability: value => readAvailability(value, true), handler: value => { if (readAvailability(value, true).enabled) semantic.showAttempt(value.attemptId); } }),
-      commands.register({ ...meta, id: "review.entry-semantic-refresh", nameKey: "semanticReview.refresh", payloadKind: "entry-semantic-read", risk: "reads-review", availability: value => readAvailability(value, false), handler: value => { if (readAvailability(value, false).enabled) void result.query.refetch(); } }),
-      commands.register({ ...meta, id: "review.entry-semantic-record", nameKey: "semanticReview.record", payloadKind: "entry-semantic-record", risk: "captures-execution-action", availability: recordAvailability, handler: value => { void record(value); } }),
-      commands.register({ ...meta, id: "review.entry-semantic-cancel", nameKey: "semanticReview.stop", payloadKind: "entry-semantic-cancel", risk: "cancels-execution-task", availability: cancelAvailability, handler: value => { void cancel(value); } }),
+      commands.register({ ...meta, id: commandId("review.entry-semantic-current"), nameKey: "workbenchV2.entrySemanticUseCurrent", payloadKind: "entry-semantic-scope", risk: "changes-view", availability: scopeAvailability, handler: value => { if (scopeAvailability(value).enabled) semantic.setMode("current"); } }),
+      commands.register({ ...meta, id: commandId("review.entry-semantic-prepare"), nameKey: "semanticReview.prepare", payloadKind: "entry-semantic-prepare", risk: "captures-ai", availability: prepareAvailability, handler: value => { void perform(value); } }),
+      commands.register({ ...meta, id: commandId("review.entry-semantic-start"), nameKey: "semanticReview.start", payloadKind: "entry-semantic-start", risk: "runs-ai", availability: startAvailability, handler: value => { void perform(value); } }),
+      commands.register({ ...meta, id: commandId("review.entry-semantic-consent"), nameKey: "semanticReview.consent", payloadKind: "entry-semantic-consent", risk: "changes-view", availability: consentAvailability, handler: value => { if (consentAvailability(value).enabled) semantic.setConsent(value.approved); } }),
+      commands.register({ ...meta, id: commandId("review.entry-semantic-show-attempt"), nameKey: "semanticReview.history", payloadKind: "entry-semantic-read", risk: "changes-view", availability: value => readAvailability(value, true), handler: value => { if (readAvailability(value, true).enabled) semantic.showAttempt(value.attemptId); } }),
+      commands.register({ ...meta, id: commandId("review.entry-semantic-refresh"), nameKey: "semanticReview.refresh", payloadKind: "entry-semantic-read", risk: "reads-review", availability: value => readAvailability(value, false), handler: value => { if (readAvailability(value, false).enabled) void result.query.refetch(); } }),
+      commands.register({ ...meta, id: commandId("review.entry-semantic-record"), nameKey: "semanticReview.record", payloadKind: "entry-semantic-record", risk: "captures-execution-action", availability: recordAvailability, handler: value => { void record(value); } }),
+      commands.register({ ...meta, id: commandId("review.entry-semantic-cancel"), nameKey: "semanticReview.stop", payloadKind: "entry-semantic-cancel", risk: "cancels-execution-task", availability: cancelAvailability, handler: value => { void cancel(value); } }),
     ];
     return () => remove.forEach(dispose => dispose());
   });
@@ -200,20 +213,21 @@ export default function EntrySemanticPanel({ project, target, owner, drafts, com
     queryVersion: result.record?.dataUpdateCount ?? null, requestId: null } : null;
   const failure = failureReason(state.failure), pairLimitValid = validAiLimits(state.config), feedbackKind = feedback?.scope === scope ? feedback.kind : null;
   const setConfig = (value: Parameters<typeof semantic.setConfig>[0]) => { if (inputAllowed()) semantic.setConfig(value); };
-  const resultRows = view?.rows.filter(row => row.item.source.unitId === target.unitId && row.item.source.targetLocale === target.locale) ?? [];
+  const resultRows = view?.rows.filter(row => selectedTargets.some(target => row.item.source.unitId === target.unitId && row.item.source.targetLocale === target.locale)) ?? [];
   if (!visible) return null;
   return <section className={styles.section} ref={root} aria-label={w("entrySemanticTitle")}
     onCompositionStartCapture={() => gate.setComposing(inputOwner, true)} onCompositionEndCapture={() => gate.setComposing(inputOwner, false)}>
     <h3>{w("entrySemanticTitle")}</h3><p className={styles.meta}>{w("entrySemanticHelp")}</p>
     {!currentRead() ? <Banner tone="warning" role="status">{w("entrySemanticReadChanged")}</Banner> : null}
-    {!target.selectionId || target.translationText === null ? <Banner tone="info">{w("entrySemanticNoSelection")}</Banner> : null}
-    {state.mode !== "current" ? <Banner tone="warning"><p>{w("entrySemanticCurrentOnly")}</p><Button size="sm" disabled={!scopeAvailability(scopePayload).enabled}
-      onClick={() => commands.dispatch("review.entry-semantic-current", commandScope, scopePayload)}>{w("entrySemanticUseCurrent")}</Button></Banner> : null}
+    {selectedTargets.some(target => !target.selectionId || target.translationText === null) ? <Banner tone="info">{w("entrySemanticNoSelection")}</Banner> : null}
+    {!batch && state.mode !== "current" ? <Banner tone="warning"><p>{w("entrySemanticCurrentOnly")}</p><Button size="sm" disabled={!scopeAvailability(scopePayload).enabled}
+      onClick={() => commands.dispatch(commandId("review.entry-semantic-current"), commandScope, scopePayload)}>{w("entrySemanticUseCurrent")}</Button></Banner> : null}
     <Button size="sm" aria-expanded={state.expanded} aria-controls={`${inputOwner}-preparation`} disabled={!sameView()}
       onClick={() => { if (sameView()) semantic.setExpanded(!semantic.current().expanded); }}>{t("semanticReview.prepareTitle")}</Button>
     <div id={`${inputOwner}-preparation`} hidden={!state.expanded}>
     <fieldset className={styles.configuration} disabled={!inputAllowed()}><legend>{t("semanticReview.prepareTitle")}</legend>
-      <p>{target.nativeKey} → {target.locale}</p>
+      <p>{batch ? t("semanticReview.pairs", { count: selectedTargets.length }) : `${target.nativeKey} → ${target.locale}`}</p>
+      {selectedTargets.length > state.config.maxItems ? <p role="alert">{t("semanticReview.errors.pairs")}</p> : null}
       <div className={styles.checks}>{(["meaning", "style"] as const).map(rule => <label className={styles.check} key={rule}><TextInput className={styles.checkbox} type="checkbox" checked={state.rules.includes(rule)}
         onChange={event => { if (inputAllowed()) semantic.setRules(event.target.checked ? [...state.rules, rule] : state.rules.filter(value => value !== rule)); }}/>{t(`semanticReview.rule.${rule}`)}</label>)}</div>
       <ModelConnectionPicker config={state.config} label={t("connections.choose")} active={visible} disabled={!inputAllowed()} editSeq={state.sequence}
@@ -228,7 +242,7 @@ export default function EntrySemanticPanel({ project, target, owner, drafts, com
     </fieldset>
     {!state.config.endpoint.trim() || !state.config.model.trim() ? <p className={styles.meta}>{w("entrySemanticChooseConnection")}</p> : null}
     {!state.rules.length ? <p role="status">{t("semanticReview.errors.rules")}</p> : null}
-    <Button size="sm" disabled={!preparePayload || !prepareAvailability(preparePayload).enabled} onClick={() => { if (preparePayload) commands.dispatch("review.entry-semantic-prepare", commandScope, preparePayload); }}>{t("semanticReview.prepare")}</Button>
+    <Button size="sm" disabled={!preparePayload || !prepareAvailability(preparePayload).enabled} onClick={() => { if (preparePayload) commands.dispatch(commandId("review.entry-semantic-prepare"), commandScope, preparePayload); }}>{t("semanticReview.prepare")}</Button>
     {prepared ? <section ref={previewRegion} tabIndex={-1} className={styles.preview} aria-label={t("semanticReview.preview")}><h4>{t("semanticReview.preview")}</h4>
       {!fresh ? <Banner tone="warning">{w("entrySemanticReadChanged")}</Banner> : null}<p>{prepared.value.preview.config.model} · {prepared.value.preview.config.endpoint}</p>
       <PreparationBudgetSummary config={prepared.value.preview.config}/>
@@ -240,14 +254,14 @@ export default function EntrySemanticPanel({ project, target, owner, drafts, com
         {item.source.omissions.map(reason => <p className={styles.meta} key={reason}>{reason.startsWith("term-conflict:") ? t("ai.termConflict", { term: reason.slice(14) }) : t(`ai.${reason}`, { defaultValue: reason })}</p>)}
       </div>)}<p className={styles.meta}>{t("semanticReview.disclosure")}</p>
       <label className={styles.check}><TextInput type="checkbox" className={styles.checkbox} checked={state.consent} disabled={!captured || !consentAvailability({ ...captured, kind: "entry-semantic-consent", preparation: prepared, approved: true }).enabled}
-        onChange={event => { if (captured) commands.dispatch("review.entry-semantic-consent", commandScope, { ...captured, kind: "entry-semantic-consent", preparation: prepared, approved: event.target.checked }); }}/>{t("semanticReview.consent")}</label>
-      <Button size="sm" variant="primary" disabled={!startPayload || !startAvailability(startPayload).enabled} onClick={() => { if (startPayload) commands.dispatch("review.entry-semantic-start", commandScope, startPayload); }}>{t("semanticReview.start")}</Button>
+        onChange={event => { if (captured) commands.dispatch(commandId("review.entry-semantic-consent"), commandScope, { ...captured, kind: "entry-semantic-consent", preparation: prepared, approved: event.target.checked }); }}/>{t("semanticReview.consent")}</label>
+      <Button size="sm" variant="primary" disabled={!startPayload || !startAvailability(startPayload).enabled} onClick={() => { if (startPayload) commands.dispatch(commandId("review.entry-semantic-start"), commandScope, startPayload); }}>{t("semanticReview.start")}</Button>
     </section> : null}
     </div>
     {state.attempts.length ? <div className={styles.actions}><Menu label={t("semanticReview.history")} trigger={<Button size="sm" disabled={!present() || semantic.reserved()}>{t("semanticReview.history")}</Button>}
       items={state.attempts.map((attemptId, index) => { const payload: EntrySemanticReadPayload = { kind: "entry-semantic-read", attemptId }; return { id: attemptId,
-        label: t("semanticReview.attempt", { count: index + 1 }), disabled: !readAvailability(payload, true).enabled, onSelect: () => commands.dispatch("review.entry-semantic-show-attempt", commandScope, payload) }; })}/>
-      {attemptPayload ? <Button size="sm" disabled={!readAvailability(attemptPayload, false).enabled} onClick={() => commands.dispatch("review.entry-semantic-refresh", commandScope, attemptPayload)}>{t("semanticReview.refresh")}</Button> : null}</div> : null}
+        label: t("semanticReview.attempt", { count: index + 1 }), disabled: !readAvailability(payload, true).enabled, onSelect: () => commands.dispatch(commandId("review.entry-semantic-show-attempt"), commandScope, payload) }; })}/>
+      {attemptPayload ? <Button size="sm" disabled={!readAvailability(attemptPayload, false).enabled} onClick={() => commands.dispatch(commandId("review.entry-semantic-refresh"), commandScope, attemptPayload)}>{t("semanticReview.refresh")}</Button> : null}</div> : null}
     {result.query.isFetching && state.attemptId ? <p role="status">{t("semanticReview.reading")}</p> : null}
     {result.query.error ? <Banner tone="error" role="alert">{t("semanticReview.readFailed")}<CommandFailureDetails failure={commandFailure(result.query.error)}/></Banner> : null}
     {state.attemptId && !result.query.isFetching && !result.query.error && view === null ? <p role="status">{t("semanticReview.notFound")}</p> : null}
@@ -265,15 +279,15 @@ export default function EntrySemanticPanel({ project, target, owner, drafts, com
           {row.output ? <>{row.output.rules.map(rule => <section key={rule.rule}><h5>{t(`semanticReview.rule.${rule.rule}`)}</h5>
             {rule.findings.length ? rule.findings.map((finding, index) => <div key={`${finding.code}:${index}`} className={styles.text}><p><TokenizedText text={finding.detail}/></p>{finding.suggestion ? <p><TokenizedText text={finding.suggestion}/></p> : null}</div>) : <p>{t("semanticReview.noFindings")}</p>}</section>)}
             <p>{t("ai.usageDetails.requests", { count: row.output.requests })}</p><AiOutputUsage usage={row.output.usage} incomplete={row.output.usageIncomplete}/>
-            {!row.run ? <Button size="sm" disabled={!payload || !recordAvailability(payload).enabled} onClick={() => { if (payload) commands.dispatch("review.entry-semantic-record", commandScope, payload); }}>{t("semanticReview.record")}</Button> : null}</> : null}
+            {!row.run ? <Button size="sm" disabled={!payload || !recordAvailability(payload).enabled} onClick={() => { if (payload) commands.dispatch(commandId("review.entry-semantic-record"), commandScope, payload); }}>{t("semanticReview.record")}</Button> : null}</> : null}
         </article>;
       })}
-      {cancellation && view.detail.progress.queued + view.detail.progress.running > 0 ? <><p className={styles.meta}>{t("semanticReview.stopHelp")}</p><Button size="sm" disabled={!cancelAvailability(cancellation).enabled} onClick={() => commands.dispatch("review.entry-semantic-cancel", commandScope, cancellation)}>{t("semanticReview.stop")}</Button></> : null}
+      {cancellation && view.detail.progress.queued + view.detail.progress.running > 0 ? <><p className={styles.meta}>{t("semanticReview.stopHelp")}</p><Button size="sm" disabled={!cancelAvailability(cancellation).enabled} onClick={() => commands.dispatch(commandId("review.entry-semantic-cancel"), commandScope, cancellation)}>{t("semanticReview.stop")}</Button></> : null}
       {tasks.current(view.detail.taskId)?.phase === "recorded" ? <p role="status">{w("entrySemanticStopRecorded")}</p> : null}
     </section> : null}
     <div ref={feedbackRegion} role="group" aria-label={w("entrySemanticResult")} tabIndex={-1} className={styles.feedback}>
       {feedbackKind && !state.failure && !state.pending ? <Banner tone={feedbackKind === "prepared" ? "success" : "warning"} role="status">{w(feedbackKind === "prepared" ? "entrySemanticPrepared" : "entrySemanticReadChanged")}</Banner> : null}
-      <SemanticRecoveryPanel project={project} owner={owner} commands={commands} gate={gate} viewId={viewId} disabled={disabled} visible={visible} parentDialogId={parentDialogId}/>
+      <SemanticRecoveryPanel commandPrefix={batch ? "review.batch-semantic" : undefined} project={project} owner={owner} commands={commands} gate={gate} viewId={viewId} disabled={disabled} visible={visible} parentDialogId={parentDialogId}/>
     </div>
   </section>;
 }

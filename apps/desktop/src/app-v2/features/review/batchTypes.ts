@@ -1,3 +1,4 @@
+import type { TranslationDrafts } from "../editor/translationDrafts";
 import type { RefObject } from "react";
 import type { ProjectView } from "../../../projectCommands";
 import type { ReviewDraftState } from "../../../ReviewDraftSession";
@@ -16,6 +17,7 @@ export interface ReviewBatchApprovePayload {
 export interface ReviewBatchControlPayload { kind: "review-batch-control"; chosen: ReviewDraftState["chosen"]; items: ReviewDraftState["batchItems"] }
 export interface ReviewBatchPagePayload extends Omit<ReviewBatchControlPayload, "kind"> { kind: "review-batch-page"; offset: number }
 export interface ReviewBatchPanelProps {
+  drafts?: TranslationDrafts;
   project: ProjectView; owner: ReviewOwner; selection: WorkspaceSelection | null; commands: WorkbenchCommands; gate: InteractionGate;
   viewId: string | null; disabled: boolean; open: boolean; onOpenChange: (open: boolean) => void; parentDialogId?: string;
   returnFocusRef?: RefObject<HTMLElement | null>;

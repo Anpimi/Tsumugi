@@ -2,14 +2,19 @@ import { decisionsEn, decisionsZh } from "./decisions";
 import { decisionDetailsEn, decisionDetailsZh } from "./decisionDetails";
 
 export const workbenchEn = {
+  semanticBatchPairs: "Selected translations",
+  semanticBatchRecapture: "Use the new language selection before previewing or sending a review.",
+  semanticBatchTitle: "Review selected translations with AI", semanticBatchHelp: "Choose languages for the fixed selected entries. Only saved translations are sent after preview and separate consent. Switching ends the current local approval selection.",
+  semanticBatchLanguages: "Languages to review", semanticBatchCount: "{{count, number}} entry and language pairs", semanticBatchCapture: "Use these entries and languages", semanticBatchSwitch: "End approval selection and prepare AI review", semanticBatchBack: "End AI selection and return to approval",
+
   ...decisionsEn,
   ...decisionDetailsEn,
   decisionFindingChanged: "This finding has changed or is no longer on this page. Refresh the list before continuing.",
   decisionNavigationFailed: "The original record could not be opened. Your input is kept. Read the list again and retry.",
   reviewBatchReviewer: "Reviewer: {{actor}}",
   reviewBatchApproving: "Approving…",
-  "reviewBatchTitle": "Approve selected translations",
-  "reviewBatchHelp": "Review this fixed selection before approving it. Approval does not change translations or replace required checks.",
+  "reviewBatchTitle": "Review selected translations",
+  "reviewBatchHelp": "Choose approval or AI meaning and style review for this fixed selection. Approval does not change translations or replace required checks.",
   "reviewBatchShow": "Open batch approval",
   "reviewBatchApprove": "Approve selected translations",
   "reviewBatchRead": "Read selected translations",
@@ -639,13 +644,18 @@ export const workbenchEn = {
 
 type Messages = { [K in keyof typeof workbenchEn]: typeof workbenchEn[K] extends string ? string : { [P in keyof typeof workbenchEn[K]]: string } };
 export const workbenchZh: Messages = {
+  semanticBatchPairs: "所选译文",
+  semanticBatchRecapture: "请先应用新的语言选择，再预览或发送审阅。",
+  semanticBatchTitle: "用 AI 审阅所选译文", semanticBatchHelp: "为固定选中的条目选择语言。预览并单独同意后才发送已保存译文。切换时会结束当前本地批准选择。",
+  semanticBatchLanguages: "要审阅的语言", semanticBatchCount: "共 {{count, number}} 个条目与语言组合", semanticBatchCapture: "使用这些条目和语言", semanticBatchSwitch: "结束批准选择并准备 AI 审阅", semanticBatchBack: "结束 AI 选择并返回批准",
+
   ...decisionsZh,
   ...decisionDetailsZh,
   decisionFindingChanged: "这条问题已变化，或已不在这一页。刷新待处理列表后再继续。",
   decisionNavigationFailed: "未能打开原记录。你的输入已保留，重新读取列表后再试。",
   reviewBatchReviewer: "审阅人：{{actor}}",
   reviewBatchApproving: "正在批准…",
-  "reviewBatchTitle": "批准所选译文",
+  "reviewBatchTitle": "审阅所选译文",
   "reviewBatchHelp": "请先核对这些固定条目，再确认批准。批准不修改译文，也不能代替必需检查。",
   "reviewBatchShow": "打开批量批准",
   "reviewBatchApprove": "批准所选译文",

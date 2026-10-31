@@ -8,7 +8,7 @@ Core and desktop IPC can keep project threads and ordered human messages before 
 
 Creating a thread or appending a message uses an action identity bound to the full request. Repeating that request returns its original receipt; changing its contents under the same identity is rejected. The corresponding recovery read returns `recorded`, `pending`, or `mismatch`. `pending` means the result has not been confirmed. Its replay field says whether the same request may be submitted explicitly; it does not schedule a retry or assert that the request never ran. Recovery keeps the original business request across project reopening while using the new session token.
 
-These conversation records store human input. Planning calls use the separate permission and result checks below. The opt-in desktop workspace has a conversation panel for creating and selecting threads, paging messages, saving messages, and recovering local input. It can read recorded planning replies and proposals for the selected thread. Saving a message does not call a model. The panel can send one planning question, with messages alone or a fixed entry selection, after explicit material and connection review. A valid planning suggestion can be saved as a proposal and edited in the panel. A saved proposal version can also be reviewed and explicitly confirmed as a work plan. Confirmation does not start execution. The conversation panel can show the linked plan status and offers explicit start, pause, stop, takeover, and ordinary continuation controls, subject to the conditions below.
+These conversation records store human input. Planning calls use the separate permission and result checks below. The desktop workspace has a conversation panel for creating and selecting threads, paging messages, saving messages, and recovering local input. It can read recorded planning replies and proposals for the selected thread. Saving a message does not call a model. The panel can send one planning question, with messages alone or a fixed entry selection, after explicit material and connection review. A valid planning suggestion can be saved as a proposal and edited in the panel. A saved proposal version can also be reviewed and explicitly confirmed as a work plan. Confirmation does not start execution. The conversation panel can show the linked plan status and offers explicit start, pause, stop, takeover, and ordinary continuation controls, subject to the conditions below.
 
 In the conversation panel, open **Ask the assistant**, choose 1–16 saved messages, and select a saved connection or enter a one-time connection. **Review what will be sent** captures materials locally without calling a model. Review the model, endpoint, output limit, timeout, selected message text and optional full request. Changing the selected messages or connection settings clears the preview and consent. **Send once** requires fresh consent and validates the original capture again; it authorizes no work plan.
 
@@ -36,7 +36,7 @@ Planning results are typed replies or plan suggestions. Suggestions must stay wi
 
 Core stores immutable proposal revisions, with desktop IPC commands and a frontend command adapter for this layer. An initial revision can only come from the Store's successful, valid planning proposal result. It retains references to the original attempt, result, input digest, and result digest without copying the planning materials. Human adjustments create a new revision; `expectedRevisionId` checks that the current revision has not changed before saving.
 
-In the conversation panel, **Save as a proposal** records a valid planning suggestion. The saved versions remain available in the thread. Edit the summary, open questions, and a subset of the original entry scope; the original steps and selection policy stay fixed. Local input can be incomplete, but saving a new immutable version requires valid content and current materials. If a newer version exists, compare it and explicitly choose to continue from it before saving. When a save succeeds while newer edits are being made, those edits are kept and based on the saved version.
+In the conversation panel, **Save as a proposal** records a valid planning suggestion. The saved versions remain available in the thread. Edit the summary, open questions, and a subset of the original entry scope. Run templates can also configure candidate generation and checks before the new version is saved. Local input can be incomplete, but saving a new immutable version requires valid content and current materials. If a newer version exists, compare it and explicitly choose to continue from it before saving. When a save succeeds while newer edits are being made, those edits are kept and based on the saved version.
 
 Creating and revising a proposal records the original request and receipt in the same transaction. Repeating the same action returns its original revision, and the original action can be checked after an uncertain response. Creating, revising, or explicitly validating a proposal checks its relevant materials against current project state. Historical revisions remain readable when those materials are stale; reopening history does not restore planning permission.
 
@@ -58,7 +58,7 @@ Reopening or checking an action reads its original receipt without recreating th
 
 Expand a confirmed plan in its conversation to read its current plan status and fixed scope. Start is a separate, explicit action. It is available only while the current session retains the direct authorization or continuation receipt and the plan still matches that receipt and remains active and unexpired. History and reopening a project do not restore that session-only start ticket.
 
-The expanded panel reads the most recent authorization or continuation that was actually enqueued for this plan, then uses its recorded task and attempt to read that attempt's full progress totals. A later continuation that has been confirmed but not started leaves the previous start as the latest recorded start. When that start predates the current plan generation, the panel identifies it as earlier work; its progress does not establish whether the current plan is running. Check the entry record for result validity, translation selection and review. Team plans show the root cumulative model budget, but one start cannot represent every member's progress; member details are not yet shown here.
+The expanded panel reads the most recent authorization or continuation that was actually enqueued for this plan, then uses its recorded task and attempt to read that attempt's full progress totals. A later continuation that has been confirmed but not started leaves the previous start as the latest recorded start. When that start predates the current plan generation, the panel identifies it as earlier work; its progress does not establish whether the current plan is running. Check the entry record for result validity, translation selection and review. Team plans show the root cumulative model budget, but one start cannot represent every member's progress. Team plan details also show recorded members, work results, messages and discussion, with incomplete pages indicated.
 
 For an ordinary started plan (excluding team and MCP plans), expand **View generated results** to read its recorded entry results. The results are tied to that plan and start, include up to 100 entries, and appear 25 per page. Each entry shows its request and validation status; a result still awaiting validation or without valid output does not hide other entries. Expand the returned text to read it in full; an empty translation is shown as an empty result. **Read results again** refreshes the recorded results without sending another model request.
 
@@ -76,7 +76,9 @@ If a start or control result is uncertain, check the original request in the pan
 
 A pending control request is never replayed automatically. When offered, **Check and retry original request** explicitly retries that same request after checking it; it does not substitute another action or expiry. A missing start receipt can be retried explicitly with the same request only while its original session ticket remains available and current status permits it. Reopening restores neither that ticket nor Host consent. A missing continuation receipt cannot replay Host consent. Checking or resolving a request preserves other pending requests and newer input.
 
-## Run setup and navigation in the opt-in workspace
+<a id="run-setup-and-navigation-in-the-opt-in-workspace"></a>
+
+## Run setup and navigation in the workspace
 
 Proposal drafts offer templates for generating candidates, with or without assisted checks. A template keeps the existing entry scope, destinations and sharing choices. It starts with candidates-only selection, leaves resource adoption and delivery disabled, and grants no permission. Save the draft as a new proposal revision before preparing its work plan.
 
@@ -95,7 +97,7 @@ The assistant’s project brief appears for an empty thread or after an absence 
 - Captured source revisions and current translation selection IDs
 - Explicit stage modes (`manual`, `assisted`, or `skipped`) across five stages: **understanding**, **resources**, **generation**, **checks**, and **delivery**
 
-By default, the Core library enables assisted candidate generation while keeping other stages manual; new drafts in the Desktop AI workbench recommend assisted candidate generation paired with assisted checks and manual selection.
+By default, the Core library enables assisted candidate generation while keeping other stages manual. In the desktop conversation panel, proposal drafts offer templates to generate candidates with or without assisted checks; both use candidates-only selection.
 
 - **Manual plans** require no `AiConfig` (passing an unused `AiConfig` to a manual plan is rejected so it cannot accidentally acquire provider scope).
 - **Assisted generation plans** lock the execution input: provider destination, model and parameters, request budgets, selected data-sharing categories, source revisions, included glossary terms and context, omission metadata, and requested post-generation effects. Only credential environment-variable names are stored in the plan—secret values are never included.
@@ -121,7 +123,7 @@ Authorization returns an execution input carrying an `AutomationLease` that refe
 - `RunChecks`: Runs the captured set of domain/Core checkers on saved candidates and records the check evidence (`checked`) without selecting the candidate as the active translation.
 - Selection policy (`checked-selection-3`): Automatically selects passing candidates (either for missing translations only, or replacing the captured selection); requires `RunChecks`.
 
-In the Desktop AI workbench, authorization and task start are separate steps: if saving an authorization succeeds but enqueueing the initial task fails, the saved authorization remains available to start or stop explicitly without re-prompting.
+In the desktop conversation panel, authorization and task start are separate steps: if saving an authorization succeeds but enqueueing the initial task fails, the saved authorization remains available to start or stop explicitly without re-prompting.
 
 ### Pause, stop, takeover, and continuation
 
@@ -136,11 +138,13 @@ For an active, authorized plan with a registered task budget, the application ho
 
 ### Reference tool queries in a work plan
 
-An assisted plan can include read-only reference tools configured in the AI workbench:
+An assisted plan can include read-only reference tools configured during work-plan confirmation:
 - **Preparation (`prepare_work_plan_with_tools`)**: Each configured provider row binds an opaque tool handle, the SDK capability binding, an approved runtime environment, the installed settings revision, package/runtime origins, and query target/category options. All rows in the plan share a single total tool invocation limit across all attempts and continuations.
 - **Unsandboxed execution consent (`query-tools`)**: Authorizing tool execution in a work plan requires a separate human confirmation for unsandboxed local execution. The tool execution window is capped at the earlier of 10 minutes or the overall plan expiration; recovering or replaying an action does not extend this timer, and reopening a project requires a new `Continue` confirmation to run tools again.
 - **Dispatched tool calls**: An Agent tool proposal passes only child task/attempt IDs, a pre-captured tool handle, and a non-empty subset of the plan's source units. Core constructs the literal SDK query payload from the captured source text, re-verifies the runtime and settings revision, and commits the delegated grant and shared budget reservation in a single ledger transaction (one invocation per item). Each tool attempt uses its own child attempt ID as its `Attempt` component scope.
 - **Reading tool results (`readToolAttempt` and `readToolOutput`)**: The Agent can poll progress and read structured reference outputs for its own enqueued tool attempts while the scope remains active. Tool outputs stay unapplied—they are not automatically injected into model prompts or adopted into project terminology—and remain readable in the workbench across plan control changes.
+
+In a team member’s work history, choose **Read tool references**, then **Read saved tool results** for the original call. Results are paged in groups of 16; structured tool fields are shown when the saved declaration is available, and **Read original tool output** expands the original response. Reading these records does not run the tool, select a translation or restore permission.
 
 ## Generation components and the generation service
 

@@ -19,7 +19,7 @@ import type { ReviewHistoryCommandPayload } from "./app-v2/features/review/histo
 import * as reviewValidation from "./generated/review.validators";
 import { validContentSelection } from "./contentSelection";
 import { createContext, useContext, type ReactNode } from "react";
-import type { WorkspaceArea } from "./WorkbenchFrame";
+import type { WorkspaceArea } from "./sessionNavigation";
 import type { TranslationKey } from "./i18n/types";
 import type { CancellationTarget } from "./ExecutionTaskSession";
 import type { RecoveryAction, ApplicationScopeBasis } from "./executionCommands";
@@ -343,6 +343,24 @@ interface WorkbenchCommandPayloads {
   "review.entry-semantic-refresh-record": EntrySemanticTaskPayload;
   "review.entry-semantic-check-cancel": EntrySemanticCancelPayload;
   "review.entry-semantic-retry-cancel": EntrySemanticCancelPayload;
+  "review.batch-semantic-current": EntrySemanticScopePayload;
+  "review.batch-semantic-prepare": EntrySemanticPreparePayload;
+  "review.batch-semantic-start": EntrySemanticStartPayload;
+  "review.batch-semantic-consent": EntrySemanticConsentPayload;
+  "review.batch-semantic-show-attempt": EntrySemanticReadPayload;
+  "review.batch-semantic-refresh": EntrySemanticReadPayload;
+  "review.batch-semantic-record": EntrySemanticRecordPayload;
+  "review.batch-semantic-cancel": EntrySemanticCancelPayload;
+  "review.batch-semantic-check-start": EntrySemanticPendingPayload;
+  "review.batch-semantic-retry-start": EntrySemanticPendingPayload;
+  "review.batch-semantic-discard-start": EntrySemanticPendingPayload;
+  "review.batch-semantic-confirm-record": EntrySemanticTaskPayload;
+  "review.batch-semantic-check-record": EntrySemanticTaskPayload;
+  "review.batch-semantic-retry-record": EntrySemanticTaskPayload;
+  "review.batch-semantic-dismiss-record": EntrySemanticTaskPayload;
+  "review.batch-semantic-refresh-record": EntrySemanticTaskPayload;
+  "review.batch-semantic-check-cancel": EntrySemanticCancelPayload;
+  "review.batch-semantic-retry-cancel": EntrySemanticCancelPayload;
   "review.entry-allow-fallback": EntryFallbackPayload;
   "review.entry-withdraw-fallback": EntryFallbackPayload;
   "review.entry-locate-issue": EntryIssueLocatePayload;
@@ -515,6 +533,7 @@ interface WorkbenchCommandPayloads {
   "release.check-build": ReleaseBuildPendingCommandPayload;
   "release.retry-build": ReleaseBuildPendingCommandPayload;
   "release.choose-release": ReleaseRecordCommandPayload;
+  "release.open-saved-build": ReleaseRecordCommandPayload;
   "release.choose-destination": ReleaseDestinationCommandPayload;
   "release.preview-destination": ReleaseDestinationCommandPayload;
   "release.confirm-overwrite": ReleasePreviewCommandPayload;
@@ -625,6 +644,32 @@ interface WorkbenchCommandPayloads {
   "source.open-translation": SourceImpactTargetCommandPayload;
 }
 export type WorkbenchCommandId = PlainWorkbenchCommandId | keyof WorkbenchCommandPayloads;
+
+const semanticBatchCommandIds = {
+  "review.entry-semantic-current": "review.batch-semantic-current",
+  "review.entry-semantic-prepare": "review.batch-semantic-prepare",
+  "review.entry-semantic-start": "review.batch-semantic-start",
+  "review.entry-semantic-consent": "review.batch-semantic-consent",
+  "review.entry-semantic-show-attempt": "review.batch-semantic-show-attempt",
+  "review.entry-semantic-refresh": "review.batch-semantic-refresh",
+  "review.entry-semantic-record": "review.batch-semantic-record",
+  "review.entry-semantic-cancel": "review.batch-semantic-cancel",
+  "review.entry-semantic-check-start": "review.batch-semantic-check-start",
+  "review.entry-semantic-retry-start": "review.batch-semantic-retry-start",
+  "review.entry-semantic-discard-start": "review.batch-semantic-discard-start",
+  "review.entry-semantic-confirm-record": "review.batch-semantic-confirm-record",
+  "review.entry-semantic-check-record": "review.batch-semantic-check-record",
+  "review.entry-semantic-retry-record": "review.batch-semantic-retry-record",
+  "review.entry-semantic-dismiss-record": "review.batch-semantic-dismiss-record",
+  "review.entry-semantic-refresh-record": "review.batch-semantic-refresh-record",
+  "review.entry-semantic-check-cancel": "review.batch-semantic-check-cancel",
+  "review.entry-semantic-retry-cancel": "review.batch-semantic-retry-cancel",
+} as const satisfies Partial<Record<WorkbenchCommandId, WorkbenchCommandId>>;
+export type SemanticEntryCommandId = keyof typeof semanticBatchCommandIds;
+/** Both surfaces dispatch the same payload contract through explicit registered IDs. */
+export function semanticCommandId<Id extends SemanticEntryCommandId>(id: Id, batch: boolean): Id | (typeof semanticBatchCommandIds)[Id] {
+  return batch ? semanticBatchCommandIds[id] : id;
+}
 type CommandPayload = WorkbenchCommandPayloads[keyof WorkbenchCommandPayloads];
 type PayloadArguments<Id extends WorkbenchCommandId> = Id extends keyof WorkbenchCommandPayloads
   ? [payload: WorkbenchCommandPayloads[Id]] : [];
@@ -682,15 +727,15 @@ export type WorkbenchCommand = ResourceCommand<"review-finding", "review.reject-
   | ResourceCommand<"review-batch-read", "review.batch-read">
   | ResourceCommand<"review-batch-approve", "review.batch-approve">
   | ResourceCommand<"review-batch-page", "review.batch-page">
-  | ResourceCommand<"entry-semantic-scope", "review.entry-semantic-current">
-  | ResourceCommand<"entry-semantic-prepare", "review.entry-semantic-prepare">
-  | ResourceCommand<"entry-semantic-start", "review.entry-semantic-start">
-  | ResourceCommand<"entry-semantic-consent", "review.entry-semantic-consent">
-  | ResourceCommand<"entry-semantic-read", "review.entry-semantic-show-attempt" | "review.entry-semantic-refresh">
-  | ResourceCommand<"entry-semantic-record", "review.entry-semantic-record">
-  | ResourceCommand<"entry-semantic-cancel", "review.entry-semantic-cancel" | "review.entry-semantic-check-cancel" | "review.entry-semantic-retry-cancel">
-  | ResourceCommand<"entry-semantic-pending", "review.entry-semantic-check-start" | "review.entry-semantic-retry-start" | "review.entry-semantic-discard-start">
-  | ResourceCommand<"entry-semantic-task", "review.entry-semantic-confirm-record" | "review.entry-semantic-check-record" | "review.entry-semantic-retry-record" | "review.entry-semantic-dismiss-record" | "review.entry-semantic-refresh-record">
+  | ResourceCommand<"entry-semantic-scope", "review.entry-semantic-current" | "review.batch-semantic-current">
+  | ResourceCommand<"entry-semantic-prepare", "review.entry-semantic-prepare" | "review.batch-semantic-prepare">
+  | ResourceCommand<"entry-semantic-start", "review.entry-semantic-start" | "review.batch-semantic-start">
+  | ResourceCommand<"entry-semantic-consent", "review.entry-semantic-consent" | "review.batch-semantic-consent">
+  | ResourceCommand<"entry-semantic-read", "review.entry-semantic-show-attempt" | "review.entry-semantic-refresh" | "review.batch-semantic-show-attempt" | "review.batch-semantic-refresh">
+  | ResourceCommand<"entry-semantic-record", "review.entry-semantic-record" | "review.batch-semantic-record">
+  | ResourceCommand<"entry-semantic-cancel", "review.entry-semantic-cancel" | "review.entry-semantic-check-cancel" | "review.entry-semantic-retry-cancel" | "review.batch-semantic-cancel" | "review.batch-semantic-check-cancel" | "review.batch-semantic-retry-cancel">
+  | ResourceCommand<"entry-semantic-pending", "review.entry-semantic-check-start" | "review.entry-semantic-retry-start" | "review.entry-semantic-discard-start" | "review.batch-semantic-check-start" | "review.batch-semantic-retry-start" | "review.batch-semantic-discard-start">
+  | ResourceCommand<"entry-semantic-task", "review.entry-semantic-confirm-record" | "review.entry-semantic-check-record" | "review.entry-semantic-retry-record" | "review.entry-semantic-dismiss-record" | "review.entry-semantic-refresh-record" | "review.batch-semantic-confirm-record" | "review.batch-semantic-check-record" | "review.batch-semantic-retry-record" | "review.batch-semantic-dismiss-record" | "review.batch-semantic-refresh-record">
   | ResourceCommand<"entry-review-fallback", "review.entry-allow-fallback" | "review.entry-withdraw-fallback">
   | ResourceCommand<"entry-review-decision", "review.entry-approve" | "review.entry-request-changes">
   | ResourceCommand<"entry-review-basis", "review.entry-adopt-current">
@@ -760,7 +805,7 @@ export type WorkbenchCommand = ResourceCommand<"review-finding", "review.reject-
   | ResourceCommand<"translation-content-row", "translation.toggle-content-selection">
   | ResourceCommand<"release-preparation", "release.assess-build" | "release.prepare-build">
   | ResourceCommand<"release-build-pending", "release.check-build" | "release.retry-build">
-  | ResourceCommand<"release-record", "release.choose-release">
+  | ResourceCommand<"release-record", "release.choose-release" | "release.open-saved-build">
   | ResourceCommand<"release-destination", "release.choose-destination" | "release.preview-destination">
   | ResourceCommand<"release-preview", "release.confirm-overwrite" | "release.export">
   | ResourceCommand<"release-delivery-pending", "release.check-export" | "release.reauthorize-destination">
@@ -857,10 +902,10 @@ function availability(command: WorkbenchCommand, payload?: CommandPayload): Comm
   if (command.payloadKind === "entry-semantic-task") return payload?.kind === command.payloadKind && !!payload.activity && !!payload.activity.intent
     && payload.activity.intent.operation === "ai-semantic-review" && payload.activity.intent.action === "adopt-result"
     && [payload.activity.intent.taskId, payload.activity.intent.attemptId, payload.activity.intent.unit?.unitId].every(validIdentity)
-    && (payload.queryVersion === null ? command.id !== "review.entry-semantic-confirm-record" : editSequence(payload.queryVersion)) ? command.availability(payload) : unavailable;
+    && (payload.queryVersion === null ? command.id !== "review.entry-semantic-confirm-record" && command.id !== "review.batch-semantic-confirm-record" : editSequence(payload.queryVersion)) ? command.availability(payload) : unavailable;
   if (command.payloadKind === "entry-semantic-cancel") return payload?.kind === command.payloadKind && [payload.taskId, payload.attemptId].every(validIdentity)
     && nullableIdentity(payload.requestId) && (payload.queryVersion === null || editSequence(payload.queryVersion))
-    && (command.id === "review.entry-semantic-cancel" ? payload.requestId === null && payload.queryVersion !== null : payload.requestId !== null) ? command.availability(payload) : unavailable;
+    && ((command.id === "review.entry-semantic-cancel" || command.id === "review.batch-semantic-cancel") ? payload.requestId === null && payload.queryVersion !== null : payload.requestId !== null) ? command.availability(payload) : unavailable;
 
   if (command.payloadKind === "entry-review-fallback") return payload?.kind === command.payloadKind && validReviewTargetBasis(payload)
     && payload.selectionId === null && payload.revisionId === null && !!payload.basisEvidence && typeof payload.basisEvidence === "object"

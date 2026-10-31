@@ -8,7 +8,7 @@ import { executionContext } from "../../../executionCommands";
 import { useExecutionTaskSession, type TaskActivity } from "../../../ExecutionTaskSession";
 import { useSessionQuery, useSessionReads } from "../../../SessionReadProvider";
 import type { SessionReads } from "../../../sessionReads";
-import type { CommandAvailability } from "../../../workbenchCommands";
+import { semanticCommandId, type CommandAvailability, type SemanticEntryCommandId } from "../../../workbenchCommands";
 import { Button } from "../../../design-system/Button";
 import { Banner } from "../../../design-system/Feedback";
 import { TokenizedText } from "../../../design-system/TokenizedText";
@@ -53,7 +53,8 @@ function originalRow(activity: TaskActivity, view: AiSemanticReviewView | null |
 }
 
 /** Recovery retains the original requests and never requires the currently displayed entry. */
-export default function SemanticRecoveryPanel({ project, owner, commands, gate, viewId, disabled, visible, parentDialogId }: SemanticRecoveryPanelProps) {
+export default function SemanticRecoveryPanel({ project, owner, commands, gate, viewId, disabled, visible, parentDialogId, commandPrefix = "review.entry-semantic" }: SemanticRecoveryPanelProps) {
+  const commandId = <Id extends SemanticEntryCommandId>(id: Id) => semanticCommandId(id, commandPrefix === "review.batch-semantic");
   const { t } = useTranslation(), { t: w } = useTranslation(undefined, { keyPrefix: "workbenchV2" }), reads = useSessionReads(), tasks = useExecutionTaskSession();
   useSyncExternalStore(gate.subscribe, gate.getSnapshot, gate.getSnapshot);
   const semantic = owner.semantic, state = semantic.state, context = executionContext(project), commandScope = { ...context, area: "translation" as const };
@@ -124,16 +125,16 @@ export default function SemanticRecoveryPanel({ project, owner, commands, gate, 
     if (!visible) return;
     const meta = { category: "review" as const, scope: commandScope, binding: null, confirmation: "none" as const };
     const remove = [
-      commands.register({ ...meta, id: "review.entry-semantic-check-start", nameKey: "semanticReview.check", payloadKind: "entry-semantic-pending", risk: "reads-review", availability: value => pendingAvailability(value, "check"), handler: value => { if (pendingAvailability(value, "check").enabled) void run(() => semantic.check()); } }),
-      commands.register({ ...meta, id: "review.entry-semantic-retry-start", nameKey: "semanticReview.retry", payloadKind: "entry-semantic-pending", risk: "retries-review-action", availability: value => pendingAvailability(value, "retry"), handler: value => { if (pendingAvailability(value, "retry").enabled) void run(() => semantic.retry()); } }),
-      commands.register({ ...meta, id: "review.entry-semantic-discard-start", nameKey: "semanticReview.discardAbsent", payloadKind: "entry-semantic-pending", risk: "changes-view", availability: value => pendingAvailability(value, "discard"), handler: value => { if (pendingAvailability(value, "discard").enabled) semantic.discardAbsent(); } }),
-      commands.register({ ...meta, id: "review.entry-semantic-confirm-record", nameKey: "semanticReview.confirmRecord", payloadKind: "entry-semantic-task", risk: "writes-execution", availability: value => taskAvailability(value, "confirm"), handler: value => { void confirm(value); } }),
-      commands.register({ ...meta, id: "review.entry-semantic-check-record", nameKey: "semanticReview.checkRecord", payloadKind: "entry-semantic-task", risk: "reconciles-execution-action", availability: value => taskAvailability(value, "check"), handler: value => { if (taskAvailability(value, "check").enabled) void run(() => tasks.checkAdoption()); } }),
-      commands.register({ ...meta, id: "review.entry-semantic-retry-record", nameKey: "semanticReview.retryRecord", payloadKind: "entry-semantic-task", risk: "retries-execution-action", availability: value => taskAvailability(value, "retry"), handler: value => { if (taskAvailability(value, "retry").enabled) void run(() => tasks.retryAdoption()); } }),
-      commands.register({ ...meta, id: "review.entry-semantic-dismiss-record", nameKey: "semanticReview.closeRecord", payloadKind: "entry-semantic-task", risk: "changes-view", availability: value => taskAvailability(value, "dismiss"), handler: value => { if (taskAvailability(value, "dismiss").enabled) tasks.dismiss(); } }),
-      commands.register({ ...meta, id: "review.entry-semantic-refresh-record", nameKey: "workbenchV2.entrySemanticRefreshOriginal", payloadKind: "entry-semantic-task", risk: "reads-review", availability: value => taskAvailability(value, "refresh"), handler: value => { if (taskAvailability(value, "refresh").enabled) void run(() => original.query.refetch()); } }),
-      commands.register({ ...meta, id: "review.entry-semantic-check-cancel", nameKey: "workbenchV2.entrySemanticCheckStop", payloadKind: "entry-semantic-cancel", risk: "reads-execution", availability: value => cancelAvailability(value, false), handler: value => { if (cancelAvailability(value, false).enabled) void run(() => tasks.checkCancellation(value.taskId)); } }),
-      commands.register({ ...meta, id: "review.entry-semantic-retry-cancel", nameKey: "workbenchV2.entrySemanticRetryStop", payloadKind: "entry-semantic-cancel", risk: "cancels-execution-task", availability: value => cancelAvailability(value, true), handler: value => { if (cancelAvailability(value, true).enabled) void run(() => tasks.retry(value.taskId)); } }),
+      commands.register({ ...meta, id: commandId("review.entry-semantic-check-start"), nameKey: "semanticReview.check", payloadKind: "entry-semantic-pending", risk: "reads-review", availability: value => pendingAvailability(value, "check"), handler: value => { if (pendingAvailability(value, "check").enabled) void run(() => semantic.check()); } }),
+      commands.register({ ...meta, id: commandId("review.entry-semantic-retry-start"), nameKey: "semanticReview.retry", payloadKind: "entry-semantic-pending", risk: "retries-review-action", availability: value => pendingAvailability(value, "retry"), handler: value => { if (pendingAvailability(value, "retry").enabled) void run(() => semantic.retry()); } }),
+      commands.register({ ...meta, id: commandId("review.entry-semantic-discard-start"), nameKey: "semanticReview.discardAbsent", payloadKind: "entry-semantic-pending", risk: "changes-view", availability: value => pendingAvailability(value, "discard"), handler: value => { if (pendingAvailability(value, "discard").enabled) semantic.discardAbsent(); } }),
+      commands.register({ ...meta, id: commandId("review.entry-semantic-confirm-record"), nameKey: "semanticReview.confirmRecord", payloadKind: "entry-semantic-task", risk: "writes-execution", availability: value => taskAvailability(value, "confirm"), handler: value => { void confirm(value); } }),
+      commands.register({ ...meta, id: commandId("review.entry-semantic-check-record"), nameKey: "semanticReview.checkRecord", payloadKind: "entry-semantic-task", risk: "reconciles-execution-action", availability: value => taskAvailability(value, "check"), handler: value => { if (taskAvailability(value, "check").enabled) void run(() => tasks.checkAdoption()); } }),
+      commands.register({ ...meta, id: commandId("review.entry-semantic-retry-record"), nameKey: "semanticReview.retryRecord", payloadKind: "entry-semantic-task", risk: "retries-execution-action", availability: value => taskAvailability(value, "retry"), handler: value => { if (taskAvailability(value, "retry").enabled) void run(() => tasks.retryAdoption()); } }),
+      commands.register({ ...meta, id: commandId("review.entry-semantic-dismiss-record"), nameKey: "semanticReview.closeRecord", payloadKind: "entry-semantic-task", risk: "changes-view", availability: value => taskAvailability(value, "dismiss"), handler: value => { if (taskAvailability(value, "dismiss").enabled) tasks.dismiss(); } }),
+      commands.register({ ...meta, id: commandId("review.entry-semantic-refresh-record"), nameKey: "workbenchV2.entrySemanticRefreshOriginal", payloadKind: "entry-semantic-task", risk: "reads-review", availability: value => taskAvailability(value, "refresh"), handler: value => { if (taskAvailability(value, "refresh").enabled) void run(() => original.query.refetch()); } }),
+      commands.register({ ...meta, id: commandId("review.entry-semantic-check-cancel"), nameKey: "workbenchV2.entrySemanticCheckStop", payloadKind: "entry-semantic-cancel", risk: "reads-execution", availability: value => cancelAvailability(value, false), handler: value => { if (cancelAvailability(value, false).enabled) void run(() => tasks.checkCancellation(value.taskId)); } }),
+      commands.register({ ...meta, id: commandId("review.entry-semantic-retry-cancel"), nameKey: "workbenchV2.entrySemanticRetryStop", payloadKind: "entry-semantic-cancel", risk: "cancels-execution-task", availability: value => cancelAvailability(value, true), handler: value => { if (cancelAvailability(value, true).enabled) void run(() => tasks.retry(value.taskId)); } }),
     ];
     return () => remove.forEach(dispose => dispose());
   });
@@ -150,9 +151,9 @@ export default function SemanticRecoveryPanel({ project, owner, commands, gate, 
       <h4>{t("semanticReview.original")}</h4><Banner tone="warning" role="status">{w(pending.absent ? "entrySemanticStartAbsent" : "entrySemanticStartUnknown")}</Banner>
       <p className={styles.meta}>{pending.preparation.value.preview.config.model} · {pending.preparation.value.preview.config.endpoint}</p>
       <div className={styles.actions}>
-        <Button size="sm" disabled={!pendingAvailability(pendingPayload, "check").enabled} onClick={() => commands.dispatch("review.entry-semantic-check-start", commandScope, pendingPayload)}>{t("semanticReview.check")}</Button>
-        {pending.absent ? <><Button size="sm" disabled={!pendingAvailability(pendingPayload, "retry").enabled} onClick={() => commands.dispatch("review.entry-semantic-retry-start", commandScope, pendingPayload)}>{t("semanticReview.retry")}</Button>
-          <Button size="sm" disabled={!pendingAvailability(pendingPayload, "discard").enabled} onClick={() => commands.dispatch("review.entry-semantic-discard-start", commandScope, pendingPayload)}>{t("semanticReview.discardAbsent")}</Button></> : null}
+        <Button size="sm" disabled={!pendingAvailability(pendingPayload, "check").enabled} onClick={() => commands.dispatch(commandId("review.entry-semantic-check-start"), commandScope, pendingPayload)}>{t("semanticReview.check")}</Button>
+        {pending.absent ? <><Button size="sm" disabled={!pendingAvailability(pendingPayload, "retry").enabled} onClick={() => commands.dispatch(commandId("review.entry-semantic-retry-start"), commandScope, pendingPayload)}>{t("semanticReview.retry")}</Button>
+          <Button size="sm" disabled={!pendingAvailability(pendingPayload, "discard").enabled} onClick={() => commands.dispatch(commandId("review.entry-semantic-discard-start"), commandScope, pendingPayload)}>{t("semanticReview.discardAbsent")}</Button></> : null}
       </div>
     </section> : null}
     {activity && taskPayload ? <section className={styles.original} aria-label={t("semanticReview.recordTitle")}>
@@ -165,23 +166,23 @@ export default function SemanticRecoveryPanel({ project, owner, commands, gate, 
           {row.output?.rules.map(rule => <section key={rule.rule}><h4>{t(`semanticReview.rule.${rule.rule}`)}</h4>
             {rule.findings.length ? rule.findings.map((finding, index) => <div className={styles.text} key={`${finding.code}:${index}`}><p><TokenizedText text={finding.detail}/></p>
               {finding.suggestion ? <p><TokenizedText text={finding.suggestion}/></p> : null}</div>) : <p>{t("semanticReview.noFindings")}</p>}</section>)}</> : null}
-        <div className={styles.actions}><Button size="sm" variant="primary" disabled={!taskAvailability(taskPayload, "confirm").enabled} onClick={() => commands.dispatch("review.entry-semantic-confirm-record", commandScope, taskPayload)}>{t("semanticReview.confirmRecord")}</Button>
-          <Button size="sm" disabled={!taskAvailability(taskPayload, "refresh").enabled} onClick={() => commands.dispatch("review.entry-semantic-refresh-record", commandScope, taskPayload)}>{w("entrySemanticRefreshOriginal")}</Button></div>
+        <div className={styles.actions}><Button size="sm" variant="primary" disabled={!taskAvailability(taskPayload, "confirm").enabled} onClick={() => commands.dispatch(commandId("review.entry-semantic-confirm-record"), commandScope, taskPayload)}>{t("semanticReview.confirmRecord")}</Button>
+          <Button size="sm" disabled={!taskAvailability(taskPayload, "refresh").enabled} onClick={() => commands.dispatch(commandId("review.entry-semantic-refresh-record"), commandScope, taskPayload)}>{w("entrySemanticRefreshOriginal")}</Button></div>
       </> : activity.phase === "unknown" ? <><Banner tone="warning" role="status">{t("semanticReview.recordUnknown")}</Banner>
-        <div className={styles.actions}><Button size="sm" disabled={!taskAvailability(taskPayload, "check").enabled} onClick={() => commands.dispatch("review.entry-semantic-check-record", commandScope, taskPayload)}>{t("semanticReview.checkRecord")}</Button>
-          {activity.retryAllowed ? <Button size="sm" disabled={!taskAvailability(taskPayload, "retry").enabled} onClick={() => commands.dispatch("review.entry-semantic-retry-record", commandScope, taskPayload)}>{t("semanticReview.retryRecord")}</Button> : null}</div>
+        <div className={styles.actions}><Button size="sm" disabled={!taskAvailability(taskPayload, "check").enabled} onClick={() => commands.dispatch(commandId("review.entry-semantic-check-record"), commandScope, taskPayload)}>{t("semanticReview.checkRecord")}</Button>
+          {activity.retryAllowed ? <Button size="sm" disabled={!taskAvailability(taskPayload, "retry").enabled} onClick={() => commands.dispatch(commandId("review.entry-semantic-retry-record"), commandScope, taskPayload)}>{t("semanticReview.retryRecord")}</Button> : null}</div>
       </> : activity.phase === "recorded" ? <Banner tone="success" role="status">{w("entrySemanticRecorded")}</Banner>
         : activity.phase === "rejected" ? <Banner tone="error" role="alert">{w("entrySemanticRecordFailed")}<CommandFailureDetails failure={activity.failure}/></Banner>
           : <p role="status">{t("semanticReview.recording")}</p>}
-      {!tasks.busy && activity.phase !== "unknown" ? <Button size="sm" disabled={!taskAvailability(taskPayload, "dismiss").enabled} onClick={() => commands.dispatch("review.entry-semantic-dismiss-record", commandScope, taskPayload)}>{t("semanticReview.closeRecord")}</Button> : null}
+      {!tasks.busy && activity.phase !== "unknown" ? <Button size="sm" disabled={!taskAvailability(taskPayload, "dismiss").enabled} onClick={() => commands.dispatch(commandId("review.entry-semantic-dismiss-record"), commandScope, taskPayload)}>{t("semanticReview.closeRecord")}</Button> : null}
     </section> : null}
     {cancellations.map(value => {
       const payload: EntrySemanticCancelPayload = { kind: "entry-semantic-cancel", taskId: value.target.taskId, attemptId: value.target.attemptId,
         requestId: value.request?.requestId ?? null, queryVersion: null };
       return <section className={styles.original} key={value.target.taskId} aria-label={w("entrySemanticStopStatus")}>
         <Banner tone={value.phase === "rejected" ? "error" : "warning"} role={value.phase === "rejected" ? "alert" : "status"}>{w(value.phase === "unknown" ? "entrySemanticStopUnknown" : value.phase === "rejected" ? "entrySemanticStopFailed" : "entrySemanticStopping")}</Banner>
-        {value.phase === "unknown" ? <div className={styles.actions}><Button size="sm" disabled={!cancelAvailability(payload, false).enabled} onClick={() => commands.dispatch("review.entry-semantic-check-cancel", commandScope, payload)}>{w("entrySemanticCheckStop")}</Button>
-          {value.retryAllowed ? <Button size="sm" disabled={!cancelAvailability(payload, true).enabled} onClick={() => commands.dispatch("review.entry-semantic-retry-cancel", commandScope, payload)}>{w("entrySemanticRetryStop")}</Button> : null}</div> : null}
+        {value.phase === "unknown" ? <div className={styles.actions}><Button size="sm" disabled={!cancelAvailability(payload, false).enabled} onClick={() => commands.dispatch(commandId("review.entry-semantic-check-cancel"), commandScope, payload)}>{w("entrySemanticCheckStop")}</Button>
+          {value.retryAllowed ? <Button size="sm" disabled={!cancelAvailability(payload, true).enabled} onClick={() => commands.dispatch(commandId("review.entry-semantic-retry-cancel"), commandScope, payload)}>{w("entrySemanticRetryStop")}</Button> : null}</div> : null}
       </section>;
     })}
   </section>;

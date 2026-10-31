@@ -1,20 +1,16 @@
 import { StrictMode } from "react";
 import { createRoot } from "react-dom/client";
+import { I18nextProvider } from "react-i18next";
 import { isTauri } from "@tauri-apps/api/core";
-import App from "./App";
+import { i18n } from "./i18n";
 import { installDesktopBehavior } from "./desktopBehavior";
-import "./styles.css";
-import "./design-system/tokens.css";
+import WorkbenchApp from "./app-v2/WorkbenchApp";
+import "./design-system/global.css";
 
-const appearance = matchMedia("(prefers-color-scheme: dark)");
-const applyAppearance = () => { document.documentElement.dataset.theme = appearance.matches ? "dark" : "light"; };
-applyAppearance(); appearance.addEventListener("change", applyAppearance);
-
+const preference = matchMedia("(prefers-color-scheme: dark)");
+const setTheme = () => { document.documentElement.dataset.theme = preference.matches ? "dark" : "light"; };
+setTheme(); preference.addEventListener("change", setTheme);
+document.documentElement.dataset.platform = navigator.platform.includes("Mac") ? "macos" : "other";
 const removeDesktopBehavior = isTauri() ? installDesktopBehavior() : undefined;
-import.meta.hot?.dispose(() => { appearance.removeEventListener("change", applyAppearance); removeDesktopBehavior?.(); });
-
-createRoot(document.getElementById("root")!).render(
-  <StrictMode>
-    <App />
-  </StrictMode>,
-);
+import.meta.hot?.dispose(() => { preference.removeEventListener("change", setTheme); removeDesktopBehavior?.(); });
+createRoot(document.getElementById("root")!).render(<StrictMode><I18nextProvider i18n={i18n}><WorkbenchApp /></I18nextProvider></StrictMode>);

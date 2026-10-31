@@ -4,7 +4,9 @@ Open a project with an imported source snapshot and at least one target language
 
 The query workspace can also retrieve term proposals from a compatible external MCP server under separate discovery and data-sharing consent; saved results enter the standard resource preview and decision flow with their external provenance intact. See [MCP terminology retrieval](mcp-retrieval.md) for supported profiles, limits, and recovery behavior.
 
-## Knowledge in the opt-in workspace
+<a id="knowledge-in-the-opt-in-workspace"></a>
+
+## Knowledge in the workspace
 
 Open **Knowledge** to read and maintain terms for a project language. Terms load in pages. You can edit a term in its row, add a term, choose the whole project or a specific entry as its scope, and read earlier versions in the details dock. Saving preserves earlier versions and checks for changes made elsewhere. If another version has been saved, compare it before continuing; your input stays available.
 
