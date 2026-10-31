@@ -78,7 +78,9 @@ beforeEach(async () => {
 });
 afterEach(() => { cleanup(); controller?.dispose(); controller = undefined; if (originalWidth) Object.defineProperty(window, "innerWidth", originalWidth); vi.restoreAllMocks(); });
 
-it("retains an original human review and newer input after all views close, checks it without another write, and requires an explicit discard before project exit", async () => {
+// This complete recovery journey also loads cold lazy surfaces. The runner's
+// total budget is separate from the bounded waits for each asserted state.
+it("retains an original human review and newer input after all views close, checks it without another write, and requires an explicit discard before project exit", { timeout: 15_000 }, async () => {
   let submitted: ReviewWrite | null = null;
   vi.spyOn(reviewCommands, "decide").mockImplementation(async (_, request) => {
     submitted = copy(request); current = { ...current, currentDecision: reviewDecisionFixture(request, current) };

@@ -57,7 +57,7 @@ import type { ConversationProposalTarget, ConversationKnowledgeProposalRef, Conv
 import type { KnowledgeReviewTarget } from "./features/knowledge/KnowledgeProposalPanel";
 import type { DecisionItem } from "../decisionCommands";
 import { contextKindForKnowledge, type KnowledgeOwner } from "./features/knowledge/knowledgeTypes";
-import { knowledgeBlocked, knowledgeHasDraft, knowledgeRecovery } from "./features/knowledge/knowledgeState";
+import { knowledgeBlocked, knowledgeHasDraft, knowledgeRecovery, knowledgeEntryRecovery } from "./features/knowledge/knowledgeState";
 import { useDecisionFeed } from "./features/decisions/useDecisionFeed";
 import { DecisionBadge, DecisionTray } from "./features/decisions/DecisionList";
 import { TokenizedText } from "../design-system/TokenizedText";
@@ -989,6 +989,32 @@ function WorkspaceShell() {
         : await runtime.navigation.open({ kind: "entries", ...target });
     } catch { setCommandFailed(true); return false; }
   }
+  async function openEntryContext(unitId: string, locale: string): Promise<boolean> {
+    const dialogId = narrow && drawer ? "workspace-dock" : undefined;
+    if (disabled || session.reads.retired || !gate.canDispatch({ viewId: currentId, source: "button", dialogId })) return false;
+    if (view?.kind === "entries" && view.focus === unitId && view.locale === locale) {
+      store.getState().patch(view.id, { dock: "details", detailTab: "context" });
+      if (narrow) showDock();
+      return true;
+    }
+    if (dialogId) closeDrawer();
+    const target = { entryMode: "table" as const, locale, focus: unitId, dock: "details" as const, detailTab: "context" as const,
+      editing: false, queueActive: false, focusMode: false };
+    const accepted = view?.kind === "entries" ? await runtime.navigation.update(view.id, target)
+      : await runtime.navigation.open({ kind: "entries", ...target });
+    if (accepted && narrow) showDock();
+    return accepted;
+  }
+  async function openEntryTermCapture(captureId: string): Promise<boolean> {
+    const capture = knowledgeOwner?.current().previewCapture, dialogId = narrow && drawer ? "workspace-dock" : undefined;
+    if (disabled || session.reads.retired || !capture || capture.captureId !== captureId
+      || !gate.canDispatch({ viewId: currentId, source: "button", dialogId })) return false;
+    if (dialogId) closeDrawer();
+    const state = store.getState(), existing = state.viewOrder.map(id => state.views[id]).find(item => item.kind === "knowledge");
+    const target = { locale: capture.targetLocale, preset: "terms", knowledgeExchange: null };
+    return existing ? await runtime.navigation.update(existing.id, target)
+      : await runtime.navigation.open({ kind: "knowledge", ...target });
+  }
   async function openReviewEditor(request: EntryReviewEditorRequest, proof: () => boolean) {
     const parentDialogId = narrow && drawer ? "workspace-dock" : undefined;
     if (!gate.canDispatch({ viewId: currentId, source: "button", dialogId: parentDialogId }) || !proof()) return false;
@@ -1121,6 +1147,8 @@ function WorkspaceShell() {
       return;
     }
     setKnowledgeOpenIntent(null);
+    const entry = restoreDraft ? knowledgeEntryRecovery(knowledgeOwner) : null;
+    if (entry) { await openEntryContext(entry.unitId, entry.locale); return; }
     const state = store.getState(), existing = state.viewOrder.map(id => state.views[id]).find(item => item.kind === "knowledge");
     const recovery = knowledgeRecovery(knowledgeOwner);
     const locale = restoreDraft ? recovery.locale ?? activeLocale : activeLocale;
@@ -1208,6 +1236,7 @@ function WorkspaceShell() {
         visible={!importVisible && (!narrow || drawer)} drafts={drafts} owners={candidateOwners} commands={commandsReady ? commands ?? null : null} gate={gate}
         patch={patch => { if (view) store.getState().patch(view.id, patch); }} onReviewEdit={openReviewEditor} onEdit={(unitId, locale) => openCandidateEditor(unitId, locale, narrow && drawer ? "workspace-dock" : undefined)}
         comparisonOwner={comparisonOwner} requestComparisons={requestComparisons} onOpenComparison={comparison => openSavedComparison(comparison, narrow && drawer ? "workspace-dock" : undefined)}
+        knowledgeOwner={knowledgeOwner} onOpenContext={openEntryContext} onOpenTermCapture={openEntryTermCapture}
         reviewOwner={reviewOwner} onOpenStrategy={(unitId, locale) => openStrategy(unitId, locale, narrow && drawer ? "workspace-dock" : undefined)}
         parentDialogId={narrow && drawer ? "workspace-dock" : undefined} onPresented={reportPresented}/>}</Suspense></FeatureBoundary></TabsContent>
     </TabsRoot>;

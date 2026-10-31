@@ -9,8 +9,7 @@ import { type SessionRequest } from "./executionCommands";
 import { CommandFailureDetails } from "./CommandFailure";
 import { useWorkbenchCommands, type ResourceFactCommandPayload, type CommandAvailability } from "./workbenchCommands";
 import { useWorkspaceView } from "./WorkbenchFrame";
-
-const factKey=(scope:SourceFactBasis["scope"],facts:{blockIndex:number;factIndex:number}[])=>["context-fact-decisions",scope,facts];
+import { contextFactQueryKey } from "./contextFactQueries";
 
 /** Editable intent stays in the original resource draft owner across consumers. */
 export function ContextFactDecisionFields(props: { context:SessionRequest; disabled?:boolean }) {
@@ -27,12 +26,12 @@ function ActiveContextFactDecisionFields({ context, disabled=false }: { context:
   const facts=draft?[{blockIndex:draft.basis.fact.blockIndex,factIndex:draft.basis.fact.factIndex}]:[];
   const sourceOptions=sourceReads.scope(context);
   const source=useSessionQuery({...sourceOptions,enabled:true});
-  const decisions=useSessionQuery({key:draft?factKey(draft.basis.scope,facts):["context-fact-decisions",null],scopes:["source","resources"],enabled:true,
+  const decisions=useSessionQuery({key:draft?contextFactQueryKey(draft.basis.scope,facts):["context-fact-decisions",null],scopes:["source","resources"],enabled:true,
     read:()=>{if(!draft)throw new Error("No context fact draft");return resourceCommands.factDecisions({...context,scope:draft.basis.scope,facts});}});
   function current(){
     if(!draft || owner.current().factDraft!==draft || !owner.localeAvailable(draft.basis.scope.locale) || reads.retired)return false;
     const source=reads.client.getQueryState<ContentScope>(reads.key(sourceOptions.key));
-    const decisions=reads.client.getQueryState<ContextFactDecision[]>(reads.key(factKey(draft.basis.scope,facts)));
+    const decisions=reads.client.getQueryState<ContextFactDecision[]>(reads.key(contextFactQueryKey(draft.basis.scope,facts)));
     return source?.status==="success" && source.fetchStatus==="idle" && !source.isInvalidated && source.error===null && source.data?.currentSnapshot===draft.basis.scope.sourceSnapshotId
       && decisions?.status==="success" && decisions.fetchStatus==="idle" && !decisions.isInvalidated && decisions.error===null
       && (decisions.data?.find(v=>v.request.basis.fact.blockIndex===draft.basis.fact.blockIndex && v.request.basis.fact.fact.id===draft.basis.fact.fact.id)?.request.actionId??null)===draft.expectedDecisionId;
@@ -82,12 +81,12 @@ export function ContextFactReferences({ context,pages,entryKey }: {context:Sessi
   const [blocked,setBlocked]=useState(false),[offset,setOffset]=useState(0),[pageIndex,setPageIndex]=useState(0);
   const page=pages[Math.min(pageIndex,pages.length-1)];
   const facts=page.entries.flatMap(entry=>entry.kind==="block"&&entry.value.facts?entry.value.facts.facts.map((_,factIndex)=>({blockIndex:entry.value.blockIndex,factIndex})):[]);
-  const decisions=useSessionQuery({key:factKey(scope,facts),scopes:["source","resources"],enabled:true,read:()=>resourceCommands.factDecisions({...context,scope,facts})});
+  const decisions=useSessionQuery({key:contextFactQueryKey(scope,facts),scopes:["source","resources"],enabled:true,read:()=>resourceCommands.factDecisions({...context,scope,facts})});
   const history=useSessionQuery({key:["context-fact-history",scope.unitId,scope.locale,offset],scopes:["resources"],enabled:true,read:()=>resourceCommands.factHistory({...context,unitId:scope.unitId,locale:scope.locale,offset,limit:10})});
-  const state=reads.client.getQueryState(reads.key(factKey(scope,facts)));
+  const state=reads.client.getQueryState(reads.key(contextFactQueryKey(scope,facts)));
   const ready=decisions.isSuccess&&!decisions.isFetching&&!decisions.error&&!state?.isInvalidated;
   function begin(basis:SourceFactBasis,value:ContextFactDecision|null,disposition:ContextFactDisposition){
-    const checked=reads.client.getQueryState(reads.key(factKey(scope,facts)));
+    const checked=reads.client.getQueryState(reads.key(contextFactQueryKey(scope,facts)));
     if(!ready || checked?.status!=="success" || checked.fetchStatus!=="idle" || checked.isInvalidated || checked.data!==decisions.data){setBlocked(true);return;}
     setBlocked(!owner.beginFact(basis,entryKey,value,disposition));
   }

@@ -1,0 +1,11 @@
+.notes { display: grid; gap: var(--space-3); min-inline-size: 0; }
+.notes header { display: grid; gap: var(--space-1); }
+.notes h3, .notes h4, .notes p { margin: 0; }
+.notes h3, .notes h4 { font-size: var(--text-base); font-weight: var(--weight-semibold); }
+.notes header p { color: var(--color-text-secondary); }
+.actions { display: flex; flex-wrap: wrap; gap: var(--space-2); }
+.text { white-space: pre-wrap; overflow-wrap: anywhere; font: inherit; margin: 0; }
+.material { display: grid; gap: var(--space-3); padding-inline-start: var(--space-4); }
+.notes details { min-inline-size: 0; }
+.notes summary { cursor: pointer; }
+.notes code { overflow-wrap: anywhere; }

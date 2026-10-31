@@ -9,6 +9,21 @@ export function knowledgeHasDraft(owner: KnowledgeOwner) {
   return owner.hasDraft();
 }
 
+/** Entry work returns to its original unit and language, including an unknown
+ * request whose input has since moved on. Other resource work stays in Knowledge. */
+export function knowledgeEntryRecovery(owner: Pick<KnowledgeOwner, "current" | "contextDirty"> | null) {
+  const state = owner?.current();
+  if (!state) return null;
+  const fact = state.factPending?.request.basis.scope ?? state.factDraft?.basis.scope;
+  if (fact) return { unitId: fact.unitId, locale: fact.locale };
+  const pending = state.pending;
+  if (pending?.kind === "context" || pending?.kind === "capture") {
+    return { unitId: pending.request.unitId, locale: pending.request.locale };
+  }
+  return owner?.contextDirty() && state.selectedUnit
+    ? { unitId: state.selectedUnit.unitId, locale: state.locale } : null;
+}
+
 export function knowledgeRecovery(owner: KnowledgeOwner | null) {
   const state = owner?.current();
   if (!state) return { locale: undefined, preset: "terms", key: null, proposalKey: null };

@@ -43,7 +43,8 @@ function DialogSurface({ open, onOpenChange, title, description, closeLabel, clo
               <Primitive.Title className={styles.title}>{title}</Primitive.Title>
               {description ? <Primitive.Description id={descriptionId} className={styles.description}>{description}</Primitive.Description> : null}
             </div>
-            <Primitive.Close asChild><IconButton label={closeLabel} disabled={closeDisabled}><X /></IconButton></Primitive.Close>
+            {/* Autofocus must not open a tooltip that consumes the dialog's first Escape. */}
+            <Primitive.Close asChild><IconButton label={closeLabel} title={closeLabel} tooltip={false} disabled={closeDisabled}><X /></IconButton></Primitive.Close>
           </header>
           <div className={styles.body}>{children}</div>
           {footer ? <footer className={styles.footer}>{footer}</footer> : null}

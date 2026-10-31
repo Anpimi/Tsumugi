@@ -5,7 +5,7 @@ import { StrictMode, useCallback, useLayoutEffect, type ComponentProps } from "r
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { i18n } from "../i18n";
 import { SessionReads } from "../sessionReads";
-import { sourceCommands } from "../sourceCommands";
+import { sourceCommands, type SourceContextPage } from "../sourceCommands";
 import { sourceDraftCommands } from "../sourceDraftCommands";
 import { sourceDraftValue } from "../sourceDraftJournal";
 import { sourceDraftStateFixture } from "../testSupport/sourceDraftStateFixture";
@@ -22,6 +22,8 @@ import { validateSaveReceipt } from "../translationCommands";
 import { executionCommands } from "../executionCommands";
 import { installDesktopBehavior } from "../desktopBehavior";
 import { reviewCommands } from "../reviewCommands";
+import { resourceCommands } from "../resourceCommands";
+import { reviewTargetFixture } from "../testSupport/reviewFixture";
 import { validateResponseRead, validateResponseWritten, validateResponseCleared } from "../generated/draft.validators";
 import { validateResponseRecoverSave } from "../generated/translation.validators";
 import draftFixture from "../../test/fixtures/draftCommands.contract.json";
@@ -173,15 +175,17 @@ it("opens work plans from the enabled activity item and retains the runs view ac
   vi.spyOn(conversationCommands, "list").mockResolvedValue({ projectId: project.metadata.projectId, rows: [], nextAfter: null });
   vi.spyOn(conversationDraftCommands, "list").mockResolvedValue({ items: [], next: null });
   await openImportWorkspace();
-  const activity = within(screen.getByRole("navigation", { name: i18n.t("workbenchV2.activity") }));
-  const runs = activity.getByRole("button", { name: i18n.t("workbenchV2.runs") });
-  await waitFor(() => expect(runs).toBeEnabled()); fireEvent.click(runs);
+  async function openActivity(name: string) {
+    const current = () => within(screen.getByRole("navigation", { name: i18n.t("workbenchV2.activity") })).getByRole("button", { name });
+    await waitFor(() => { expect(current()).toBeEnabled(); expect(current()).not.toHaveAttribute("aria-disabled", "true"); });
+    fireEvent.click(current());
+  }
+  await openActivity(i18n.t("workbenchV2.runs"));
   expect(await screen.findByRole("heading", { name: "工作计划" })).toBeVisible();
   expect(screen.getByRole("tab", { name: "工作计划" })).toHaveAttribute("aria-selected", "true");
-  fireEvent.click(activity.getByRole("button", { name: i18n.t("workbenchV2.entries") }));
+  await openActivity(i18n.t("workbenchV2.entries"));
   await screen.findByText("Actual source from the read port");
-  const currentRuns = () => within(screen.getByRole("navigation", { name: i18n.t("workbenchV2.activity") })).getByRole("button", { name: i18n.t("workbenchV2.runs") });
-  await waitFor(() => expect(currentRuns()).toBeEnabled()); fireEvent.click(currentRuns());
+  await openActivity(i18n.t("workbenchV2.runs"));
   expect(await screen.findByRole("heading", { name: "工作计划" })).toBeVisible();
   expect(screen.getAllByRole("button", { name: i18n.t("workbenchV2.closeView", { name: i18n.t("workbenchV2.runs") }) })).toHaveLength(1);
 }, 15000);
@@ -955,6 +959,106 @@ describe("real-port workspace assembly", () => {
   });
 });
 
+
+describe("entry knowledge workflow assembly", () => {
+  const target = reviewTargetFixture({ unitId: fixtureIdentity(98901), sourceRevisionId: fixtureIdentity(98902), sourceSnapshotId: fixtureIdentity(98903),
+    nativeKey: "dialogue.original-context", sourceText: "Context source {{name}}", selectionId: null, revisionId: null, translationText: null });
+  function sourcePage(locale: string): SourceContextPage {
+    return { scope: { projectId: project.metadata.projectId, unitId: target.unitId, locale, sourceSnapshotId: target.sourceSnapshotId, sourceRevisionId: target.sourceRevisionId },
+      contentRevision: "1", sourceAttemptId: fixtureIdentity(98904), sourceResultId: fixtureIdentity(98905), sourceResultDigest: "a".repeat(64), sourceLocale: "en",
+      localUnitId: "original-context", occurrenceCount: 1, after: 0, totalEntries: 1, nextAfter: null,
+      observations: { missingBlocks: false, knownBlocks: 1, knownFacts: 1, emptyBlocks: 0, unknownBlocks: 0, unknownRequiredBlocks: 0, neighborOccurrences: 0, unknownSamples: [] },
+      entries: [{ kind: "block", value: { blockIndex: 0, target: { kind: "occurrence", id: "original-local-occurrence" },
+        schema: { id: "tsumugi.source-context-facts", schemaVersion: 1, behaviorVersion: 1 }, handling: "preserve", inRevisionBasis: true,
+        facts: { facts: [{ id: "speaker", kind: "speaker", text: "Original speaker Mira", origin: { kind: "extracted",
+          sources: [{ artifactId: "synthetic-source", range: { encoding: "utf8-byte", start: 0, end: 8 } }] } }] } } }] };
+  }
+  async function openContext() {
+    const opened = { ...project, metadata: { ...project.metadata, targetLocales: ["ja", "zh-CN"] } };
+    vi.mocked(sourceCommands.scope).mockResolvedValue({ currentSnapshot: target.sourceSnapshotId, revision: "1" });
+    vi.mocked(segmentCommands.page).mockImplementation(async request => ({ ...page, locale: request.locale, query: { ...request.query, status: request.query.status ?? "all" },
+      sourceSnapshotId: target.sourceSnapshotId, rows: [{ ...page.rows[0], protection: { ...page.rows[0].protection, unitId: target.unitId },
+        content: { ...page.rows[0].content, unitId: target.unitId, locale: request.locale, sourceSnapshotId: target.sourceSnapshotId,
+          sourceRevisionId: target.sourceRevisionId, nativeKey: target.nativeKey, sourcePreview: target.sourceText, translationPreview: null, selectionId: null, revisionId: null } }] }));
+    vi.spyOn(conversationDraftCommands, "list").mockResolvedValue({ items: [], next: null });
+    vi.spyOn(conversationCommands, "list").mockResolvedValue({ projectId: project.metadata.projectId, rows: [], nextAfter: null });
+    vi.spyOn(draftCommands, "read").mockImplementation(async request => ({ head: { key: request.key, revision: "0", writerId: null, value: null },
+      current: { kind: "current", basis: { sourceRevisionId: target.sourceRevisionId, selectionId: null, revisionId: null, text: null }, nativeKey: target.nativeKey, sourceText: target.sourceText } }));
+    vi.spyOn(reviewCommands, "editorSnapshot").mockImplementation(async request => ({ readVersion: "entry-context-read", target: { ...target, locale: request.locale }, context: null,
+      terms: { unitId: target.unitId, locale: request.locale, sourceRevisionId: target.sourceRevisionId, entries: [] },
+      translations: { unitId: target.unitId, locale: request.locale, current: null, currentText: null, total: "0", rows: [], nextOrdinal: null } }));
+    vi.spyOn(resourceCommands, "context").mockResolvedValue(null);
+    vi.spyOn(resourceCommands, "resolve").mockImplementation(async request => ({ unitId: request.unitId, locale: request.locale, sourceRevisionId: target.sourceRevisionId, entries: [] }));
+    vi.spyOn(resourceCommands, "resolveContextResources").mockImplementation(async request => ({ scope: request.scope, entries: [] }));
+    const raw = vi.spyOn(sourceCommands, "sourceContext").mockImplementation(async request => sourcePage(request.locale));
+    vi.spyOn(resourceCommands, "factDecisions").mockResolvedValue([]);
+    const saveNote = vi.spyOn(resourceCommands, "saveContext"), saveFact = vi.spyOn(resourceCommands, "decideFact");
+    await openImportWorkspace(opened);
+    const language = await screen.findByRole("button", { name: "ja" }); language.focus(); fireEvent.keyDown(language, { key: "Enter" });
+    fireEvent.click(await screen.findByRole("menuitem", { name: "zh-CN" }));
+    await waitFor(() => expect(screen.getByRole("button", { name: "zh-CN" })).toBeVisible());
+    fireEvent.click(await screen.findByRole("button", { name: i18n.t("workbenchV2.showEntryDetails", { key: target.nativeKey }) }));
+    const tab = await screen.findByRole("tab", { name: i18n.t("workbenchV2.entryContextTab") });
+    await userEvent.setup().click(tab);
+    const notes = await screen.findByRole("region", { name: i18n.t("resource.manualContext") });
+    const facts = await screen.findByRole("region", { name: i18n.t("contextFacts.title") });
+    await waitFor(() => expect(within(notes).getByRole("button", { name: i18n.t("resource.editFromEntry") })).toBeEnabled());
+    await waitFor(() => expect(within(facts).getByRole("button", { name: i18n.t("contextFacts.replace") })).toBeEnabled());
+    expect(within(facts).getByText("Original speaker Mira")).toBeVisible();
+    expect(raw).toHaveBeenCalledWith(expect.objectContaining({ unitId: target.unitId, locale: "zh-CN", sourceSnapshotId: target.sourceSnapshotId, sourceRevisionId: target.sourceRevisionId }));
+    return { notes, facts, saveNote, saveFact };
+  }
+  async function closeViewsAndRestore() {
+    const drawer = screen.queryByRole("dialog", { name: i18n.t("workbenchV2.agent") });
+    if (drawer) {
+      fireEvent.click(within(drawer).getByRole("button", { name: i18n.t("workbenchV2.close") }));
+      await waitFor(() => expect(drawer).not.toBeInTheDocument());
+    }
+    fireEvent.click(screen.getByRole("button", { name: i18n.t("workbenchV2.closeView", { name: i18n.t("workbenchV2.viewName", { locale: "zh-CN" }) }) }));
+    await screen.findByText(i18n.t("workbenchV2.noViews"));
+    const restore = await screen.findByRole("button", { name: i18n.t("knowledge.backToDraft") });
+    await waitFor(() => expect(restore).toBeEnabled()); fireEvent.click(restore);
+    await waitFor(() => expect(location.hash).toContain(`focus=${target.unitId}`));
+    expect(location.hash).toContain("locale=zh-CN");
+    await screen.findByRole("tab", { name: i18n.t("workbenchV2.entryContextTab"), selected: true });
+    expect(screen.queryByRole("heading", { name: i18n.t("knowledge.kinds.terms") })).not.toBeInTheDocument();
+  }
+
+  it("opens the real note and source-fact controls from entry context, then restores the original note B without opening Knowledge", async () => {
+    const { notes, saveNote, saveFact } = await openContext();
+    fireEvent.click(within(notes).getByRole("button", { name: i18n.t("resource.editFromEntry") }));
+    const text = await within(notes).findByRole("textbox", { name: i18n.t("resource.manualContext") });
+    fireEvent.change(text, { target: { value: "Original entry note B 🧵\nkeep {{name}}" } });
+    fireEvent.change(within(notes).getByRole("textbox", { name: i18n.t("resource.reason") }), { target: { value: "Unfinished original reason B" } });
+    await closeViewsAndRestore();
+    const restored = within(await screen.findByRole("region", { name: i18n.t("resource.manualContext") }));
+    expect(await restored.findByRole("textbox", { name: i18n.t("resource.manualContext") })).toHaveValue("Original entry note B 🧵\nkeep {{name}}");
+    expect(restored.getByRole("textbox", { name: i18n.t("resource.reason") })).toHaveValue("Unfinished original reason B");
+    expect(restored.getByRole("textbox", { name: i18n.t("resource.manualContext") })).not.toHaveAttribute("readonly");
+    fireEvent.change(restored.getByRole("textbox", { name: i18n.t("resource.manualContext") }), { target: { value: "Continue original note B" } });
+    expect(restored.getByRole("textbox", { name: i18n.t("resource.manualContext") })).toHaveValue("Continue original note B");
+    expect(restored.getByText(i18n.t("contextFacts.scope", { key: target.nativeKey, locale: "zh-CN" }))).toBeVisible();
+    expect(saveNote).not.toHaveBeenCalled(); expect(saveFact).not.toHaveBeenCalled();
+  }, 15000);
+
+  it("returns a retained source-fact replacement to its original entry and locale with all newer input intact", async () => {
+    const { facts, saveNote, saveFact } = await openContext();
+    fireEvent.click(within(facts).getByRole("button", { name: i18n.t("contextFacts.replace") }));
+    const value = await within(facts).findByRole("textbox", { name: i18n.t("contextFacts.value") });
+    fireEvent.change(value, { target: { value: "Manual source-fact B 👩🏽‍🚀" } });
+    fireEvent.change(within(facts).getByRole("textbox", { name: i18n.t("contextFacts.actor") }), { target: { value: "Human B" } });
+    fireEvent.change(within(facts).getByRole("textbox", { name: i18n.t("contextFacts.reason") }), { target: { value: "Original source evidence B" } });
+    await closeViewsAndRestore();
+    const restored = within(await screen.findByRole("region", { name: i18n.t("contextFacts.title") }));
+    expect(await restored.findByRole("textbox", { name: i18n.t("contextFacts.value") })).toHaveValue("Manual source-fact B 👩🏽‍🚀");
+    expect(restored.getByRole("textbox", { name: i18n.t("contextFacts.actor") })).toHaveValue("Human B");
+    expect(restored.getByRole("textbox", { name: i18n.t("contextFacts.reason") })).toHaveValue("Original source evidence B");
+    expect(restored.getByRole("textbox", { name: i18n.t("contextFacts.value") })).not.toHaveAttribute("readonly");
+    fireEvent.change(restored.getByRole("textbox", { name: i18n.t("contextFacts.value") }), { target: { value: "Continue source-fact B" } });
+    expect(restored.getByRole("textbox", { name: i18n.t("contextFacts.value") })).toHaveValue("Continue source-fact B");
+    expect(saveNote).not.toHaveBeenCalled(); expect(saveFact).not.toHaveBeenCalled();
+  }, 15000);
+});
 
 it("opens application settings and external query commands through the real workspace while retaining project language and query input", async () => {
   document.documentElement.lang = "zh-CN";

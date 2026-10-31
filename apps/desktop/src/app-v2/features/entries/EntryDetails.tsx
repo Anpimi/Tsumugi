@@ -12,6 +12,7 @@ import { TokenizedText } from "../../../design-system/TokenizedText";
 import type { InteractionGate } from "../../workspace/interactionGate";
 import type { ViewPatch, WorkspaceView } from "../../workspace/workspaceStore";
 import type { TranslationDrafts } from "../editor/translationDrafts";
+import type { KnowledgeOwner } from "../knowledge/knowledgeTypes";
 import type { CandidateOwners } from "../candidates/candidateTypes";
 import type { EntryReviewEditorRequest } from "../review/navigationTypes";
 import type { ReviewOwner } from "../review/reviewTypes";
@@ -21,6 +22,9 @@ import { readEntryDetails } from "./entryReads";
 import styles from "../../WorkbenchLayout.module.css";
 import local from "./EntryDetails.module.css";
 
+const EntryContextNotes = lazy(() => import("./EntryContextNotes"));
+const EntrySourceFacts = lazy(() => import("./EntrySourceFacts"));
+const EntryCorrectionTerm = lazy(() => import("./EntryCorrectionTerm"));
 const EntriesCandidates = lazy(() => import("../candidates/EntriesCandidates"));
 const EntryProtection = lazy(() => import("../candidates/EntryProtection"));
 const ComparisonPanel = lazy(() => import("../comparison/ComparisonPanel"));
@@ -38,12 +42,15 @@ interface Props {
   parentDialogId?: string; comparisonOwner: ComparisonSession | null; requestComparisons: () => void;
   onOpenComparison: (view: ComparisonView) => Promise<boolean>;
   reviewOwner?: ReviewOwner | null;
+  knowledgeOwner?: KnowledgeOwner | null;
+  onOpenContext?: (unitId: string, locale: string) => Promise<boolean>;
+  onOpenTermCapture?: (captureId: string) => Promise<boolean>;
   onReviewEdit?: (request: EntryReviewEditorRequest, proof: () => boolean) => Promise<boolean>;
   onOpenStrategy?: (unitId: string, locale: string) => Promise<boolean>;
   onPresented: (viewId: string, kind: "candidates" | "protection" | "comparison" | "review", visible: boolean) => void;
 }
 export default function EntryDetails({ project, view, locale, disabled, visible, drafts, owners, commands, gate, patch, onEdit, parentDialogId,
-  comparisonOwner, requestComparisons, onOpenComparison, onPresented, reviewOwner, onReviewEdit, onOpenStrategy }: Props) {
+  comparisonOwner, requestComparisons, onOpenComparison, onPresented, reviewOwner, onReviewEdit, onOpenStrategy, knowledgeOwner, onOpenContext, onOpenTermCapture }: Props) {
   const { t } = useTranslation(undefined, { keyPrefix: "workbenchV2" });
   const reads = useSessionReads(), unitId = view?.focus ?? null;
   const comparisonButton = useRef<HTMLButtonElement>(null), previousComparison = useRef({ viewId: view?.id, unitId, open: view?.candidateCompareOpen });
@@ -92,10 +99,19 @@ export default function EntryDetails({ project, view, locale, disabled, visible,
         viewId={view.id} disabled={disabled} visible={visible} parentDialogId={parentDialogId}/></Suspense> : null}
       <h3>{t("source", { locale: "" })}</h3><p className={local.text}><TokenizedText text={target.sourceText} /></p>
       <h3>{t("translation", { locale })}</h3><p className={local.text}>{target.translationText === null ? t("noTranslation") : target.translationText === "" ? t("editorEmptySelection") : <TokenizedText text={target.translationText} />}</p>
+      {knowledgeOwner && drafts ? <Suspense fallback={<LoadingState label={t("loadingDetails")} />}><EntryCorrectionTerm project={project} target={target} owner={knowledgeOwner}
+        drafts={drafts} gate={gate} viewId={view.id} disabled={disabled} visible={visible && view.detailTab === "detail"} parentDialogId={parentDialogId}
+        read={{ key: ["workbench-entry-details", unitId, locale], data: query.data }} onOpenCapture={onOpenTermCapture}/></Suspense> : null}
       {onOpenStrategy && savedCorrection ? <Button disabled={disabled || !visible} onClick={() => { if (view && gate.canDispatch({ viewId: view.id, source: "button", dialogId: parentDialogId })) void onOpenStrategy(unitId, locale); }}>{t("strategyEntryOpen")}</Button> : null}
     </TabsContent>
     <TabsContent value="context" className={styles.details}>
-      <h2>{t("context")}</h2><p className={local.text}>{context ? <TokenizedText text={context.text} /> : t("entryContextEmpty")}</p>
+      <h2>{t("context")}</h2>
+      {knowledgeOwner ? <Suspense fallback={<LoadingState label={t("loadingDetails")} />}>
+        <EntryContextNotes project={project} target={target} owner={knowledgeOwner} gate={gate} viewId={view.id} disabled={disabled}
+          visible={visible && view.detailTab === "context"} parentDialogId={parentDialogId} onOpenEntry={onOpenContext}/>
+        <EntrySourceFacts project={project} target={target} owner={knowledgeOwner} gate={gate} viewId={view.id} disabled={disabled}
+          visible={visible && view.detailTab === "context"} parentDialogId={parentDialogId} onOpenEntry={onOpenContext}/>
+      </Suspense> : <p className={local.text}>{context ? <TokenizedText text={context.text} /> : t("entryContextEmpty")}</p>}
       <EntryContextResources project={project} target={target} visible={visible && view.detailTab === "context"}/>
       <h3>{t("entryTerms")}</h3>{terms.entries.length ? <dl>{terms.entries.map(term => <div key={term.source}>
         <dt><TokenizedText text={term.source}/></dt><dd>{term.selected ? <TokenizedText text={term.selected.target}/> : t("termConflict")}

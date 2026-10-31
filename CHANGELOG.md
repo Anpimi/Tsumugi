@@ -12,6 +12,8 @@ Current workspace version metadata: **`0.2.0-alpha.1`**. Because the published `
 
 ### Added
 
+- Entry details in the opt-in workspace can edit context notes, capture saved context and adopted terms as fixed input, and inspect original source facts. Human fact corrections, rejection of inferred facts and restoration retain their history. A saved manual translation correction can explicitly become a unit-scoped term candidate for review. Unfinished input and original uncertain requests use the existing local recovery workflow; these actions do not call a model.
+
 - Appearance settings in the opt-in workspace can set source and translation text to 14–20 px while keeping other controls at their existing size. The choice stays on the current device, and changing it preserves unfinished input.
 
 - The visible assistant panel can create a conversation with ⌘N on Mac or Ctrl+N on Windows. The button, command palette and rebindable shortcut use the same local conversation action; creating a conversation does not call a model. An existing custom use of this shortcut keeps its assignment.
@@ -135,6 +137,8 @@ Current workspace version metadata: **`0.2.0-alpha.1`**. Because the published `
 - **Non-blocking project operations and shared session state**: Desktop project commands, full-text search, QA checks, and exports run on a dedicated project thread without blocking window events. Task, AI, Arena, and import progress share a coalesced session cache that reconciles missed notifications and pauses background polling in hidden views.
 
 ### Fixed
+
+- Opening a dialog or side panel with its close button focused no longer makes the first Escape dismiss only that button's tooltip. Escape closes the surface and restores the opener's focus.
 
 - Reduce repeated reads and source scans for project progress and items that need a decision, while preserving complete checks, finding history and clear indicators when results are incomplete.
 

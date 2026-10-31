@@ -26,14 +26,12 @@ export function Button({ variant = "ghost", size = "md", pending = false, icon, 
 export type IconButtonProps = Omit<ButtonProps, "kbd" | "aria-label"> & {
   label: string;
   tooltipSide?: "top" | "right" | "bottom" | "left";
+  tooltip?: boolean;
 };
 
-export function IconButton({ label, tooltipSide, size = "sm", className, disabled, pending, ...props }: IconButtonProps) {
+export function IconButton({ label, tooltipSide, tooltip = true, size = "sm", className, disabled, pending, ...props }: IconButtonProps) {
   const blocked = disabled || pending;
   const button = <Button {...props} size={size} disabled={disabled} pending={pending} aria-label={label} aria-hidden={blocked || undefined} tabIndex={blocked ? -1 : props.tabIndex} title={props.title ?? (disabled ? label : undefined)} className={cx(styles.iconButton, className)} />;
-  return (
-    <Tooltip content={props.title ?? label} side={tooltipSide}>
-      {disabled || pending ? <span className={styles.disabledTrigger} tabIndex={0} role="button" aria-disabled="true" aria-label={label}>{button}</span> : button}
-    </Tooltip>
-  );
+  const trigger = blocked ? <span className={styles.disabledTrigger} tabIndex={0} role="button" aria-disabled="true" aria-label={label}>{button}</span> : button;
+  return tooltip ? <Tooltip content={props.title ?? label} side={tooltipSide}>{trigger}</Tooltip> : trigger;
 }

@@ -13,6 +13,7 @@ import { Dialog } from "../../../design-system/Dialog";
 import { Banner, EmptyState, LoadingState } from "../../../design-system/Feedback";
 import type { InteractionGate } from "../../workspace/interactionGate";
 import type { KnowledgeOwner } from "./knowledgeTypes";
+import { CorrectionTermDraftForm } from "../entries/EntryCorrectionTerm";
 import styles from "./TermProposalPanel.module.css";
 
 interface Props {
@@ -25,7 +26,7 @@ type Choice = {
 } & ({ removed: false; row: ResourcePreviewRow } | { removed: true; row: TermRevision });
 
 /** Saved captures are evidence. Decisions remain in the original resource owner. */
-export default function TermProposalPanel({ project, owner, disabled, current, gate }: Props) {
+export default function TermProposalPanel({ project, owner, disabled, current, gate, viewId }: Props) {
   const { t } = useTranslation(undefined, { keyPrefix: "knowledge" }), { t: global } = useTranslation();
   const reads = useSessionReads(), context = executionContext(project), dialogId = useId();
   useSyncExternalStore(gate.subscribe, gate.getSnapshot, gate.getSnapshot);
@@ -112,6 +113,7 @@ export default function TermProposalPanel({ project, owner, disabled, current, g
   const changed = !!preview && (state.previewNeedsRefresh || !latest.data || !source.data || !fresh(sourceKey, source.data)
     || !fresh(previewKey, latest.data) || jsonIdentity(preview) !== jsonIdentity(latest.data));
   return <section className={styles.panel} aria-label={t("proposalTitle")}>
+    <CorrectionTermDraftForm project={project} owner={owner} disabled={disabled} visible current={() => present()} gate={gate} viewId={viewId}/>
     <header className={styles.header}><div><h2>{t("proposalTitle")}</h2><p>{t("proposalHelp")}</p></div>
       <Button size="sm" disabled={!present() || busy || dirty || !owner.localeAvailable(state.locale)}
         onClick={() => { if (present() && !busy && !dirty) void owner.chooseFile(() => present()); }}>{t("proposalChooseFile")}</Button>

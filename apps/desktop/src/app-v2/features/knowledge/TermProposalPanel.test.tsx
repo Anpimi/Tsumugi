@@ -89,6 +89,19 @@ it.each(["en-US", "zh-CN"])("reads a proposal without applying it and sends the 
   expect(observed?.current().previewNeedsRefresh).toBe(true);
 });
 
+it("retains the explicit file chooser and its original preview path", async () => {
+  const original = invoke.getMockImplementation();
+  if (!original) throw new Error("Synthetic IPC harness required");
+  invoke.mockImplementation((command, payload) => command === "choose_resource_file" ? Promise.resolve(structuredClone(preview.capture)) : original(command, payload));
+  const user = await open();
+  expect(invoke.mock.calls.filter(([name]) => name === "choose_resource_file")).toHaveLength(0);
+  await user.click(screen.getByRole("button", { name: label("proposalChooseFile") }));
+  await waitFor(() => expect(invoke.mock.calls.filter(([name]) => name === "choose_resource_file")).toHaveLength(1));
+  await waitFor(() => expect(observed?.current().previewNeedsRefresh).toBe(false));
+  expect(observed?.current().previewCapture?.origin.kind).toBe("file");
+  expect(decisions()).toHaveLength(0);
+});
+
 it("keeps the original action after an uncertain acknowledgement and retries only that request", async () => {
   uncertain = true;
   const user = await open();

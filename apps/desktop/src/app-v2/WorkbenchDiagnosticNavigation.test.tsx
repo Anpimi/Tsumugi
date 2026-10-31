@@ -137,7 +137,8 @@ it("locates the saved Unicode range, confirms an edit and returns to the origina
   expect(segmentCommands.queueWindow).toHaveBeenLastCalledWith(expect.objectContaining({ scopeId, locale: fixture.target.locale }));
   expect(reviewCommands.check).not.toHaveBeenCalled(); expect(reviewCommands.prepareCheck).not.toHaveBeenCalled(); expect(reviewCommands.decide).not.toHaveBeenCalled(); expect(reviewCommands.finding).not.toHaveBeenCalled();
 });
-it("keeps an uncertain save and blocks returning without replaying or rerunning work", async () => {
+// Running this journey alone also pays the cold lazy-surface loading cost.
+it("keeps an uncertain save and blocks returning without replaying or rerunning work", { timeout: 15_000 }, async () => {
   const user = await openIssues();
   await user.click(await screen.findByRole("button", { name: i18n.t("review.diagnosticNavigation.locateTranslation") }));
   const field = await screen.findByRole<HTMLTextAreaElement>("textbox", { name: i18n.t("workbenchV2.editorLabel", { key: fixture.target.nativeKey }) });
