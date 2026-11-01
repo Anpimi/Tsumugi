@@ -1,4 +1,5 @@
 export const conversationTeamEn = {
+  finding: "Review finding",
   toolResultOriginal: "Read original tool output",
   toolResults: "Saved tool results", readToolResults: "Read saved tool results", hideToolResults: "Hide saved tool results", toolResultsHelp: "Read the original saved output. This does not run the tool, select a translation or restore permission.", toolResultAbsent: "No successful output is saved for this item.", refreshToolResults: "Refresh these results", firstToolResults: "First result page", nextToolResults: "Next result page",
 
@@ -18,6 +19,7 @@ export const conversationTeamEn = {
   postKind: { "human-question": "Question or response", note: "Note", challenge: "Challenge", rejection: "Rejection", resolution: "Resolution record" },
 };
 export const conversationTeamZh = {
+  finding: "审校发现",
   toolResultOriginal: "查看原工具输出",
   toolResults: "已保存工具结果", readToolResults: "查看已保存工具结果", hideToolResults: "收起已保存工具结果", toolResultsHelp: "只回看原工具输出，不运行工具、不选用译文，也不恢复许可。", toolResultAbsent: "此条目没有已保存的成功输出。", refreshToolResults: "刷新这些结果", firstToolResults: "结果首页", nextToolResults: "下一页结果",
 

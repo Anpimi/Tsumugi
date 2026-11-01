@@ -119,6 +119,7 @@ export class ConversationSession {
   private opening = new Map<string, Promise<boolean>>();
   private loading: Promise<boolean> | null = null;
   private readonly strategyDefaultLoads = new Map<string, object>();
+  private readonly composerContexts = new Map<string, string>();
   private changed = 0;
   private state: ConversationSessionSnapshot = { hydration: "idle", failure: null, inputFailure: null, activeId: null, inputs: new Map(), summaries: [], next: null, retired: false };
   constructor(readonly context: SessionRequest, private readonly onRecorded: () => void, private readonly onReveal: () => void, ports: Partial<Ports> = {}) {
@@ -728,8 +729,13 @@ export class ConversationSession {
     const record = this.records.get(conversationId); if (!record || !this.kernel.live) return false;
     const selection = copyWorkspaceSelection(selected);
     try { planningSelectionScope(this.context, selection); } catch { return false; }
-    this.editPlanning(record, { selection, config: planningConfig(record.input.planning.config, selection) });
+    this.editPlanning(record, { selection, config: planningConfig(record.input.planning.config, selection), ...(!selection ? { purpose: null } : {}) });
     return true;
+  }
+  syncComposerContext(conversationId: string, selection: WorkspaceSelection | null, identity: string) {
+    if (!this.kernel.live || !this.records.has(conversationId) || this.composerContexts.get(conversationId) === identity) return;
+    this.composerContexts.set(conversationId, identity);
+    if (!this.setPlanningSelection(conversationId, selection)) this.setPlanningSelection(conversationId, null);
   }
   setPlanningConfig(conversationId: string, change: AiConfig | ((before: AiConfig) => AiConfig)) {
     const record = this.records.get(conversationId); if (!record || !this.kernel.live) return;

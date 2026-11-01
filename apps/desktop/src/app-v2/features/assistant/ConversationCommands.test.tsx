@@ -118,3 +118,17 @@ it("keeps hidden, stale, composing and modal panels inactive and limits the Agen
   await waitFor(() => expect(h.create).toHaveBeenCalledTimes(1)); await h.settled(); act(closeDrawer);
   h.rendered.unmount(); expect(h.commands.describe("conversation.new-thread", h.scope)).toBeUndefined();
 });
+
+it("routes command palette actions to the same explicit composer input without running or sharing it", async () => {
+  const h = await harness();
+  act(() => { h.commands.dispatch("conversation.new-thread", h.scope); });
+  await h.settled();
+  expect(h.commands.describe("conversation.translate", h.scope)?.nameKey).toBe("conversation.commandTranslate");
+  act(() => { expect(h.commands.dispatch("conversation.translate", h.scope)).toBe(true); });
+  expect(screen.getByRole("textbox", { name: "Message" })).toHaveValue("/translate ");
+  expect(h.owner.getSnapshot().inputs.get(h.owner.getSnapshot().activeId!)?.planning.consent).toBe(false);
+  let close!: () => void; act(() => { close = h.gate.pushDialog("other"); });
+  expect(h.commands.dispatch("conversation.review", h.scope)).toBe(false); act(close);
+  h.show({ visible: false }); expect(h.commands.dispatch("conversation.terms", h.scope)).toBe(false);
+  expect(invoke.mock.calls.some(([command]) => command === "start_conversation_planning" || command === "start_work_plan" || command === "prepare_conversation_planning")).toBe(false);
+});
