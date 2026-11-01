@@ -17,6 +17,8 @@ import { segmentCommands, type SegmentPage } from "../segmentCommands";
 import { draftCommands } from "../draftCommands";
 import { conversationCommands } from "../conversationCommands";
 import { conversationDraftCommands } from "../conversationDraftCommands";
+import type { ConversationDraftHead } from "../conversationDraftCommands";
+import { ConversationSession } from "./features/assistant/ConversationSession";
 import { translationCommands } from "../translationCommands";
 import { validateSaveReceipt } from "../translationCommands";
 import { executionCommands } from "../executionCommands";
@@ -125,6 +127,74 @@ beforeEach(async () => {
   vi.spyOn(window, "scrollTo").mockImplementation(() => {});
 });
 afterEach(() => { cleanup(); controller?.dispose(); });
+
+it.each([1440, 900])("keeps the conversation owner, both inputs and return focus through conversation mode at %i px", async width => {
+  const previousWidth = Object.getOwnPropertyDescriptor(window, "innerWidth");
+  Object.defineProperty(window, "innerWidth", { configurable: true, writable: true, value: width });
+  const conversationId = fixtureIdentity(982), key = { projectId: project.metadata.projectId, conversationId };
+  let head: ConversationDraftHead = { key, revision: "1", writerId: fixtureIdentity(983), value: { text: "Retained Agent draft 🙂", editSeq: "1", pending: null } };
+  vi.spyOn(conversationCommands, "list").mockResolvedValue({ projectId: project.metadata.projectId, rows: [{ ...key, title: "Layout conversation", ordinal: "1" }], nextAfter: null });
+  vi.spyOn(conversationCommands, "messages").mockResolvedValue({ ...key, rows: [], nextAfter: null });
+  vi.spyOn(conversationCommands, "planningAttempts").mockResolvedValue({ ...key, rows: [], nextAfter: null });
+  vi.spyOn(conversationCommands, "proposalRevisions").mockResolvedValue({ ...key, rows: [], nextAfter: null });
+  vi.spyOn(conversationCommands, "proposalWorkPlans").mockResolvedValue({ ...key, rows: [], nextAfter: null });
+  vi.spyOn(conversationDraftCommands, "list").mockResolvedValue({ items: [], next: null });
+  vi.spyOn(conversationDraftCommands, "read").mockImplementation(async () => structuredClone(head));
+  vi.spyOn(conversationDraftCommands, "write").mockImplementation(async request => {
+    head = { key, revision: String(BigInt(head.revision) + 1n), writerId: request.write.writerId, value: structuredClone(request.write.value) };
+    return structuredClone(head);
+  });
+  const openConversation = vi.spyOn(ConversationSession.prototype, "open"), initialize = vi.spyOn(ConversationSession.prototype, "initialize");
+  const prepare = vi.spyOn(conversationCommands, "preparePlanning"), start = vi.spyOn(conversationCommands, "startPlanning");
+  try {
+    await openImportWorkspace();
+    const search = await screen.findByRole("textbox", { name: i18n.t("workbenchV2.searchEntries") });
+    fireEvent.change(search, { target: { value: "Unfinished search B {{name}}" } });
+    const table = screen.getByRole("region", { name: i18n.t("workbenchV2.entriesTableLabel") });
+    table.scrollTop = 120; fireEvent.scroll(table);
+    if (width <= 1100) fireEvent.click(screen.getByRole("button", { name: i18n.t("workbenchV2.openAgent") }));
+    const picker = await screen.findByRole("button", { name: i18n.t("conversation.chooseThread") });
+    await waitFor(() => expect(picker).toBeEnabled()); picker.focus(); fireEvent.keyDown(picker, { key: "ArrowDown" });
+    fireEvent.click(await screen.findByRole("menuitem", { name: "Layout conversation" }));
+    const composer = await screen.findByRole("textbox", { name: i18n.t("conversation.message") }) as HTMLTextAreaElement;
+    fireEvent.change(composer, { target: { value: "Agent draft B 🙂\nkeep this input" } });
+    composer.setSelectionRange(2, 7);
+    const owner = openConversation.mock.contexts.at(-1) as ConversationSession;
+    await waitFor(() => expect(owner.getSnapshot().inputs.get(conversationId)?.journalBusy).toBe(false));
+    const retained = owner.getSnapshot().inputs.get(conversationId), initialized = initialize.mock.calls.length;
+    if (width <= 1100) {
+      const drawer = screen.getByRole("dialog", { name: i18n.t("workbenchV2.agent") });
+      fireEvent.keyDown(composer, { key: "L", ctrlKey: !navigator.platform.includes("Mac"), metaKey: navigator.platform.includes("Mac"), shiftKey: true });
+      expect(screen.getByRole("button", { name: i18n.t("workbenchV2.conversationMode"), hidden: true })).toHaveAttribute("aria-pressed", "false");
+      fireEvent.click(within(drawer).getByRole("button", { name: i18n.t("workbenchV2.close") }));
+      await waitFor(() => expect(drawer).not.toBeInTheDocument());
+    }
+    search.focus();
+    fireEvent.compositionStart(search);
+    fireEvent.keyDown(search, { key: "L", ctrlKey: !navigator.platform.includes("Mac"), metaKey: navigator.platform.includes("Mac"), shiftKey: true });
+    expect(screen.getByRole("button", { name: i18n.t("workbenchV2.conversationMode") })).toHaveAttribute("aria-pressed", "false");
+    fireEvent.compositionEnd(search);
+    fireEvent.keyDown(search, { key: "L", ctrlKey: !navigator.platform.includes("Mac"), metaKey: navigator.platform.includes("Mac"), shiftKey: true });
+    await waitFor(() => expect(composer).toHaveFocus());
+    expect(screen.getByRole("textbox", { name: i18n.t("conversation.message") })).toBe(composer);
+    expect(composer).toHaveValue("Agent draft B 🙂\nkeep this input");
+    expect([composer.selectionStart, composer.selectionEnd]).toEqual([2, 7]);
+    expect(composer.closest('[aria-hidden="true"], [inert]')).toBeNull();
+    expect(owner.getSnapshot().activeId).toBe(conversationId);
+    expect(owner.getSnapshot().inputs.get(conversationId)).toBe(retained);
+    expect(initialize.mock.calls.length).toBe(initialized);
+    expect(screen.getAllByPlaceholderText(i18n.t("conversation.placeholder"))).toHaveLength(1);
+    const returnButton = screen.getByRole("button", { name: i18n.t("workbenchV2.returnToView") });
+    fireEvent.click(returnButton);
+    await waitFor(() => expect(search).toHaveFocus());
+    expect(screen.getByRole("textbox", { name: i18n.t("workbenchV2.searchEntries") })).toBe(search);
+    expect(search).toHaveValue("Unfinished search B {{name}}"); expect(table.scrollTop).toBe(120);
+    expect(owner.getSnapshot().inputs.get(conversationId)).toBe(retained);
+    expect(prepare).not.toHaveBeenCalled(); expect(start).not.toHaveBeenCalled();
+  } finally {
+    if (previousWidth) Object.defineProperty(window, "innerWidth", previousWidth);
+  }
+}, 15000);
 
 it("synchronizes the document language on the welcome screen", async () => {
   document.documentElement.lang = "en";

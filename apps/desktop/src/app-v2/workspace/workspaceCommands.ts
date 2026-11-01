@@ -22,6 +22,7 @@ export interface WorkspaceCommandActions {
   focusSearch?: () => void;
   focusAgent?: () => void;
   focusDetails?: () => void;
+  toggleConversationMode?: () => void;
   openCommands?: () => void;
   openSettings?: () => void | Promise<unknown>;
   openExtensions?: () => void | Promise<unknown>;
@@ -78,7 +79,8 @@ export function registerWorkspaceCommands({ commands, store, gate, viewId, scope
     commands.register({ ...metadata, ...workspaceCommandMetadata("workspace.close-view"), availability: () => available(!!view() && !view()?.pinned), handler: run(() => viewId ? navigation.close(viewId) : undefined) }),
     commands.register({ ...metadata, ...pinMetadata, get nameKey(): TranslationKey { return view()?.pinned ? "workbenchV2.unpinView" : pinMetadata.nameKey; }, availability: () => available(!!view()), handler: () => { if (viewId) store.getState().pin(viewId); } }),
     commands.register({ ...metadata, ...workspaceCommandMetadata("workspace.agent"), availability: () => available(!!view()), handler: run(() => { if (viewId) store.getState().patch(viewId, { dock: "agent", dockOpen: true }); actions.focusAgent?.(); }) }),
-    commands.register({ ...metadata, ...workspaceCommandMetadata("workspace.details"), availability: () => available(!!view()), handler: run(() => { if (viewId) store.getState().patch(viewId, { dock: "details", dockOpen: true }); actions.focusDetails?.(); }) }),
+    commands.register({ ...metadata, ...workspaceCommandMetadata("workspace.conversation-mode"), availability: () => available(!!view() && !!actions.toggleConversationMode), handler: run(() => actions.toggleConversationMode?.()) }),
+    commands.register({ ...metadata, ...workspaceCommandMetadata("workspace.details"), availability: () => available(!!view()), handler: run(() => { if (viewId) store.getState().patch(viewId, { dock: "details", dockOpen: true, conversationMode: false }); actions.focusDetails?.(); }) }),
     commands.register({ ...metadata, ...workspaceCommandMetadata("workspace.decisions"), availability: () => available(!!actions.openDecisions), handler: run(() => actions.openDecisions?.()) }),
     commands.register({ ...metadata, ...workspaceCommandMetadata("workspace.delivery"), availability: () => available(!!actions.openDelivery), handler: run(() => actions.openDelivery?.()) }),
     commands.register({ ...metadata, ...workspaceCommandMetadata("workspace.strategy"), availability: () => available(!!actions.openStrategy), handler: run(() => actions.openStrategy?.()) }),
@@ -140,7 +142,7 @@ export function createWorkspaceCommandDispatcher({ gate, getContext, modifier }:
     if (!context || context.viewId !== request.viewId || !gate.canDispatch(request)) return false;
     if (request.dialogId === "draft-recovery" && !id.startsWith("translation.")) return false;
     if (request.dialogId === "draft-recovery" && id === "translation.confirm-next") return false;
-    if (request.dialogId === "workspace-dock" && id !== "conversation.new-thread") return false;
+    if (request.dialogId === "workspace-dock" && id !== "conversation.new-thread" && id !== "workspace.agent" && id !== "workspace.details") return false;
     if (request.source === "keyboard" && id.startsWith("translation.")) {
       const actual = gate.getSnapshot().inputOwner?.ownerId;
       if (id === "translation.stage-focused-ai") {

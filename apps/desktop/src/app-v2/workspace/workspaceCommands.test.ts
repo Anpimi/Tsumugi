@@ -12,6 +12,29 @@ beforeEach(() => { localStorage.removeItem(COMMAND_BINDINGS_STORAGE_KEY); });
 afterEach(() => { vi.restoreAllMocks(); localStorage.removeItem(COMMAND_BINDINGS_STORAGE_KEY); });
 
 describe("workspace commands in the existing registry", () => {
+  it.each(["meta", "ctrl"] as const)("routes conversation layout through one command and respects composition, dialogs and view ownership with %s", modifier => {
+    const store = createWorkspaceStore({ initialLocale: "zh-CN", initialViews: [{ id: "one", kind: "entries", locale: "zh-CN" }] });
+    const gate = new InteractionGate(), commands = new WorkbenchCommands(), toggleConversationMode = vi.fn(); gate.setVisibleOwner("one");
+    let liveScope = scope;
+    registerWorkspaceCommands({ commands, store, gate, viewId: "one", scope, getCurrentScope: () => liveScope, navigation: navigation(), actions: { toggleConversationMode }, onError: vi.fn() });
+    const dispatcher = createWorkspaceCommandDispatcher({ gate, getContext: () => ({ viewId: "one", scope, commands }), modifier });
+    const key = (options: KeyboardEventInit = {}) => new KeyboardEvent("keydown", { key: "L", metaKey: modifier === "meta", ctrlKey: modifier === "ctrl", shiftKey: true, cancelable: true, ...options });
+    expect(dispatcher.list().find(command => command.id === "workspace.conversation-mode")).toMatchObject({ binding: "Mod+Shift+L", availability: { enabled: true } });
+    const accepted = key(); expect(dispatcher.handleKeyDown(accepted, "one")).toBe(true); expect(accepted.defaultPrevented).toBe(true);
+    expect(dispatcher.handleKeyDown(key({ isComposing: true }), "one")).toBe(false);
+    const ime = key(); Object.defineProperty(ime, "keyCode", { value: 229 }); expect(dispatcher.handleKeyDown(ime, "one")).toBe(false);
+    gate.setComposing("conversation-composer", true); expect(dispatcher.handleKeyDown(key(), "one")).toBe(false); gate.setComposing("conversation-composer", false);
+    for (const dialog of ["workspace-dock", "draft-recovery", "project-metadata"]) {
+      const close = gate.pushDialog(dialog);
+      expect(dispatcher.handleKeyDown(key(), "one", undefined, dialog === "project-metadata" ? undefined : dialog)).toBe(false); close();
+    }
+    const intent = gate.acquireIntent("switch-project"); expect(dispatcher.dispatch("workspace.conversation-mode", { viewId: "one", source: "button" })).toBe(false); intent?.release();
+    expect(dispatcher.dispatch("workspace.conversation-mode", { viewId: "stale-view", source: "native-menu" })).toBe(false);
+    for (const source of ["button", "palette", "native-menu"] as const) expect(dispatcher.dispatch("workspace.conversation-mode", { viewId: "one", source })).toBe(true);
+    liveScope = { ...scope, sessionToken: "another-session" };
+    expect(dispatcher.dispatch("workspace.conversation-mode", { viewId: "one", source: "native-menu" })).toBe(false);
+    expect(toggleConversationMode).toHaveBeenCalledTimes(4);
+  });
   it("opens work plans from the same button, palette and native command without bypassing an active dialog", () => {
     const store = createWorkspaceStore({ initialLocale: "zh-CN", initialViews: [] }), gate = new InteractionGate(), commands = new WorkbenchCommands(), openRuns = vi.fn();
     registerWorkspaceCommands({ commands, store, gate, viewId: null, scope, getCurrentScope: () => scope,

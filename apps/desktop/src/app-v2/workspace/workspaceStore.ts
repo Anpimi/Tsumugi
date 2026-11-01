@@ -54,6 +54,8 @@ export interface WorkspaceView {
   queueAnchor: string | null;
   queueScopeId: string | null;
   focusMode: boolean;
+  conversationMode: boolean;
+  conversationViewSize: number | null;
   dock: "agent" | "details";
   dockOpen: boolean;
   dockSize: number | null;
@@ -128,6 +130,8 @@ export function makeWorkspaceView(input: NewWorkspaceView, id: string): Workspac
     queueAnchor: input.queueAnchor ?? (input.kind === "entries" ? input.focus ?? null : null),
     queueScopeId: input.queueScopeId ?? null,
     focusMode: input.focusMode ?? false,
+    conversationMode: input.conversationMode ?? false,
+    conversationViewSize: input.conversationViewSize ?? null,
     dock: input.dock ?? "agent",
     dockOpen: input.dockOpen ?? true,
     dockSize: input.dockSize ?? null,

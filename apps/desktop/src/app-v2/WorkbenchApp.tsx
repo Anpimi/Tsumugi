@@ -20,7 +20,7 @@ import { Banner, EmptyState, ErrorState, LoadingState } from "../design-system/F
 import { Dialog, Sheet } from "../design-system/Dialog";
 import { Menu } from "../design-system/Menu";
 import { TabsRoot, TabsList, TabsTrigger, TabsContent } from "../design-system/Tabs";
-import { SplitView, SplitPanel, SplitHandle } from "../design-system/SplitView";
+import { WorkspacePanes } from "./WorkspacePanes";
 import { CommandPalette } from "../design-system/CommandPalette";
 import { ProjectLifecycle, type ProjectSession } from "./platform/projectLifecycle";
 import { useNativeProjectClose, useProjectLifecycle } from "./platform/useProjectLifecycle";
@@ -115,7 +115,7 @@ type ShellActions = { requestOpen: () => void; close: () => Promise<boolean>; re
   openStrategy: () => Promise<boolean>;
   openRuns: () => Promise<boolean>;
   openImport: () => Promise<void>; canOpenImport: () => boolean;
-  confirm: (advance: boolean) => Promise<void>; exitEditor: () => Promise<void>; toggleFocus: () => Promise<void>; isEditing: () => boolean; canConfirm: () => boolean; canAdvance: () => boolean };
+  confirm: (advance: boolean) => Promise<void>; exitEditor: () => Promise<void>; toggleFocus: () => Promise<void>; toggleConversationMode: () => void; isEditing: () => boolean; canConfirm: () => boolean; canAdvance: () => boolean };
 type SessionContext = { previousProject: RecentProject | null; session: ProjectSession; lifecycle: ProjectLifecycle; runtime: Runtime; store: ReturnType<typeof createWorkspaceStore>; gate: InteractionGate; readOnly: boolean; requestOpen: () => void; requestCreate: () => void;
   onRecentProjectsChange: (projects: RecentProject[]) => void;
   sourceOwner: SourceOwner | null; sourceOpen: boolean; setSourceOpen: (open: boolean) => void;
@@ -528,7 +528,9 @@ function WorkspaceShell() {
     () => conversations?.getSnapshot().hydration ?? "idle", () => "idle");
   const candidateBatchState = useSyncExternalStore<CandidateBatchSnapshot | null>(candidateOwners?.batch.subscribe ?? noDraftSubscription,
     candidateOwners?.batch.getSnapshot ?? getNoCandidateBatchState, candidateOwners?.batch.getSnapshot ?? getNoCandidateBatchState);
-  const narrow = useSyncExternalStore(subscribeWidth, () => innerWidth <= 1100, () => false);
+  const compact = useSyncExternalStore(subscribeWidth, () => innerWidth <= 1100, () => false);
+  const conversationMode = view?.conversationMode ?? false;
+  const narrow = compact && !conversationMode;
   const wide = useSyncExternalStore(subscribeWidth, () => innerWidth >= 1440, () => false);
   const [registries, setRegistries] = useState<Map<string | null, WorkbenchCommands>>(new Map());
   const [registeredCommands, setRegisteredCommands] = useState<WorkbenchCommands | null>(null);
@@ -558,7 +560,7 @@ function WorkspaceShell() {
     return trigger?.isConnected && !trigger.disabled ? trigger : candidateBatchRecoveryTrigger.current;
   } }), []);
   const recoveryEditor = useRef<SegmentEditorHandle>(null);
-  const split = useRef<HTMLDivElement>(null), splitHandle = useRef<HTMLDivElement>(null);
+  const conversationReturnFocus = useRef(new Map<string, HTMLElement>()), layoutFocusFrame = useRef<number | null>(null);
   const currentId = state.activeViewId;
   const importVisible = importRecovery || view?.kind === "entries" && view.entryMode === "import";
   const revealedImportFailure = useRef<typeof lifecycleState.failure>(null);
@@ -641,11 +643,43 @@ function WorkspaceShell() {
   function closePalette() { paletteRelease.current?.(); paletteRelease.current = null; setPalette(false); }
   function openPalette() { if (paletteRelease.current) return; paletteOrigin.current = document.activeElement; paletteRelease.current = gate.pushDialog("workspace-palette"); setPalette(true); }
   const closeDrawer = useCallback(() => { drawerRelease.current?.(); drawerRelease.current = null; setDrawer(false); }, []);
+  useLayoutEffect(() => { if (!narrow && drawer) closeDrawer(); }, [narrow, drawer, closeDrawer]);
   useLayoutEffect(() => recoveryKey ? gate.pushDialog("draft-recovery") : undefined, [gate, recoveryKey !== null]);
   const showDock = useCallback(() => {
-    if (narrow && !drawerRelease.current) { drawerRelease.current = gate.pushDialog("workspace-dock"); setDrawer(true); }
-    else requestAnimationFrame(() => dock.current?.focus());
-  }, [narrow, gate]);
+    const active = store.getState().activeViewId, current = active ? store.getState().views[active] : null;
+    if (innerWidth <= 1100 && !current?.conversationMode && !drawerRelease.current) { drawerRelease.current = gate.pushDialog("workspace-dock"); setDrawer(true); }
+    else requestAnimationFrame(() => {
+      const target = current?.dock === "agent" ? dock.current?.querySelector<HTMLTextAreaElement>('[data-state="active"] textarea:not([disabled])') : null;
+      (target ?? dock.current)?.focus();
+    });
+  }, [gate, store]);
+  function toggleConversationMode() {
+    const current = store.getState(), active = current.activeViewId ? current.views[current.activeViewId] : null;
+    if (!active || disabled || !gate.canDispatch({ viewId: active.id, source: "button" })) return;
+    const origin = paletteHandoff.current ?? document.activeElement, next = !active.conversationMode;
+    if (next) {
+      if (origin instanceof HTMLElement && main.current?.contains(origin)) conversationReturnFocus.current.set(active.id, origin);
+      else conversationReturnFocus.current.delete(active.id);
+    }
+    store.getState().patch(active.id, { conversationMode: next, ...(next ? { dock: "agent", dockOpen: true } : {}) });
+    if (layoutFocusFrame.current !== null) cancelAnimationFrame(layoutFocusFrame.current);
+    layoutFocusFrame.current = requestAnimationFrame(() => {
+      layoutFocusFrame.current = null;
+      const now = store.getState();
+      if (now.activeViewId !== active.id || now.views[active.id]?.conversationMode !== next || !currentScope()
+        || !gate.canDispatch({ viewId: active.id, source: "button" })
+        || document.activeElement !== origin && document.activeElement !== document.body) return;
+      if (next) {
+        const input = dock.current?.querySelector<HTMLTextAreaElement>('[data-state="active"] textarea:not([disabled])');
+        (input ?? dock.current)?.focus();
+      } else {
+        const previous = conversationReturnFocus.current.get(active.id);
+        const target = previous?.isConnected && main.current?.contains(previous) && !previous.closest("[hidden], [inert]") && !previous.matches(":disabled") ? previous : main.current;
+        target?.focus();
+      }
+    });
+  }
+  useEffect(() => () => { if (layoutFocusFrame.current !== null) cancelAnimationFrame(layoutFocusFrame.current); }, []);
   const revealedConversation = useRef(conversationReveal);
   useEffect(() => {
     if (revealedConversation.current === conversationReveal) return;
@@ -710,7 +744,7 @@ function WorkspaceShell() {
   const actions = useRef<ShellActions>({ requestOpen, close: () => lifecycle.close(), refresh: () => { void session.reads.synchronize(true); void lifecycle.refresh(); entries.current?.refresh(); },
     openSource, openDelivery: async () => false, openStrategy: async () => false, openRuns: async () => false,
     openImport: async () => {}, canOpenImport: () => false,
-    confirm: async (_advance: boolean) => {}, exitEditor: async () => {}, toggleFocus: async () => {}, isEditing: () => false, canConfirm: () => false, canAdvance: () => false });
+    confirm: async (_advance: boolean) => {}, exitEditor: async () => {}, toggleFocus: async () => {}, toggleConversationMode: () => {}, isEditing: () => false, canConfirm: () => false, canAdvance: () => false });
   actions.current = { requestOpen, close: () => lifecycle.close(), refresh: () => { void session.reads.synchronize(true); void lifecycle.refresh(); entries.current?.refresh(); },
     openSource, openDelivery: () => openDelivery(), openStrategy: () => openStrategy(), openRuns: () => openRuns(),
     openImport: async () => {
@@ -729,6 +763,7 @@ function WorkspaceShell() {
     confirm: async advance => { if (recoveryKey && drafts) await drafts.confirm(recoveryKey); else await entries.current?.confirm(advance); },
     exitEditor: async () => { if (recoveryKey) revealDraft(null); else await entries.current?.exitEditor(); },
     toggleFocus: async () => { if (!recoveryKey) await entries.current?.toggleFocus(); },
+    toggleConversationMode,
     isEditing: () => recoveryKey !== null || !importVisible && !!entries.current?.isEditing(),
     canAdvance: () => recoveryKey === null && !!entries.current?.isEditing(),
     canConfirm: () => recoveryKey ? !!drafts && !readOnly && !lifecycleState.pending && draftState.hydration === "ready" && !draftState.retired && !draftState.mutationReserved
@@ -750,7 +785,7 @@ function WorkspaceShell() {
     const remove = registerWorkspaceCommands({ commands, store, gate, viewId: currentId, defaultLocale: session.project.metadata.targetLocales[0], scope, getCurrentScope: currentScope, navigation: runtime.navigation,
       actions: { openProject: () => actions.current.requestOpen(), closeProject: () => actions.current.close(), closeWindow: async () => {
         if (isTauri()) { const { getCurrentWindow } = await import("@tauri-apps/api/window"); await lifecycle.closeWindow(() => getCurrentWindow().destroy()); }
-      }, refresh: () => actions.current.refresh(), focusSearch: () => entries.current?.focusSearch(), focusAgent: showDock, focusDetails: showDock, openCommands: openPalette,
+      }, refresh: () => actions.current.refresh(), focusSearch: () => entries.current?.focusSearch(), focusAgent: showDock, focusDetails: showDock, toggleConversationMode: () => actions.current.toggleConversationMode(), openCommands: openPalette,
       openStrategy: () => actions.current.openStrategy(),
       openProjectMetadata: revealProjectMetadata,
     openRuns: () => actions.current.openRuns(),
@@ -1222,14 +1257,16 @@ function WorkspaceShell() {
     return await openKnowledgeTarget(proposal, null, current);
   };
   function panel() {
-    return <TabsRoot value={view?.dock ?? "agent"} onValueChange={value => { if (view && (value === "agent" || value === "details")) store.getState().patch(view.id, { dock: value }); }} className={styles.dockTabs}>
-      <TabsList aria-label={message("dockTabs")}><TabsTrigger value="agent"><Sparkles />{message("agent")}</TabsTrigger><TabsTrigger value="details">{message("detail")}</TabsTrigger></TabsList>
-      <TabsContent value="agent" className={styles.dockContent}><FeatureBoundary fallback={conversationFallback(<ErrorState title={t("conversation.unavailable")}/>)}><Suspense fallback={conversationFallback(<LoadingState label={t("conversation.loading")}/>)}>
+    return <TabsRoot value={view?.dock ?? "agent"} onValueChange={value => { if (view && (value === "agent" || value === "details")) dispatcher.dispatch(value === "agent" ? "workspace.agent" : "workspace.details", { source: "button", viewId: currentId, dialogId: narrow && drawer ? "workspace-dock" : undefined }); }} className={styles.dockTabs}>
+      <div className={styles.dockHeader}><TabsList aria-label={message("dockTabs")}><TabsTrigger value="agent"><Sparkles />{message("agent")}</TabsTrigger><TabsTrigger value="details">{message("detail")}</TabsTrigger></TabsList>
+        {conversationMode ? <Button size="sm" disabled={disabled || !commandsReady} onClick={() => dispatch("workspace.conversation-mode")}>{message("returnToView")}</Button> : null}
+      </div>
+      <TabsContent value="agent" forceMount className={styles.dockContent}><FeatureBoundary fallback={conversationFallback(<ErrorState title={t("conversation.unavailable")}/>)}><Suspense fallback={conversationFallback(<LoadingState label={t("conversation.loading")}/>)}>
         {conversations ? <ConversationPanel commands={commandsReady ? commands : undefined} showWorkPlans={view?.kind !== "runs" || view.runsMode === "strategy" || !!conversationTeamQuestion} onOpenCandidate={openRunCandidate} onOpenTeamCandidate={openTeamCandidate} onOpenKnowledgeProposal={openKnowledgeProposal} owner={conversations} visible={(view?.dock ?? "agent") === "agent" && (!narrow || drawer)} disabled={disabled} gate={gate} viewId={currentId} parentDialogId={narrow && drawer ? "workspace-dock" : undefined}
           selection={view?.kind === "entries" && !importVisible ? view.selection : null} decisionTray={decisionTray()} projectBrief={projectBrief} maintenanceBrief={sourceBrief()} recoveryTarget={conversationRecovery} proposalTarget={conversationProposal} questionTarget={conversationTeamQuestion}/>
           : conversationFallback(conversationLoadFailed ? <ErrorState title={t("conversation.unavailable")} action={<Button onClick={retryConversations}>{t("conversation.retryRead")}</Button>}/> : <LoadingState label={t("conversation.loading")}/>)}
       </Suspense></FeatureBoundary></TabsContent>
-      <TabsContent value="details" className={styles.dockContent}><div className={styles.actions}><Button disabled={disabled || !settings.openReferences} onClick={event => {
+      <TabsContent value="details" forceMount className={styles.dockContent}><div className={styles.actions}><Button disabled={disabled || !settings.openReferences} onClick={event => {
         if (!gate.canDispatch({ viewId: currentId, source: "button", dialogId: narrow && drawer ? "workspace-dock" : undefined })) return;
         paletteHandoff.current = narrow ? dockTrigger.current : event.currentTarget;
         if (narrow) { drawerReferenceClose.current = true; closeDrawer(); }
@@ -1237,7 +1274,7 @@ function WorkspaceShell() {
       }}>{t("toolQuery.title")}</Button></div><FeatureBoundary key={currentId} fallback={<ErrorState title={message("featureFailed")} description={message("featureFailedHelp")} />}><Suspense fallback={<LoadingState label={message("loadingDetails")} />}>{view?.kind === "knowledge" ? knowledgeOwner ? view.preset === "memory" ? <TranslationMemoryDetails project={session.project} view={view} visible={view.dock === "details" && (!narrow || drawer)}/> : contextKindForKnowledge(view.preset) ? <ContextResourceDetails project={session.project} owner={knowledgeOwner} disabled={disabled} gate={gate} preset={view.preset} locale={view.locale}
         visible={view.dock === "details" && (!narrow || drawer)} current={dialogId => knowledgeCurrent(dialogId ?? (narrow && drawer ? "workspace-dock" : undefined))} onOpenProposal={openKnowledgeProposal}/> : <KnowledgeDetails project={session.project} owner={knowledgeOwner} disabled={disabled}
         visible={view.dock === "details" && (!narrow || drawer)} current={() => knowledgeCurrent(narrow && drawer ? "workspace-dock" : undefined)}/> : <LoadingState label={t("knowledge.readingTerms")}/> : <EntryDetails project={session.project} view={view} locale={activeLocale} disabled={disabled}
-        visible={!importVisible && (!narrow || drawer)} drafts={drafts} owners={candidateOwners} commands={commandsReady ? commands ?? null : null} gate={gate}
+        visible={view?.dock === "details" && !importVisible && (!narrow || drawer)} drafts={drafts} owners={candidateOwners} commands={commandsReady ? commands ?? null : null} gate={gate}
         patch={patch => { if (view) store.getState().patch(view.id, patch); }} onReviewEdit={openReviewEditor} onEdit={(unitId, locale) => openCandidateEditor(unitId, locale, narrow && drawer ? "workspace-dock" : undefined)}
         comparisonOwner={comparisonOwner} requestComparisons={requestComparisons} onOpenComparison={comparison => openSavedComparison(comparison, narrow && drawer ? "workspace-dock" : undefined)}
         knowledgeOwner={knowledgeOwner} onOpenContext={openEntryContext} onOpenTermCapture={openEntryTermCapture}
@@ -1245,7 +1282,7 @@ function WorkspaceShell() {
         parentDialogId={narrow && drawer ? "workspace-dock" : undefined} onPresented={reportPresented}/>}</Suspense></FeatureBoundary></TabsContent>
     </TabsRoot>;
   }
-  return <div className={styles.frame} data-focus-mode={!importVisible && view?.focusMode || undefined} onCompositionStartCapture={() => gate.setComposing("workspace", true)} onCompositionEndCapture={() => gate.setComposing("workspace", false)}>
+  return <div className={styles.frame} data-focus-mode={!importVisible && view?.focusMode || undefined} data-conversation-mode={conversationMode || undefined} onCompositionStartCapture={() => gate.setComposing("workspace", true)} onCompositionEndCapture={() => gate.setComposing("workspace", false)}>
     <header className={styles.titlebar} data-tauri-drag-region>
       <span className={styles.wordmark}>紡</span><Menu label={message("projectCommands")} trigger={<Button size="sm"><span className={styles.project}>{session.project.metadata.displayName}</span><ChevronDown /></Button>} items={[
         { id: "create", label: t("startup.manual"), onSelect: () => { if (gate.canDispatch({ viewId: currentId, source: "button" })) requestCreate(); }, disabled: disabled || !commandsReady },
@@ -1256,6 +1293,7 @@ function WorkspaceShell() {
       <span className={styles.breadcrumb}>›</span><Menu label={message("language")} trigger={<Button size="sm" disabled={disabled || view?.kind === "decisions"}>{view?.kind === "decisions" ? message("decisionAllLanguages") : activeLocale}<ChevronDown /></Button>} items={session.project.metadata.targetLocales.map(locale => ({ id: locale, label: locale, onSelect: () => { if (view) void runtime.navigation.update(view.id, { locale }); } }))} />
       <Button size="sm" disabled={!drafts || draftState.summaries.length === 0} onClick={() => { const first = draftState.summaries[0]; if (first) revealDraft(first.key); }}>{message("draftRecoveryTitle")}</Button>
       <Button ref={commandTrigger} className={styles.commandSearch} size="sm" disabled={!commandsReady || disabled} onClick={() => dispatch("workspace.commands")}><Search />{message("commandPlaceholder")}</Button>
+      <IconButton label={message("conversationMode")} aria-pressed={conversationMode} disabled={disabled || !commandsReady || !view} onClick={() => dispatch("workspace.conversation-mode")}><Sparkles /></IconButton>
       <IconButton ref={dockTrigger} className={styles.dockToggle} label={message("openAgent")} disabled={disabled || !commandsReady} onClick={() => dispatch("workspace.agent")}><PanelRight /></IconButton>
     </header>
     <ProjectMetadataSheet project={session.project} visible={projectMetadataOpen} disabled={disabled}
@@ -1322,16 +1360,19 @@ function WorkspaceShell() {
         }}>{icon}</IconButton>{id === "decisions" ? <span id={decisionBadgeId} className={styles.activityCount}><DecisionBadge page={decisionFeed.first.data} loading={decisionFeed.first.isFetching} error={decisionFeed.first.error}/></span> : null}</div>)}
         <div className={styles.activityBottom}><IconButton label={message("extensions")} disabled={disabled || !commandsReady} onClick={() => dispatch("workspace.extensions")}><Command /></IconButton><IconButton label={message("settings")} disabled={disabled || !commandsReady} onClick={() => dispatch("workspace.settings")}><Settings /></IconButton></div>
       </nav>
-      <SplitView key={currentId} className={styles.workspaceSplit} elementRef={split} disabled={disabled} onLayoutChanged={(layout, meta) => {
-        if (!meta.isUserInteraction || !view || narrow) return;
-        const available = (split.current?.clientWidth ?? 0) - (splitHandle.current?.getBoundingClientRect().width ?? 0);
-        const percentage = (meta.requestedLayout ?? layout)["workspace-dock"];
-        if (available > 0 && percentage !== undefined) {
-          const pixels = Math.round(percentage / 100 * available);
-          if (pixels !== view.dockSize) store.getState().patch(view.id, { dockSize: pixels });
-        }
-      }}>
-        <SplitPanel minSize={0} className={styles.mainPanel}><main ref={main} tabIndex={view?.kind === "decisions" || view?.kind === "delivery" || view?.kind === "runs" ? -1 : undefined} className={styles.main}>
+      <WorkspacePanes view={view} compact={compact} wide={wide} disabled={disabled} dockRef={dock} label={message("agent")}
+        resizeLabel={message(conversationMode ? "resizeCurrentView" : "resizeDock")} dock={panel()}
+        onResize={patch => { if (view) store.getState().patch(view.id, patch); }}
+        drawer={{ open: drawer && narrow, onOpenAutoFocus: event => { if (drawerRecoveryFocus.current) { event.preventDefault(); drawerRecoveryFocus.current = false; } }, onCloseAutoFocus: event => {
+          if (drawerReferenceClose.current) { event.preventDefault(); drawerReferenceClose.current = false; }
+          else if (drawerDecisionClose.current) {
+            event.preventDefault(); drawerDecisionClose.current = false;
+            const current = store.getState();
+            if (current.activeViewId && current.views[current.activeViewId]?.kind === "decisions") main.current?.focus(); else decisionTrigger.current?.focus();
+          }
+          else if (drawerEditorClose.current) { event.preventDefault(); drawerEditorClose.current = false; }
+        }, onOpenChange: open => { if (!open) closeDrawer(); }, title: message("agent"), description: session.project.metadata.displayName, closeLabel: message("close") }}>
+        <main ref={main} tabIndex={-1} className={styles.main}>
           <div className={styles.viewTabs} aria-label={message("views")} role="navigation">{state.viewOrder.map(id => {
             const item = state.views[id], name = item.kind === "entries" ? message("viewName", { locale: item.locale }) : message(item.kind);
             return <div key={id} className={appStyles.viewTab} data-active={id === currentId || undefined}>
@@ -1379,9 +1420,8 @@ function WorkspaceShell() {
               onOpenExtensions={() => settings.openExtensions()}/>
               : <LoadingState label={t("deliveryWorkbench.loading")}/>}
           </Suspense></FeatureBoundary> : <EmptyState title={message(view.kind)} description={message("comingLater")} /> : <EmptyState icon={<Layers />} title={message("noViews")} action={<Button disabled={disabled || !commandsReady} onClick={() => dispatch("workspace.new-view")}>{message("openEntries")}</Button>} />}
-        </main></SplitPanel>
-        {!narrow ? <><SplitHandle label={message("resizeDock")} elementRef={splitHandle} /><SplitPanel id="workspace-dock" key={wide ? "wide" : "compact"} groupResizeBehavior="preserve-pixel-size" defaultSize={view?.dockSize ?? (wide ? 380 : 340)} minSize={300} maxSize="45%"><aside className={styles.dock} ref={dock} tabIndex={-1} aria-label={message("agent")}>{panel()}</aside></SplitPanel></> : null}
-      </SplitView>
+        </main>
+      </WorkspacePanes>
     </div>
     <footer className={styles.statusbar}><span><Circle />{message(readOnly ? "retired" : "liveProject")}</span><span className={styles.statusEnd}>{message("language")} · {view?.kind === "decisions" ? message("decisionAllLanguages") : activeLocale}</span></footer>
     {sourceOwner ? <FeatureBoundary fallback={<ErrorState title={t("sourceMaintenance.ownerFailed")}/>}><Suspense fallback={sourceOpen ? <LoadingState label={t("sourceMaintenance.recoveryLoading")}/> : null}>
@@ -1390,15 +1430,6 @@ function WorkspaceShell() {
         onApplied={(snapshotId, release) => { void openSourceAffected(snapshotId, undefined, activeLocale, release); }}
         onOpenEntry={(snapshotId, unitId, locale, release) => { void openSourceAffected(snapshotId, unitId, locale, release); }}/>
     </Suspense></FeatureBoundary> : null}
-    <Sheet open={drawer && narrow} onOpenAutoFocus={event => { if (drawerRecoveryFocus.current) { event.preventDefault(); drawerRecoveryFocus.current = false; } }} onCloseAutoFocus={event => {
-      if (drawerReferenceClose.current) { event.preventDefault(); drawerReferenceClose.current = false; }
-      else if (drawerDecisionClose.current) {
-        event.preventDefault(); drawerDecisionClose.current = false;
-        const state = store.getState();
-        if (state.activeViewId && state.views[state.activeViewId]?.kind === "decisions") main.current?.focus(); else decisionTrigger.current?.focus();
-      }
-      else if (drawerEditorClose.current) { event.preventDefault(); drawerEditorClose.current = false; }
-    }} onOpenChange={open => { if (!open) closeDrawer(); }} title={message("agent")} description={session.project.metadata.displayName} closeLabel={message("close")}>{panel()}</Sheet>
     <Sheet open={recoveryKey !== null} onOpenChange={open => { if (!open) revealDraft(null); }} title={message("draftRecoveryTitle")} description={message("draftRecoveryHelp")} closeLabel={message("close")}
       onOpenAutoFocus={event => { event.preventDefault(); requestAnimationFrame(() => recoveryEditor.current?.focus()); }}
       onEscapeKeyDown={event => {

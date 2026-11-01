@@ -2,6 +2,9 @@ import { decisionsEn, decisionsZh } from "./decisions";
 import { decisionDetailsEn, decisionDetailsZh } from "./decisionDetails";
 
 export const workbenchEn = {
+  conversationMode: "Conversation mode",
+  returnToView: "Return to current view",
+  resizeCurrentView: "Resize current view",
   semanticBatchPairs: "Selected translations",
   semanticBatchRecapture: "Use the new language selection before previewing or sending a review.",
   semanticBatchTitle: "Review selected translations with AI", semanticBatchHelp: "Choose languages for the fixed selected entries. Only saved translations are sent after preview and separate consent. Switching ends the current local approval selection.",
@@ -644,6 +647,9 @@ export const workbenchEn = {
 
 type Messages = { [K in keyof typeof workbenchEn]: typeof workbenchEn[K] extends string ? string : { [P in keyof typeof workbenchEn[K]]: string } };
 export const workbenchZh: Messages = {
+  conversationMode: "对话模式",
+  returnToView: "返回当前视图",
+  resizeCurrentView: "调整当前视图宽度",
   semanticBatchPairs: "所选译文",
   semanticBatchRecapture: "请先应用新的语言选择，再预览或发送审阅。",
   semanticBatchTitle: "用 AI 审阅所选译文", semanticBatchHelp: "为固定选中的条目选择语言。预览并单独同意后才发送已保存译文。切换时会结束当前本地批准选择。",
