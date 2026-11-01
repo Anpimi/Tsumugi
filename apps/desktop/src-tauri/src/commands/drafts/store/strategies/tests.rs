@@ -95,9 +95,9 @@ fn strategy_journal_sixteen_upgrades_fifteen_only_on_successful_shared_quota_wri
     store.limits.project_bytes=1;
     assert_eq!(store.write_strategy(&write).unwrap_err().code,ErrorCode::LimitExceeded);assert_eq!(fs::read(&path).unwrap(),bytes);
     store.limits=Limits::default();let saved=store.write_strategy(&write).unwrap();
-    let connection=Connection::open(&path).unwrap();assert_eq!(verify_schema(&connection).unwrap(),16);
+    let connection=Connection::open(&path).unwrap();assert_eq!(verify_schema(&connection).unwrap(),FORMAT);
     assert_eq!(store.read(&old.key).unwrap(),previous);assert_eq!(store.read_strategy(&key).unwrap(),saved);
-    let (total,records,local,count)=journal_usage(&connection,16,project).unwrap();
+    let (total,records,local,count)=journal_usage(&connection,FORMAT,project).unwrap();
     assert_eq!(records,2);assert_eq!(count,2);assert_eq!(total,local);
     assert_eq!(total as usize,encode_bounded(&previous,MAX_DRAFT_RECORD_BYTES).unwrap().len()+encode_bounded(&saved,MAX_RECORD).unwrap().len());
 }

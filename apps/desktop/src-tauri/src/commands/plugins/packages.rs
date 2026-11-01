@@ -111,7 +111,8 @@ pub(super) fn manual_origin() -> PackageOrigin {
     }
 }
 
-#[derive(Clone, PartialEq, Eq)]
+#[derive(Clone, PartialEq, Eq, Serialize)]
+#[serde(tag = "kind", content = "request", rename_all = "kebab-case")]
 pub(in crate::commands) enum MutationRequest {
     Install(PluginInstallRequest),
     PackInstall(packs::PluginPackInstallRequest),
@@ -125,6 +126,13 @@ pub(in crate::commands) enum MutationRequest {
 }
 
 impl MutationRequest {
+    fn settings_proof(&self) -> Result<String, CommandError> {
+        serde_json::to_string(self).map_err(|_| failure(
+            CommandErrorCode::InvalidInput, "plugin-action-invalid", self.stage()))
+    }
+    fn settings_only(&self) -> bool {
+        matches!(self, Self::Enable(_) | Self::NativeHost(_))
+    }
     pub(in crate::commands) fn stage(&self) -> CommandStage {
         match self {
             Self::Install(_)
@@ -216,6 +224,16 @@ pub(super) fn at_stage(error: InstallError, stage: CommandStage) -> CommandError
     let mut error = map_store_error(error);
     error.stage = stage;
     error
+}
+
+pub(super) fn check_reopened_settings(
+    manager: &PluginManager, settings: &PluginSettings,
+) -> Result<(), CommandError> {
+    if manager.pending.is_none() && settings.action_request().is_some() && !settings.action_complete() {
+        return Err(cleanup::original_required(failure(
+            CommandErrorCode::OutcomeUnknown, "plugin-result-unconfirmed", CommandStage::Read)));
+    }
+    Ok(())
 }
 pub(super) fn catalog_error(error: CatalogError) -> CommandError {
     match error {
@@ -496,24 +514,44 @@ impl ApplicationPlugins {
             .is_some_and(|pending| pending.request == request);
         if !same {
             if manager.pending.as_ref().is_some_and(|pending| {
-                !pending.complete
-                    || !pending.handoff_complete
-                    || pending.unknown
+                !pending.complete || !pending.handoff_complete || pending.unknown
                     || pending.running.load(Ordering::Acquire)
             }) {
-                return Err(failure(
-                    CommandErrorCode::Busy,
-                    "plugin-operation-pending",
-                    stage,
-                ));
+                return Err(failure(CommandErrorCode::Busy, "plugin-operation-pending", stage));
+            }
+            let settings = manager.store.as_ref().expect("store provisioned")
+                .settings(allowed).map_err(|error| at_stage(error, stage))?;
+            if settings.action_id() == Some(request.action_id().to_string().as_str()) {
+                let proof = request.settings_proof()?;
+                match settings.action_request() {
+                    Some(original) if original != proof => return Err(at_stage(InstallError::ActionConflict, stage)),
+                    Some(_) if settings.action_complete() => {
+                        // Confirm only the already complete original decision.
+                        // Do not recapture inputs, revoke a live epoch or repeat IO.
+                        manager.store.as_mut().expect("store provisioned")
+                            .confirm_settings_action(request.expected_revision(), &request.action_id().to_string(), &proof, allowed)
+                            .map_err(|error| at_stage(error, stage))?;
+                        return self.inventory_locked(&mut manager).map_err(|_| failure(
+                            CommandErrorCode::OutcomeUnknown, "plugin-result-unconfirmed", stage));
+                    }
+                    Some(_) => return Err(cleanup::original_required(failure(
+                        CommandErrorCode::OutcomeUnknown, "plugin-result-unconfirmed", stage))),
+                    // A v2 decision has no complete Host request to compare.
+                    None => return Err(cleanup::original_required(failure(
+                        CommandErrorCode::OutcomeUnknown, "plugin-result-unconfirmed", stage))),
+                }
+            }
+            if settings.action_request().is_some() && !settings.action_complete() {
+                return Err(cleanup::original_required(failure(
+                    CommandErrorCode::OutcomeUnknown, "plugin-result-unconfirmed", stage)));
             }
             let store = manager.store.as_ref().expect("store provisioned");
-            let settings = store
-                .settings(allowed)
-                .map_err(|error| at_stage(error, stage))?;
             let expected = request.expected_revision();
             if expected != settings.revision() {
                 return Err(at_stage(InstallError::RevisionConflict, stage));
+            }
+            if settings.knows_action(&request.action_id().to_string()) {
+                return Err(at_stage(InstallError::ActionConflict, stage));
             }
             let mut desired = PluginSettingsUpdate {
                 packages: settings.packages().to_vec(),
@@ -759,10 +797,12 @@ impl ApplicationPlugins {
                     // promote bytes. A failed or unknown write never revives it.
                     self.revoke_environment_authority()
                         .map_err(|_| InstallError::CorruptStore)?;
-                    store.update_settings(
+                    store.update_settings_with_proof(
                         pending.revision(),
                         &pending.action(),
                         &pending.desired,
+                        &pending.request.settings_proof().map_err(|_| InstallError::InvalidAction)?,
+                        pending.request.settings_only(),
                         allowed,
                     )?;
                     pending.settings_confirmed = true;
@@ -785,6 +825,11 @@ impl ApplicationPlugins {
                         &step.action,
                         allowed,
                     )?;
+                }
+                if !pending.handoff_complete { return Err(InstallError::RecoveryRequired); }
+                if !pending.request.settings_only() {
+                    store.confirm_settings_action(pending.revision(), &pending.action(),
+                        &pending.request.settings_proof().map_err(|_| InstallError::InvalidAction)?, allowed)?;
                 }
                 Ok::<_, InstallError>(())
             })();

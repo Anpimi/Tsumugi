@@ -930,6 +930,172 @@ fn interrupted_existing_transactions_recover_old_or_new_input_with_original_pend
     }
 }
 
+#[test]
+fn format_seventeen_cross_domain_upgrade_is_atomic_and_preserves_pending() {
+    // Format 17 already had all five tables. Keep its DDL fixed rather than
+    // downgrading the header of a database created by the current initializer.
+    const SCHEMA: &[&str] = &[
+        "CREATE TABLE draft_heads (project_id TEXT NOT NULL, locale TEXT NOT NULL, unit_id TEXT NOT NULL, revision INTEGER NOT NULL CHECK(revision>0), edit_seq INTEGER, source_revision_id TEXT, has_pending INTEGER NOT NULL CHECK(has_pending IN(0,1)), payload BLOB NOT NULL CHECK(length(payload)<=262144), PRIMARY KEY(project_id,locale,unit_id), CHECK((edit_seq IS NULL AND source_revision_id IS NULL AND has_pending=0) OR (edit_seq>=0 AND source_revision_id IS NOT NULL)))",
+        "CREATE TABLE conversation_draft_heads (project_id TEXT NOT NULL, conversation_id TEXT NOT NULL, revision INTEGER NOT NULL CHECK(revision>0), edit_seq INTEGER, has_pending INTEGER NOT NULL CHECK(has_pending IN(0,1)), payload BLOB NOT NULL CHECK(length(payload)<=4456448), PRIMARY KEY(project_id,conversation_id), CHECK(edit_seq IS NOT NULL OR has_pending=0), CHECK(edit_seq IS NULL OR edit_seq>=0))",
+        "CREATE TABLE resource_draft_heads (project_id TEXT PRIMARY KEY NOT NULL, revision INTEGER NOT NULL CHECK(revision>0), edit_seq INTEGER, has_pending INTEGER NOT NULL CHECK(has_pending IN(0,1)), payload BLOB NOT NULL CHECK(length(payload)<=4456448), CHECK(edit_seq IS NOT NULL OR has_pending=0), CHECK(edit_seq IS NULL OR edit_seq>=0))",
+        "CREATE TABLE source_draft_heads (project_id TEXT PRIMARY KEY NOT NULL, revision INTEGER NOT NULL CHECK(revision>0), edit_seq INTEGER, has_pending INTEGER NOT NULL CHECK(has_pending IN(0,1)), payload BLOB NOT NULL CHECK(length(payload)<=8650752), CHECK(edit_seq IS NOT NULL OR has_pending=0), CHECK(edit_seq IS NULL OR edit_seq>=0))",
+        "CREATE TABLE strategy_draft_heads (project_id TEXT PRIMARY KEY NOT NULL, revision INTEGER NOT NULL CHECK(revision>0), edit_seq INTEGER, has_pending INTEGER NOT NULL CHECK(has_pending IN(0,1)), payload BLOB NOT NULL CHECK(length(payload)<=4456448), CHECK(edit_seq IS NOT NULL OR has_pending=0), CHECK(edit_seq IS NULL OR edit_seq>=0))",
+    ];
+    fn rows(connection: &Connection) -> Vec<(&'static str, Vec<(i64, Vec<u8>)>)> {
+        ["draft_heads", "conversation_draft_heads", "resource_draft_heads", "source_draft_heads", "strategy_draft_heads"]
+            .into_iter().map(|table| {
+                let mut query = connection.prepare(&format!("SELECT rowid,payload FROM {table} ORDER BY rowid")).unwrap();
+                let values = query.query_map([], |row| Ok((row.get(0)?, row.get(1)?))).unwrap()
+                    .collect::<std::result::Result<Vec<_>, _>>().unwrap();
+                (table, values)
+            }).collect()
+    }
+    for stage in ["conversation-upgrade-before-ddl", "conversation-upgrade-after-ddl", "write-before-commit", "write-after-commit"] {
+        let (directory, store, mut translation) = setup();
+        let project = translation.key.project_id;
+        translation.value.pending = Some(pending(&translation));
+        translation.value.text = "Newer translation B {{name}}\r\ne\u{301} 👩🏽‍💻".into();
+        translation.value.edit_seq = revision(2);
+        let translation_head = DraftHead { key: translation.key.clone(), revision: revision(2),
+            writer_id: Some(translation.writer_id), value: Some(translation.value.clone()) };
+        let mut tombstone = empty_head(&DraftKey { project_id: project, locale: translation.key.locale.clone(), unit_id: ExecutionId::new() });
+        tombstone.revision = revision(4);
+        let conversation_key = ConversationDraftKey { project_id: project, conversation_id: ExecutionId::new() };
+        let conversation = ConversationDraftHead { key: conversation_key.clone(), revision: revision(3), writer_id: Some(ExecutionId::new()),
+            value: Some(ConversationDraftValue { text: "Newer composer B e\u{301} 👩🏽‍💻".into(), edit_seq: revision(2), message_edit_seq: None,
+                pending: Some(ConversationDraftPending::Append { request: tsumugi_core::application::AppendProjectConversationMessage {
+                    project_id: project, conversation_id: conversation_key.conversation_id, action_id: ExecutionId::new(),
+                    message_id: ExecutionId::new(), body: "Submitted composer A".into() }, submitted_seq: revision(1) }),
+                proposal_edits: vec![], revocations: vec![], team_drafts: vec![] }) };
+        let fixture: serde_json::Value = serde_json::from_str(include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/../test/fixtures/resourceDraftCommands.contract.json"))).unwrap();
+        let mut resource_write: ResourceDraftWrite = serde_json::from_value(fixture["requests"]["write"]["write"].clone()).unwrap();
+        resource_write.key.project_id = project;
+        let capture = ExecutionId::new();
+        resource_write.value.preview_capture_id = Some(capture);
+        resource_write.value.proposal_edit_draft = Some(ResourceProposalEditDraft { capture_id: capture, entry_id: "term".into(), locale: "zh-CN".into(),
+            expected_revision_id: None, source: "Original source".into(), current_target: None, original_target: "Original proposal".into(),
+            target: "Newer proposal B e\u{301} 👩🏽‍💻".into(), edit_seq: revision(3) });
+        resource_write.value.pending = Some(ResourceDraftPending::Decision { request: tsumugi_core::ResourceDecision {
+            project_id: project, action_id: ExecutionId::new(), capture_id: capture, entry_id: "term".into(), expected_revision_id: None,
+            decision: tsumugi_core::ResourceDecisionKind::Adopt, edited_target: Some("Submitted target A".into()) },
+            locale: "zh-CN".into(), submitted_seq: revision(2) });
+        let resource = ResourceDraftHead { key: resource_write.key.clone(), revision: revision(5), writer_id: Some(resource_write.writer_id),
+            value: Some(resource_write.value.clone()) };
+        let source = SourceDraftHead { key: SourceDraftKey { project_id: project }, revision: revision(6), writer_id: Some(ExecutionId::new()),
+            value: Some(SourceDraftValue {
+                edit_seq: revision(2), mapping_seq: revision(2), domain: "Newer source B e\u{301} 👩🏽‍💻".into(), source: None,
+                source_language: "en-US".into(), declared: true, selection_label: None, updating: false,
+                attempt_id: None, check_attempt_id: None, capture_request: None, check_prepare_request: None,
+                comparison_ref: None, lineage: vec![], actor: "Synthetic editor".into(), filter: "Newer filter B".into(),
+                applied_filter: String::new(), manual_ordinal: None, historical_query: String::new(), preview_after: 0,
+                comparison_after: 0, historical_search: None, receipt_ref: None, picker_uncertain: false,
+                hook: SourceDraftHook { locale: "zh-CN".into(), enabled_intent: true, source_action_id: None },
+                pending: Some(SourceDraftPending::Capture { request: SourceDraftCaptureRequest { project_id: project,
+                    selection_id: ExecutionId::new(), source_language: "en-US".into(), attempt_id: ExecutionId::new() },
+                    submitted_seq: revision(1), submitted_mapping_seq: revision(1) }),
+                hook_stop: None, correction: None,
+            }) };
+        let strategy = StrategyDraftHead { key: StrategyDraftKey { project_id: project }, revision: revision(7), writer_id: Some(ExecutionId::new()),
+            value: Some(StrategyDraftValue {
+                journal_seq: revision(4), edit_seq: revision(2), locale: "zh-CN".into(), correction_unit: String::new(),
+                number_drafts: Default::default(), evidence: None, source_context: Default::default(),
+                reason: "Newer strategy B e\u{301} 👩🏽‍💻".into(), exceptions: "Unfinished exceptions B".into(),
+                config: tsumugi_core::ai::AiConfig::default(), roles: Default::default(), candidate: None, suite: None,
+                evaluation_id: None, judgments: Default::default(), candidate_edit_seq: revision(1), candidate_saved_seq: revision(0),
+                suite_edit_seq: revision(0), suite_saved_seq: revision(0),
+                pending: Some(StrategyDraftPending::Withdraw { request: StrategyWithdrawOriginal { project_id: project,
+                    withdrawal: tsumugi_core::WithdrawContextStrategy { action_id: ExecutionId::new(), project_id: project,
+                        locale: "zh-CN".into(), expected_revision_id: None } }, edit_seq: revision(1), submitted_seq: revision(1) }),
+            }) };
+
+        fs::create_dir_all(&store.directory).unwrap();
+        let path = store.directory.join(DATABASE);
+        let mut connection = Connection::open(&path).unwrap();
+        let tx = connection.transaction().unwrap();
+        for ddl in SCHEMA { tx.execute_batch(ddl).unwrap(); }
+        tx.pragma_update(None, "application_id", APPLICATION_ID).unwrap();
+        tx.pragma_update(None, "user_version", 17).unwrap();
+        tx.execute("INSERT INTO draft_heads(rowid,project_id,locale,unit_id,revision,edit_seq,source_revision_id,has_pending,payload) VALUES(11,?1,?2,?3,?4,?5,?6,1,?7)",
+            params![project.to_string(), translation.key.locale, translation.key.unit_id.to_string(), translation_head.revision.get() as i64,
+                translation.value.edit_seq.get() as i64, translation.value.basis.source_revision_id.to_string(), encode(&translation_head).unwrap()]).unwrap();
+        tx.execute("INSERT INTO draft_heads(rowid,project_id,locale,unit_id,revision,edit_seq,source_revision_id,has_pending,payload) VALUES(17,?1,?2,?3,?4,NULL,NULL,0,?5)",
+            params![project.to_string(), tombstone.key.locale, tombstone.key.unit_id.to_string(), tombstone.revision.get() as i64, encode(&tombstone).unwrap()]).unwrap();
+        tx.execute("INSERT INTO conversation_draft_heads(rowid,project_id,conversation_id,revision,edit_seq,has_pending,payload) VALUES(29,?1,?2,?3,?4,1,?5)",
+            params![project.to_string(), conversation.key.conversation_id.to_string(), conversation.revision.get() as i64,
+                conversation.value.as_ref().unwrap().edit_seq.get() as i64, serde_json::to_vec(&conversation).unwrap()]).unwrap();
+        for (table, rowid, head_revision, seq, bytes) in [
+            ("resource_draft_heads", 43, resource.revision, resource.value.as_ref().unwrap().edit_seq, serde_json::to_vec(&resource).unwrap()),
+            ("source_draft_heads", 67, source.revision, source.value.as_ref().unwrap().edit_seq, serde_json::to_vec(&source).unwrap()),
+            ("strategy_draft_heads", 89, strategy.revision, strategy.value.as_ref().unwrap().journal_seq, serde_json::to_vec(&strategy).unwrap()),
+        ] {
+            tx.execute(&format!("INSERT INTO {table}(rowid,project_id,revision,edit_seq,has_pending,payload) VALUES(?1,?2,?3,?4,1,?5)"),
+                params![rowid, project.to_string(), head_revision.get() as i64, seq.get() as i64, bytes]).unwrap();
+        }
+        tx.commit().unwrap();
+        let original_rows = rows(&connection);
+        drop(connection);
+
+        // Every legacy record is decoded before invoking the interrupted writer.
+        assert_eq!(store.read(&translation.key).unwrap(), translation_head);
+        assert_eq!(store.read(&tombstone.key).unwrap(), tombstone);
+        assert_eq!(store.read_conversation(&conversation.key).unwrap(), conversation);
+        assert_eq!(store.read_resource(&resource.key).unwrap(), resource);
+        assert_eq!(store.read_source(&source.key).unwrap(), source);
+        assert_eq!(store.read_strategy(&strategy.key).unwrap(), strategy);
+        let original_pending = store.pending_snapshot(project, None).unwrap();
+        assert!(original_pending.complete);
+        assert_eq!(original_pending.scanned_heads, 6);
+        assert_eq!(original_pending.rows.len(), 5);
+        assert_eq!(disk_format(&store), 17, "reads must preserve the legacy format");
+        assert_eq!(rows(&Connection::open(&path).unwrap()), original_rows);
+
+        let next = replace(&translation, &translation_head, "Newest translation C e\u{301} 👩🏽‍💻");
+        crash_child(directory.path(), &store, &next, stage);
+        let committed = stage == "write-after-commit";
+        let expected = if committed { DraftHead { key: next.key.clone(), revision: revision(3), writer_id: Some(next.writer_id), value: Some(next.value.clone()) } }
+            else { translation_head.clone() };
+        let reopened = DraftStore::at(store.directory.clone()).unwrap();
+        assert_eq!(reopened.read(&translation.key).unwrap(), expected);
+        assert_eq!(reopened.read(&tombstone.key).unwrap(), tombstone);
+        assert_eq!(reopened.read_conversation(&conversation.key).unwrap(), conversation);
+        assert_eq!(reopened.read_resource(&resource.key).unwrap(), resource);
+        assert_eq!(reopened.read_source(&source.key).unwrap(), source);
+        assert_eq!(reopened.read_strategy(&strategy.key).unwrap(), strategy);
+        let restored_pending = reopened.pending_snapshot(project, None).unwrap();
+        assert!(restored_pending.complete);
+        assert_eq!(restored_pending.scanned_heads, original_pending.scanned_heads);
+        assert_eq!(restored_pending.rows.len(), original_pending.rows.len());
+        for original in &original_pending.rows {
+            let restored = restored_pending.rows.iter().find(|row| row.key == original.key).unwrap();
+            assert_eq!(restored.slot, original.slot, "the exact original A request must survive");
+            assert_eq!(restored.writer_id, original.writer_id);
+            assert_eq!(restored.head_revision, if matches!(original.key, PendingJournalKey::Translation(_)) { expected.revision } else { original.head_revision });
+        }
+
+        // A different writer with an old revision cannot replace any recovered B.
+        let mut stale_translation = translation.clone(); stale_translation.writer_id = ExecutionId::new();
+        let stale_conversation = ConversationDraftWrite { key: conversation.key.clone(), expected_revision: revision(0), writer_id: ExecutionId::new(), value: conversation.value.clone().unwrap() };
+        let mut stale_resource = resource_write.clone(); stale_resource.writer_id = ExecutionId::new();
+        let stale_source = SourceDraftWrite { key: source.key.clone(), expected_revision: revision(0), writer_id: ExecutionId::new(), value: source.value.clone().unwrap() };
+        let stale_strategy = StrategyDraftWrite { key: strategy.key.clone(), expected_revision: revision(0), writer_id: ExecutionId::new(), value: strategy.value.clone().unwrap() };
+        for failure in [reopened.write(&stale_translation).unwrap_err(), reopened.write_conversation(&stale_conversation).unwrap_err(),
+            reopened.write_resource(&stale_resource).unwrap_err(), reopened.write_source(&stale_source).unwrap_err(), reopened.write_strategy(&stale_strategy).unwrap_err()] {
+            assert_eq!(failure.stage, "drafts-revision");
+        }
+        for failure in [reopened.clear(&DraftClear { key: translation.key.clone(), expected_revision: expected.revision }).unwrap_err(),
+            reopened.clear_conversation(&ConversationDraftClear { key: conversation.key.clone(), expected_revision: conversation.revision }).unwrap_err(),
+            reopened.clear_resource(&ResourceDraftClear { key: resource.key.clone(), expected_revision: resource.revision }).unwrap_err(),
+            reopened.clear_source(&SourceDraftClear { key: source.key.clone(), expected_revision: source.revision }).unwrap_err(),
+            reopened.clear_strategy(&StrategyDraftClear { key: strategy.key.clone(), expected_revision: strategy.revision }).unwrap_err()] {
+            assert_eq!(failure.stage, "drafts-pending");
+        }
+        let mut expected_rows = original_rows;
+        expected_rows[0].1.iter_mut().find(|row| row.0 == 11).unwrap().1 = encode(&expected).unwrap();
+        assert_eq!(rows(&Connection::open(&path).unwrap()), expected_rows, "all rowids and unrelated payloads must remain intact");
+        assert_eq!(disk_format(&reopened), if committed { FORMAT } else { 17 });
+    }
+}
+
 pub(super) fn crash_child(control: &Path, store: &DraftStore, request: &DraftWrite, stage: &str) {
     let input = control.join("child-request.json");
     fs::write(&input, serde_json::to_vec(request).unwrap()).unwrap();

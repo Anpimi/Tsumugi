@@ -182,6 +182,72 @@ impl Drop for Fixture {
 }
 
 #[test]
+fn registered_cleanup_cannot_overwrite_a_reopened_incomplete_settings_action() {
+    let fixture = Fixture::new();
+    let installed = fixture.install(0.into());
+    let plugins = fixture.app.state::<AppState>().plugins.clone();
+    let candidate = plugins.capture_candidate_for_test(fixture.source.clone()).unwrap();
+    let original = PluginInstallRequest {
+        ticket: candidate.ticket,
+        expected_revision: installed.settings_revision,
+        action_id: ExecutionId::new(),
+    };
+    let proof = MutationRequest::Install(original.clone()).settings_proof().unwrap();
+    {
+        let mut manager = plugins.manager.lock().unwrap();
+        let store = manager.store.as_mut().unwrap();
+        let current = store.settings(|| true).unwrap();
+        store.update_settings_with_proof(current.revision(), &original.action_id.to_string(),
+            &PluginSettingsUpdate { packages: current.packages().to_vec(), runtimes: current.runtimes().to_vec() },
+            &proof, false, || true).unwrap();
+    }
+    let bytes = fs::read(fixture.root().join("settings.json")).unwrap();
+    plugins.close();
+    plugins.dispose_closed_store_for_test().unwrap();
+
+    let app = crate::commands::register_commands(tauri::test::mock_builder())
+        .build(tauri::test::mock_context(tauri::test::noop_assets())).unwrap();
+    let state = app.state::<AppState>();
+    state.plugins.configure(fixture.directory.path().join("application")).unwrap();
+    let window = tauri::WebviewWindowBuilder::new(&app, "main", tauri::WebviewUrl::App("index.html".into()))
+        .build().unwrap();
+    let mut withdrawal = Fixture::removal(&installed);
+    withdrawal.expected_revision = 2.into();
+    let mut uninstall = Fixture::uninstall(&installed);
+    uninstall.expected_revision = 2.into();
+    for (command, request) in [
+        ("remove_plugin_approval", json!(withdrawal)),
+        ("uninstall_plugin_package", json!(uninstall)),
+    ] {
+        let error = tauri::test::get_ipc_response(&window, InvokeRequest {
+            cmd: command.into(), callback: CallbackFn(0), error: CallbackFn(1),
+            url: crate::ipc_test_url().parse().unwrap(),
+            body: InvokeBody::Json(json!({"request": request})), headers: Default::default(),
+            invoke_key: tauri::test::INVOKE_KEY.into(),
+        }).unwrap_err();
+        assert_eq!(error["code"], "outcome-unknown");
+        assert_eq!(error["outcome"], "unknown");
+        assert_eq!(error["recoveryRequired"], true);
+        assert_eq!(error["recoveryGuidance"], "reconcile-original");
+        assert_eq!(fs::read(fixture.root().join("settings.json")).unwrap(), bytes);
+        let manager = state.plugins.manager.lock().unwrap();
+        assert!(manager.pending.is_none());
+        let current = manager.store.as_ref().unwrap().settings(|| true).unwrap();
+        assert_eq!(current.action_request(), Some(proof.as_str()));
+        assert!(!current.action_complete());
+        assert_eq!(current.revision(), 2);
+        drop(manager);
+        assert!(state.plugins.environment_epoch.lock().unwrap().is_none());
+        state.sessions.with(|sessions| {
+            assert!(sessions.package_operation.is_none());
+            assert!(sessions.active.is_none());
+        });
+    }
+    state.plugins.close();
+    state.plugins.dispose_closed_store_for_test().unwrap();
+}
+
+#[test]
 fn registered_uninstall_requires_separate_approval_action_and_old_receipt_preserves_reinstall() {
     let fixture = Fixture::new();
     let installed = fixture.install(0.into());

@@ -154,6 +154,8 @@ Current workspace version metadata: **`0.2.0-alpha.1`**. Because the published `
 
 ### Fixed
 
+- Installation, enablement, and runtime settings requests retain their exact last request and I/O completion state in the original package store. A caller holding that request can confirm a completed operation after the plugin owner is recreated without repeating installation, advancing the settings revision, or restoring execution grants. Previously recorded action IDs cannot be reused as new changes. Local settings advance to format 3; format 2 remains readable without rewriting it, while earlier clients refuse format 3. Incomplete operations and old snapshots without request proof remain unresolved rather than being replayed.
+
 - Failed automatic processing in a saved run can explicitly retry its original checks and authorized effects after verifying the original generation, item, result and current permission. It does not generate a new translation. Uncertain protection changes can independently check the complete original request and receipt, even after a newer change, without resubmitting or replacing newer input.
 
 - Loading review controls in the desktop workspace no longer interrupts an in-progress action to open candidate details. Review drafts and unfinished actions still protect project exit.

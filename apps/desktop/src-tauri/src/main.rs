@@ -279,4 +279,146 @@ mod tests {
         drop(webview);
         drop(app);
     }
+
+    #[test]
+    fn project_change_reconnect_reads_missed_commits_and_releases_retired_listeners() {
+        use std::sync::mpsc::{self, Receiver};
+        use std::time::Duration;
+        use tauri::{Listener, Manager};
+
+        struct ListenerLifetime(mpsc::Sender<()>);
+        impl Drop for ListenerLifetime {
+            fn drop(&mut self) {
+                let _ = self.0.send(());
+            }
+        }
+        fn receive_change(events: &Receiver<String>, project: &Value, kind: &str, sequence: &str) {
+            let event: Value =
+                serde_json::from_str(&events.recv_timeout(Duration::from_secs(2)).unwrap()).unwrap();
+            assert_eq!(event["projectId"], project["metadata"]["projectId"]);
+            assert_eq!(event["sessionToken"], project["sessionToken"]);
+            assert_eq!(event["kind"], kind);
+            assert_eq!(event["sequence"], sequence);
+            assert_eq!(event["scopes"], json!(["project"]));
+        }
+        fn change_request(project: &Value, after: &str) -> Value {
+            json!({"request": {"sessionToken": project["sessionToken"],
+                "projectId": project["metadata"]["projectId"], "afterSequence": after}})
+        }
+
+        let parent = temporary_directory("change-reconnect");
+        let app = crate::commands::register_commands(tauri::test::mock_builder())
+            .build(tauri::test::mock_context(tauri::test::noop_assets()))
+            .unwrap();
+        let webview =
+            tauri::WebviewWindowBuilder::new(&app, "main", tauri::WebviewUrl::App("index.html".into()))
+                .build()
+                .unwrap();
+        let invoke = |command: &str, body: Value| -> Value {
+            tauri::test::get_ipc_response(&webview, request(command, body))
+                .unwrap()
+                .deserialize()
+                .unwrap()
+        };
+        let (events, received) = mpsc::channel();
+        let (released, release_observed) = mpsc::channel();
+        let lifetime = ListenerLifetime(released);
+        let listener = app.listen_any("project-changed", move |event| {
+            let _lifetime = &lifetime;
+            let _ = events.send(event.payload().to_owned());
+        });
+        let state = app.state::<crate::commands::AppState>();
+        state.connect_change_events(app.handle().clone());
+        let first = invoke(
+            "create_project",
+            json!({"request": {
+                "destination": parent.path().join("first"), "displayName": "First",
+                "sourceLocale": "en-US", "targetLocales": ["zh-CN"]
+            }}),
+        );
+        receive_change(&received, &first, "resync", "0");
+        let initial = invoke("read_project_changes", change_request(&first, "0"));
+        invoke(
+            "rename_project",
+            json!({"request": {"sessionToken": first["sessionToken"],
+            "expectedRevision": "1", "displayName": "Before disconnect"}}),
+        );
+        receive_change(&received, &first, "change", "1");
+
+        state.disconnect_change_events();
+        app.unlisten(listener);
+        release_observed
+            .recv_timeout(Duration::from_secs(2))
+            .unwrap();
+        assert_eq!(received.try_recv(), Err(mpsc::TryRecvError::Disconnected));
+        invoke(
+            "rename_project",
+            json!({"request": {"sessionToken": first["sessionToken"],
+            "expectedRevision": "2", "displayName": "Committed while disconnected"}}),
+        );
+        let missed = invoke("read_project_changes", change_request(&first, "1"));
+        assert_eq!(missed["epoch"], initial["epoch"]);
+        assert_eq!(missed["sequence"], "2");
+        assert_eq!(missed["scopes"], json!(["project"]));
+
+        let (events, received) = mpsc::channel();
+        let (released, release_observed) = mpsc::channel();
+        let lifetime = ListenerLifetime(released);
+        let listener = app.listen_any("project-changed", move |event| {
+            let _lifetime = &lifetime;
+            let _ = events.send(event.payload().to_owned());
+        });
+        state.connect_change_events(app.handle().clone());
+        receive_change(&received, &first, "change", "2");
+        let settled = invoke("read_project_changes", change_request(&first, "2"));
+        assert_eq!(settled["sequence"], missed["sequence"]);
+        assert_eq!(settled["scopes"], json!([]));
+        assert_eq!(settled["runtime"]["active"], false);
+        assert_eq!(settled["runtime"]["queryCount"], 0);
+        let read = invoke(
+            "read_project",
+            json!({"request": {
+                "sessionToken": first["sessionToken"], "expectedRevision": null
+            }}),
+        );
+        assert_eq!(
+            read["metadata"]["displayName"],
+            "Committed while disconnected"
+        );
+
+        invoke(
+            "close_project",
+            json!({"request": {"sessionToken": first["sessionToken"]}}),
+        );
+        let second = invoke(
+            "create_project",
+            json!({"request": {
+                "destination": parent.path().join("second"), "displayName": "Second",
+                "sourceLocale": "en-US", "targetLocales": ["ja"]
+            }}),
+        );
+        receive_change(&received, &second, "resync", "0");
+        let reopened = invoke("read_project_changes", change_request(&second, "0"));
+        assert_ne!(reopened["epoch"], initial["epoch"]);
+        assert_eq!(reopened["runtime"]["active"], false);
+        assert_eq!(reopened["runtime"]["queryCount"], 0);
+        assert_eq!(
+            tauri::test::get_ipc_response(
+                &webview,
+                request("read_project_changes", change_request(&first, "0")),
+            )
+            .unwrap_err()["code"],
+            "session-invalid"
+        );
+        state.disconnect_change_events();
+        app.unlisten(listener);
+        release_observed
+            .recv_timeout(Duration::from_secs(2))
+            .unwrap();
+        assert_eq!(received.try_recv(), Err(mpsc::TryRecvError::Disconnected));
+        invoke(
+            "close_project",
+            json!({"request": {"sessionToken": second["sessionToken"]}}),
+        );
+    }
 }

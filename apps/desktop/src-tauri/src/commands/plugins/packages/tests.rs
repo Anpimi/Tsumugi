@@ -699,6 +699,181 @@ fn accepted_install_finishes_and_can_reconcile_after_reply_is_dropped() {
 }
 
 #[test]
+fn completed_settings_original_request_survives_a_recreated_application_owner() {
+    let fixture = Fixture::new();
+    let (_, installed) = fixture.install();
+    let original = Fixture::enable(&installed, true);
+    // The operation completed, but its caller did not retain the reply.
+    let recorded = fixture.owner.enable_package(original.clone()).unwrap();
+    let bytes = fs::read(fixture.root().join("settings.json")).unwrap();
+    fixture.owner.close();
+    fixture.owner.dispose_closed_store_for_test().unwrap();
+    let reopened = ApplicationPlugins::default();
+    reopened
+        .configure(fixture.directory.path().join("application"))
+        .unwrap();
+
+    assert_eq!(reopened.enable_package(original.clone()).unwrap(), recorded);
+    assert_eq!(fs::read(fixture.root().join("settings.json")).unwrap(), bytes);
+    assert!(reopened.environment_epoch.lock().unwrap().is_none());
+    let mut changed_revision = original.clone();
+    changed_revision.expected_revision = recorded.settings_revision;
+    assert_eq!(
+        reopened.enable_package(changed_revision).unwrap_err().reason.as_deref(),
+        Some("plugin-action-conflict")
+    );
+    let mut changed = original;
+    changed.enabled = false;
+    assert_eq!(
+        reopened.enable_package(changed).unwrap_err().reason.as_deref(),
+        Some("plugin-action-conflict")
+    );
+    assert_eq!(fs::read(fixture.root().join("settings.json")).unwrap(), bytes);
+}
+
+#[test]
+fn recreated_owner_rejects_a_different_request_with_the_same_settings_result() {
+    let fixture = Fixture::new();
+    let (_, installed) = fixture.install();
+    let manifest_path = fixture.source.join("manifest.json");
+    let mut manifest: sdk::PluginManifest =
+        serde_json::from_slice(&fs::read(&manifest_path).unwrap()).unwrap();
+    manifest.plugin.id = "other-tools".into();
+    fs::write(&manifest_path, serde_json::to_vec(&manifest).unwrap()).unwrap();
+    let selected = fixture.select();
+    let second = fixture.owner.install_package(PluginInstallRequest {
+        ticket: selected.ticket,
+        expected_revision: installed.settings_revision,
+        action_id: ExecutionId::new(),
+    }).unwrap();
+    let other = second.package_decisions.iter()
+        .find(|decision| decision.plugin.id == "other-tools").unwrap();
+    let other_package = PluginPackageRequest {
+        plugin: other.plugin.clone(), package_digest: other.package_digest.clone(),
+    };
+    let mut enable_other = Fixture::enable(&second, true);
+    enable_other.package = other_package.clone();
+    let enabled_other = fixture.owner.enable_package(enable_other).unwrap();
+    let original = Fixture::enable(&enabled_other, true);
+    fixture.owner.enable_package(original.clone()).unwrap();
+    let bytes = fs::read(fixture.root().join("settings.json")).unwrap();
+    fixture.owner.close();
+    fixture.owner.dispose_closed_store_for_test().unwrap();
+    let reopened = ApplicationPlugins::default();
+    reopened.configure(fixture.directory.path().join("application")).unwrap();
+
+    // Both packages are enabled. Comparing only desired settings would accept
+    // this substituted target even though it is not the original action.
+    let mut substituted = original.clone();
+    substituted.package = other_package;
+    assert_eq!(
+        reopened.enable_package(substituted).unwrap_err().reason.as_deref(),
+        Some("plugin-action-conflict")
+    );
+    assert!(reopened.enable_package(original).is_ok());
+    assert_eq!(fs::read(fixture.root().join("settings.json")).unwrap(), bytes);
+    assert!(reopened.environment_epoch.lock().unwrap().is_none());
+}
+
+#[test]
+fn completed_install_proof_reopens_without_its_ticket_or_original_source() {
+    let fixture = Fixture::new();
+    let (original, installed) = fixture.install();
+    let bytes = fs::read(fixture.root().join("settings.json")).unwrap();
+    fs::remove_dir_all(&fixture.source).unwrap();
+    fixture.owner.close();
+    fixture.owner.dispose_closed_store_for_test().unwrap();
+    let reopened = ApplicationPlugins::default();
+    reopened.configure(fixture.directory.path().join("application")).unwrap();
+    assert_eq!(reopened.install_package(original).unwrap(), installed);
+    assert_eq!(fs::read(fixture.root().join("settings.json")).unwrap(), bytes);
+    assert!(reopened.environment_epoch.lock().unwrap().is_none());
+}
+
+#[test]
+fn legacy_settings_do_not_invent_an_original_host_request_after_reopen() {
+    let fixture = Fixture::new();
+    let (_, installed) = fixture.install();
+    let original = Fixture::enable(&installed, true);
+    fixture.owner.enable_package(original.clone()).unwrap();
+    let path = fixture.root().join("settings.json");
+    let mut legacy: serde_json::Value = serde_json::from_slice(&fs::read(&path).unwrap()).unwrap();
+    legacy["formatVersion"] = serde_json::json!(2);
+    legacy.as_object_mut().unwrap().remove("lastActionProof");
+    legacy.as_object_mut().unwrap().remove("knownSettingsActions");
+    fixture.rewrite_settings(&serde_json::to_vec(&legacy).unwrap());
+    let bytes = fs::read(&path).unwrap();
+    fixture.owner.close();
+    fixture.owner.dispose_closed_store_for_test().unwrap();
+    let reopened = ApplicationPlugins::default();
+    reopened.configure(fixture.directory.path().join("application")).unwrap();
+    let error = reopened.enable_package(original).unwrap_err();
+    assert_eq!(error.code, CommandErrorCode::OutcomeUnknown);
+    assert_eq!(error.outcome, CommandOutcome::Unknown);
+    assert_eq!(error.recovery_guidance, Some(RecoveryGuidance::ReconcileOriginal));
+    assert_eq!(fs::read(&path).unwrap(), bytes);
+    assert!(reopened.environment_epoch.lock().unwrap().is_none());
+}
+
+#[test]
+fn incomplete_install_proof_cannot_be_confirmed_or_overwritten_by_a_recreated_owner() {
+    let fixture = Fixture::new();
+    let (_, installed) = fixture.install();
+    let original = PluginInstallRequest {
+        ticket: fixture.select().ticket, expected_revision: installed.settings_revision,
+        action_id: ExecutionId::new(),
+    };
+    let request = MutationRequest::Install(original.clone());
+    // Persist the exact boundary after settings promotion, before the Host's
+    // remaining installation steps and their completion proof.
+    {
+        let mut manager = fixture.owner.manager.lock().unwrap();
+        let store = manager.store.as_mut().unwrap();
+        let settings = store.settings(|| true).unwrap();
+        store.update_settings_with_proof(settings.revision(), &original.action_id.to_string(),
+            &PluginSettingsUpdate { packages: settings.packages().to_vec(), runtimes: settings.runtimes().to_vec() },
+            &request.settings_proof().unwrap(), false, || true).unwrap();
+    }
+    let bytes = fs::read(fixture.root().join("settings.json")).unwrap();
+    fixture.owner.close();
+    fixture.owner.dispose_closed_store_for_test().unwrap();
+    let reopened = ApplicationPlugins::default();
+    reopened.configure(fixture.directory.path().join("application")).unwrap();
+    let observation = reopened.inventory().unwrap_err();
+    assert_eq!(observation.code, CommandErrorCode::OutcomeUnknown);
+    assert_eq!(observation.stage, CommandStage::Read);
+    assert_eq!(observation.recovery_guidance, Some(RecoveryGuidance::ReconcileOriginal));
+    let error = reopened.install_package(original).unwrap_err();
+    assert_eq!(error.code, CommandErrorCode::OutcomeUnknown);
+    assert_eq!(error.recovery_guidance, Some(RecoveryGuidance::ReconcileOriginal));
+    let mut fresh = Fixture::enable(&installed, true);
+    fresh.expected_revision = 2.into();
+    assert_eq!(reopened.enable_package(fresh).unwrap_err().code, CommandErrorCode::OutcomeUnknown);
+    assert_eq!(fs::read(fixture.root().join("settings.json")).unwrap(), bytes);
+    assert!(reopened.environment_epoch.lock().unwrap().is_none());
+}
+
+#[test]
+fn older_settings_action_cannot_be_reused_with_the_current_revision() {
+    let fixture = Fixture::new();
+    let (_, installed) = fixture.install();
+    let original = Fixture::enable(&installed, true);
+    let enabled = fixture.owner.enable_package(original.clone()).unwrap();
+    let disabled = fixture.owner.enable_package(Fixture::enable(&enabled, false)).unwrap();
+    let bytes = fs::read(fixture.root().join("settings.json")).unwrap();
+    fixture.owner.close();
+    fixture.owner.dispose_closed_store_for_test().unwrap();
+    let reopened = ApplicationPlugins::default();
+    reopened.configure(fixture.directory.path().join("application")).unwrap();
+    assert_eq!(reopened.enable_package(original.clone()).unwrap_err().code, CommandErrorCode::StaleRevision);
+    let mut reused = original;
+    reused.expected_revision = disabled.settings_revision;
+    assert_eq!(reopened.enable_package(reused).unwrap_err().reason.as_deref(), Some("plugin-action-conflict"));
+    assert_eq!(fs::read(fixture.root().join("settings.json")).unwrap(), bytes);
+    assert!(reopened.environment_epoch.lock().unwrap().is_none());
+}
+
+#[test]
 fn registered_package_ipc_installs_enables_and_looks_up_real_store_bytes() {
     use tauri::{
         Manager,

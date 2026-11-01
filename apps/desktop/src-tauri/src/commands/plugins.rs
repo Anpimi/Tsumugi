@@ -398,6 +398,7 @@ impl ApplicationPlugins {
         let allowed = || self.open.load(Ordering::Acquire);
         let store = manager.store.as_ref().expect("store provisioned");
         let settings = store.settings(allowed).map_err(map_store_error)?;
+        packages::check_reopened_settings(manager, &settings)?;
         let inventory = store.inventory(allowed).map_err(map_store_error)?;
         if !allowed() {
             return Err(map_store_error(InstallError::AuthorityRevoked));

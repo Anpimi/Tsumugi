@@ -455,6 +455,41 @@ impl PackageStore {
         }
     }
 
+    /// Bind the last settings decision to a complete trusted application request.
+    /// `complete` is true only when no follow-up application IO remains.
+    pub fn update_settings_with_proof(
+        &mut self, expected_revision: u64, action_id: &str,
+        update: &PluginSettingsUpdate, request: &str, complete: bool,
+        authorized: impl Fn() -> bool,
+    ) -> InstallResult<PluginSettings> {
+        #[cfg(any(target_os = "macos", target_os = "linux"))]
+        {
+            self.inner.update_settings_proven(expected_revision, action_id, update, request, complete, &authorized)
+        }
+        #[cfg(not(any(target_os = "macos", target_os = "linux")))]
+        {
+            let _ = (expected_revision, action_id, update, request, complete, authorized);
+            Err(InstallError::UnsupportedPlatform)
+        }
+    }
+
+    /// Confirm that the original follow-up IO finished. This only advances the
+    /// last-action proof; settings revision, approvals and grants stay unchanged.
+    pub fn confirm_settings_action(
+        &mut self, expected_revision: u64, action_id: &str, request: &str,
+        authorized: impl Fn() -> bool,
+    ) -> InstallResult<PluginSettings> {
+        #[cfg(any(target_os = "macos", target_os = "linux"))]
+        {
+            self.inner.confirm_settings_action(expected_revision, action_id, request, &authorized)
+        }
+        #[cfg(not(any(target_os = "macos", target_os = "linux")))]
+        {
+            let _ = (expected_revision, action_id, request, authorized);
+            Err(InstallError::UnsupportedPlatform)
+        }
+    }
+
     /// Inspect at most 128 packages and 128 runtime environments on a blocking
     /// worker, with the existing sixty-second observed IO deadline. Strict
     /// receipts, package manifest identity and readonly tree metadata are
@@ -987,6 +1022,39 @@ mod platform {
             )
         }
 
+        pub(super) fn update_settings_proven(
+            &mut self, expected_revision: u64, action: &str,
+            update: &PluginSettingsUpdate, request: &str, complete: bool,
+            authorized: &impl Fn() -> bool,
+        ) -> InstallResult<PluginSettings> {
+            let guard = OperationGuard::new(authorized);
+            guard.finish(self.update_settings_inner_proven(expected_revision, action, update,
+                Some((request, complete)), &|| guard.allowed()))
+        }
+
+        pub(super) fn confirm_settings_action(
+            &mut self, expected_revision: u64, action: &str, request: &str,
+            authorized: &impl Fn() -> bool,
+        ) -> InstallResult<PluginSettings> {
+            let guard = OperationGuard::new(authorized);
+            guard.finish((|| {
+                let allowed = || guard.allowed();
+                let current = self.settings_snapshot(&allowed)?;
+                let desired = current.settings.completed_action(expected_revision, action, request)?;
+                if current.settings.action_complete() {
+                    self.confirm_settings_snapshot(&current, &allowed)?;
+                    return Ok(current.settings);
+                }
+                self.promote_settings(current, desired, &allowed)
+            })())
+        }
+
+        fn confirm_settings_snapshot(&self, current: &SettingsSnapshot, authorized: &impl Fn() -> bool) -> InstallResult<()> {
+            let file = current.file.as_ref().ok_or(InstallError::CorruptSettings)?;
+            let stamp = current.stamp.as_ref().ok_or(InstallError::CorruptSettings)?;
+            self.confirm_settings_file(file, stamp, authorized).map_err(|_| InstallError::UnknownCommit)
+        }
+
         fn check_package_settings(
             &self,
             packages: &[ApprovedPackageSetting],
@@ -1018,34 +1086,49 @@ mod platform {
             update: &PluginSettingsUpdate,
             authorized: &impl Fn() -> bool,
         ) -> InstallResult<PluginSettings> {
+            self.update_settings_inner_proven(expected_revision, action, update, None, authorized)
+        }
+
+        fn update_settings_inner_proven(
+            &mut self, expected_revision: u64, action: &str,
+            update: &PluginSettingsUpdate, proof: Option<(&str, bool)>,
+            authorized: &impl Fn() -> bool,
+        ) -> InstallResult<PluginSettings> {
             self.check(authorized)?;
-            let desired = PluginSettings::next(expected_revision, action, update)?;
+            let mut desired = match proof {
+                Some(proof) => PluginSettings::next_with_proof(expected_revision, action, update, Some(proof))?,
+                None => PluginSettings::next(expected_revision, action, update)?,
+            };
             self.check_uninstall_settings(update, authorized)?;
-            let bytes = serde_json::to_vec(&desired).map_err(|_| InstallError::CorruptSettings)?;
-            if bytes.len() > MAX_SETTINGS_BYTES {
-                return Err(InstallError::LimitExceeded);
-            }
             let current = self.settings_snapshot(authorized)?;
             if current.settings.action_id() == Some(action) {
-                if current.settings != desired {
+                if !current.settings.same_action(&desired) {
                     return Err(InstallError::ActionConflict);
                 }
-                let file = current.file.as_ref().ok_or(InstallError::CorruptSettings)?;
-                let stamp = current
-                    .stamp
-                    .as_ref()
-                    .ok_or(InstallError::CorruptSettings)?;
-                self.confirm_settings_file(file, stamp, authorized)
-                    .map_err(|_| InstallError::UnknownCommit)?;
+                self.confirm_settings_snapshot(&current, authorized)?;
                 return Ok(current.settings);
             }
             if current.settings.revision() != expected_revision {
                 return Err(InstallError::RevisionConflict);
             }
+            if current.settings.action_request().is_some() && !current.settings.action_complete() {
+                return Err(InstallError::RecoveryRequired);
+            }
+            if current.settings.knows_action(action) {
+                return Err(InstallError::ActionConflict);
+            }
+            desired.inherit_known_actions(&current.settings);
             // Reject deterministic provenance/identity conflicts before any
             // approval is promoted. Receipts constrain decisions but never
             // become an independent source of approval or enablement.
             self.check_package_settings(&desired.packages, authorized)?;
+            self.promote_settings(current, desired, authorized)
+        }
+
+        fn promote_settings(&mut self, current: SettingsSnapshot, desired: PluginSettings,
+            authorized: &impl Fn() -> bool) -> InstallResult<PluginSettings> {
+            let bytes = serde_json::to_vec(&desired).map_err(|_| InstallError::CorruptSettings)?;
+            if bytes.len() > MAX_SETTINGS_BYTES { return Err(InstallError::LimitExceeded); }
             self.check_settings_snapshot(&current, authorized)?;
             let candidate = format!(".settings-candidate-{}", uuid::Uuid::new_v4());
             let file = new_file(&self.root, OsStr::new(&candidate))?;
@@ -3089,6 +3172,86 @@ mod platform {
                         .count();
                     assert_eq!(candidates, usize::from(before_promotion));
                 }
+            }
+        }
+
+        #[test]
+        fn settings_action_proof_upgrade_and_completion_keep_one_atomic_snapshot() {
+            let old_action = "00000000-0000-4000-8000-000000000001";
+            let action = "00000000-0000-4000-8000-000000000002";
+            let proof = r#"{"kind":"synthetic-settings","request":{"input":"A"}}"#;
+            let changed = r#"{"kind":"synthetic-settings","request":{"input":"B"}}"#;
+            let update = PluginSettingsUpdate::default();
+            for checkpoint in [CommitCheckpoint::SettingsCandidateSync, CommitCheckpoint::SettingsFileSync,
+                CommitCheckpoint::SettingsRootSync, CommitCheckpoint::SettingsConfirmation] {
+                let root = OwnedRoot(tempfile::Builder::new().permissions(fs::Permissions::from_mode(0o700))
+                    .tempdir().unwrap());
+                let mut store = PackageStore::open_existing(root.0.path()).unwrap();
+                store.update_settings(0, old_action, &update, || true).unwrap();
+                let path = root.0.path().join("settings.json");
+                let mut legacy: serde_json::Value = serde_json::from_slice(&fs::read(&path).unwrap()).unwrap();
+                legacy["formatVersion"] = serde_json::json!(2);
+                legacy.as_object_mut().unwrap().remove("knownSettingsActions");
+                fs::set_permissions(&path, fs::Permissions::from_mode(0o600)).unwrap();
+                fs::write(&path, serde_json::to_vec(&legacy).unwrap()).unwrap();
+                fs::set_permissions(&path, fs::Permissions::from_mode(0o400)).unwrap();
+                let original_bytes = fs::read(&path).unwrap();
+                let old = store.settings(|| true).unwrap();
+                assert_eq!(old.revision(), 1);
+                assert!(old.action_request().is_none());
+                assert_eq!(fs::read(&path).unwrap(), original_bytes);
+                store.inner.fail_commit_checkpoint = Some(checkpoint);
+                assert!(store.update_settings_with_proof(1, action, &update, proof, false, || true).is_err());
+                let visible = store.settings(|| true).unwrap();
+                if checkpoint == CommitCheckpoint::SettingsCandidateSync {
+                    assert_eq!(visible, old);
+                    assert_eq!(fs::read(&path).unwrap(), original_bytes);
+                } else {
+                    assert_eq!(visible.action_request(), Some(proof));
+                    assert!(!visible.action_complete());
+                    assert_eq!(visible.revision(), 2);
+                }
+                drop(store);
+                let mut store = PackageStore::open_existing(root.0.path()).unwrap();
+                let pending = store.update_settings_with_proof(1, action, &update, proof, false, || true).unwrap();
+                assert_eq!(pending.revision(), 2);
+                assert!(!pending.action_complete());
+                let pending_bytes = fs::read(&path).unwrap();
+                let blocked_action = "00000000-0000-4000-8000-000000000003";
+                assert_eq!(store.update_settings(2, blocked_action, &update, || true).unwrap_err(), InstallError::RecoveryRequired);
+                assert_eq!(store.update_settings_with_proof(2, blocked_action, &update, changed, true, || true).unwrap_err(), InstallError::RecoveryRequired);
+                assert_eq!(fs::read(&path).unwrap(), pending_bytes);
+                assert_eq!(store.update_settings_with_proof(1, action, &update, proof, false, || true).unwrap(), pending);
+                assert_eq!(store.confirm_settings_action(1, action, changed, || true).unwrap_err(), InstallError::ActionConflict);
+                assert_eq!(store.confirm_settings_action(2, action, proof, || true).unwrap_err(), InstallError::ActionConflict);
+                store.inner.fail_commit_checkpoint = Some(checkpoint);
+                assert!(store.confirm_settings_action(1, action, proof, || true).is_err());
+                assert_eq!(store.settings(|| true).unwrap().action_complete(), checkpoint != CommitCheckpoint::SettingsCandidateSync);
+                drop(store);
+                let mut store = PackageStore::open_existing(root.0.path()).unwrap();
+                let complete = store.confirm_settings_action(1, action, proof, || true).unwrap();
+                assert!(complete.action_complete());
+                assert_eq!(complete.revision(), 2);
+                assert_eq!(complete.action_request(), Some(proof));
+                assert!(complete.knows_action(old_action));
+                assert!(complete.knows_action(action));
+                let bytes = fs::read(&path).unwrap();
+                assert_eq!(store.confirm_settings_action(1, action, proof, || true).unwrap(), complete);
+                assert_eq!(store.update_settings_with_proof(1, action, &update, proof, false, || true).unwrap(), complete);
+                assert_eq!(fs::read(&path).unwrap(), bytes);
+                let next_action = "00000000-0000-4000-8000-000000000003";
+                let oversized = serde_json::json!({"input": "x".repeat(MAX_SETTINGS_BYTES - 100)}).to_string();
+                assert_eq!(store.update_settings_with_proof(2, next_action, &update, &oversized, true, || true).unwrap_err(), InstallError::LimitExceeded);
+                assert_eq!(fs::read(&path).unwrap(), bytes);
+                store.update_settings_with_proof(2, next_action, &update, changed, true, || true).unwrap();
+                assert_eq!(store.update_settings_with_proof(1, action, &update, proof, false, || true).unwrap_err(), InstallError::RevisionConflict);
+                assert_eq!(store.update_settings_with_proof(3, action, &update, proof, false, || true).unwrap_err(), InstallError::ActionConflict);
+                let mut forged_legacy: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+                forged_legacy["formatVersion"] = serde_json::json!(2);
+                fs::set_permissions(&path, fs::Permissions::from_mode(0o600)).unwrap();
+                fs::write(&path, serde_json::to_vec(&forged_legacy).unwrap()).unwrap();
+                fs::set_permissions(&path, fs::Permissions::from_mode(0o400)).unwrap();
+                assert_eq!(store.settings(|| true).unwrap_err(), InstallError::CorruptSettings);
             }
         }
     }

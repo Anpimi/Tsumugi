@@ -97,6 +97,17 @@ pub(in crate::commands::plugins) fn original_required(mut error: CommandError) -
 }
 
 impl ApplicationPlugins {
+    fn check_cleanup_reopened_settings(&self, stage: CommandStage) -> Result<(), CommandError> {
+        let mut manager = self.try_manager()?;
+        self.provision(&mut manager)?;
+        let settings = manager.store.as_ref().expect("store provisioned")
+            .settings(|| self.open.load(Ordering::Acquire)).map_err(|error| at_stage(error, stage))?;
+        check_reopened_settings(&manager, &settings).map_err(|mut error| {
+            error.stage = stage;
+            error
+        })
+    }
+
     fn begin_cleanup(&self, request: &MutationRequest) -> Result<CleanupClaim, CommandError> {
         let stage = request.stage();
         let approval = request.cleanup_approval()?;
@@ -132,6 +143,10 @@ impl ApplicationPlugins {
         if !same {
             let store = manager.store.as_ref().expect("store provisioned");
             let settings = store.settings(allowed).map_err(|e| at_stage(e, stage))?;
+            check_reopened_settings(&manager, &settings).map_err(|mut error| {
+                error.stage = stage;
+                error
+            })?;
             let mut desired = PluginSettingsUpdate {
                 packages: settings.packages().to_vec(),
                 runtimes: settings.runtimes().to_vec(),
@@ -428,6 +443,14 @@ async fn cleanup(
     request: MutationRequest,
 ) -> Result<PluginInventoryView, CommandError> {
     let stage = request.stage();
+    // A restarted owner has no accepted cleanup continuation to retain. Refuse
+    // an older incomplete decision before creating an unrelated Core hold.
+    // Retained same-owner actions keep their original admission ordering.
+    let reopened = state.plugins.try_manager()?.pending.is_none();
+    if reopened {
+        let owner = state.plugins.clone();
+        state.io.run(stage, move || owner.check_cleanup_reopened_settings(stage)).await?;
+    }
     let lease = state.sessions.lease(stage)?;
     let initial = request.clone();
     let admitted = lease.submit("plugin_cleanup.begin", stage, move |sessions| {
