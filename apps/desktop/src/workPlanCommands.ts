@@ -595,6 +595,21 @@ export const workPlanCommands = {
     if (value.unitId !== request.unitId || value.locale !== request.locale) invalidAcknowledgement();
     return value;
   },
+  recoverProtection: async (request: WorkProtectionSetRequest) => {
+    const value = await checkedInvoke("recover_work_protection", request, validators.validateResponseWorkProtectionRecovery);
+    const original = value.request;
+    if (original.projectId !== request.projectId || original.actionId !== request.actionId
+      || original.unitId !== request.unitId || original.locale !== request.locale
+      || original.sourceRevisionId !== request.sourceRevisionId || (original.selectionId ?? null) !== (request.selectionId ?? null)
+      || original.expectedRevision !== request.expectedRevision || original.protected !== request.protected
+      || original.confirmedRelease !== request.confirmedRelease) invalidAcknowledgement();
+    if (value.outcome.kind === "recorded") {
+      const receipt = value.outcome.receipt;
+      if (receipt.unitId !== request.unitId || receipt.locale !== request.locale || receipt.protected !== request.protected
+        || receipt.revision !== (BigInt(request.expectedRevision) + 1n).toString()) invalidAcknowledgement();
+    }
+    return value;
+  },
   setProtection: async (request: WorkProtectionSetRequest) => {
     const value = await checkedInvoke("set_work_protection", request, validators.validateResponseWorkProtection);
     if (value.unitId !== request.unitId || value.locale !== request.locale

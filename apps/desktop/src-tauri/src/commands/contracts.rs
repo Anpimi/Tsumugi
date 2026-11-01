@@ -830,6 +830,7 @@ struct AiResponses {
     work_plan_control_settlement: execution::work_plans::WorkPlanControlSettlementView,
     work_plan_authorization_action: Option<execution::work_plans::WorkPlanActionReadView>,
     work_protection: tsumugi_core::application::WorkProtection,
+    work_protection_recovery: tsumugi_core::application::WorkProtectionRecovery,
 }
 #[derive(JsonSchema)]
 #[schemars(rename_all = "camelCase")]

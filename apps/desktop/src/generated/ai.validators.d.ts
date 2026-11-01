@@ -115,3 +115,4 @@ export declare function validateResponseWorkPlanTeamRecoverySettlement(value: un
 export declare function validateResponseWorkPlanTeamRecoveryState(value: unknown): value is Responses["workPlanTeamRecoveryState"];
 export declare function validateResponseWorkPlanTeamWorkTools(value: unknown): value is Responses["workPlanTeamWorkTools"];
 export declare function validateResponseWorkProtection(value: unknown): value is Responses["workProtection"];
+export declare function validateResponseWorkProtectionRecovery(value: unknown): value is Responses["workProtectionRecovery"];

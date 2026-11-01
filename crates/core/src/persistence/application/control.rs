@@ -637,6 +637,56 @@ impl ProjectStore {
         super::super::ledger::commit(tx)?;
         Ok(receipt)
     }
+
+    /// Observe the complete original action, independently of newer protection
+    /// or translation changes. This never submits or reapplies the action.
+    pub fn recover_work_protection(
+        &self,
+        request: &SetWorkProtection,
+    ) -> Result<WorkProtectionRecovery, ExecutionError> {
+        let c = self.connection()
+            .map_err(|_| err(ErrorCode::StorageFailed, "work-protection-read"))?;
+        let outcome = super::super::review::read_snapshot(c, |c| {
+            if !super::super::content::unit_owned_by_project(c, request.project_id, request.unit_id)? {
+                return Err(err(ErrorCode::Unauthorized, "work-protection-scope"));
+            }
+            let locale = crate::Locale::parse(&request.locale)
+                .map_err(|_| err(ErrorCode::InvalidInput, "work-protection-locale"))?;
+            if locale.as_str() != request.locale {
+                return Err(err(ErrorCode::InvalidInput, "work-protection-locale"));
+            }
+            let old: Option<(Vec<u8>, String, Vec<u8>, String)> = c.query_row(
+                "SELECT request,digest,receipt,receipt_digest FROM application_protection_actions WHERE action_id=?1",
+                [request.action_id.to_string()],
+                |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?)),
+            ).optional().map_err(sql)?;
+            let Some((saved, digest, result, result_digest)) = old else {
+                return Ok(WorkProtectionOutcome::Pending {});
+            };
+            if digest != codec::digest(&saved) || result_digest != codec::digest(&result) {
+                return Err(err(ErrorCode::CorruptLedger, "work-protection-receipt"));
+            }
+            let original: SetWorkProtection = codec::decode(&saved, MAX_INPUT_BYTES)?;
+            let receipt: WorkProtection = codec::decode(&result, MAX_INPUT_BYTES)?;
+            if original.action_id != request.action_id || original.project_id != request.project_id
+                || original.unit_id != receipt.unit_id || original.locale != receipt.locale
+                || original.protected != receipt.protected
+                || receipt.revision != original.expected_revision.next()?
+                || (!original.protected && !original.confirmed_release) {
+                return Err(err(ErrorCode::CorruptLedger, "work-protection-receipt"));
+            }
+            if original != *request {
+                return Ok(WorkProtectionOutcome::Mismatch {});
+            }
+            Ok(WorkProtectionOutcome::Recorded { receipt })
+        })?;
+        // Match the existing explicit recovery boundary: verify uncertain local
+        // commit state only after the original read succeeded, never on mismatch.
+        if !matches!(outcome, WorkProtectionOutcome::Mismatch {}) && self.is_reconciling() {
+            self.reconcile_execution()?;
+        }
+        Ok(WorkProtectionRecovery { request: request.clone(), outcome })
+    }
 }
 impl ProjectStore {
     /// Open a bounded application handle only after the original task's durable

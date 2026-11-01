@@ -424,6 +424,7 @@ interface WorkbenchCommandPayloads {
   "translation.protect-work": TranslationProtectionCommandPayload;
   "translation.release-work": TranslationProtectionCommandPayload;
   "translation.retry-protection": TranslationProtectionPendingCommandPayload;
+  "translation.check-protection": TranslationProtectionPendingCommandPayload;
   "resource.prepare-tool": ResourceToolPreparationCommandPayload;
   "resource.start-tool": ResourceToolCaptureCommandPayload;
   "resource.stop-tool-instance": ResourceToolCaptureCommandPayload;
@@ -782,7 +783,7 @@ export type WorkbenchCommand = ResourceCommand<"review-finding", "review.reject-
   | ResourceCommand<"translation-candidate-batch-pending", "translation.check-candidate-batch" | "translation.retry-candidate-batch">
   | ResourceCommand<"translation-candidate-batch-item", "translation.edit-candidate-batch-item">
   | ResourceCommand<"translation-candidate-batch-page", "translation.candidate-batch-page">
-  | ResourceCommand<"translation-protection-pending", "translation.retry-protection" | "translation.recover-protection">
+  | ResourceCommand<"translation-protection-pending", "translation.retry-protection" | "translation.recover-protection" | "translation.check-protection">
   | ResourceCommand<"translation-plugin", "translation.prepare-import-check" | "translation.start-import-check" | "translation.finish-import-check" | "translation.prepare-import-projection" | "translation.start-import-projection">
   | ResourceCommand<"translation-plugin-pending", "translation.check-import-plugin-start" | "translation.check-import-projection-start" | "translation.retry-import-plugin">
   | ResourceCommand<"translation-import-setup", "translation.choose-import-folder" | "translation.inspect-import">

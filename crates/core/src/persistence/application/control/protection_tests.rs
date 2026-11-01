@@ -61,3 +61,58 @@ fn protection_summaries_validate_project_units_and_canonical_locale() {
     assert!(protection_summaries(connection, project, &[], "zh-CN").unwrap().is_empty());
     assert_eq!(protection_summaries(connection, ExecutionId::new(), &[], "zh-CN").unwrap_err().code, ErrorCode::Unauthorized);
 }
+
+#[test]
+fn protection_recovery_reads_original_after_newer_action_and_reopen_without_writes() {
+    let (_directory, mut store, project, units) = fixture();
+    let target = store.review_target(project, units[0], "zh-CN").unwrap();
+    let request = SetWorkProtection {
+        action_id: ExecutionId::new(), project_id: project, unit_id: units[0],
+        locale: "zh-CN".into(), source_revision_id: target.source_revision_id,
+        selection_id: target.selection_id, expected_revision: Revision::new(0).unwrap(),
+        protected: true, confirmed_release: false,
+    };
+    let before = store.connection().unwrap().total_changes();
+    assert_eq!(store.recover_work_protection(&request).unwrap(), WorkProtectionRecovery {
+        request: request.clone(), outcome: WorkProtectionOutcome::Pending {},
+    });
+    assert_eq!(store.connection().unwrap().total_changes(), before);
+    let original = store.set_work_protection(&request).unwrap();
+    let newer = set_protection(&mut store, project, units[0], false);
+    let expected = WorkProtectionRecovery { request: request.clone(), outcome: WorkProtectionOutcome::Recorded { receipt: original.clone() } };
+    let before = store.connection().unwrap().total_changes();
+    assert_eq!(store.recover_work_protection(&request).unwrap(), expected);
+    for changed in [
+        SetWorkProtection { protected: false, ..request.clone() },
+        SetWorkProtection { confirmed_release: true, ..request.clone() },
+        SetWorkProtection { unit_id: units[1], ..request.clone() },
+        SetWorkProtection { locale: "fr-FR".into(), ..request.clone() },
+        SetWorkProtection { source_revision_id: ExecutionId::new(), ..request.clone() },
+        SetWorkProtection { selection_id: Some(ExecutionId::new()), ..request.clone() },
+        SetWorkProtection { expected_revision: Revision::new(1).unwrap(), ..request.clone() },
+    ] {
+        assert_eq!(store.recover_work_protection(&changed).unwrap().outcome, WorkProtectionOutcome::Mismatch {});
+        assert_eq!(store.set_work_protection(&changed).unwrap_err().code, ErrorCode::ResultMismatch);
+    }
+    for changed in [
+        SetWorkProtection { project_id: ExecutionId::new(), ..request.clone() },
+        SetWorkProtection { unit_id: ExecutionId::new(), ..request.clone() },
+        SetWorkProtection { locale: "zh-cn".into(), ..request.clone() },
+    ] { assert!(store.recover_work_protection(&changed).is_err()); }
+    assert_eq!(store.connection().unwrap().total_changes(), before);
+    assert_eq!(store.work_protection(units[0], "zh-CN").unwrap(), newer);
+    assert_eq!(store.set_work_protection(&request).unwrap(), original);
+    store.execution_unknown.store(true, std::sync::atomic::Ordering::Release);
+    assert_eq!(store.recover_work_protection(&SetWorkProtection { confirmed_release: true, ..request.clone() }).unwrap().outcome,
+        WorkProtectionOutcome::Mismatch {});
+    assert!(store.is_reconciling());
+    assert_eq!(store.recover_work_protection(&request).unwrap(), expected);
+    assert!(!store.is_reconciling());
+    assert_eq!(store.connection().unwrap().total_changes(), before);
+    let path = store.directory().to_path_buf(); store.close().unwrap();
+    let reopened = ProjectStore::open(path).unwrap();
+    let before = reopened.connection().unwrap().total_changes();
+    assert_eq!(reopened.recover_work_protection(&request).unwrap(), expected);
+    assert_eq!(reopened.connection().unwrap().total_changes(), before);
+    assert_eq!(reopened.work_protection(units[0], "zh-CN").unwrap(), newer);
+}

@@ -779,6 +779,17 @@ export type WorkPlanRequestOutcome =
   | {
       kind: "fenced-not-applied";
     };
+export type WorkProtectionOutcome =
+  | {
+      kind: "recorded";
+      receipt: WorkProtection;
+    }
+  | {
+      kind: "pending";
+    }
+  | {
+      kind: "mismatch";
+    };
 
 export interface Responses {
   candidateEffect: AiCandidateEffectView;
@@ -833,6 +844,7 @@ export interface Responses {
   workPlanTeamRecoveryState: WorkPlanTeamRecoveryStateView;
   workPlanTeamWorkTools: TeamWorkToolHistory;
   workProtection: WorkProtection;
+  workProtectionRecovery: WorkProtectionRecovery;
 }
 export interface AiCandidateEffectView {
   attemptId: ExecutionId;
@@ -3604,4 +3616,19 @@ export interface TeamWorkToolAttempt {
    * @maxItems 100
    */
   unitIds: ExecutionId[];
+}
+export interface WorkProtectionRecovery {
+  outcome: WorkProtectionOutcome;
+  request: SetWorkProtection;
+}
+export interface SetWorkProtection {
+  actionId: ExecutionId;
+  confirmedRelease: boolean;
+  expectedRevision: Revision;
+  locale: string;
+  projectId: ExecutionId;
+  protected: boolean;
+  selectionId: ExecutionId | null;
+  sourceRevisionId: ExecutionId;
+  unitId: ExecutionId;
 }

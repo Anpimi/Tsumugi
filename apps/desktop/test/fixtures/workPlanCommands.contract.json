@@ -486,6 +486,28 @@
       "revision": "9007199254740994",
       "protected": false
     },
+    "protectionRecovery": {
+      "request": {
+        "projectId": "60000000-0000-4000-8000-000000000001",
+        "actionId": "60000000-0000-4000-8000-000000000008",
+        "unitId": "60000000-0000-4000-8000-000000000003",
+        "locale": "zh-CN",
+        "sourceRevisionId": "60000000-0000-4000-8000-000000000004",
+        "selectionId": null,
+        "expectedRevision": "9007199254740993",
+        "protected": false,
+        "confirmedRelease": true
+      },
+      "outcome": {
+        "kind": "recorded",
+        "receipt": {
+          "unitId": "60000000-0000-4000-8000-000000000003",
+          "locale": "zh-CN",
+          "revision": "9007199254740994",
+          "protected": false
+        }
+      }
+    },
     "discussionPlan": {
       "planId": "60000000-0000-4000-8000-000000000007",
       "digest": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
