@@ -2,6 +2,14 @@ import { decisionsEn, decisionsZh } from "./decisions";
 import { decisionDetailsEn, decisionDetailsZh } from "./decisionDetails";
 
 export const workbenchEn = {
+  candidateBatchOriginalChanged: "This run’s original candidate is no longer available.",
+  candidateBatchOriginalRun: "Only the saved candidates captured from this run are shown. Confirmation adds eligible candidates to drafts; it does not save or approve translations.",
+  candidateBatchSourceText: "Source",
+  candidateBatchCurrentText: "Current translation",
+  candidateBatchNoCurrentText: "No current translation",
+  conversationMode: "Conversation mode",
+  returnToView: "Return to current view",
+  resizeCurrentView: "Resize current view",
   copyEntryKey: "Copy key {{key}}",
   entryKeyCopied: "Key copied.",
   entryKeyCopyFailed: "Could not copy the key. Try again.",
@@ -650,6 +658,14 @@ export const workbenchEn = {
 
 type Messages = { [K in keyof typeof workbenchEn]: typeof workbenchEn[K] extends string ? string : { [P in keyof typeof workbenchEn[K]]: string } };
 export const workbenchZh: Messages = {
+  candidateBatchOriginalChanged: "这次运行的原候选已不可用。",
+  candidateBatchOriginalRun: "这里只显示从这次运行捕获的已存候选。确认仅将符合条件的候选放入草稿，不会保存或批准译文。",
+  candidateBatchSourceText: "原文",
+  candidateBatchCurrentText: "当前译文",
+  candidateBatchNoCurrentText: "尚无当前译文",
+  conversationMode: "对话模式",
+  returnToView: "返回当前视图",
+  resizeCurrentView: "调整当前视图宽度",
   copyEntryKey: "复制 key {{key}}",
   entryKeyCopied: "已复制 key。",
   entryKeyCopyFailed: "无法复制 key，请重试。",

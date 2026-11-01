@@ -1,4 +1,13 @@
 export const conversationRunResultsEn = {
+  runResultsBatchTitle: "{{count}} saved candidates from this run",
+  runResultsBatchHelp: "Review this fixed batch before placing eligible candidates in drafts. Existing input and protected entries are preserved.",
+  runResultsViewBatch: "View this batch in comparison",
+  runResultsStageBatch: "Adopt all to drafts…",
+  runEventAuthorized: "This run is authorized. No start has been recorded.",
+  runEventStarted: "A start is recorded for this run.",
+  runEventPaused: "This run is paused.",
+  runEventStopped: "This run is stopped.",
+  runEventTakenOver: "You have taken over this run.",
   runResultsRetryEffect: "Retry original processing",
   runResultsRetryEffectHelp: "Retry only the original candidate checks and authorized processing. This does not generate another translation or grant new permission.",
   runResultsRetryingEffect: "Checking and retrying the original processing…",
@@ -30,6 +39,15 @@ export const conversationRunResultsEn = {
 };
 
 export const conversationRunResultsZh: typeof conversationRunResultsEn = {
+  runResultsBatchTitle: "本次运行已保存 {{count}} 条候选",
+  runResultsBatchHelp: "先查看这批固定候选，再将符合条件的候选放入草稿。已有输入和受保护条目会保留。",
+  runResultsViewBatch: "在对照表中查看这批候选",
+  runResultsStageBatch: "全部采用到草稿…",
+  runEventAuthorized: "本次运行已授权，尚无开始记录。",
+  runEventStarted: "本次运行已有开始记录。",
+  runEventPaused: "本次运行已暂停。",
+  runEventStopped: "本次运行已停止。",
+  runEventTakenOver: "你已接管本次运行。",
   runResultsRetryEffect: "重试原处理",
   runResultsRetryEffectHelp: "仅重试原候选的检查及已授权处理，不重新生成译文，也不授予新权限。",
   runResultsRetryingEffect: "正在核对并重试原处理…",

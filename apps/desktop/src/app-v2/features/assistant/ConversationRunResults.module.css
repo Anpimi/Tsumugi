@@ -13,3 +13,6 @@
 .pagination { padding-block-start: var(--space-3); border-block-start: var(--border-width) solid var(--color-border-subtle); }
 .panel summary:focus-visible, .panel [tabindex="-1"]:focus-visible { outline: var(--focus-width) solid var(--color-accent-solid); outline-offset: var(--focus-offset); }
 @container (max-width: 320px) { .actions > button { inline-size: 100%; } }
+.batch { display: grid; gap: var(--space-3); padding: var(--space-3); border: var(--border-width) solid var(--color-border-subtle); border-radius: var(--radius-lg); }
+.examples { display: grid; gap: var(--space-2); margin: 0; padding-inline-start: var(--space-5); }
+.example { white-space: pre-wrap; overflow-wrap: anywhere; display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; }

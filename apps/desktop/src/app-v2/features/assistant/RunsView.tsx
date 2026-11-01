@@ -1,3 +1,4 @@
+import type { OpenRunCandidateBatch } from "../candidates/runCandidateBatch";
 import { useLayoutEffect, useRef, useSyncExternalStore } from "react";
 import { useTranslation } from "react-i18next";
 import { conversationCommands } from "../../../conversationCommands";
@@ -13,9 +14,9 @@ import type { OpenConversationTeamCandidate } from "./conversationTeamReads";
 import { ConversationWorkPlanPanel } from "./ConversationWorkPlanPanel";
 import styles from "./RunsView.module.css";
 
-export default function RunsView({ owner, disabled, gate, viewId, onAssistant, onOpenCandidate, onOpenTeamCandidate, showDetails = true, expandedPlans, onExpandedPlan, scrollTop = 0, onScroll }: {
+export default function RunsView({ owner, disabled, gate, viewId, onAssistant, onOpenCandidate, onOpenCandidateBatch, onOpenTeamCandidate, showDetails = true, expandedPlans, onExpandedPlan, scrollTop = 0, onScroll }: {
   owner: ConversationSession; disabled: boolean; gate: InteractionGate; viewId: string;
-  onAssistant: () => void; onOpenCandidate: OpenConversationRunCandidate; onOpenTeamCandidate: OpenConversationTeamCandidate;
+  onAssistant: () => void; onOpenCandidate: OpenConversationRunCandidate; onOpenCandidateBatch?: OpenRunCandidateBatch; onOpenTeamCandidate: OpenConversationTeamCandidate;
   showDetails?: boolean; expandedPlans?: readonly string[]; onExpandedPlan?: (planId: string, open: boolean) => void;
   scrollTop?: number; onScroll?: (top: number) => void;
 }) {
@@ -53,6 +54,6 @@ export default function RunsView({ owner, disabled, gate, viewId, onAssistant, o
       ? <ErrorState title={global("conversation.inputReadFailed")} action={<Button disabled={!allowed()} onClick={() => { if (allowed()) void owner.open(activeId); }}>{global("conversation.retryRead")}</Button>}/>
       : <LoadingState label={global("conversation.readingInput")}/>
       : <ConversationWorkPlanPanel key={activeId} owner={owner} input={input} visible disabled={disabled} gate={gate} viewId={viewId}
-        onOpenCandidate={onOpenCandidate} onOpenTeamCandidate={onOpenTeamCandidate} expandedPlans={expandedPlans} onExpandedPlan={onExpandedPlan}/>}
+        onOpenCandidate={onOpenCandidate} onOpenCandidateBatch={onOpenCandidateBatch} onOpenTeamCandidate={onOpenTeamCandidate} expandedPlans={expandedPlans} onExpandedPlan={onExpandedPlan}/>}
   </section>;
 }

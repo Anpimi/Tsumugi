@@ -526,7 +526,7 @@ function WorkspaceShell() {
     importOwners, importRecovery, requestImport, revealImport, hideImportRecovery,
     strategyOwner, requestStrategy, strategyReveal, strategyLoadFailed, retryStrategy,
     deliveryOwner, executionTasks, requestDelivery, deliveryReveal, deliveryLoadFailed, canRetryDelivery, retryDelivery,
-    candidateOwners, requestCandidates, revealCandidates, candidateBatchOpen, setCandidateBatchOpen, comparisonOwner, requestComparisons,
+    candidateOwners, requestCandidates, revealCandidates, candidateBatchOpen, setCandidateBatchOpen, openRunCandidateBatch, comparisonOwner, requestComparisons,
     reviewOwner, requestReview, revealReview, reviewRecovery, hideReviewRecovery, reviewBatchOpen, setReviewBatchOpen, reviewBatchSelection, prepareReviewBatch,
     knowledgeOwner, knowledgeLoadFailed, requestKnowledge, knowledgeReveal, revealKnowledge, knowledgeOpenIntent, setKnowledgeOpenIntent,
     conversations, conversationLoadFailed, retryConversations, conversationReveal, conversationRecovery, conversationProposal, conversationTeamQuestion,
@@ -546,7 +546,7 @@ function WorkspaceShell() {
   const observedKnowledgeOpenIntent = useRef<KnowledgeOpenIntent | null>(null);
   useLayoutEffect(() => { if (view?.kind === "knowledge") requestKnowledge(); }, [view?.kind, requestKnowledge]);
   useLayoutEffect(() => { if (view?.kind === "runs" && view.runsMode === "strategy") requestStrategy(); }, [view?.kind, view?.runsMode, requestStrategy]);
-  useLayoutEffect(() => { if (view?.kind === "runs") requestCandidates(); }, [view?.kind, requestCandidates]);
+  useLayoutEffect(() => { if (view?.kind === "runs" || view?.dock === "agent") requestCandidates(); }, [view?.kind, view?.dock, requestCandidates]);
   useLayoutEffect(() => { if (view?.kind === "delivery") requestDelivery(); }, [view?.kind, requestDelivery]);
   const interaction = useSyncExternalStore(gate.subscribe, gate.getSnapshot, gate.getSnapshot);
   const draftState = useSyncExternalStore(drafts?.subscribe ?? noDraftSubscription, drafts?.getSnapshot ?? getNoDraftState, drafts?.getSnapshot ?? getNoDraftState);
@@ -1296,7 +1296,7 @@ function WorkspaceShell() {
     return <TabsRoot value={view?.dock ?? "agent"} onValueChange={value => { if (view && (value === "agent" || value === "details")) store.getState().patch(view.id, { dock: value }); }} className={styles.dockTabs}>
       <TabsList aria-label={message("dockTabs")}><TabsTrigger value="agent"><Sparkles />{message("agent")}</TabsTrigger><TabsTrigger value="details">{message("detail")}</TabsTrigger></TabsList>
       <TabsContent value="agent" className={styles.dockContent}><FeatureBoundary fallback={conversationFallback(<ErrorState title={t("conversation.unavailable")}/>)}><Suspense fallback={conversationFallback(<LoadingState label={t("conversation.loading")}/>)}>
-        {conversations ? <ConversationPanel commands={commandsReady ? commands : undefined} showWorkPlans={view?.kind !== "runs" || view.runsMode === "strategy" || !!conversationTeamQuestion} onOpenCandidate={openRunCandidate} onOpenTeamCandidate={openTeamCandidate} onOpenKnowledgeProposal={openKnowledgeProposal} owner={conversations} visible={(view?.dock ?? "agent") === "agent" && (!narrow || drawer)} disabled={disabled} gate={gate} viewId={currentId} parentDialogId={narrow && drawer ? "workspace-dock" : undefined}
+        {conversations ? <ConversationPanel commands={commandsReady ? commands : undefined} showWorkPlans={view?.kind !== "runs" || view.runsMode === "strategy" || !!conversationTeamQuestion} onOpenCandidate={openRunCandidate} onOpenCandidateBatch={openRunCandidateBatch} onOpenTeamCandidate={openTeamCandidate} onOpenKnowledgeProposal={openKnowledgeProposal} owner={conversations} visible={(view?.dock ?? "agent") === "agent" && (!narrow || drawer)} disabled={disabled} gate={gate} viewId={currentId} parentDialogId={narrow && drawer ? "workspace-dock" : undefined}
           selection={view?.kind === "entries" && !importVisible ? view.selection : null} decisionTray={decisionTray()} projectBrief={projectBrief} maintenanceBrief={sourceBrief()} recoveryTarget={conversationRecovery} proposalTarget={conversationProposal} questionTarget={conversationTeamQuestion}/>
           : conversationFallback(conversationLoadFailed ? <ErrorState title={t("conversation.unavailable")} action={<Button onClick={retryConversations}>{t("conversation.retryRead")}</Button>}/> : <LoadingState label={t("conversation.loading")}/>)}
       </Suspense></FeatureBoundary></TabsContent>
@@ -1433,7 +1433,7 @@ function WorkspaceShell() {
               <TabsContent className={appStyles.runsPanel} value="plans">{conversations ? <RunsView owner={conversations} disabled={disabled} gate={gate} viewId={view.id}
                 expandedPlans={view.runExpanded} onExpandedPlan={(planId, open) => store.getState().patch(view.id, { runExpanded: open ? [...new Set([...view.runExpanded, planId])] : view.runExpanded.filter(id => id !== planId) })}
                 scrollTop={view.scroll.top} onScroll={top => store.getState().patch(view.id, { scroll: { top, left: 0 } })}
-                showDetails={!conversationTeamQuestion} onAssistant={() => dispatch("workspace.agent")} onOpenCandidate={openRunCandidate} onOpenTeamCandidate={openTeamCandidate}/>
+                showDetails={!conversationTeamQuestion} onAssistant={() => dispatch("workspace.agent")} onOpenCandidate={openRunCandidate} onOpenCandidateBatch={openRunCandidateBatch} onOpenTeamCandidate={openTeamCandidate}/>
                 : <LoadingState label={t("conversation.loading")}/>}</TabsContent>
               <TabsContent className={appStyles.runsPanel} value="strategy">{strategyLoadFailed ? <ErrorState title={message("strategyLoadFailed")} action={<Button onClick={retryStrategy}>{message("strategyRetry")}</Button>}/>
                 : strategyOwner ? <StrategyView project={session.project} owner={strategyOwner} commands={commandsReady ? commands : null} tasks={executionTasks} visible={view.runsMode === "strategy"} disabled={disabled} gate={gate} viewId={view.id} intent={strategyIntent} requestTarget={strategyRequestTarget}

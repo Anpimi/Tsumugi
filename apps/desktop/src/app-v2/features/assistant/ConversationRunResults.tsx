@@ -11,13 +11,14 @@ import { Button } from "../../../design-system/Button";
 import { Banner, LoadingState } from "../../../design-system/Feedback";
 import { TokenizedText } from "../../../design-system/TokenizedText";
 import type { ConversationPlanLink } from "./conversationRun";
+import { runCandidateBatchTarget, type OpenRunCandidateBatch } from "../candidates/runCandidateBatch";
 import { conversationRunCandidateTarget, conversationRunEffectTarget, readConversationRunResults, type OpenConversationRunCandidate, type RetryConversationRunEffect } from "./conversationRunResultReads";
 import styles from "./ConversationRunResults.module.css";
 
 interface Props {
   context: SessionRequest; link: ConversationPlanLink; plan: WorkPlanView; start: WorkPlanStartReceipt;
   visible: boolean; canRead: () => boolean; onOpenCandidate?: OpenConversationRunCandidate;
-  canRetryEffect?: () => boolean; onRetryEffect?: RetryConversationRunEffect;
+  canRetryEffect?: () => boolean; onRetryEffect?: RetryConversationRunEffect; onOpenCandidateBatch?: OpenRunCandidateBatch;
 }
 const pageSize = 25;
 const executionKeys = {
@@ -57,16 +58,16 @@ export function ConversationRunResults(props: Props) {
   </section>;
 }
 
-function RunResultsRead({ context, link, plan, start, visible, canRead, onOpenCandidate, canRetryEffect, onRetryEffect, identity }: Props & { identity: string }) {
+function RunResultsRead({ context, link, plan, start, visible, canRead, onOpenCandidate, onOpenCandidateBatch, canRetryEffect, onRetryEffect, identity }: Props & { identity: string }) {
   const { t } = useTranslation(undefined, { keyPrefix: "conversation" }), { t: global } = useTranslation();
   const reads = useSessionReads(), id = useId();
-  const mounted = useRef(false), live = useRef({ visible, identity, canRead, onOpenCandidate, canRetryEffect, onRetryEffect });
-  const navigation = useRef<{ itemId: string; kind: "candidate" | "effect"; dispose: () => void } | null>(null);
+  const mounted = useRef(false), live = useRef({ visible, identity, canRead, onOpenCandidate, onOpenCandidateBatch, canRetryEffect, onRetryEffect });
+  const navigation = useRef<{ itemId: string; kind: "candidate" | "effect" | "batch"; dispose: () => void } | null>(null);
   const [busyItem, setBusyItem] = useState<string | null>(null), [page, setPage] = useState(0);
   const [feedback, setFeedback] = useState<{ itemId: string; cause: CommandFailure | null; effect?: boolean } | null>(null);
   const resultRegion = useRef<HTMLElement>(null), failureRegion = useRef<HTMLDivElement>(null), navigationFailureRegion = useRef<HTMLDivElement>(null);
   const readFocus = useRef<{ origin: HTMLElement | null } | null>(null), failureFocus = useRef<HTMLElement | null>(null), pageFocus = useRef<HTMLElement | null>(null);
-  useLayoutEffect(() => { live.current = { visible, identity, canRead, onOpenCandidate, canRetryEffect, onRetryEffect }; });
+  useLayoutEffect(() => { live.current = { visible, identity, canRead, onOpenCandidate, onOpenCandidateBatch, canRetryEffect, onRetryEffect }; });
   useLayoutEffect(() => {
     mounted.current = true;
     readFocus.current = { origin: document.activeElement instanceof HTMLElement ? document.activeElement : null };
@@ -86,6 +87,7 @@ function RunResultsRead({ context, link, plan, start, visible, canRead, onOpenCa
     return present() && query?.status === "success" && query.fetchStatus === "idle" && !query.isInvalidated && query.error === null && query.data === expected;
   }
   const fresh = !!view && currentView(view);
+  const batch = view && onOpenCandidateBatch ? runCandidateBatchTarget(link, plan, start, view.rows) : null;
   const pageCount = view ? Math.max(1, Math.ceil(view.rows.length / pageSize)) : 1, currentPage = Math.min(page, pageCount - 1);
   const rows = view?.rows.slice(currentPage * pageSize, (currentPage + 1) * pageSize) ?? [];
   const statuses = new Map(view?.detail.items.map(item => [item.status.itemId, item]) ?? []);
@@ -162,6 +164,26 @@ function RunResultsRead({ context, link, plan, start, visible, canRead, onOpenCa
       if (navigation.current === flight) { navigation.current = null; if (mounted.current) setBusyItem(null); }
     }
   }
+  async function openBatch(origin: HTMLElement) {
+    const callback = onOpenCandidateBatch, expected = view, target = batch;
+    if (!callback || !expected || !target || !currentView(expected) || navigation.current) return;
+    const witness = reads.watchExactQuery(key), original = witness.current(), version = original?.state.dataUpdateCount;
+    const flight = { itemId: "batch", kind: "batch" as const, dispose: () => witness.dispose() };
+    const focusOwner = shouldFocus(origin) ? resultRegion.current : null;
+    focusOwner?.focus(); navigation.current = flight; setBusyItem("batch"); setFeedback(null);
+    const current = () => navigation.current === flight && live.current.onOpenCandidateBatch === callback && currentView(expected)
+      && witness.current() === original && original?.state.dataUpdateCount === version;
+    try {
+      if (!current()) return;
+      const opened = await callback(target, current);
+      if (current() && !opened) { failureFocus.current = focusOwner ?? origin; setFeedback({ itemId: "batch", cause: null }); }
+    } catch (error) {
+      if (current()) { failureFocus.current = focusOwner ?? origin; setFeedback({ itemId: "batch", cause: commandFailure(error) }); }
+    } finally {
+      flight.dispose();
+      if (navigation.current === flight) { navigation.current = null; if (mounted.current) setBusyItem(null); }
+    }
+  }
   return <div className={styles.body} onClickCapture={event => { if (!present()) { event.preventDefault(); event.stopPropagation(); } }}>
     <p>{t("runResultsReadHelp")}</p>
     <div className={styles.actions}><Button size="sm" pending={read.isFetching} disabled={!present() || !!busyItem}
@@ -176,6 +198,17 @@ function RunResultsRead({ context, link, plan, start, visible, canRead, onOpenCa
       <p>{t("runResultsSummary", { total: view.rows.length, returned: view.rows.filter(row => row.output !== null).length,
         saved: view.rows.filter(row => row.savedRevisionId !== null).length })}</p>
       <p>{t("runResultsMeaning")}</p>
+      {batch ? <section className={styles.batch} aria-label={t("runResultsBatchTitle", { count: batch.candidates.length })}>
+        <h6>{t("runResultsBatchTitle", { count: batch.candidates.length })}</h6>
+        <ul className={styles.examples}>{view.rows.filter(row => row.savedRevisionId && row.resultId && row.output).slice(0, 3).map(row => <li key={row.itemId}>
+          <p><TokenizedText text={row.item.nativeKey}/></p><p className={styles.example}><TokenizedText text={row.output!.text || t("runResultsEmptyTranslation")} tone="ai"/></p>
+        </li>)}</ul>
+        <p>{t("runResultsBatchHelp")}</p>
+        <div className={styles.actions}>
+          <Button size="sm" disabled={!fresh || !!busyItem} onClick={event => void openBatch(event.currentTarget)}>{t("runResultsViewBatch")}</Button>
+          <Button size="sm" disabled={!fresh || !!busyItem} onClick={event => void openBatch(event.currentTarget)}>{t("runResultsStageBatch")}</Button>
+        </div>
+      </section> : null}
       {!fresh ? <p role="status">{t("runResultsStale")}</p> : null}
       {busyItem ? <p role="status">{t(navigation.current?.kind === "effect" ? "runResultsRetryingEffect" : "runResultsOpeningCandidate")}</p> : null}
       {feedback ? <Banner ref={navigationFailureRegion} tabIndex={-1} tone="warning" role="alert"><p>{t(feedback.effect ? "runResultsRetryEffectFailed" : "runResultsOpenFailed")}</p>

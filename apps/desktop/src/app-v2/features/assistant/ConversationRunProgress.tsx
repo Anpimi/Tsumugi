@@ -1,3 +1,4 @@
+import type { OpenRunCandidateBatch } from "../candidates/runCandidateBatch";
 import { useTranslation } from "react-i18next";
 import { AiProviderBudget } from "../../../AiUsage";
 import { commandFailure, CommandFailureDetails } from "../../../CommandFailure";
@@ -16,7 +17,7 @@ import styles from "./ConversationRunPanel.module.css";
 
 interface Props {
   context: SessionRequest; link: ConversationPlanLink; status: WorkPlanStatusView | null;
-  visible: boolean; canRead: () => boolean; onOpenCandidate?: OpenConversationRunCandidate;
+  visible: boolean; canRead: () => boolean; onOpenCandidate?: OpenConversationRunCandidate; onOpenCandidateBatch?: OpenRunCandidateBatch;
   onOpenTeamCandidate?: OpenConversationTeamCandidate;
   teamActions?: ConversationTeamProgressProps["actions"];
   onTeamReply?: ConversationTeamProgressProps["onReply"];
@@ -52,7 +53,7 @@ function RunAttempt({ context, run, visible, canRead }: Pick<Props, "context" | 
 }
 
 /** Read the original plan's start proof before asking the execution ledger for progress. */
-export function ConversationRunProgress({ context, link, status, visible, canRead, onOpenCandidate, onOpenTeamCandidate, teamActions, onTeamReply, canRetryEffect, onRetryEffect }: Props) {
+export function ConversationRunProgress({ context, link, status, visible, canRead, onOpenCandidate, onOpenCandidateBatch, onOpenTeamCandidate, teamActions, onTeamReply, canRetryEffect, onRetryEffect }: Props) {
   const { t } = useTranslation(undefined, { keyPrefix: "conversation" });
   const read = useSessionQuery({ key: ["work-plan-run", link.planId], scopes: ["project", "execution"], enabled: visible,
     read: async () => {
@@ -70,6 +71,7 @@ export function ConversationRunProgress({ context, link, status, visible, canRea
       if (canRead()) void read.refetch();
     }}>{t("runRefreshRecord")}</Button> : null}
     {run ? <>
+      <p className={styles.event}>{t(run.state === "paused" ? "runEventPaused" : run.state === "stopped" ? "runEventStopped" : run.state === "taken-over" ? "runEventTakenOver" : run.lastStart ? "runEventStarted" : "runEventAuthorized")}</p>
       {!sameStatus ? <p role="status">{t("runRecordChanged")}</p>
         : status?.plan.options.teamExecution ? <ConversationTeamProgress context={context} link={link} status={status}
           visible={visible} canRead={canRead} onOpenCandidate={onOpenTeamCandidate} actions={teamActions} onReply={onTeamReply}/>
@@ -79,7 +81,7 @@ export function ConversationRunProgress({ context, link, status, visible, canRea
       </section>
       {sameStatus && status?.plan.preview && !status.plan.options.teamExecution && !status.plan.options.mcpTermQuery && run.lastStart
         ? <ConversationRunResults context={context} link={link} plan={status.plan} start={run.lastStart}
-          visible={visible} canRead={canRead} onOpenCandidate={onOpenCandidate} canRetryEffect={canRetryEffect}
+          visible={visible} canRead={canRead} onOpenCandidate={onOpenCandidate} onOpenCandidateBatch={onOpenCandidateBatch} canRetryEffect={canRetryEffect}
           onRetryEffect={onRetryEffect ? (target, current) => target.startActionId === run.lastStart?.actionId && target.attemptId === run.lastStart.attemptId
             ? onRetryEffect(target, current) : Promise.resolve(false) : undefined}/> : null}
     </> : null}

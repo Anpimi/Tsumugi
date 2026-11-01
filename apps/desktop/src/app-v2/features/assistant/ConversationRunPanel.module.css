@@ -21,3 +21,4 @@
 .panel :global(.secondary-button):disabled, .panel :global(.text-button):disabled { opacity: var(--opacity-disabled); }
 .observation:focus-visible, .panel summary:focus-visible, .panel input:focus-visible, .panel :global(.secondary-button):focus-visible, .panel :global(.text-button):focus-visible { outline: var(--focus-width) solid var(--color-accent-solid); outline-offset: var(--focus-offset); }
 @container (max-width: 320px) { .actions > button { inline-size: 100%; } }
+.event { color: var(--color-text-tertiary); padding-block: var(--space-2); border-block-end: var(--border-width) solid var(--color-border-subtle); }

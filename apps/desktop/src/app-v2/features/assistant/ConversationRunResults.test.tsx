@@ -10,6 +10,7 @@ import { fixtureIdentity as id } from "../../../testSupport/executionFixture";
 import { InteractionGate } from "../../workspace/interactionGate";
 import { ConversationRunResults } from "./ConversationRunResults";
 import { conversationRunEffectTarget, type OpenConversationRunCandidate, type RetryConversationRunEffect } from "./conversationRunResultReads";
+import { runCandidateBatchTarget, type OpenRunCandidateBatch } from "../candidates/runCandidateBatch";
 
 const invoke = vi.hoisted(() => vi.fn());
 vi.mock("@tauri-apps/api/core", () => ({ invoke }));
@@ -42,12 +43,12 @@ function fixture(count = 100) {
   const link = { ...prepared.proposal, planId: plan.planId, planDigest: plan.digest, actionId: id(61002), ordinal: "1" };
   return { context, link, plan, start, view };
 }
-function harness(count = 100, callback = vi.fn<OpenConversationRunCandidate>(async () => true), retry?: RetryConversationRunEffect) {
+function harness(count = 100, callback = vi.fn<OpenConversationRunCandidate>(async () => true), retry?: RetryConversationRunEffect, batch?: OpenRunCandidateBatch) {
   const h = fixture(count), reads = new SessionReads(h.context), gate = new InteractionGate(); gate.setVisibleOwner("entries");
   if (retry) h.view.rows[0].automation = { actionId: id(69001), phase: "failed", retryable: true, receipt: null, error: { code: "outcome-unknown", stage: "execution-read", outcome: "unknown", recoveryRequired: true } };
   invoke.mockImplementation(async command => { if (command === "read_ai_translation") return structuredClone(h.view); throw new Error(`Unexpected result command: ${command}`); });
   const props = { ...h, visible: true, canRead: () => gate.canDispatch({ viewId: "entries", source: "button" }), onOpenCandidate: callback,
-    canRetryEffect: () => true, onRetryEffect: retry };
+    canRetryEffect: () => true, onRetryEffect: retry, onOpenCandidateBatch: batch };
   const tree = () => <SessionReadProvider context={h.context} reads={reads} bridge={false}><label>Other draft<input aria-label="Other draft" defaultValue="Retained B"/></label>
     <ConversationRunResults {...props}/></SessionReadProvider>;
   const rendered = render(tree());
@@ -61,6 +62,24 @@ beforeEach(async () => { invoke.mockReset(); await i18n.changeLanguage("en-US");
 afterEach(() => { cleanup(); disposals.splice(0).forEach(dispose => dispose()); expect(invoke.mock.calls.every(([command]) => command === "read_ai_translation")).toBe(true); });
 
 describe("conversation run result UI", () => {
+it("captures the whole original batch, shows three examples, and opens comparison before either bulk action", async () => {
+  const batch = vi.fn<OpenRunCandidateBatch>(async (_target, current) => { expect(current()).toBe(true); return true; });
+  const h = harness(10, undefined, undefined, batch);
+  for (const index of [4, 5, 6]) {
+    h.view.rows[index].savedRevisionId = id(66000 + index); h.view.detail.items[index].status.adoption = "committed";
+  }
+  h.view.detail.progress.adopted = 4;
+  expect(batch).not.toHaveBeenCalled(); await expand();
+  const card = screen.getByRole("region", { name: t("runResultsBatchTitle", { count: 4 }) });
+  expect(within(card).getAllByRole("listitem")).toHaveLength(3);
+  for (const name of ["runResultsViewBatch", "runResultsStageBatch"]) {
+    fireEvent.click(within(card).getByRole("button", { name: t(name) }));
+    await waitFor(() => expect(batch).toHaveBeenCalledTimes(name === "runResultsViewBatch" ? 1 : 2));
+    expect(batch.mock.lastCall?.[0]).toEqual(runCandidateBatchTarget(h.link, h.plan, h.start, h.view.rows));
+    await waitFor(() => expect(within(card).getByRole("button", { name: t(name) })).toBeEnabled());
+  }
+  expect(invoke).toHaveBeenCalledOnce();
+});
 it("offers only a retryable original effect and passes its exact current proof to the retained owner", async () => {
   const retry = vi.fn<RetryConversationRunEffect>(async (_target, current) => { expect(current()).toBe(true); return true; });
   const h = harness(1, undefined, retry); await expand();

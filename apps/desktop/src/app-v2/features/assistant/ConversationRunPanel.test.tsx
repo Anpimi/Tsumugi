@@ -253,6 +253,7 @@ it("starts only after a fresh direct authorization and journals the original req
   expect(calls("read_work_plan_status")).toHaveLength(0);
   await expand();
   await screen.findByText(i18n.t("conversation.runNotStarted"));
+  expect(screen.getByText(i18n.t("conversation.runEventAuthorized"))).toBeVisible();
   expect(calls("read_execution_attempt")).toHaveLength(0);
   const start = screen.getByRole("button", { name: i18n.t("conversation.runStart") });
   await waitFor(() => expect(start).toBeEnabled()); fireEvent.click(start); fireEvent.click(start);
@@ -262,6 +263,7 @@ it("starts only after a fresh direct authorization and journals the original req
   expect(h.state.journalEvents.indexOf("work-plan-start")).toBeLessThan(h.state.journalEvents.indexOf("dispatch-start"));
   expect(h.state.head.value?.pending).toBeNull(); expect(start).toBeDisabled();
   expect(await screen.findByText(i18n.t("conversation.runProgressCounts", { ...h.state.detail.progress }))).toBeVisible();
+  expect(screen.getByText(i18n.t("conversation.runEventStarted"))).toBeVisible();
   expect(h.state.detail.items).toHaveLength(1);
   expect(calls("read_execution_attempt")[0][1].request).toEqual({ ...context, attemptId: h.prepared.plan.attemptId, offset: 0, limit: 1 });
   expect(screen.getByText(i18n.t("conversation.runProgressResultHelp"))).toBeVisible();
