@@ -2,6 +2,8 @@
 
 `0.2.0-alpha.1` is an experimental, unsigned prerelease for Apple silicon Macs running macOS 13.5 or later.
 
+This page describes the frozen `v0.2.0-alpha.1` tag, not current source. For current project compatibility and upgrade support, see the [Versioning Policy](versioning.md#core-storage-and-desktop-domain-transition).
+
 ## Bundled components and profile isolation
 
 The archive bundles the fixed Node `26.10.0` component Host, the Pi member runtime, and the standalone WebVTT and Stardew SMAPI `0.1.0-alpha.1` packages. Their source, SDK, and package identities are pinned in the application catalog. Installing the application does not alter existing project bindings or grant plugin execution permissions—approving, installing, enabling, and running a plugin remain separate actions inside the app.
@@ -14,7 +16,7 @@ CARGO_NET_OFFLINE=true pnpm --dir apps/desktop tauri build --config src-tauri/ta
 
 ## Project compatibility and model connections
 
-- **Database schema**: Test with synthetic projects first. This source build uses schema `65` and upgrades valid schema `61`, `62`, `63`, or `64` projects in one transaction, preserving their content, conversations, planning history, proposal revisions, plans, team discussions, and receipts. An interrupted upgrade leaves the complete original database or complete schema 65; earlier clients cannot open schema 65. Older unsupported formats are refused without reset. Keep those older directories intact and reimport original source files into a new project. See [supported integrations](integrations.md) and the [changelog](../CHANGELOG.md) for workflow limits.
+- **Database schema**: Test with synthetic projects first. The frozen release uses schema `61` and accepts only valid schema 61 projects. It refuses earlier development directories without automatically migrating or resetting them. Keep unsupported older directories intact and reimport original source files into a new project. See [supported integrations](integrations.md) and the [changelog](../CHANGELOG.md) for workflow limits.
 - **Model connections**: This snapshot includes the API-key connection workflow (the experimental ChatGPT account sign-in flow is omitted). No model requests are made during installation or startup, and every provider dispatch requires explicit scope, data-sharing, and budget consent.
 
 ## Signing and current limitations
