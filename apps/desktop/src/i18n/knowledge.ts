@@ -3,6 +3,15 @@ import { knowledgeProposalEn, knowledgeProposalZh } from "./knowledgeProposal";
 import { translationMemoryEn, translationMemoryZh } from "./translationMemory";
 import { resourceDraftRecoveryEn, resourceDraftRecoveryZh } from "./resourceDraftRecovery";
 export const knowledgeEn = {
+  proposalEdit: "Edit and adopt",
+  proposalEditTitle: "Edit this term proposal",
+  proposalEditedTarget: "Your translation",
+  proposalAdoptEdited: "Adopt edited translation",
+  proposalEditDiscard: "Discard edit",
+  proposalEditChanged: "The current term changed. Compare it before continuing.",
+  proposalEditUseCurrent: "Use this current version",
+  proposalEditInvalid: "Enter a translation using at most 16 KiB of UTF-8 text, without null characters.",
+  proposalEditNewer: "The earlier translation was adopted. Your newer edit is retained.",
   proposalInboxTarget: "Review the term proposal selected from Decisions.",
   proposalReturnToInbox: "Back to Decisions",
   proposalTargetMissing: "This proposal is no longer in the current comparison. Read it again or return to Decisions.",
@@ -157,6 +166,15 @@ export const knowledgeEn = {
 };
 
 export const knowledgeZh = {
+  proposalEdit: "编辑后采用",
+  proposalEditTitle: "编辑术语提议",
+  proposalEditedTarget: "你的译名",
+  proposalAdoptEdited: "采用编辑后的译名",
+  proposalEditDiscard: "放弃编辑",
+  proposalEditChanged: "当前术语已变化，请比较后继续。",
+  proposalEditUseCurrent: "基于此当前版本继续",
+  proposalEditInvalid: "请输入译名，UTF-8 文本最多 16 KiB，不能含空字符。",
+  proposalEditNewer: "此前译名已采用，较新的编辑仍已保留。",
   proposalInboxTarget: "正在查看从“待你决定”定位的术语提议。",
   proposalReturnToInbox: "返回待你决定",
   proposalTargetMissing: "当前比较中已没有这项提议。请重新读取或返回“待你决定”。",

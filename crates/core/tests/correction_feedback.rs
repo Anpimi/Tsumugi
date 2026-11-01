@@ -64,7 +64,7 @@ fn decision(
     kind: ResourceDecisionKind,
     expected: Option<ExecutionId>,
 ) -> ResourceDecision {
-    ResourceDecision {
+    ResourceDecision { edited_target: None,
         project_id: receipt.request.basis.project_id,
         action_id: ExecutionId::new(),
         capture_id: receipt.capture.capture_id,
@@ -340,7 +340,7 @@ fn decisions_preserve_exact_receipts_cas_and_stale_history_without_adoption() {
     );
     assert_eq!(store.capture_correction_term(&request).unwrap(), capture);
     assert_eq!(store.decide_glossary_entry(&ignored).unwrap(), receipt);
-    let mismatch = ResourceDecision {
+    let mismatch = ResourceDecision { edited_target: None,
         decision: ResourceDecisionKind::Keep,
         ..ignored.clone()
     };
@@ -754,7 +754,7 @@ fn file_provenance_and_manual_edit_semantics_remain_separate_and_preview_is_requ
     wire.as_object_mut().unwrap().remove("correction");
     assert!(serde_json::from_value::<ResourcePreview>(wire).is_err());
     let receipt = store
-        .decide_glossary_entry(&ResourceDecision {
+        .decide_glossary_entry(&ResourceDecision { edited_target: None,
             project_id: p,
             action_id: ExecutionId::new(),
             capture_id: capture.capture_id,
@@ -831,4 +831,23 @@ fn decision_action_reads_require_the_complete_original_correction_and_proof_with
     let before = version();
     assert_eq!(reopened.resource_decision_action(&original).unwrap(), Some(expected));
     assert_eq!(version(), before);
+}
+
+#[test]
+fn edited_correction_adoption_retains_original_capture_and_exact_recovery() {
+    let (dir, mut store, rows) = support::source_fixture();
+    let evidence = correction(&mut store, &rows[0]);
+    let capture = store.capture_correction_term(&proposal(&evidence)).unwrap();
+    let mut request = decision(&capture,ResourceDecisionKind::Adopt,None);
+    request.edited_target=Some("Edited e\u{301} 👩🏽‍💻".into());
+    let receipt=store.decide_glossary_entry(&request).unwrap();
+    let term=receipt.revision.as_ref().unwrap();
+    assert_eq!(term.target,request.edited_target.as_ref().unwrap().as_str());
+    assert_eq!(term.capture_id,Some(capture.capture.capture_id));
+    assert_eq!(term.origin_kind,TermOrigin::Manual);
+    assert_eq!(term.scope_unit_id,Some(evidence.basis.unit_id));
+    assert_eq!(store.decide_glossary_entry(&request).unwrap(),receipt);
+    drop(store);
+    let store=ProjectStore::open(dir.path().join("project")).unwrap();
+    assert_eq!(store.resource_decision_request_observation(&request).unwrap().unwrap().receipt,receipt);
 }

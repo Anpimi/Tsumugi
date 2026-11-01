@@ -339,6 +339,8 @@ pub struct ResourceDecision {
     pub entry_id: String,
     pub expected_revision_id: Option<ExecutionId>,
     pub decision: ResourceDecisionKind,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub edited_target: Option<String>,
 }
 
 #[cfg_attr(feature = "wire-schema", derive(schemars::JsonSchema))]
@@ -679,7 +681,8 @@ const TABLES: &[(&str, &str)] = &[
         decision TEXT NOT NULL CHECK(decision IN ('adopt','keep','ignore','override')),
         expected_revision_id TEXT,
         result_revision_id TEXT REFERENCES term_revisions(revision_id),
-        request_digest TEXT NOT NULL CHECK(length(request_digest)=64))"),
+        request_digest TEXT NOT NULL CHECK(length(request_digest)=64),
+        edited_target TEXT)"),
     ("context_revisions", "CREATE TABLE context_revisions (
         revision_id TEXT PRIMARY KEY NOT NULL,
         project_id TEXT NOT NULL,
@@ -744,6 +747,23 @@ pub(super) fn initialize(connection: &Connection) -> rusqlite::Result<()> {
     }
     context_facts::initialize(connection)?;
     strategy::initialize(connection)?;
+    Ok(())
+}
+
+pub(super) fn migrate_edited_decisions(connection: &Connection) -> rusqlite::Result<()> {
+    connection.execute_batch("ALTER TABLE resource_decisions ADD COLUMN edited_target TEXT")
+}
+
+fn validate_edited_decision(request: &ResourceDecision) -> Result<(), ExecutionError> {
+    if let Some(target) = &request.edited_target {
+        if !matches!(request.decision, ResourceDecisionKind::Adopt | ResourceDecisionKind::Override) {
+            return Err(failure(ErrorCode::InvalidInput, "resource-edited-decision"));
+        }
+        validate_text(target, false)?;
+        if target.trim().is_empty() {
+            return Err(failure(ErrorCode::InvalidInput, "resource-edited-target"));
+        }
+    }
     Ok(())
 }
 
@@ -888,6 +908,68 @@ pub(super) fn validate_version(connection: &Connection, version: i64) -> rusqlit
     mcp::validate_captures(connection).map_err(|_| rusqlite::Error::InvalidQuery)?;
     if version >= 66 {
         context_resources::validate(connection).map_err(|_| rusqlite::Error::InvalidQuery)?;
+    }
+    Ok(())
+}
+
+fn validate_file_decision(c: &Connection, receipt: &ResourceDecisionResult, file: &GlossaryFile) -> Result<(), ExecutionError> {
+    let request = &receipt.request;
+    let revision = &receipt.revision;
+    let term_id = external_term_id(&file.resource_id, &request.entry_id);
+    if revision.as_ref().is_some_and(|value| {
+        value.term_id != term_id || value.locale != file.target_locale
+    }) {
+        return Err(failure(
+            ErrorCode::CorruptLedger,
+            "resource-decision-revision",
+        ));
+    }
+    if matches!(
+        request.decision,
+        ResourceDecisionKind::Keep | ResourceDecisionKind::Ignore
+    ) {
+        if revision.as_ref().map(|value| value.revision_id)
+            != request.expected_revision_id
+        {
+            return Err(failure(
+                ErrorCode::CorruptLedger,
+                "resource-decision-revision",
+            ));
+        }
+    } else {
+        let value = revision.as_ref().ok_or_else(|| {
+            failure(ErrorCode::CorruptLedger, "resource-decision-revision")
+        })?;
+        let incoming = file
+            .entries
+            .iter()
+            .find(|entry| entry.id == request.entry_id);
+        if value.origin_kind != TermOrigin::External
+            || value.capture_id != Some(request.capture_id)
+            || value.external_entry_id.as_deref() != Some(request.entry_id.as_str())
+            || value.previous_revision_id != request.expected_revision_id
+            || value.removed != incoming.is_none()
+            || request.edited_target.is_some() && incoming.is_none()
+            || incoming.is_some_and(|entry| {
+                value.source != entry.source
+                    || value.aliases != entry.aliases
+                    || value.target != request.edited_target.as_deref().unwrap_or(&entry.target)
+                    || value.reason != entry.reason
+                    || value.protected != entry.protected
+            })
+        {
+            return Err(failure(
+                ErrorCode::CorruptLedger,
+                "resource-decision-revision",
+            ));
+        }
+    }
+    if let Some(revision) = &receipt.revision {
+        if matches!(request.decision, ResourceDecisionKind::Adopt | ResourceDecisionKind::Override) {
+            let exact: bool = c.query_row("SELECT action_id=?2 AND request_digest=?3 FROM term_revisions WHERE revision_id=?1",
+                params![revision.revision_id.to_string(),request.action_id.to_string(),digest(request)?], |r|r.get(0)).map_err(sql)?;
+            if !exact { return Err(failure(ErrorCode::CorruptLedger,"resource-decision-revision")); }
+        }
     }
     Ok(())
 }
@@ -1046,7 +1128,7 @@ const TERM_COLUMNS: &str = "r.revision_id,r.term_id,r.locale,r.source,r.aliases_
     r.target,r.protected,r.scope_unit_id,r.reason,r.origin_kind,r.capture_id,
     r.external_entry_id,r.previous_revision_id,r.removed";
 
-fn term_by_revision(
+pub(super) fn term_by_revision(
     connection: &Connection,
     project_id: ExecutionId,
     revision_id: ExecutionId,
@@ -1066,7 +1148,7 @@ fn term_by_revision(
         .transpose()
 }
 
-fn current_term(
+pub(super) fn current_term(
     connection: &Connection,
     project_id: ExecutionId,
     term_id: &str,
@@ -1586,11 +1668,11 @@ impl ProjectStore {
                 .map_err(|_| failure(ErrorCode::StorageFailed, "resource-read"))?,
             |c| {
                 check_action_project(c, request.project_id)?;
-                let row: Option<(String,String,String,Option<String>,String,Option<String>,String)> = c.query_row(
-                "SELECT project_id,capture_id,entry_id,expected_revision_id,decision,result_revision_id,request_digest
+                let row: Option<(String,String,String,Option<String>,String,Option<String>,String,Option<String>)> = c.query_row(
+                "SELECT project_id,capture_id,entry_id,expected_revision_id,decision,result_revision_id,request_digest,edited_target
                  FROM resource_decisions WHERE action_id=?1",[request.action_id.to_string()],
-                |row|Ok((row.get(0)?,row.get(1)?,row.get(2)?,row.get(3)?,row.get(4)?,row.get(5)?,row.get(6)?))).optional().map_err(sql)?;
-                let Some((project, capture, entry, previous, decision, result, saved_digest)) = row
+                |row|Ok((row.get(0)?,row.get(1)?,row.get(2)?,row.get(3)?,row.get(4)?,row.get(5)?,row.get(6)?,row.get(7)?))).optional().map_err(sql)?;
+                let Some((project, capture, entry, previous, decision, result, saved_digest, edited_target)) = row
                 else {
                     if other_manual_action(c, request.action_id, ManualActionKind::Decision)? {
                         return Err(failure(ErrorCode::ResultMismatch, "resource-action-kind"));
@@ -1606,6 +1688,7 @@ impl ProjectStore {
                     capture_id: id(capture)?,
                     entry_id: entry,
                     expected_revision_id: previous.map(id).transpose()?,
+                    edited_target,
                     decision: match decision.as_str() {
                         "adopt" => ResourceDecisionKind::Adopt,
                         "keep" => ResourceDecisionKind::Keep,
@@ -1614,7 +1697,7 @@ impl ProjectStore {
                         _ => return Err(failure(ErrorCode::CorruptLedger, "resource-decision")),
                     },
                 };
-                if &stored != request {
+                if &stored != request || validate_edited_decision(&stored).is_err() {
                     return Err(failure(ErrorCode::CorruptLedger, "resource-decision"));
                 }
                 let revision = result
@@ -1635,55 +1718,7 @@ impl ProjectStore {
                 let (_, data) = capture_by_id(c, request.project_id, request.capture_id)?;
                 match data {
                     correction::CapturedGlossary::File(file) => {
-                        let revision = &receipt.revision;
-                        let term_id = external_term_id(&file.resource_id, &request.entry_id);
-                        if revision.as_ref().is_some_and(|value| {
-                            value.term_id != term_id || value.locale != file.target_locale
-                        }) {
-                            return Err(failure(
-                                ErrorCode::CorruptLedger,
-                                "resource-decision-revision",
-                            ));
-                        }
-                        if matches!(
-                            request.decision,
-                            ResourceDecisionKind::Keep | ResourceDecisionKind::Ignore
-                        ) {
-                            if revision.as_ref().map(|value| value.revision_id)
-                                != request.expected_revision_id
-                            {
-                                return Err(failure(
-                                    ErrorCode::CorruptLedger,
-                                    "resource-decision-revision",
-                                ));
-                            }
-                        } else {
-                            let value = revision.as_ref().ok_or_else(|| {
-                                failure(ErrorCode::CorruptLedger, "resource-decision-revision")
-                            })?;
-                            let incoming = file
-                                .entries
-                                .iter()
-                                .find(|entry| entry.id == request.entry_id);
-                            if value.origin_kind != TermOrigin::External
-                                || value.capture_id != Some(request.capture_id)
-                                || value.external_entry_id.as_deref() != Some(request.entry_id.as_str())
-                                || value.previous_revision_id != request.expected_revision_id
-                                || value.removed != incoming.is_none()
-                                || incoming.is_some_and(|entry| {
-                                    value.source != entry.source
-                                        || value.aliases != entry.aliases
-                                        || value.target != entry.target
-                                        || value.reason != entry.reason
-                                        || value.protected != entry.protected
-                                })
-                            {
-                                return Err(failure(
-                                    ErrorCode::CorruptLedger,
-                                    "resource-decision-revision",
-                                ));
-                            }
-                        }
+                        validate_file_decision(c, &receipt, &file)?;
                     }
                     correction::CapturedGlossary::Correction(capture) => {
                         correction::validate_decision(c, &receipt, &capture)?;
@@ -3016,6 +3051,7 @@ impl ProjectStore {
                 Err(failure(ErrorCode::ResultMismatch, "resource-action"))
             };
         }
+        validate_edited_decision(request)?;
         let (_, data) = capture_by_id(&tx, request.project_id, request.capture_id)?;
         let revision = match data {
             correction::CapturedGlossary::Mcp(capture) => {
@@ -3034,7 +3070,7 @@ impl ProjectStore {
                     .entries
                     .iter()
                     .find(|entry| entry.id == request.entry_id);
-                if incoming.is_none() && current.is_none() {
+                if incoming.is_none() && (current.is_none() || request.edited_target.is_some()) {
                     return Err(failure(ErrorCode::DependencyConflict, "resource-entry"));
                 }
                 if current
@@ -3063,8 +3099,8 @@ impl ProjectStore {
                         .map(|entry| entry.source.as_str())
                         .or_else(|| current.as_ref().map(|value| value.source.as_str()))
                         .ok_or_else(|| failure(ErrorCode::DependencyConflict, "resource-entry"))?;
-                    let target = incoming
-                        .map(|entry| entry.target.as_str())
+                    let target = request.edited_target.as_deref().or_else(|| incoming
+                        .map(|entry| entry.target.as_str()))
                         .or_else(|| current.as_ref().map(|value| value.target.as_str()))
                         .ok_or_else(|| failure(ErrorCode::DependencyConflict, "resource-entry"))?;
                     let aliases = incoming
@@ -3128,8 +3164,8 @@ impl ProjectStore {
         tx.execute(
             "INSERT INTO resource_decisions
              (action_id,project_id,capture_id,entry_id,decision,expected_revision_id,
-              result_revision_id,request_digest)
-             VALUES (?1,?2,?3,?4,?5,?6,?7,?8)",
+              result_revision_id,request_digest,edited_target)
+             VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9)",
             params![
                 request.action_id.to_string(),
                 request.project_id.to_string(),
@@ -3144,6 +3180,7 @@ impl ProjectStore {
                 request.expected_revision_id.map(|value| value.to_string()),
                 revision.as_ref().map(|value| value.revision_id.to_string()),
                 request_digest,
+                request.edited_target,
             ],
         )
         .map_err(sql)?;
@@ -3398,6 +3435,8 @@ pub(super) fn resolve_terms_from(
     }
 }
 
+#[cfg(test)]
+mod edited_decision_tests;
 #[cfg(test)]
 mod observation_tests;
 #[cfg(test)]
@@ -3680,7 +3719,7 @@ mod tests {
                 include_bytes!("../../tests/fixtures/resource-updates/g1.json"),
             )
             .unwrap();
-        let request = ResourceDecision {
+        let request = ResourceDecision { edited_target: None,
             project_id,
             action_id: ExecutionId::new(),
             capture_id: capture.capture_id,
@@ -3689,7 +3728,7 @@ mod tests {
             decision: ResourceDecisionKind::Adopt,
         };
         let receipt = store.decide_glossary_entry(&request).unwrap();
-        let fresh = ResourceDecision {
+        let fresh = ResourceDecision { edited_target: None,
             action_id: ExecutionId::new(),
             entry_id: "box".into(),
             ..request.clone()
@@ -3826,7 +3865,7 @@ mod tests {
                 .all(|row| row.kind == ResourceChangeKind::Added)
         );
         for row in preview.rows {
-            let request = ResourceDecision {
+            let request = ResourceDecision { edited_target: None,
                 project_id,
                 action_id: ExecutionId::new(),
                 capture_id: first.capture_id,
@@ -3882,7 +3921,7 @@ mod tests {
             .iter()
             .find(|row| row.entry.id == "barrel")
             .unwrap();
-        let decision = ResourceDecision {
+        let decision = ResourceDecision { edited_target: None,
             project_id,
             action_id: ExecutionId::new(),
             capture_id: second.capture_id,
@@ -3906,7 +3945,7 @@ mod tests {
             .find(|term| term.external_entry_id.as_deref() == Some("now"))
             .unwrap();
         store
-            .decide_glossary_entry(&ResourceDecision {
+            .decide_glossary_entry(&ResourceDecision { edited_target: None,
                 project_id,
                 action_id: ExecutionId::new(),
                 capture_id: second.capture_id,
@@ -4626,7 +4665,7 @@ mod tests {
         let first = store
             .capture_glossary(project_id, ExecutionId::new(), g1)
             .unwrap();
-        let adopt = ResourceDecision {
+        let adopt = ResourceDecision { edited_target: None,
             project_id,
             action_id: ExecutionId::new(),
             capture_id: first.capture_id,
@@ -4661,7 +4700,7 @@ mod tests {
                 reason: "Explicit project override".into(),
             })
             .unwrap();
-        let stale = ResourceDecision {
+        let stale = ResourceDecision { edited_target: None,
             project_id,
             action_id: ExecutionId::new(),
             capture_id: second.capture_id,
@@ -4702,7 +4741,7 @@ mod tests {
         let mut store = ProjectStore::open(path).unwrap();
         let project_id =
             ExecutionId::parse(&store.metadata().unwrap().project_id().to_string()).unwrap();
-        let _ = store.decide_glossary_entry(&ResourceDecision {
+        let _ = store.decide_glossary_entry(&ResourceDecision { edited_target: None,
             project_id,
             action_id,
             capture_id,
@@ -4728,7 +4767,7 @@ mod tests {
                     include_bytes!("../../tests/fixtures/resource-updates/g1.json"),
                 )
                 .unwrap();
-            let request = ResourceDecision {
+            let request = ResourceDecision { edited_target: None,
                 project_id,
                 action_id: ExecutionId::new(),
                 capture_id: capture.capture_id,
@@ -4818,7 +4857,7 @@ mod tests {
                 include_bytes!("../../tests/fixtures/resource-updates/g1.json"),
             )
             .unwrap();
-        let request = ResourceDecision {
+        let request = ResourceDecision { edited_target: None,
             project_id: project,
             action_id: ExecutionId::new(),
             capture_id: capture.capture_id,
@@ -4851,7 +4890,7 @@ mod tests {
             assert!(!store.is_reconciling());
             assert_eq!(store.connection().unwrap().total_changes(), writes);
         }
-        let second = ResourceDecision {
+        let second = ResourceDecision { edited_target: None,
             action_id: ExecutionId::new(),
             expected_revision_id: receipt.revision.as_ref().map(|r| r.revision_id),
             decision: ResourceDecisionKind::Keep,

@@ -9,6 +9,8 @@ import { useSessionQuery, useSessionReads } from "../../../SessionReadProvider";
 import { sourceCommands } from "../../../sourceCommands";
 import { Badge } from "../../../design-system/Badge";
 import { Button } from "../../../design-system/Button";
+import { Field, TextInput } from "../../../design-system/Field";
+import { validProposalTarget } from "../../../ResourceDraftSession";
 import { Dialog } from "../../../design-system/Dialog";
 import { Banner, EmptyState, LoadingState } from "../../../design-system/Feedback";
 import type { InteractionGate } from "../../workspace/interactionGate";
@@ -23,6 +25,7 @@ interface Props {
 }
 type Choice = {
   preview: ResourcePreview;
+  editedTarget?: string;
   entryId: string; revisionId: string | null; decision: ResourceDecision["decision"];
 } & ({ removed: false; row: ResourcePreviewRow } | { removed: true; row: TermRevision });
 
@@ -38,6 +41,12 @@ export default function TermProposalPanel({ project, owner, disabled, current, g
   useLayoutEffect(() => confirmation ? gate.pushDialog(dialogId) : undefined, [confirmation, dialogId, gate]);
   const present = (dialog?: string) => mounted.current && !reads.retired && !live.current.disabled && live.current.current(dialog);
   const state = owner.state, capture = state.previewCapture, preview = state.preview;
+  const editingOrigin = useRef<HTMLButtonElement | null>(null), editingInput = useRef<HTMLInputElement>(null), wasEditing = useRef(false);
+  useLayoutEffect(() => {
+    if (!wasEditing.current && state.proposalEditDraft && present()) editingInput.current?.focus();
+    if (wasEditing.current && !state.proposalEditDraft && document.activeElement === document.body && present()) editingOrigin.current?.focus();
+    wasEditing.current = !!state.proposalEditDraft;
+  }, [state.proposalEditDraft]);
   const targetRow = useRef<HTMLTableRowElement>(null), focusedTarget = useRef<ResourceProposalTarget | null>(null);
   useLayoutEffect(() => {
     if (!target || target === focusedTarget.current || capture?.captureId !== target.captureId || !targetRow.current || !present()) return;
@@ -81,19 +90,28 @@ export default function TermProposalPanel({ project, owner, disabled, current, g
     }
     const row = observed.rows.find(row => row.entry.id === choice.entryId);
     return !!row && jsonIdentity(row) === jsonIdentity(choice.row)
-      && (choice.decision !== "adopt" || row.kind !== "unchanged" && row.kind !== "override")
+      && (choice.decision !== "adopt" || (row.kind !== "unchanged" || choice.editedTarget !== undefined) && row.kind !== "override")
       && (choice.decision !== "override" || row.kind === "override" && !observed.correction)
       && !(observed.correction && choice.decision === "adopt" && row.current !== null);
   }
   const busy = state.busyMutation || owner.inFlight() || !!state.pending || !!state.factPending || !!state.checkingAction;
   const dirty = owner.termDirty() || owner.contextDirty() || owner.correctionDirty() || owner.factDirty() || owner.tool.hasDraft() || owner.tool.blocked();
-  function canChoose(choice: Choice, dialog?: string) { return !busy && !dirty && matching(choice, dialog); }
+  function canChoose(choice: Choice, dialog?: string) {
+    const draft = live.current.owner.current().proposalEditDraft;
+    const edited = choice.editedTarget !== undefined;
+    return !busy && !dirty && matching(choice, dialog) && (edited
+      ? !!draft && validProposalTarget(draft.target) && draft.target === choice.editedTarget
+        && draft.captureId === choice.preview.capture.captureId && draft.entryId === choice.entryId && draft.expectedRevisionId === choice.revisionId
+      : !draft);
+  }
   function confirm(choice: Choice | null) { confirmationRef.current = choice; setConfirmation(choice); }
   async function apply(choice: Choice, dialog?: string) {
     if (!canChoose(choice, dialog)) return;
     const originalOwner = live.current.owner;
-    await originalOwner.decide(choice.entryId, choice.revisionId, choice.decision,
-      () => matching(choice, dialog) && (!dialog || confirmationRef.current === choice));
+    const proof = () => matching(choice, dialog) && (!dialog || confirmationRef.current === choice);
+    if (choice.editedTarget !== undefined && (choice.decision === "adopt" || choice.decision === "override")) {
+      await originalOwner.adoptProposalEdit(choice.decision, proof);
+    } else await originalOwner.decide(choice.entryId, choice.revisionId, choice.decision, proof);
     if (mounted.current && !originalOwner.current().pending && confirmationRef.current === choice) confirm(null);
   }
   function choose(choice: Choice) {
@@ -117,6 +135,12 @@ export default function TermProposalPanel({ project, owner, disabled, current, g
     </div>}>{t(state.busyMutation ? "proposalBusy" : "proposalUnknown")}</Banner>;
   }
   const readable = captures.data?.filter(value => value.targetLocale === state.locale && owner.canReadCapture(value)) ?? [];
+  const edit = state.proposalEditDraft;
+  const editRow = edit && preview?.capture.captureId === edit.captureId ? preview.rows.find(row => row.entry.id === edit.entryId) : undefined;
+  const editedChoice: Choice | null = edit && editRow && preview ? { preview, row: editRow, removed: false,
+    entryId: edit.entryId, revisionId: editRow.current?.revisionId ?? null,
+    decision: editRow.kind === "override" && !preview.correction ? "override" : "adopt", editedTarget: edit.target } : null;
+  const editChanged = !!edit && (!editRow || (editRow.current?.revisionId ?? null) !== edit.expectedRevisionId);
   const changed = !!preview && (state.previewNeedsRefresh || !latest.data || !source.data || !fresh(sourceKey, source.data)
     || !fresh(previewKey, latest.data) || jsonIdentity(preview) !== jsonIdentity(latest.data));
   return <section className={styles.panel} aria-label={t("proposalTitle")}>
@@ -138,6 +162,22 @@ export default function TermProposalPanel({ project, owner, disabled, current, g
         onClick={() => { if (present() && !busy && !dirty) void owner.openPreview(value, () => present()); }}>{t("proposalOpen")}</Button>
     </li>)}</ul> : captures.isSuccess && !captures.error ? <p>{t("proposalEmpty")}</p> : null}
     {captures.data?.length === 100 ? <p className={styles.meta}>{t("proposalLimited")}</p> : null}
+    {edit ? <section className={styles.edit} aria-label={t("proposalEditTitle")}>
+      <h3>{t("proposalEditTitle")}</h3><p>{edit.source}</p>
+      <dl className={styles.comparison}><div><dt>{t("proposalCurrent")}</dt><dd>{editRow?.current?.target ?? edit.currentTarget ?? t("proposalMissingValue")}</dd></div>
+        <div><dt>{t("proposalProposed")}</dt><dd>{edit.originalTarget}</dd></div></dl>
+      <Field label={t("proposalEditedTarget")} required error={!validProposalTarget(edit.target) ? t("proposalEditInvalid") : undefined}>
+        <TextInput ref={editingInput} value={edit.target} readOnly={!present()} onChange={event => { if (present()) owner.editProposalTarget(event.target.value); }}/>
+      </Field>
+      {state.notice === "savedNewer" ? <Banner tone="info" role="status">{t("proposalEditNewer")}</Banner> : null}
+      {editChanged ? <Banner tone="warning" role="status" action={<Button size="sm" disabled={!editedChoice || busy || dirty || !matching(editedChoice)}
+        onClick={() => { if (editedChoice && editRow && !busy && !dirty && matching(editedChoice)) owner.rebaseProposalEdit(editRow, () => matching(editedChoice)); }}>{t("proposalEditUseCurrent")}</Button>}>{t("proposalEditChanged")}</Banner> : null}
+      <div className={styles.actions}><Button size="sm" variant="primary" disabled={!editedChoice || editChanged || !canChoose(editedChoice)}
+        onClick={() => { if (editedChoice) choose(editedChoice); }}>{t("proposalAdoptEdited")}</Button>
+        <Button size="sm" disabled={!present() || busy || !!state.pending} onClick={() => { if (present()) owner.discardProposalEdit(); }}>{t("proposalEditDiscard")}</Button>
+        <Button size="sm" disabled={!present() || busy} onClick={() => { if (present() && !busy) void owner.retryPreview(() => present()); }}>{t("proposalReadAgain")}</Button></div>
+      {state.failure ? <CommandFailureDetails failure={state.failure}/> : null}
+    </section> : null}
     {recovery()}
     {capture ? <div className={styles.preview}>
       <header className={styles.header}><div><h3>{label(capture)}</h3><p>{t("proposalLocale", { locale: capture.targetLocale })}</p></div>
@@ -156,7 +196,9 @@ export default function TermProposalPanel({ project, owner, disabled, current, g
         return <tr key={row.entry.id} ref={targeted ? targetRow : undefined} tabIndex={targeted ? -1 : undefined} aria-label={targeted ? row.entry.source : undefined}><th scope="row">{row.entry.source}<p className={styles.meta}>{row.entry.nativeKey || t(row.scopeUnitId ? "proposalScopeEntry" : "proposalScopeProject")}</p></th>
           <td>{row.current?.target ?? t("proposalMissingValue")}</td><td>{row.entry.target}<p className={styles.meta}>{global(`resource.changeKind.${row.kind}`)}</p>
             {row.entry.protected ? <Badge>{t("proposalProtected")}</Badge> : null}{row.entry.reason ? <p aria-label={t("proposalReason")}>{row.entry.reason}</p> : null}</td>
-          <td><div className={styles.actions}><Button size="sm" disabled={!canChoose(action)} onClick={() => choose(action)}>{t(action.decision === "override" ? "proposalOverride" : "proposalAdopt")}</Button>
+          <td><div className={styles.actions}><Button size="sm" disabled={!!edit || busy || dirty || !matching({ ...action, editedTarget: row.entry.target })}
+            onClick={event => { const choice = { ...action, editedTarget: row.entry.target }; if (!edit && !busy && !dirty && matching(choice)) { editingOrigin.current = event.currentTarget; owner.beginProposalEdit(row, () => matching(choice)); } }}>{t("proposalEdit")}</Button>
+            <Button size="sm" disabled={!canChoose(action)} onClick={() => choose(action)}>{t(action.decision === "override" ? "proposalOverride" : "proposalAdopt")}</Button>
             <Button size="sm" disabled={!canChoose(make("keep"))} onClick={() => choose(make("keep"))}>{t("proposalKeep")}</Button>
             <Button size="sm" disabled={!canChoose(make("ignore"))} onClick={() => choose(make("ignore"))}>{t("proposalIgnore")}</Button></div></td></tr>;
       })}{preview.removed.map(term => {
@@ -173,11 +215,11 @@ export default function TermProposalPanel({ project, owner, disabled, current, g
       description={t("proposalConfirmHelp")} closeLabel={t("proposalCancel")}
       footer={<><Button onClick={() => confirm(null)}>{t("proposalCancel")}</Button><Button variant="primary"
         disabled={!confirmation || !canChoose(confirmation, dialogId)} onClick={() => { if (confirmation) void apply(confirmation, dialogId); }}>
-        {t(confirmation?.removed ? "proposalRemove" : "proposalOverride")}</Button></>}>
+        {t(confirmation?.removed ? "proposalRemove" : confirmation?.editedTarget !== undefined ? "proposalAdoptEdited" : "proposalOverride")}</Button></>}>
       {confirmation ? <p className={styles.text}>{confirmation.removed ? confirmation.row.source : confirmation.row.entry.source}</p> : null}
       {confirmation ? <dl className={styles.comparison}><div><dt>{t("proposalCurrent")}</dt><dd>{confirmation.removed
         ? confirmation.row.target : confirmation.row.current?.target ?? t("proposalMissingValue")}</dd></div>
-        <div><dt>{t("proposalProposed")}</dt><dd>{confirmation.removed ? t("proposalRemovalHelp") : confirmation.row.entry.target}</dd></div></dl> : null}
+        <div><dt>{t("proposalProposed")}</dt><dd>{confirmation.removed ? t("proposalRemovalHelp") : confirmation.editedTarget ?? confirmation.row.entry.target}</dd></div></dl> : null}
       {confirmation && !matching(confirmation, dialogId) ? <Banner tone="warning" action={<Button size="sm" disabled={!present(dialogId) || busy || dirty}
         onClick={() => { if (present(dialogId) && !busy && !dirty) void owner.retryPreview(() => present(dialogId)); }}>{t("proposalReadAgain")}</Button>}>{t("proposalChanged")}</Banner> : null}
       {state.failure ? <CommandFailureDetails failure={state.failure}/> : null}{recovery(dialogId)}

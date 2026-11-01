@@ -378,7 +378,7 @@ fn unadopted_glossary_proposals_are_not_disclosed_and_empty_choices_remain_expli
     assert!(before.payload().translation.is_none());
     assert!(before.payload().manual_context.is_none());
     store
-        .decide_glossary_entry(&ResourceDecision {
+        .decide_glossary_entry(&ResourceDecision { edited_target: None,
             project_id: p,
             action_id: ExecutionId::new(),
             capture_id: proposal.capture_id,
@@ -389,7 +389,7 @@ fn unadopted_glossary_proposals_are_not_disclosed_and_empty_choices_remain_expli
         .unwrap();
     store.validate_mcp_share(&before).unwrap();
     let adopted = store
-        .decide_glossary_entry(&ResourceDecision {
+        .decide_glossary_entry(&ResourceDecision { edited_target: None,
             project_id: p,
             action_id: ExecutionId::new(),
             capture_id: proposal.capture_id,

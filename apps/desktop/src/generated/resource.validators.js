@@ -6257,7 +6257,7 @@ return errors === 0;
 export const validateRequestDecision = validate220;
 const schema257 = {"$id":"urn:tsumugi:ipc:resource:requests:decision","$ref":"urn:tsumugi:ipc:resource:requests#/properties/decision"};
 const schema128 = {"additionalProperties":false,"properties":{"decision":{"$ref":"#/definitions/ResourceDecision"},"projectId":{"$ref":"#/definitions/ExecutionId"},"sessionToken":{"type":"string"}},"required":["sessionToken","projectId","decision"],"type":"object"};
-const schema129 = {"additionalProperties":false,"properties":{"actionId":{"$ref":"#/definitions/ExecutionId"},"captureId":{"$ref":"#/definitions/ExecutionId"},"decision":{"$ref":"#/definitions/ResourceDecisionKind"},"entryId":{"type":"string"},"expectedRevisionId":{"anyOf":[{"$ref":"#/definitions/ExecutionId"},{"type":"null"}]},"projectId":{"$ref":"#/definitions/ExecutionId"}},"required":["projectId","actionId","captureId","entryId","decision"],"type":"object"};
+const schema129 = {"additionalProperties":false,"properties":{"actionId":{"$ref":"#/definitions/ExecutionId"},"captureId":{"$ref":"#/definitions/ExecutionId"},"decision":{"$ref":"#/definitions/ResourceDecisionKind"},"editedTarget":{"type":["string","null"]},"entryId":{"type":"string"},"expectedRevisionId":{"anyOf":[{"$ref":"#/definitions/ExecutionId"},{"type":"null"}]},"projectId":{"$ref":"#/definitions/ExecutionId"}},"required":["projectId","actionId","captureId","entryId","decision"],"type":"object"};
 const schema132 = {"enum":["adopt","keep","ignore","override"],"type":"string"};
 
 function validate100(data, {instancePath="", parentData, parentDataProperty, rootData=data}={}){
@@ -6273,7 +6273,7 @@ return false;
 else {
 const _errs1 = errors;
 for(const key0 in data){
-if(!((((((key0 === "actionId") || (key0 === "captureId")) || (key0 === "decision")) || (key0 === "entryId")) || (key0 === "expectedRevisionId")) || (key0 === "projectId"))){
+if(!(((((((key0 === "actionId") || (key0 === "captureId")) || (key0 === "decision")) || (key0 === "editedTarget")) || (key0 === "entryId")) || (key0 === "expectedRevisionId")) || (key0 === "projectId"))){
 validate100.errors = [{instancePath,schemaPath:"#/additionalProperties",keyword:"additionalProperties",params:{additionalProperty: key0},message:"must NOT have additional properties"}];
 return false;
 break;
@@ -6321,10 +6321,11 @@ else {
 var valid0 = true;
 }
 if(valid0){
-if(data.entryId !== undefined){
+if(data.editedTarget !== undefined){
+let data3 = data.editedTarget;
 const _errs11 = errors;
-if(typeof data.entryId !== "string"){
-validate100.errors = [{instancePath:instancePath+"/entryId",schemaPath:"#/properties/entryId/type",keyword:"type",params:{type: "string"},message:"must be string"}];
+if((typeof data3 !== "string") && (data3 !== null)){
+validate100.errors = [{instancePath:instancePath+"/editedTarget",schemaPath:"#/properties/editedTarget/type",keyword:"type",params:{type: schema129.properties.editedTarget.type},message:"must be string,null"}];
 return false;
 }
 var valid0 = _errs11 === errors;
@@ -6333,13 +6334,25 @@ else {
 var valid0 = true;
 }
 if(valid0){
-if(data.expectedRevisionId !== undefined){
-let data4 = data.expectedRevisionId;
+if(data.entryId !== undefined){
 const _errs13 = errors;
-const _errs14 = errors;
-let valid4 = false;
+if(typeof data.entryId !== "string"){
+validate100.errors = [{instancePath:instancePath+"/entryId",schemaPath:"#/properties/entryId/type",keyword:"type",params:{type: "string"},message:"must be string"}];
+return false;
+}
+var valid0 = _errs13 === errors;
+}
+else {
+var valid0 = true;
+}
+if(valid0){
+if(data.expectedRevisionId !== undefined){
+let data5 = data.expectedRevisionId;
 const _errs15 = errors;
-if(typeof data4 !== "string"){
+const _errs16 = errors;
+let valid4 = false;
+const _errs17 = errors;
+if(typeof data5 !== "string"){
 const err0 = {instancePath:instancePath+"/expectedRevisionId",schemaPath:"#/definitions/ExecutionId/type",keyword:"type",params:{type: "string"},message:"must be string"};
 if(vErrors === null){
 vErrors = [err0];
@@ -6349,11 +6362,11 @@ vErrors.push(err0);
 }
 errors++;
 }
-var _valid0 = _errs15 === errors;
+var _valid0 = _errs17 === errors;
 valid4 = valid4 || _valid0;
 if(!valid4){
-const _errs18 = errors;
-if(data4 !== null){
+const _errs20 = errors;
+if(data5 !== null){
 const err1 = {instancePath:instancePath+"/expectedRevisionId",schemaPath:"#/properties/expectedRevisionId/anyOf/1/type",keyword:"type",params:{type: "null"},message:"must be null"};
 if(vErrors === null){
 vErrors = [err1];
@@ -6363,7 +6376,7 @@ vErrors.push(err1);
 }
 errors++;
 }
-var _valid0 = _errs18 === errors;
+var _valid0 = _errs20 === errors;
 valid4 = valid4 || _valid0;
 }
 if(!valid4){
@@ -6379,32 +6392,33 @@ validate100.errors = vErrors;
 return false;
 }
 else {
-errors = _errs14;
+errors = _errs16;
 if(vErrors !== null){
-if(_errs14){
-vErrors.length = _errs14;
+if(_errs16){
+vErrors.length = _errs16;
 }
 else {
 vErrors = null;
 }
 }
 }
-var valid0 = _errs13 === errors;
+var valid0 = _errs15 === errors;
 }
 else {
 var valid0 = true;
 }
 if(valid0){
 if(data.projectId !== undefined){
-const _errs20 = errors;
+const _errs22 = errors;
 if(typeof data.projectId !== "string"){
 validate100.errors = [{instancePath:instancePath+"/projectId",schemaPath:"#/definitions/ExecutionId/type",keyword:"type",params:{type: "string"},message:"must be string"}];
 return false;
 }
-var valid0 = _errs20 === errors;
+var valid0 = _errs22 === errors;
 }
 else {
 var valid0 = true;
+}
 }
 }
 }
@@ -19638,7 +19652,7 @@ export const validateResponseDecision = validate693;
 const schema748 = {"$id":"urn:tsumugi:ipc:resource:responses:decision","$ref":"urn:tsumugi:ipc:resource:responses#/properties/decision"};
 const schema459 = {"additionalProperties":false,"properties":{"actionId":{"$ref":"#/definitions/ExecutionId"},"decision":{"$ref":"#/definitions/ResourceDecisionKind"},"request":{"$ref":"#/definitions/ResourceDecision"},"revision":{"anyOf":[{"$ref":"#/definitions/TermRevision"},{"type":"null"}]}},"required":["request","actionId","decision","revision"],"type":"object"};
 const schema461 = {"enum":["adopt","keep","ignore","override"],"type":"string"};
-const schema462 = {"additionalProperties":false,"properties":{"actionId":{"$ref":"#/definitions/ExecutionId"},"captureId":{"$ref":"#/definitions/ExecutionId"},"decision":{"$ref":"#/definitions/ResourceDecisionKind"},"entryId":{"type":"string"},"expectedRevisionId":{"anyOf":[{"$ref":"#/definitions/ExecutionId"},{"type":"null"}]},"projectId":{"$ref":"#/definitions/ExecutionId"}},"required":["projectId","actionId","captureId","entryId","expectedRevisionId","decision"],"type":"object"};
+const schema462 = {"additionalProperties":false,"properties":{"actionId":{"$ref":"#/definitions/ExecutionId"},"captureId":{"$ref":"#/definitions/ExecutionId"},"decision":{"$ref":"#/definitions/ResourceDecisionKind"},"editedTarget":{"type":["string","null"]},"entryId":{"type":"string"},"expectedRevisionId":{"anyOf":[{"$ref":"#/definitions/ExecutionId"},{"type":"null"}]},"projectId":{"$ref":"#/definitions/ExecutionId"}},"required":["projectId","actionId","captureId","entryId","expectedRevisionId","decision"],"type":"object"};
 
 function validate416(data, {instancePath="", parentData, parentDataProperty, rootData=data}={}){
 let vErrors = null;
@@ -19653,7 +19667,7 @@ return false;
 else {
 const _errs1 = errors;
 for(const key0 in data){
-if(!((((((key0 === "actionId") || (key0 === "captureId")) || (key0 === "decision")) || (key0 === "entryId")) || (key0 === "expectedRevisionId")) || (key0 === "projectId"))){
+if(!(((((((key0 === "actionId") || (key0 === "captureId")) || (key0 === "decision")) || (key0 === "editedTarget")) || (key0 === "entryId")) || (key0 === "expectedRevisionId")) || (key0 === "projectId"))){
 validate416.errors = [{instancePath,schemaPath:"#/additionalProperties",keyword:"additionalProperties",params:{additionalProperty: key0},message:"must NOT have additional properties"}];
 return false;
 break;
@@ -19721,10 +19735,11 @@ else {
 var valid0 = true;
 }
 if(valid0){
-if(data.entryId !== undefined){
+if(data.editedTarget !== undefined){
+let data3 = data.editedTarget;
 const _errs11 = errors;
-if(typeof data.entryId !== "string"){
-validate416.errors = [{instancePath:instancePath+"/entryId",schemaPath:"#/properties/entryId/type",keyword:"type",params:{type: "string"},message:"must be string"}];
+if((typeof data3 !== "string") && (data3 !== null)){
+validate416.errors = [{instancePath:instancePath+"/editedTarget",schemaPath:"#/properties/editedTarget/type",keyword:"type",params:{type: schema462.properties.editedTarget.type},message:"must be string,null"}];
 return false;
 }
 var valid0 = _errs11 === errors;
@@ -19733,16 +19748,28 @@ else {
 var valid0 = true;
 }
 if(valid0){
-if(data.expectedRevisionId !== undefined){
-let data4 = data.expectedRevisionId;
+if(data.entryId !== undefined){
 const _errs13 = errors;
-const _errs14 = errors;
-let valid4 = false;
+if(typeof data.entryId !== "string"){
+validate416.errors = [{instancePath:instancePath+"/entryId",schemaPath:"#/properties/entryId/type",keyword:"type",params:{type: "string"},message:"must be string"}];
+return false;
+}
+var valid0 = _errs13 === errors;
+}
+else {
+var valid0 = true;
+}
+if(valid0){
+if(data.expectedRevisionId !== undefined){
+let data5 = data.expectedRevisionId;
 const _errs15 = errors;
 const _errs16 = errors;
-if(errors === _errs16){
-if(typeof data4 === "string"){
-if(!pattern4.test(data4)){
+let valid4 = false;
+const _errs17 = errors;
+const _errs18 = errors;
+if(errors === _errs18){
+if(typeof data5 === "string"){
+if(!pattern4.test(data5)){
 const err0 = {instancePath:instancePath+"/expectedRevisionId",schemaPath:"#/definitions/ExecutionId/pattern",keyword:"pattern",params:{pattern: "^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$"},message:"must match pattern \""+"^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$"+"\""};
 if(vErrors === null){
 vErrors = [err0];
@@ -19764,11 +19791,11 @@ vErrors.push(err1);
 errors++;
 }
 }
-var _valid0 = _errs15 === errors;
+var _valid0 = _errs17 === errors;
 valid4 = valid4 || _valid0;
 if(!valid4){
-const _errs18 = errors;
-if(data4 !== null){
+const _errs20 = errors;
+if(data5 !== null){
 const err2 = {instancePath:instancePath+"/expectedRevisionId",schemaPath:"#/properties/expectedRevisionId/anyOf/1/type",keyword:"type",params:{type: "null"},message:"must be null"};
 if(vErrors === null){
 vErrors = [err2];
@@ -19778,7 +19805,7 @@ vErrors.push(err2);
 }
 errors++;
 }
-var _valid0 = _errs18 === errors;
+var _valid0 = _errs20 === errors;
 valid4 = valid4 || _valid0;
 }
 if(!valid4){
@@ -19794,29 +19821,29 @@ validate416.errors = vErrors;
 return false;
 }
 else {
-errors = _errs14;
+errors = _errs16;
 if(vErrors !== null){
-if(_errs14){
-vErrors.length = _errs14;
+if(_errs16){
+vErrors.length = _errs16;
 }
 else {
 vErrors = null;
 }
 }
 }
-var valid0 = _errs13 === errors;
+var valid0 = _errs15 === errors;
 }
 else {
 var valid0 = true;
 }
 if(valid0){
 if(data.projectId !== undefined){
-let data5 = data.projectId;
-const _errs20 = errors;
-const _errs21 = errors;
-if(errors === _errs21){
-if(typeof data5 === "string"){
-if(!pattern4.test(data5)){
+let data6 = data.projectId;
+const _errs22 = errors;
+const _errs23 = errors;
+if(errors === _errs23){
+if(typeof data6 === "string"){
+if(!pattern4.test(data6)){
 validate416.errors = [{instancePath:instancePath+"/projectId",schemaPath:"#/definitions/ExecutionId/pattern",keyword:"pattern",params:{pattern: "^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$"},message:"must match pattern \""+"^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$"+"\""}];
 return false;
 }
@@ -19826,10 +19853,11 @@ validate416.errors = [{instancePath:instancePath+"/projectId",schemaPath:"#/defi
 return false;
 }
 }
-var valid0 = _errs20 === errors;
+var valid0 = _errs22 === errors;
 }
 else {
 var valid0 = true;
+}
 }
 }
 }

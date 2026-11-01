@@ -75,6 +75,7 @@ fn make_legacy(path: &std::path::Path) {
     ] {
         c.execute_batch(&format!("DROP TABLE {name}")).unwrap();
     }
+    c.execute_batch("ALTER TABLE resource_decisions DROP COLUMN edited_target").unwrap();
     c.pragma_update(None, "user_version", 61).unwrap();
 }
 

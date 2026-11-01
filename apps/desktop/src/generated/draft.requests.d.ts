@@ -1876,6 +1876,7 @@ export interface ResourceDecision {
   actionId: ExecutionId;
   captureId: ExecutionId;
   decision: ResourceDecisionKind;
+  editedTarget?: string | null;
   entryId: string;
   expectedRevisionId?: ExecutionId | null;
   projectId: ExecutionId;
@@ -1977,6 +1978,7 @@ export interface ResourceDraftValue {
    */
   pickerUnknown: boolean;
   previewCaptureId?: ExecutionId | null;
+  proposalEditDraft?: ResourceProposalEditDraft | null;
   selectedTerm?: TermRevision | null;
   selectedUnit?: ResourceContextTarget | null;
   termDraft: ResourceTermInput;
@@ -2072,6 +2074,17 @@ export interface ConversationProposalOrigin {
   inputDigest: string;
   resultDigest: string;
   resultId: ExecutionId;
+}
+export interface ResourceProposalEditDraft {
+  captureId: ExecutionId;
+  currentTarget?: string | null;
+  editSeq: Revision;
+  entryId: string;
+  expectedRevisionId?: ExecutionId | null;
+  locale: string;
+  originalTarget: string;
+  source: string;
+  target: string;
 }
 export interface TermRevision {
   aliases: string[];

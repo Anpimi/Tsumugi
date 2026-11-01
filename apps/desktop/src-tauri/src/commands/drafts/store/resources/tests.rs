@@ -9,7 +9,7 @@ use tsumugi_plugin_sdk as sdk;
 
 fn rev(n:u64)->Revision{Revision::new(n).unwrap()}
 fn value()->ResourceDraftValue{
-    ResourceDraftValue{edit_seq:rev(10),locale:"zh-CN".into(),selected_term:None,
+    ResourceDraftValue{proposal_edit_draft:None,edit_seq:rev(10),locale:"zh-CN".into(),selected_term:None,
         term_draft:ResourceTermInput{source:String::new(),aliases:vec![],target:String::new(),protected:false,scope_unit_id:None,reason:String::new()},
         alias_input:"unfinished alias, ".into(),term_seq:rev(1),newer_term:true,selected_unit:None,context_revision:None,
         context_draft:"Unfinished note e\u{301} 👩🏽‍💻".into(),context_reason:String::new(),context_seq:rev(1),newer_context:true,
@@ -75,7 +75,7 @@ fn originals(w:&mut ResourceDraftWrite)->Vec<ResourceDraftPending>{
             submitted_seq:rev(0),alias_input:"Submitted aliases A".into()},
         ResourceDraftPending::Context{request:SaveContext{project_id:project,action_id:ExecutionId::new(),unit_id:unit,locale:"zh-CN".into(),
             source_revision_id:source,expected_revision_id:None,text:"Submitted note A".into(),reason:"Original note".into()},submitted_seq:rev(0)},
-        ResourceDraftPending::Decision{request:ResourceDecision{project_id:project,action_id:ExecutionId::new(),capture_id:ExecutionId::new(),
+        ResourceDraftPending::Decision{request:ResourceDecision{ edited_target: None,project_id:project,action_id:ExecutionId::new(),capture_id:ExecutionId::new(),
             entry_id:"term".into(),expected_revision_id:None,decision:ResourceDecisionKind::Keep},locale:"zh-CN".into(),submitted_seq:rev(3)},
         ResourceDraftPending::Capture{request:CaptureContext{project_id:project,action_id:ExecutionId::new(),unit_id:unit,locale:"zh-CN".into(),
             source_revision_id:source,budget_bytes:16384},submitted_seq:rev(3)},
@@ -201,4 +201,75 @@ fn resource_limits_and_wrong_project_cannot_publish_or_drop_retained_input(){
     w.value.pending=Some(pending);
     assert_eq!(store.write_resource(&w).unwrap_err().stage,"resource-drafts-project");
     assert!(!store.directory.exists());
+}
+
+#[test]
+fn edited_proposal_original_request_and_newer_input_survive_reopen_and_resolution() {
+    let temp=tempfile::tempdir().unwrap();let store=DraftStore::at(temp.path().join("drafts")).unwrap();
+    let mut w=write(ExecutionId::new());let capture=ExecutionId::new();
+    w.value.preview_capture_id=Some(capture);
+    w.value.proposal_edit_draft=Some(ResourceProposalEditDraft{capture_id:capture,entry_id:"term".into(),locale:"zh-CN".into(),
+        expected_revision_id:None,source:"Original source".into(),current_target:None,original_target:"Original proposal".into(),
+        target:"Newer B e\u{301} 👩🏽‍💻".into(),edit_seq:rev(3)});
+    let pending=ResourceDraftPending::Decision{request:ResourceDecision{project_id:w.key.project_id,action_id:ExecutionId::new(),
+        capture_id:capture,entry_id:"term".into(),expected_revision_id:None,decision:ResourceDecisionKind::Adopt,
+        edited_target:Some("Submitted A".into())},locale:"zh-CN".into(),submitted_seq:rev(2)};
+    w.value.pending=Some(pending.clone());
+    let head=store.write_resource(&w).unwrap();
+    let reopened=DraftStore::at(store.directory.clone()).unwrap();
+    assert_eq!(reopened.read_resource(&w.key).unwrap(),head);
+    assert_eq!(reopened.pending_snapshot(w.key.project_id,None).unwrap().rows[0].slot,PendingJournalSlot::Resource(pending.clone()));
+    let mut next=w;next.expected_revision=head.revision;next.value.edit_seq=rev(11);next.value.pending=None;
+    let mut lost=next.clone();lost.value.proposal_edit_draft=None;
+    assert_eq!(store.resolve_resource(&ResourceDraftResolve{write:lost,target:ResourceDraftResolveTarget::Primary{pending:pending.clone()},
+        disposition:ResourceDraftDisposition::Recorded}).unwrap_err().stage,"resource-drafts-newer-input");
+    let resolved=store.resolve_resource(&ResourceDraftResolve{write:next,target:ResourceDraftResolveTarget::Primary{pending},
+        disposition:ResourceDraftDisposition::Recorded}).unwrap();
+    assert_eq!(resolved.value.unwrap().proposal_edit_draft.unwrap().target,"Newer B e\u{301} 👩🏽‍💻");
+}
+
+#[test]
+fn format_16_resource_bytes_remain_unchanged_until_a_valid_format_17_write() {
+    let temp=tempfile::tempdir().unwrap();let store=DraftStore::at(temp.path().join("drafts")).unwrap();
+    let mut original=write(ExecutionId::new());let head=store.write_resource(&original).unwrap();
+    let c=Connection::open(store.directory.join(DATABASE)).unwrap();set_legacy_format(&c,16).unwrap();
+    let bytes:Vec<u8>=c.query_row("SELECT payload FROM resource_draft_heads",[],|r|r.get(0)).unwrap();
+    drop(c);
+    assert_eq!(store.read_resource(&original.key).unwrap(),head);
+    let c=Connection::open(store.directory.join(DATABASE)).unwrap();
+    assert_eq!(c.pragma_query_value(None,"user_version",|r|r.get::<_,i64>(0)).unwrap(),16);
+    assert_eq!(c.query_row("SELECT payload FROM resource_draft_heads",[],|r|r.get::<_,Vec<u8>>(0)).unwrap(),bytes);drop(c);
+    original.expected_revision=rev(99);assert!(store.write_resource(&original).is_err());
+    let c=Connection::open(store.directory.join(DATABASE)).unwrap();
+    assert_eq!(c.pragma_query_value(None,"user_version",|r|r.get::<_,i64>(0)).unwrap(),16);drop(c);
+    original.expected_revision=head.revision;original.value.edit_seq=rev(11);original.value.context_draft="More input".into();
+    store.write_resource(&original).unwrap();
+    let c=Connection::open(store.directory.join(DATABASE)).unwrap();
+    assert_eq!(c.pragma_query_value(None,"user_version",|r|r.get::<_,i64>(0)).unwrap(),17);
+}
+
+#[test]
+fn invalid_legacy_resource_history_blocks_format_upgrade_without_changing_the_journal() {
+    let temp=tempfile::tempdir().unwrap();let store=DraftStore::at(temp.path().join("drafts")).unwrap();
+    let original=write(ExecutionId::new());store.write_resource(&original).unwrap();
+    let c=Connection::open(store.directory.join(DATABASE)).unwrap();set_legacy_format(&c,16).unwrap();
+    c.execute("UPDATE resource_draft_heads SET payload=?1",[vec![0_u8]]).unwrap();drop(c);
+    assert!(store.write_resource(&write(ExecutionId::new())).is_err());
+    let c=Connection::open(store.directory.join(DATABASE)).unwrap();
+    assert_eq!(c.pragma_query_value(None,"user_version",|r|r.get::<_,i64>(0)).unwrap(),16);
+    assert_eq!(c.query_row("SELECT payload FROM resource_draft_heads",[],|r|r.get::<_,Vec<u8>>(0)).unwrap(),vec![0]);
+    assert_eq!(c.query_row("SELECT COUNT(*) FROM resource_draft_heads",[],|r|r.get::<_,i64>(0)).unwrap(),1);
+}
+
+#[test]
+fn invalid_format_16_strategy_history_blocks_resource_format_upgrade() {
+    let temp=tempfile::tempdir().unwrap();let store=DraftStore::at(temp.path().join("drafts")).unwrap();
+    let original=write(ExecutionId::new());store.write_resource(&original).unwrap();
+    let c=Connection::open(store.directory.join(DATABASE)).unwrap();set_legacy_format(&c,16).unwrap();
+    c.execute("INSERT INTO strategy_draft_heads VALUES(?1,1,1,0,?2)",params![original.key.project_id.to_string(),vec![0_u8]]).unwrap();drop(c);
+    assert!(store.write_resource(&write(ExecutionId::new())).is_err());
+    let c=Connection::open(store.directory.join(DATABASE)).unwrap();
+    assert_eq!(c.pragma_query_value(None,"user_version",|r|r.get::<_,i64>(0)).unwrap(),16);
+    assert_eq!(c.query_row("SELECT payload FROM strategy_draft_heads",[],|r|r.get::<_,Vec<u8>>(0)).unwrap(),vec![0]);
+    assert_eq!(c.query_row("SELECT COUNT(*) FROM resource_draft_heads",[],|r|r.get::<_,i64>(0)).unwrap(),1);
 }

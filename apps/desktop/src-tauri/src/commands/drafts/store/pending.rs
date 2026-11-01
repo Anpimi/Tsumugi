@@ -195,7 +195,7 @@ impl DraftStore {
             } else if kind == 2 {
                 let key=ResourceDraftKey{project_id:project};
                 if entry!=project.to_string(){return Err(fail(ErrorCode::CorruptLedger,"resource-drafts-project"));}
-                let head=resources::decode(&key,(stored_revision,edit_seq,has_pending,Some(payload)))?;
+                let head=resources::decode(&key,(stored_revision,edit_seq,has_pending,Some(payload)),format)?;
                 let seq=head.value.as_ref().map(|v|v.edit_seq);
                 let mut slots=Vec::new();
                 if let Some(v)=head.value {

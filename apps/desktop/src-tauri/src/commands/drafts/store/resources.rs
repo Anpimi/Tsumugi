@@ -35,6 +35,12 @@ pub(super) fn validate_value(key:&ResourceDraftKey,v:&ResourceDraftValue)->Resul
             ||v.selected_unit.as_ref().is_none_or(|u|u.unit_id!=c.unit_id)){
         return Err(fail(ErrorCode::InvalidInput,"resource-drafts-basis"));
     }
+    if let Some(d)=&v.proposal_edit_draft {
+        checked_key(&d.entry_id)?; locale(&d.locale,false)?; local_seq(d.edit_seq,v.edit_seq)?;
+        if v.preview_capture_id!=Some(d.capture_id) || v.locale!=d.locale {
+            return Err(fail(ErrorCode::InvalidInput,"resource-drafts-proposal"));
+        }
+    }
     if let Some(c)=&v.correction_draft {
         local_seq(c.edit_seq,v.edit_seq)?;
         if c.evidence.basis.project_id!=key.project_id{return Err(fail(ErrorCode::InvalidInput,"resource-drafts-project"));}
@@ -112,7 +118,15 @@ pub(super) fn validate_value(key:&ResourceDraftKey,v:&ResourceDraftValue)->Resul
                     return Err(fail(ErrorCode::InvalidInput,"resource-drafts-pending"));
                 }request.project_id
             }
-            ResourceDraftPending::Decision{request,locale:l,..}=>{locale(l,false)?;request.project_id}
+            ResourceDraftPending::Decision{request,locale:l,submitted_seq}=>{
+                locale(l,false)?;
+                if request.edited_target.is_some() && v.proposal_edit_draft.as_ref().is_none_or(|d|
+                    d.capture_id!=request.capture_id || d.entry_id!=request.entry_id || d.locale!=*l
+                    || d.expected_revision_id!=request.expected_revision_id || *submitted_seq>d.edit_seq) {
+                    return Err(fail(ErrorCode::InvalidInput,"resource-drafts-pending"));
+                }
+                request.project_id
+            }
             ResourceDraftPending::Capture{request,..}=>request.project_id,
         };
         if project!=key.project_id{return Err(fail(ErrorCode::InvalidInput,"resource-drafts-project"));}
@@ -127,7 +141,7 @@ pub(super) fn validate_value(key:&ResourceDraftKey,v:&ResourceDraftValue)->Resul
     Ok(())
 }
 pub(super) type Stored=(i64,Option<i64>,i64,Option<Vec<u8>>);
-pub(super) fn decode(key:&ResourceDraftKey,stored:Stored)->Result<ResourceDraftHead> {
+pub(super) fn decode(key:&ResourceDraftKey,stored:Stored,format:i64)->Result<ResourceDraftHead> {
     let (revision,seq,pending,payload)=stored;
     let bytes=payload.ok_or_else(||fail(ErrorCode::CorruptLedger,"resource-drafts-record"))?;
     let head:ResourceDraftHead=serde_json::from_slice(&bytes).map_err(|_|fail(ErrorCode::CorruptLedger,"resource-drafts-record"))?;
@@ -136,16 +150,18 @@ pub(super) fn decode(key:&ResourceDraftKey,stored:Stored)->Result<ResourceDraftH
         ||head.writer_id.is_some()!=v.is_some()||seq!=v.map(|v|v.edit_seq.get() as i64)
         ||pending!=i64::from(v.is_some_and(has_pending))
         ||v.is_some_and(|v|validate_value(key,v).is_err())
+        ||format<RESOURCE_EDIT_FORMAT && v.is_some_and(|v|v.proposal_edit_draft.is_some()
+            ||matches!(&v.pending,Some(ResourceDraftPending::Decision{request,..}) if request.edited_target.is_some()))
         ||encode_bounded(&head,MAX_RECORD).map_err(|_|fail(ErrorCode::CorruptLedger,"resource-drafts-record"))?!=bytes{
         return Err(fail(ErrorCode::CorruptLedger,"resource-drafts-record"));
     }Ok(head)
 }
-pub(super) fn validate_existing(connection: &Connection) -> Result<()> {
+pub(super) fn validate_existing(connection: &Connection, format:i64) -> Result<()> {
     let mut statement = connection.prepare("SELECT project_id,revision,edit_seq,has_pending,CASE WHEN length(payload)<=?1 THEN payload END FROM resource_draft_heads ORDER BY project_id").map_err(sql)?;
     let rows = statement.query_map([MAX_RECORD as i64], |row| Ok((row.get::<_,String>(0)?, (row.get(1)?, row.get(2)?, row.get(3)?, row.get(4)?)))).map_err(sql)?;
     for row in rows {
         let (project, stored) = row.map_err(sql)?;
-        decode(&ResourceDraftKey { project_id: stored_id(&project)? }, stored)?;
+        decode(&ResourceDraftKey { project_id: stored_id(&project)? }, stored, format)?;
     }
     Ok(())
 }
@@ -154,7 +170,7 @@ fn read(c:&Connection,key:&ResourceDraftKey,format:i64)->Result<ResourceDraftHea
     let row=c.query_row("SELECT revision,edit_seq,has_pending,CASE WHEN length(payload)<=?2 THEN payload END
         FROM resource_draft_heads WHERE project_id=?1",params![key.project_id.to_string(),MAX_RECORD as i64],
         |r|Ok((r.get(0)?,r.get(1)?,r.get(2)?,r.get(3)?))).optional().map_err(sql)?;
-    row.map(|r|decode(key,r)).transpose().map(|r|r.unwrap_or_else(||empty(key)))
+    row.map(|r|decode(key,r,format)).transpose().map(|r|r.unwrap_or_else(||empty(key)))
 }
 fn persist(c:&Connection,h:&ResourceDraftHead,bytes:&[u8])->Result<()> {
     c.execute("INSERT INTO resource_draft_heads VALUES(?1,?2,?3,?4,?5)
@@ -179,6 +195,14 @@ fn apply(before:&ResourceDraftHead,r:&ResourceDraftWrite,resolve:Option<&Resourc
 }
 fn keep_newer_input(old:&ResourceDraftValue,new:&ResourceDraftValue,target:&ResourceDraftResolveTarget)->Result<()> {
     let kept=match target {
+        ResourceDraftResolveTarget::Primary{pending:ResourceDraftPending::Decision{request,submitted_seq,..}}
+            if request.edited_target.is_some()=>{
+            match old.proposal_edit_draft.as_ref().filter(|d|d.edit_seq>*submitted_seq){
+                None=>true,Some(a)=>new.proposal_edit_draft.as_ref().is_some_and(|b|
+                    a.edit_seq==b.edit_seq && a.capture_id==b.capture_id && a.entry_id==b.entry_id
+                    && a.target==b.target && a.original_target==b.original_target && a.source==b.source),
+            }
+        }
         ResourceDraftResolveTarget::Primary{pending:ResourceDraftPending::Term{submitted_seq,..}}
             if old.term_seq>*submitted_seq=>old.term_draft==new.term_draft&&old.alias_input==new.alias_input&&old.term_seq==new.term_seq,
         ResourceDraftResolveTarget::Primary{pending:ResourceDraftPending::Context{submitted_seq,..}}

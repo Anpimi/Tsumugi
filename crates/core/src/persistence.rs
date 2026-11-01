@@ -131,7 +131,7 @@ pub use translation::{
 const DATABASE_FILENAME: &str = "project.sqlite3";
 const LOCK_FILENAME: &str = ".tsumugi.lock";
 const APPLICATION_ID: i64 = 0x5453_4D47;
-pub(crate) const SCHEMA_VERSION: i64 = 71;
+pub(crate) const SCHEMA_VERSION: i64 = 72;
 #[cfg(test)]
 pub(crate) enum UnsupportedFixtureDomain {
     Arena,
@@ -963,7 +963,7 @@ fn validate_existing_connection(
     let user_version: i64 = connection
         .query_row("PRAGMA user_version", [], |row| row.get(0))
         .map_err(|error| map_sqlite(error, PersistenceStage::Open))?;
-    if ![61, 62, 63, 64, 65, 66, 67, 68, 69, 70, SCHEMA_VERSION].contains(&user_version) {
+    if ![61, 62, 63, 64, 65, 66, 67, 68, 69, 70, 71, SCHEMA_VERSION].contains(&user_version) {
         return Err(PersistenceError::UnsupportedSchema {
             found_version: user_version,
             stage: PersistenceStage::Open,
@@ -991,7 +991,7 @@ fn validate_existing_connection(
         // Validate the complete supported schema and storage pragmas before
         // replacing any tables.
         // SQLite's rollback journal makes both schema and version one durable
-        // unit; a crash leaves the original supported schema or complete 71.
+        // unit; a crash leaves the original supported schema or complete 72.
         let transaction = connection
             .transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)
             .map_err(|error| map_sqlite(error, PersistenceStage::Open))?;
@@ -1037,6 +1037,10 @@ fn validate_existing_connection(
             content::lineage_corrections::remove_legacy_read_views(&transaction)
                 .map_err(|error| map_sqlite(error, PersistenceStage::Open))?;
             content::lineage_corrections::initialize(&transaction)
+                .map_err(|error| map_sqlite(error, PersistenceStage::Open))?;
+        }
+        if user_version < 72 {
+            resources::migrate_edited_decisions(&transaction)
                 .map_err(|error| map_sqlite(error, PersistenceStage::Open))?;
         }
         #[cfg(test)]

@@ -20,3 +20,5 @@
 .comparison { display: grid; gap: var(--space-4); margin: 0; }
 .comparison dt { color: var(--color-text-secondary); font-size: var(--text-sm); }
 .comparison dd { margin: var(--space-2) 0 0; white-space: pre-wrap; overflow-wrap: anywhere; }
+
+.edit { display: grid; gap: var(--space-3); border: var(--border-width) solid var(--color-border-subtle); border-radius: var(--radius-md); padding: var(--space-4); min-inline-size: 0; }

@@ -690,6 +690,7 @@ export interface ResourceDecision {
   actionId: ExecutionId;
   captureId: ExecutionId;
   decision: ResourceDecisionKind;
+  editedTarget?: string | null;
   entryId: string;
   expectedRevisionId: ExecutionId | null;
   projectId: ExecutionId;

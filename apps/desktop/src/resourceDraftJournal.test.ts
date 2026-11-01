@@ -116,3 +116,18 @@ it("fences late hydration after retirement and keeps a different window's pendin
   const loading = second.journal.initialize(); second.journal.retire(); late.resolve(before); await loading;
   expect(second.state.termDraft.target).toBe(""); expect(second.journal.getSnapshot().retired).toBe(true);
 });
+
+it("restores the original edited adoption and newer proposal input without granting retry permission", () => {
+  const state = input();
+  state.proposalEditDraft = { captureId: id(6), entryId: "term", locale: "zh-CN", expectedRevisionId: null,
+    source: "Original source", currentTarget: null, originalTarget: "Original proposal", target: "Newer B e\u0301 👩🏽‍💻", editSeq: 3 };
+  state.pending = { kind: "decision", session, locale: "zh-CN", submittedSeq: "2", request: { projectId: session.projectId,
+    actionId: id(600), captureId: id(6), entryId: "term", expectedRevisionId: null, decision: "adopt", editedTarget: "Submitted A" } };
+  const value = canonicalResourceDraft(resourceDraftValue(state, "100"));
+  const reopened = restoreResourceDraft(initialResourceDraftState("ja"), value, { ...session, sessionToken: "reopened-session" });
+  expect(reopened.proposalEditDraft).toEqual(state.proposalEditDraft);
+  expect(reopened.pending?.request).toEqual(state.pending.request);
+  expect(reopened.pending?.session.sessionToken).toBe("reopened-session");
+  expect(reopened).toMatchObject({ pendingUncertain: true, pendingCheckedMissing: false, pendingRecorded: false });
+  expect(JSON.stringify(value)).not.toContain(session.sessionToken);
+});

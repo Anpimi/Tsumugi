@@ -33,7 +33,8 @@ pub const MAX_DRAFT_RECORDS: usize = 65_536;
 pub const MAX_DRAFT_PAGE_SIZE: u32 = 100;
 const DATABASE: &str = "drafts.sqlite3";
 const APPLICATION_ID: i64 = 0x5444_5246;
-const FORMAT: i64 = 16;
+const FORMAT: i64 = 17;
+const RESOURCE_EDIT_FORMAT: i64 = 17;
 const STRATEGY_FORMAT:i64=16;
 const TEAM_QUESTION_FORMAT: i64 = 15;
 const TEAM_RECOVERY_FORMAT: i64 = 14;
@@ -484,7 +485,7 @@ fn verify_schema(connection: &Connection) -> Result<i64> {
     let format: i64 = connection
         .pragma_query_value(None, "user_version", |row| row.get(0))
         .map_err(sql)?;
-    if application != APPLICATION_ID || !matches!(format, LEGACY_FORMAT | MERGE_FORMAT | CONVERSATION_FORMAT | ACTION_FORMAT | PROPOSAL_FORMAT | RUN_FORMAT | REVOCATION_FORMAT | KNOWLEDGE_PROPOSAL_FORMAT | REUSE_ORIGIN_FORMAT | RESOURCE_FORMAT | SOURCE_FORMAT | SOURCE_ACTION_FORMAT | TEAM_DRAFT_FORMAT | TEAM_RECOVERY_FORMAT | TEAM_QUESTION_FORMAT | FORMAT) {
+    if application != APPLICATION_ID || !matches!(format, LEGACY_FORMAT | MERGE_FORMAT | CONVERSATION_FORMAT | ACTION_FORMAT | PROPOSAL_FORMAT | RUN_FORMAT | REVOCATION_FORMAT | KNOWLEDGE_PROPOSAL_FORMAT | REUSE_ORIGIN_FORMAT | RESOURCE_FORMAT | SOURCE_FORMAT | SOURCE_ACTION_FORMAT | TEAM_DRAFT_FORMAT | TEAM_RECOVERY_FORMAT | TEAM_QUESTION_FORMAT | STRATEGY_FORMAT | FORMAT) {
         return Err(fail(ErrorCode::InvalidInput, "drafts-schema-version"));
     }
     let mut statement = connection
@@ -544,8 +545,9 @@ fn upgrade_schema(connection: &Connection, format: i64) -> Result<()> {
     } else {
         connection.execute_batch(conversations::HEAD_SQL).map_err(sql)?;
     }
-    if format >= RESOURCE_FORMAT { resources::validate_existing(connection)?; }
+    if format >= RESOURCE_FORMAT { resources::validate_existing(connection, format)?; }
     if format >= SOURCE_FORMAT { sources::validate_existing(connection, format)?; }
+    if format >= STRATEGY_FORMAT { strategies::validate_existing(connection)?; }
     if format < RESOURCE_FORMAT {
         connection.execute_batch(resources::HEAD_SQL).map_err(sql)?;
     }

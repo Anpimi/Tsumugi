@@ -6,10 +6,11 @@ import wire from "../test/fixtures/resourceDraftCommands.contract.json";
 import resources from "../test/fixtures/resourceCommands.contract.json";
 import { i18n } from "./i18n";
 import { executionCommands } from "./executionCommands";
-import { resourceCommands, type SaveTerm, type TermRevision } from "./resourceCommands";
+import { resourceCommands, type SaveTerm, type TermRevision, type ResourceDecision } from "./resourceCommands";
 import { canonicalResourceDraft, resourceDraftCommands } from "./resourceDraftCommands";
 import { validateRequestResourceWrite } from "./generated/draft.validators";
-import { useResourceDraftSession } from "./ResourceDraftSession";
+import { initialResourceDraftState, useResourceDraftSession } from "./ResourceDraftSession";
+import { resourceDraftValue } from "./resourceDraftJournal";
 import { ResourceDraftRecovery } from "./ResourceDraftRecovery";
 import { Field, TextInput } from "./design-system/Field";
 import { Button } from "./design-system/Button";
@@ -105,4 +106,35 @@ it("keeps pending and B after a journal resolve failure and retries its exact lo
   await waitFor(() => expect(owner.current().pending).toBeNull()); await act(async () => { await owner.flush(); });
   expect(owner.current().termDraft.target).toBe("B while local recovery is waiting"); expect(save).toHaveBeenCalledOnce();
   expect(resolve).toHaveBeenCalledTimes(2); expect(resolve.mock.calls[1][0]).toEqual(resolve.mock.calls[0][0]);
+});
+
+it("reopens an edited adoption with newer input and reconciles only the exact original receipt", async () => {
+  installResourceDraftFixture();
+  const request: ResourceDecision = { projectId: project.metadata.projectId, actionId: resources.requests.term.term.actionId,
+    captureId: resources.responses.preview.capture.captureId, entryId: resources.responses.preview.rows[0].entry.id,
+    expectedRevisionId: null, decision: "adopt", editedTarget: "Submitted A" };
+  const state = initialResourceDraftState("zh-CN");
+  state.previewCaptureId = request.captureId;
+  state.proposalEditDraft = { captureId: request.captureId, entryId: request.entryId, locale: "zh-CN", expectedRevisionId: null,
+    source: "Original source", currentTarget: null, originalTarget: "Original proposal", target: "Newer B after unknown e\u0301 👩🏽‍💻", editSeq: 3 };
+  state.pending = { kind: "decision", session: { sessionToken: project.sessionToken, projectId: project.metadata.projectId },
+    locale: "zh-CN", submittedSeq: "2", request };
+  await resourceDraftCommands.write({ sessionToken: project.sessionToken, write: { key: { projectId: project.metadata.projectId },
+    expectedRevision: "0", writerId: resources.requests.term.term.actionId, value: resourceDraftValue(state, "100") } });
+  const receipt = { request, actionId: request.actionId, decision: request.decision, revision: { ...resources.responses.term,
+    target: request.editedTarget ?? "", captureId: request.captureId, previousRevisionId: null } };
+  const observed = vi.spyOn(resourceCommands, "observeDecisionAction"), write = vi.spyOn(resourceCommands, "decide");
+  const read = vi.spyOn(resourceCommands, "decisionAction").mockResolvedValue({ request, receipt });
+  await open({ ...project, sessionToken: "reopened-edited-session", metadata: { ...project.metadata, targetLocales: [] } });
+  expect(owner.current().locale).toBe("zh-CN"); expect(owner.localeAvailable("zh-CN")).toBe(false);
+  expect(observed).not.toHaveBeenCalled(); expect(read).not.toHaveBeenCalled();
+  expect(owner.current().pendingCheckedMissing).toBe(false);
+  await userEvent.setup().click(screen.getByRole("button", { name: k("recoveryCheck") }));
+  await waitFor(() => expect(owner.current().pending).toBeNull());
+  expect(owner.current().proposalEditDraft?.target).toBe("Newer B after unknown e\u0301 👩🏽‍💻");
+  expect(owner.current().proposalEditDraft?.expectedRevisionId).toBe(receipt.revision.revisionId);
+  expect(read.mock.calls[0][0]).toMatchObject({ sessionToken: "reopened-edited-session", decision: request });
+  expect(write).not.toHaveBeenCalled(); expect(executionCommands.identity).not.toHaveBeenCalled();
+  await userEvent.setup().click(screen.getByRole("button", { name: k("recoveryShow") }));
+  expect(screen.getByRole<HTMLTextAreaElement>("textbox", { name: k("recoveryLocal") }).value).toContain("Newer B after unknown");
 });

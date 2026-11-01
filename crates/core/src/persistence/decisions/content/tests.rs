@@ -149,7 +149,7 @@ fn resource_keep_ignore_and_stale_correction_use_original_receipts_after_reopen(
     let capture = store.capture_glossary(project, ExecutionId::new(), &serde_json::to_vec(&file).unwrap()).unwrap();
     assert_eq!(read(&store, project, DecisionSource::ResourceProposal).items.len(), 2);
     for (entry, decision) in [("first", ResourceDecisionKind::Keep), ("second", ResourceDecisionKind::Ignore)] {
-        store.decide_glossary_entry(&ResourceDecision { project_id: project, action_id: ExecutionId::new(),
+        store.decide_glossary_entry(&ResourceDecision { edited_target: None, project_id: project, action_id: ExecutionId::new(),
             capture_id: capture.capture_id, entry_id: entry.into(), expected_revision_id: None, decision }).unwrap();
     }
     assert!(read(&store, project, DecisionSource::ResourceProposal).items.is_empty());
@@ -172,7 +172,7 @@ fn resource_keep_ignore_and_stale_correction_use_original_receipts_after_reopen(
     drop(store);
     let mut store = ProjectStore::open(&path).unwrap();
     assert_eq!(read(&store, project, DecisionSource::ResourceProposal).items, stale.items);
-    store.decide_glossary_entry(&ResourceDecision { project_id: project, action_id: ExecutionId::new(),
+    store.decide_glossary_entry(&ResourceDecision { edited_target: None, project_id: project, action_id: ExecutionId::new(),
         capture_id: correction.capture.capture_id, entry_id: "term".into(), expected_revision_id: None, decision: ResourceDecisionKind::Ignore }).unwrap();
     assert!(read(&store, project, DecisionSource::ResourceProposal).items.is_empty());
 }

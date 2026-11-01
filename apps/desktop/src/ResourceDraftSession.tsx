@@ -9,7 +9,7 @@ import { commandFailure, type CommandFailure } from "./CommandFailure";
 import { executionCommands, executionContext, type SessionRequest } from "./executionCommands";
 import { hasUnknownOutcome, isCommandError, type ProjectView } from "./projectCommands";
 import { confirmContextFact, confirmCorrectionCapture, resourceCommands, type CorrectionTermEvidence, type CorrectionTermReceipt, type CaptureCorrectionTerm, type ContextFactWrite, type ContextFactDecision, type SourceFactBasis, type ContextFactDisposition, type CaptureContext, type ContextCapture, type ContextRevision, type GlossaryCapture,
-  type ResourceDecision, type ResourceDecisionResult, type ResourcePreview, type SaveContext, type SaveTerm, type TermRevision } from "./resourceCommands";
+  type ResourceDecision, type ResourceDecisionResult, type ResourcePreviewRow, type ResourcePreview, type SaveContext, type SaveTerm, type TermRevision } from "./resourceCommands";
 import { sourceCommands, type ContentRow, type ContentScope } from "./sourceCommands";
 import { useSessionReads, useSessionAlive } from "./SessionReadProvider";
 import { ResourceDraftJournal, resourcePendingValue, resourceFactPendingValue, restoreResourceDraft, type ResourceJournalState } from "./resourceDraftJournal";
@@ -60,7 +60,15 @@ function isReceiptFirstRejection(action: ResourcePending, value: unknown) {
     : action.kind === "correction" ? value.reason === "correction-stale" || value.reason === "correction-existing"
     : action.kind === "decision" && (value.reason === "correction-stale" || value.reason === "resource-current");
 }
+export interface ResourceProposalEditDraft {
+  captureId: string; entryId: string; locale: string; expectedRevisionId: string | null;
+  source: string; currentTarget: string | null; originalTarget: string; target: string; editSeq: number;
+}
+export function validProposalTarget(target: string) {
+  return !!target.trim() && !target.includes("\0") && new TextEncoder().encode(target).length <= 16 * 1024;
+}
 export interface ResourceDraftState {
+  proposalEditDraft: ResourceProposalEditDraft | null;
   knowledgeDrafts: Record<string, KnowledgeProposalDraft>;
   knowledgeActiveKey: string | null;
   knowledgeLastActionKey: string | null;
@@ -156,6 +164,11 @@ interface ResourceSession extends DecisionActivityOwner {
   discard: () => void;
   saveTerm: (isScopeCurrent?: () => boolean) => Promise<void>;
   saveContext: (isScopeCurrent?: () => boolean) => Promise<void>;
+  beginProposalEdit: (row: ResourcePreviewRow, proof: () => boolean) => boolean;
+  editProposalTarget: (target: string) => void;
+  rebaseProposalEdit: (row: ResourcePreviewRow, proof: () => boolean) => boolean;
+  discardProposalEdit: () => boolean;
+  adoptProposalEdit: (decision: "adopt" | "override", proof: () => boolean) => Promise<void>;
   decide: (entryId: string, expectedRevisionId: string | null, decision: ResourceDecision["decision"], isScopeCurrent?: () => boolean) => Promise<void>;
   captureContext: (isScopeCurrent?: () => boolean) => Promise<void>;
   retryPending: () => Promise<void>;
@@ -174,7 +187,7 @@ function sameTerm(left: ResourceTermDraft, right: ResourceTermDraft) { return JS
 function nullable(value: string | null | undefined) { return value ?? null; }
 function invalidReceipt() { throw new Error("Invalid resource action acknowledgement"); }
 export function initialResourceDraftState(locale: string): ResourceDraftState {
-  return { knowledgeDrafts: {}, knowledgeActiveKey: null, knowledgeLastActionKey: null, typedDrafts: {}, typedActiveKey: null, typedLastActionKey: null, correctionDraft:null,correctionReceipt:null,pendingCheckedMissing:false,factDraft:null,factPending:null,factCheckedMissing:false,factFailure:null,factRecorded:null, locale,
+  return { proposalEditDraft: null, knowledgeDrafts: {}, knowledgeActiveKey: null, knowledgeLastActionKey: null, typedDrafts: {}, typedActiveKey: null, typedLastActionKey: null, correctionDraft:null,correctionReceipt:null,pendingCheckedMissing:false,factDraft:null,factPending:null,factCheckedMissing:false,factFailure:null,factRecorded:null, locale,
     selectedTerm: null, termDraft: resourceTermDraftFor(null), aliasInput: "", termSeq: 0, newerTerm: false,
     selectedUnit: null, contextRevision: null, contextDraft: "", contextReason: "", contextSeq: 0, newerContext: false,
     previewCapture: null, previewCaptureId: null, fixedContextId: null, pickerUnknown: false, preview: null, previewSourceBasis: null, previewNeedsRefresh: false, fixedContext: null, pending: null, pendingUncertain: false, pendingRecorded: false, busyMutation: false, checkingAction: null, notice: null, failure: null, completionVersion: 0 };
@@ -223,7 +236,7 @@ export function ResourceDraftSession({ project, children }: { project: ProjectVi
   function factBlocked(){return running.current || current().factPending!==null;}
   function reserved() { const value = journal.getSnapshot(); return !live() || !!value.failure || !!value.conflict || running.current || !!current().pending || !!current().factPending; }
   function blocked() { const value = journal.getSnapshot(); return reserved() || value.busy || !!current().checkingAction || tool.blocked(); }
-  function hasDraft() { const value = journal.getSnapshot(); return value.dirty || !!value.failure || !!value.conflict || termDirty() || contextDirty() || correctionDirty() || factDirty() || contextResources.hasDrafts() || knowledgeProposals.hasDrafts() || tool.hasDraft(); }
+  function hasDraft() { const value = journal.getSnapshot(); return value.dirty || !!value.failure || !!value.conflict || termDirty() || contextDirty() || correctionDirty() || factDirty() || current().proposalEditDraft !== null || contextResources.hasDrafts() || knowledgeProposals.hasDrafts() || tool.hasDraft(); }
   function resetLocale(before: ResourceDraftState, locale: string): ResourceDraftState {
     return { ...before, locale, correctionDraft:null,correctionReceipt:null,pendingCheckedMissing:false, selectedTerm: null, termDraft: resourceTermDraftFor(null), aliasInput: "", termSeq: before.termSeq + 1, newerTerm: false,
       selectedUnit: null, contextRevision: null, contextDraft: "", contextReason: "", contextSeq: before.contextSeq + 1, newerContext: false,
@@ -232,12 +245,12 @@ export function ResourceDraftSession({ project, children }: { project: ProjectVi
   useEffect(() => {
     const next = projectRef.current.metadata.targetLocales[0] ?? "";
     if (current().locale !== next && !localeAvailable(current().locale) && !reserved() && !termDirty() && !contextDirty() && !correctionDirty()
-      && !current().previewCapture && !current().fixedContext) {
+      && !current().proposalEditDraft && !current().previewCapture && !current().fixedContext) {
       update(before => resetLocale(before, next));
     }
-  }, [targetScope, state.busyMutation, state.pending, state.termSeq, state.contextSeq, state.correctionDraft]);
+  }, [targetScope, state.busyMutation, state.pending, state.termSeq, state.contextSeq, state.correctionDraft, state.proposalEditDraft]);
   function setLocale(locale: string) {
-    if (!localeAvailable(locale) || reserved() || termDirty() || contextDirty() || correctionDirty()) return false;
+    if (!localeAvailable(locale) || reserved() || termDirty() || contextDirty() || correctionDirty() || current().proposalEditDraft !== null) return false;
     update(before => resetLocale(before, locale)); return true;
   }
   function beginTerm(term: TermRevision | null) {
@@ -264,7 +277,7 @@ export function ResourceDraftSession({ project, children }: { project: ProjectVi
   }
   function canReceiveContext(locale: string) {
     const before=current();
-    return localeAvailable(locale) && !reserved() && !contextDirty() && !correctionDirty() && !tool.blocked() && !tool.hasDraft()
+    return localeAvailable(locale) && !reserved() && !contextDirty() && !correctionDirty() && !current().proposalEditDraft && !tool.blocked() && !tool.hasDraft()
       && (before.locale===locale || (!termDirty() && !before.previewCapture && !before.fixedContext));
   }
   function receiveContext(target:ResourceContextTarget, locale:string, revision:ContextRevision|null, before:ResourceDraftState, currentRead:()=>boolean) {
@@ -290,7 +303,7 @@ export function ResourceDraftSession({ project, children }: { project: ProjectVi
   }
   function editContextReason(contextReason: string) { update(before => ({ ...before, contextReason, contextSeq: before.contextSeq + 1, newerContext: false })); }
   function discardContext() { if (!reserved()) update(before => ({ ...before, contextDraft: before.contextRevision?.text ?? "", contextReason: before.contextRevision?.reason ?? "", contextSeq: before.contextSeq + 1, newerContext: false })); }
-  function discard() { discardTerm(); discardContext(); discardFact(); discardCorrection(); }
+  function discard() { discardTerm(); discardContext(); discardFact(); discardCorrection(); discardProposalEdit(); }
   function beginFact(basis:SourceFactBasis,key:string,decision:ContextFactDecision|null,disposition:ContextFactDisposition) {
     if (!live() || reserved() || factDirty() || !localeAvailable(basis.scope.locale) || basis.scope.projectId!==session.projectId || decision && jsonIdentity(decision.request.basis)!==jsonIdentity(basis)) return false;
     update(before=>({...before,factDraft:{basis:structuredClone(basis),key,expectedDecisionId:decision?.request.actionId??null,disposition:structuredClone(disposition),actor:"",reason:"",editSeq:0},factFailure:null,factRecorded:null}));return true;
@@ -396,10 +409,52 @@ export function ResourceDraftSession({ project, children }: { project: ProjectVi
         notice: unchanged ? "saved" : "savedNewer", failure: null, completionVersion: before.completionVersion + 1 };
     });
   }
+  function beginProposalEdit(row: ResourcePreviewRow, proof: () => boolean) {
+    const value = current(), preview = value.preview;
+    if (!preview || reserved() || value.proposalEditDraft || !proof() || !localeAvailable(preview.capture.targetLocale)
+      || value.previewNeedsRefresh || !preview.rows.includes(row)) return false;
+    update(before => ({ ...before, proposalEditDraft: { captureId: preview.capture.captureId, entryId: row.entry.id,
+      locale: preview.capture.targetLocale, expectedRevisionId: row.current?.revisionId ?? null, source: row.entry.source,
+      currentTarget: row.current?.target ?? null, originalTarget: row.entry.target, target: row.entry.target, editSeq: 0 }, failure: null, notice: null }));
+    return true;
+  }
+  function editProposalTarget(target: string) {
+    update(before => before.proposalEditDraft ? { ...before, proposalEditDraft: { ...before.proposalEditDraft,
+      target, editSeq: before.proposalEditDraft.editSeq + 1 } } : before);
+  }
+  function discardProposalEdit() {
+    if (reserved()) return false;
+    update(before => ({ ...before, proposalEditDraft: null, failure: null, notice: null })); return true;
+  }
+  function rebaseProposalEdit(row: ResourcePreviewRow, proof: () => boolean) {
+    const value = current(), draft = value.proposalEditDraft;
+    if (!draft || reserved() || !proof() || value.previewNeedsRefresh || value.preview?.capture.captureId !== draft.captureId
+      || !value.preview.rows.includes(row) || row.entry.id !== draft.entryId) return false;
+    update(before => before.proposalEditDraft !== draft ? before : { ...before, proposalEditDraft: { ...draft,
+      expectedRevisionId: row.current?.revisionId ?? null, currentTarget: row.current?.target ?? null, editSeq: draft.editSeq + 1 }, failure: null, notice: null });
+    return true;
+  }
+  async function adoptProposalEdit(decision: "adopt" | "override", proof: () => boolean) {
+    const draft = current().proposalEditDraft;
+    if (!draft || !validProposalTarget(draft.target)) return;
+    await fresh("decision", { entryId: draft.entryId, expectedRevisionId: draft.expectedRevisionId,
+      decision, editedTarget: draft.target }, proof);
+  }
   async function confirmDecision(action: Extract<ResourcePending, { kind: "decision" }>, result: ResourceDecisionResult, observeOnly = false) {
     if (result.actionId !== action.request.actionId || result.decision !== action.request.decision || jsonIdentity(result.request) !== jsonIdentity(action.request)) invalidReceipt();
+    if (action.request.editedTarget != null && (!result.revision || result.revision.target !== action.request.editedTarget
+      || result.revision.captureId !== action.request.captureId || result.revision.previousRevisionId !== action.request.expectedRevisionId)) invalidReceipt();
     if (observeOnly) { update(before => ({ ...before, pendingRecorded: true })); return; }
-    await resolvePrimary(action, before => before.pending === action ? { ...before, pending: null, pendingUncertain: false, pendingCheckedMissing: false, checkingAction: null, previewNeedsRefresh: true, notice: "decisionSaved", failure: null, completionVersion: before.completionVersion + 1 } : before);
+    await resolvePrimary(action, before => {
+      if (before.pending !== action) return before;
+      const draft = before.proposalEditDraft, edited = action.request.editedTarget != null;
+      const matchingDraft = edited && draft?.captureId === action.request.captureId && draft.entryId === action.request.entryId;
+      const newer = matchingDraft && String(draft.editSeq) !== action.submittedSeq;
+      return { ...before, proposalEditDraft: !matchingDraft ? draft : !newer ? null : { ...draft,
+        expectedRevisionId: result.revision?.revisionId ?? draft.expectedRevisionId, currentTarget: result.revision?.target ?? draft.currentTarget },
+        pending: null, pendingUncertain: false, pendingCheckedMissing: false, checkingAction: null, previewNeedsRefresh: true,
+        notice: newer ? "savedNewer" : "decisionSaved", failure: null, completionVersion: before.completionVersion + 1 };
+    });
   }
   async function confirmCapture(action: Extract<ResourcePending, { kind: "capture" }>, capture: ContextCapture, observeOnly = false) {
     const request = action.request;
@@ -409,7 +464,7 @@ export function ResourceDraftSession({ project, children }: { project: ProjectVi
   }
   function canReceiveCorrection(locale: string) {
     return localeAvailable(locale) && !reserved() && !termDirty() && !contextDirty() && !factDirty() && !correctionDirty()
-      && !tool.blocked() && !tool.hasDraft();
+      && !current().proposalEditDraft && !tool.blocked() && !tool.hasDraft();
   }
   function receiveCorrection(evidence: CorrectionTermEvidence, before: ResourceDraftState, proof: () => boolean) {
     if (current() !== before || !canReceiveCorrection(evidence.basis.locale) || !proof()
@@ -583,12 +638,16 @@ export function ResourceDraftSession({ project, children }: { project: ProjectVi
       if (live() && current().pending === action) update(before => ({ ...before, failure: writeFailure, notice: "unknown" }));
     } catch (error) { if (live() && current().pending === action) fail(error, "unknown"); }
   }
-  async function fresh(kind: Exclude<ResourcePending["kind"], "typed-context" | "knowledge-decision">, entry?: { entryId: string; expectedRevisionId: string | null; decision: ResourceDecision["decision"] }, isScopeCurrent: () => boolean = () => true) {
+  async function fresh(kind: Exclude<ResourcePending["kind"], "typed-context" | "knowledge-decision">, entry?: { entryId: string; expectedRevisionId: string | null; decision: ResourceDecision["decision"]; editedTarget?: string }, isScopeCurrent: () => boolean = () => true) {
     const start = current(), locale = kind === "decision" ? start.previewCapture?.targetLocale ?? "" : start.locale;
-    const submittedSeq = journal.getInputSequence();
+    const submittedSeq = kind === "decision" && entry?.editedTarget !== undefined && start.proposalEditDraft
+      ? String(start.proposalEditDraft.editSeq) : journal.getInputSequence();
     if (!(kind === "decision" ? decisionLocaleAvailable(start, entry?.decision) : localeAvailable(locale)) || (kind === "term" && (!start.termDraft.source.trim() || !start.termDraft.target.trim() || !start.termDraft.reason.trim()))
       || ((kind === "context" || kind === "capture") && (!start.selectedUnit?.unitId || !start.selectedUnit.sourceRevisionId))
-      || (kind === "context" && !start.contextReason.trim()) || (kind === "decision" && (!entry || !start.preview || start.previewNeedsRefresh || !matchingEntry(start.preview, entry)))) return;
+      || (kind === "context" && !start.contextReason.trim()) || (kind === "decision" && entry?.editedTarget !== undefined && (!start.proposalEditDraft || !validProposalTarget(entry.editedTarget)
+        || start.proposalEditDraft.captureId !== start.previewCapture?.captureId || start.proposalEditDraft.entryId !== entry.entryId
+        || start.proposalEditDraft.expectedRevisionId !== entry.expectedRevisionId))
+      || (kind === "decision" && (!entry || !start.preview || start.previewNeedsRefresh || !matchingEntry(start.preview, entry)))) return;
     if (!isScopeCurrent()) { fail({ reason: "resource-basis" }); return; }
     if (!reserve()) return;
     try {
@@ -610,11 +669,11 @@ export function ResourceDraftSession({ project, children }: { project: ProjectVi
     } catch (error) { fail(error); }
     finally { release(); }
   }
-  function matchingEntry(preview: ResourcePreview, entry: { entryId: string; expectedRevisionId: string | null; decision: ResourceDecision["decision"] }) {
+  function matchingEntry(preview: ResourcePreview, entry: { entryId: string; expectedRevisionId: string | null; decision: ResourceDecision["decision"]; editedTarget?: string }) {
     if (preview.mcp && !preview.mcp.current && (entry.decision === "adopt" || entry.decision === "override")) return false;
     const row = preview.rows.find(value => value.entry.id === entry.entryId);
-    if (row) return !(preview.correction && (entry.decision === "override" || entry.decision === "adopt" && (!preview.correction.evidence.current || row.current !== null))) && nullable(row.current?.revisionId) === entry.expectedRevisionId && !(entry.decision === "adopt" && (row.kind === "unchanged" || row.kind === "override"));
-    return preview.removed.some(value => value.externalEntryId === entry.entryId && value.revisionId === entry.expectedRevisionId);
+    if (row) return !(preview.correction && (entry.decision === "override" || entry.decision === "adopt" && (!preview.correction.evidence.current || row.current !== null))) && nullable(row.current?.revisionId) === entry.expectedRevisionId && !(entry.decision === "adopt" && (row.kind === "unchanged" && entry.editedTarget === undefined || row.kind === "override"));
+    return entry.editedTarget === undefined && preview.removed.some(value => value.externalEntryId === entry.entryId && value.revisionId === entry.expectedRevisionId);
   }
   async function retryPending() {
     const action = current().pending;
@@ -623,14 +682,14 @@ export function ResourceDraftSession({ project, children }: { project: ProjectVi
     try { await dispatch(action); } finally { release(); }
   }
   async function openPreview(capture: GlossaryCapture, isCurrent: () => boolean = live) {
-    if (!isCurrent() || !canReadCapture(capture) || !reserve()) return;
+    if (!isCurrent() || !canReadCapture(capture) || current().proposalEditDraft && current().proposalEditDraft?.captureId !== capture.captureId || !reserve()) return;
     update(before => ({ ...before, previewCapture: capture, previewCaptureId: capture.captureId, preview: null, previewSourceBasis: null, previewNeedsRefresh: true }));
     try { if (await journal.flush()) await readPreview(capture, isCurrent); } catch (error) { if (isCurrent()) fail(error); } finally { release(); }
   }
   async function retryPreview(isCurrent?: () => boolean) { const capture = current().previewCapture; if (capture) await openPreview(capture, isCurrent); }
   function canReceiveMcp(capture: GlossaryCapture) {
     return capture.origin.kind === "mcp" && canReadCapture(capture) && !reserved() && !termDirty() && !contextDirty() && !factDirty() && !correctionDirty()
-      && !tool.blocked() && !tool.hasDraft();
+      && !current().proposalEditDraft && !tool.blocked() && !tool.hasDraft();
   }
   async function openMcpPreview(capture: GlossaryCapture, before: ResourceDraftState, proof: () => boolean) {
     if (current() !== before || !canReceiveMcp(capture) || !proof()) return false;
@@ -644,7 +703,7 @@ export function ResourceDraftSession({ project, children }: { project: ProjectVi
   }
   async function chooseFile(isCurrent: () => boolean = live) {
     const locale = current().locale;
-    if (!localeAvailable(locale) || termDirty() || contextDirty() || !reserve()) return;
+    if (!localeAvailable(locale) || termDirty() || contextDirty() || current().proposalEditDraft || !reserve()) return;
     let captured = false;
     try {
       const capture = await resourceCommands.chooseFile(session);
@@ -674,5 +733,6 @@ export function ResourceDraftSession({ project, children }: { project: ProjectVi
     knowledgeProposals, contextResources, canReceiveMcp, openMcpPreview, correctionDirty,canReceiveCorrection,receiveCorrection,editCorrection,discardCorrection,captureCorrection,checkPending, factDirty,factBlocked,beginFact,editFact,discardFact,saveFact,checkFact,retryFact, tool, state, current, inFlight: () => running.current, termDirty, contextDirty, localeAvailable,
     setLocale, beginTerm, adoptTerm, editTerm, discardTerm, beginContext, canReceiveContext, receiveContext, adoptContext, editContext, editContextReason, discardContext, discard,
     canReadCapture, saveTerm: proof => fresh("term", undefined, proof), saveContext: proof => fresh("context", undefined, proof), captureContext: proof => fresh("capture", undefined, proof),
+    beginProposalEdit, editProposalTarget, rebaseProposalEdit, discardProposalEdit, adoptProposalEdit,
     decide: (entryId, expectedRevisionId, decision, proof) => fresh("decision", { entryId, expectedRevisionId, decision }, proof), retryPending, chooseFile, openPreview, retryPreview }}>{children}</ResourceContext.Provider>;
 }

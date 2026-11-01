@@ -160,7 +160,7 @@ fn decision(
     kind: ResourceDecisionKind,
     expected: Option<ExecutionId>,
 ) -> ResourceDecision {
-    ResourceDecision {
+    ResourceDecision { edited_target: None,
         project_id: project(s),
         action_id: ExecutionId::new(),
         capture_id: c.capture.capture_id,
@@ -864,4 +864,24 @@ fn query_result_entry_and_utf8_byte_budgets_are_checked_before_capture() {
             .unwrap()
             .is_empty()
     );
+}
+
+#[test]
+fn edited_mcp_adoption_retains_tool_capture_and_exact_recovery() {
+    let (directory, mut s, rows)=support::source_fixture();
+    let (mut runtime,_)=runtime(&s);
+    let prepared=s.prepare_mcp_term_query(&request(&s,&rows[0])).unwrap();
+    let (_,result)=complete(&mut s,&mut runtime,&prepared);
+    let capture=capture(&mut s,&prepared,&result);
+    let mut action=decision(&s,&capture,ResourceDecisionKind::Adopt,None);
+    action.edited_target=Some("Edited e\u{301} 👩🏽‍💻".into());
+    let receipt=s.decide_glossary_entry(&action).unwrap();
+    let term=receipt.revision.as_ref().unwrap();
+    assert_eq!(term.target,action.edited_target.as_ref().unwrap().as_str());
+    assert_eq!(term.capture_id,Some(capture.capture.capture_id));
+    assert_eq!(term.origin_kind,TermOrigin::External);
+    assert_eq!(s.decide_glossary_entry(&action).unwrap(),receipt);
+    drop(runtime);drop(s);
+    let s=ProjectStore::open(directory.path().join("project")).unwrap();
+    assert_eq!(s.resource_decision_request_observation(&action).unwrap().unwrap().receipt,receipt);
 }

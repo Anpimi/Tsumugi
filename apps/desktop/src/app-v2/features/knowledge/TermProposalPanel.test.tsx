@@ -163,3 +163,127 @@ it("keeps stale MCP evidence readable while refusing adoption and allowing rejec
   await waitFor(() => expect(decisions()).toHaveLength(1));
   expect(decisions()[0][1].request.decision.decision).toBe("ignore" satisfies ResourceDecision["decision"]);
 });
+
+function editedReceipt(request: ResourceDecision) {
+  const raw: unknown = structuredClone(wire.responses.term);
+  if (!validateResponseTerm(raw)) throw new Error("Synthetic term revision required");
+  return { request, actionId: request.actionId, decision: request.decision,
+    revision: { ...raw, revisionId: fixtureIdentity(901), source: preview.rows[0].entry.source,
+      target: request.editedTarget ?? preview.rows[0].entry.target, captureId: request.captureId,
+      externalEntryId: request.entryId, previousRevisionId: request.expectedRevisionId ?? null } };
+}
+
+it.each(["en-US", "zh-CN"])("adopts an edited proposal through its original resource request (%s)", async locale => {
+  await i18n.changeLanguage(locale);
+  const original = invoke.getMockImplementation();
+  invoke.mockImplementation((command, payload) => {
+    if (command === "decide_resource_entry") {
+      if (!validateRequestDecision(payload.request)) throw new Error("Expected typed edited decision");
+      return Promise.resolve(editedReceipt(payload.request.decision));
+    }
+    return original?.(command, payload);
+  });
+  const user = await open();
+  await user.click(screen.getByRole("button", { name: label("proposalEdit") }));
+  const input = screen.getByRole("textbox", { name: label("proposalEditedTarget") });
+  await user.clear(input);
+  expect(screen.getByRole("button", { name: label("proposalAdoptEdited") })).toBeDisabled();
+  const edited = "Revised e\u0301 👩🏽‍💻";
+  await user.type(input, edited);
+  await user.click(screen.getByRole("button", { name: label("proposalAdoptEdited") }));
+  await waitFor(() => expect(observed?.current().proposalEditDraft).toBeNull());
+  expect(decisions()).toHaveLength(1);
+  expect(decisions()[0][1].request.decision).toMatchObject({ captureId: preview.capture.captureId,
+    entryId: preview.rows[0].entry.id, expectedRevisionId: null, decision: "adopt", editedTarget: edited });
+  expect(invoke.mock.calls.filter(([command]) => command === "save_term")).toHaveLength(0);
+});
+
+it("keeps newer B when edited A is acknowledged and advances only its confirmed base", async () => {
+  let acknowledge: ((value: ReturnType<typeof editedReceipt>) => void) | undefined;
+  let submitted: ResourceDecision | undefined;
+  const original = invoke.getMockImplementation();
+  invoke.mockImplementation((command, payload) => {
+    if (command === "decide_resource_entry") {
+      if (!validateRequestDecision(payload.request)) throw new Error("Expected typed edited decision");
+      submitted = payload.request.decision;
+      return new Promise(resolve => { acknowledge = resolve; });
+    }
+    return original?.(command, payload);
+  });
+  const user = await open();
+  await user.click(screen.getByRole("button", { name: label("proposalEdit") }));
+  const input = screen.getByRole("textbox", { name: label("proposalEditedTarget") });
+  await user.clear(input); await user.type(input, "Edited A");
+  await user.click(screen.getByRole("button", { name: label("proposalAdoptEdited") }));
+  await waitFor(() => expect(submitted?.editedTarget).toBe("Edited A"));
+  await user.clear(input); await user.type(input, "Newer B e\u0301 👩🏽‍💻");
+  if (!submitted || !acknowledge) throw new Error("Expected pending edited action");
+  const receipt = editedReceipt(submitted);
+  await act(async () => { acknowledge?.(receipt); });
+  await waitFor(() => expect(observed?.current().pending).toBeNull());
+  expect(input).toHaveValue("Newer B e\u0301 👩🏽‍💻");
+  expect(observed?.current().proposalEditDraft?.expectedRevisionId).toBe(receipt.revision.revisionId);
+  expect(screen.getByText(label("proposalEditNewer"))).toBeVisible();
+});
+
+it("keeps the edited target after a current-term conflict and requires explicit comparison", async () => {
+  const original = invoke.getMockImplementation();
+  invoke.mockImplementation((command, payload) => command === "decide_resource_entry"
+    ? Promise.reject({ code: "dependency-conflict", stage: "execution-adopt", outcome: "rejected", recoveryRequired: false, reason: "resource-current" })
+    : original?.(command, payload));
+  const user = await open();
+  await user.click(screen.getByRole("button", { name: label("proposalEdit") }));
+  const input = screen.getByRole("textbox", { name: label("proposalEditedTarget") });
+  await user.clear(input); await user.type(input, "Retained human edit");
+  await user.click(screen.getByRole("button", { name: label("proposalAdoptEdited") }));
+  await waitFor(() => expect(observed?.current().pending).toBeNull());
+  expect(input).toHaveValue("Retained human edit");
+  expect(observed?.current().proposalEditDraft?.expectedRevisionId).toBeNull();
+  expect(observed?.current().previewNeedsRefresh).toBe(true);
+  expect(screen.getByRole("button", { name: label("proposalAdoptEdited") })).toBeDisabled();
+  expect(decisions()).toHaveLength(1);
+  const raw: unknown = structuredClone(wire.responses.term);
+  if (!validateResponseTerm(raw)) throw new Error("Expected conflicting current term");
+  preview.rows[0] = { ...preview.rows[0], kind: "override", current: { ...raw, revisionId: fixtureIdentity(903), target: "Changed elsewhere",
+    originKind: "manual", captureId: null, externalEntryId: null } };
+  const editor = screen.getByRole("region", { name: label("proposalEditTitle") });
+  await user.click(within(editor).getByRole("button", { name: label("proposalReadAgain") }));
+  await waitFor(() => expect(screen.getByRole("button", { name: label("proposalEditUseCurrent") })).toBeEnabled());
+  expect(screen.getByRole("button", { name: label("proposalAdoptEdited") })).toBeDisabled();
+  expect(within(editor).getByText("Changed elsewhere")).toBeVisible();
+  await user.click(screen.getByRole("button", { name: label("proposalEditUseCurrent") }));
+  expect(observed?.current().proposalEditDraft?.expectedRevisionId).toBe(fixtureIdentity(903));
+  expect(input).toHaveValue("Retained human edit");
+  expect(screen.getByRole("button", { name: label("proposalAdoptEdited") })).toBeEnabled();
+});
+
+it("retains an edited action after a mismatched receipt and reconciles the same request without resending", async () => {
+  let submitted: ResourceDecision | undefined;
+  const original = invoke.getMockImplementation();
+  invoke.mockImplementation((command, payload) => {
+    if (command === "decide_resource_entry") {
+      if (!validateRequestDecision(payload.request)) throw new Error("Expected typed edited decision");
+      submitted = payload.request.decision;
+      const receipt = editedReceipt(submitted);
+      return Promise.resolve({ ...receipt, revision: { ...receipt.revision, target: "Mismatched acknowledgement" } });
+    }
+    if ((command === "observe_resource_decision_action" || command === "read_resource_decision_action") && submitted) {
+      return Promise.resolve({ request: submitted, receipt: editedReceipt(submitted) });
+    }
+    return original?.(command, payload);
+  });
+  const user = await open();
+  await user.click(screen.getByRole("button", { name: label("proposalEdit") }));
+  const input = screen.getByRole("textbox", { name: label("proposalEditedTarget") });
+  await user.clear(input); await user.type(input, "Exact edited A");
+  await user.click(screen.getByRole("button", { name: label("proposalAdoptEdited") }));
+  await waitFor(() => expect(observed?.current().pendingRecorded).toBe(true));
+  expect(observed?.current().pending?.request).toEqual(submitted);
+  expect(input).toHaveValue("Exact edited A");
+  expect(invoke.mock.calls.filter(([name]) => name === "observe_resource_decision_action")).toHaveLength(1);
+  expect(invoke.mock.calls.filter(([name]) => name === "read_resource_decision_action")).toHaveLength(0);
+  await user.click(screen.getByRole("button", { name: label("proposalCheck") }));
+  await waitFor(() => expect(observed?.current().pending).toBeNull());
+  expect(observed?.current().proposalEditDraft).toBeNull();
+  expect(decisions()).toHaveLength(1);
+});

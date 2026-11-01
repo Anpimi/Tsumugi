@@ -1078,6 +1078,12 @@
           "decision": {
             "$ref": "#/definitions/ResourceDecisionKind"
           },
+          "editedTarget": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
           "entryId": {
             "type": "string"
           },
@@ -4657,6 +4663,12 @@
           },
           "decision": {
             "$ref": "#/definitions/ResourceDecisionKind"
+          },
+          "editedTarget": {
+            "type": [
+              "string",
+              "null"
+            ]
           },
           "entryId": {
             "type": "string"

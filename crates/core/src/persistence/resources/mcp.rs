@@ -829,7 +829,7 @@ pub(super) fn decide(
         &p.basis.locale,
         &incoming.source,
         &[],
-        &incoming.target,
+        request.edited_target.as_deref().unwrap_or(&incoming.target),
         false,
         Some(p.basis.unit_id),
         &incoming.reason,
@@ -843,7 +843,7 @@ pub(super) fn decide(
     )?;
     if old.as_ref().is_none_or(|v| {
         v.source != incoming.source
-            || v.target != incoming.target
+            || v.target != request.edited_target.as_deref().unwrap_or(&incoming.target)
             || v.scope_unit_id != Some(p.basis.unit_id)
             || v.removed
             || !v.aliases.is_empty()
@@ -935,7 +935,7 @@ pub(super) fn validate_decision(
             || revision.locale != value.provenance.basis.locale
             || revision.scope_unit_id != Some(value.provenance.basis.unit_id)
             || revision.source != incoming.source
-            || revision.target != incoming.target
+            || revision.target != saved.request.edited_target.as_deref().unwrap_or(&incoming.target)
             || !revision.aliases.is_empty()
             || revision.protected
             || revision.removed

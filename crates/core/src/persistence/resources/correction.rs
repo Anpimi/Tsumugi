@@ -355,7 +355,7 @@ pub(super) fn validate_decision(
             || r.locale != capture.basis.locale
             || r.scope_unit_id != Some(capture.basis.unit_id)
             || r.source != capture.source
-            || r.target != capture.target
+            || r.target != request.edited_target.as_deref().unwrap_or(&capture.target)
             || r.protected != capture.protected
             || r.reason != capture.reason
             || !r.aliases.is_empty()
@@ -395,6 +395,9 @@ pub(super) fn validate(c: &Connection) -> Result<(), ExecutionError> {
                 return Err(corrupt());
             };
             validate_decision(c, &receipt, &capture)?;
+        } else if kind == "file" {
+            let (_, CapturedGlossary::File(file)) = capture_by_id(c, project, request.capture_id)? else { return Err(corrupt()); };
+            validate_file_decision(c, &receipt, &file)?;
         }
     }
     let mut statement=c.prepare("SELECT r.revision_id,r.project_id,r.origin_kind,r.capture_id,c.capture_kind FROM term_revisions r JOIN resource_captures c ON c.capture_id=r.capture_id").map_err(sql)?;
@@ -529,7 +532,7 @@ pub(super) fn decide(
         &b.locale,
         &capture.source,
         &[],
-        &capture.target,
+        request.edited_target.as_deref().unwrap_or(&capture.target),
         capture.protected,
         Some(b.unit_id),
         &capture.reason,
@@ -562,10 +565,13 @@ pub(super) fn decision_action_in(
     project: ExecutionId,
     action: ExecutionId,
 ) -> Result<Option<ResourceDecisionResult>, ExecutionError> {
-    let row:Option<(String,String,Option<String>,String,Option<String>,String)>=c.query_row(
-        "SELECT capture_id,entry_id,expected_revision_id,decision,result_revision_id,request_digest FROM resource_decisions WHERE project_id=?1 AND action_id=?2",
-        params![project.to_string(),action.to_string()],|r|Ok((r.get(0)?,r.get(1)?,r.get(2)?,r.get(3)?,r.get(4)?,r.get(5)?))).optional().map_err(sql)?;
-    let Some((capture, entry, expected, decision, result, stored_digest)) = row else {
+    let version: i64 = c.pragma_query_value(None, "user_version", |r| r.get(0)).map_err(sql)?;
+    let edited = if version < 72 { "NULL" } else { "edited_target" };
+    let query = format!("SELECT capture_id,entry_id,expected_revision_id,decision,result_revision_id,request_digest,{edited} FROM resource_decisions WHERE project_id=?1 AND action_id=?2");
+    let row:Option<(String,String,Option<String>,String,Option<String>,String,Option<String>)>=c.query_row(
+        &query,
+        params![project.to_string(),action.to_string()],|r|Ok((r.get(0)?,r.get(1)?,r.get(2)?,r.get(3)?,r.get(4)?,r.get(5)?,r.get(6)?))).optional().map_err(sql)?;
+    let Some((capture, entry, expected, decision, result, stored_digest, edited_target)) = row else {
         return Ok(None);
     };
     let decision = match decision.as_str() {
@@ -582,8 +588,9 @@ pub(super) fn decision_action_in(
         entry_id: entry,
         expected_revision_id: expected.map(id).transpose()?,
         decision: decision.clone(),
+        edited_target,
     };
-    if digest(&request)? != stored_digest {
+    if digest(&request)? != stored_digest || validate_edited_decision(&request).is_err() {
         return Err(failure(ErrorCode::CorruptLedger, "resource-action"));
     }
     let revision = result

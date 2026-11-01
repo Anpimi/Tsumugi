@@ -32,14 +32,19 @@ function canonicalPending(value: Input["pending"]) {
     case "term": return { ...value, request: { ...value.request, termId: value.request.termId ?? null,
       scopeUnitId: value.request.scopeUnitId ?? null, expectedRevisionId: value.request.expectedRevisionId ?? null } };
     case "context":
-    case "decision": return { ...value, request: { ...value.request, expectedRevisionId: value.request.expectedRevisionId ?? null } };
+    case "decision": {
+      const { editedTarget, ...request } = value.request;
+      return { ...value, request: { ...request, expectedRevisionId: request.expectedRevisionId ?? null,
+        ...(editedTarget == null ? {} : { editedTarget }) } };
+    }
     default: return value;
   }
 }
 
 export function canonicalResourceDraft(input: Input): ResourceDraftValue {
+  const { proposalEditDraft, ...original } = input;
   const value = {
-    ...input, selectedTerm: input.selectedTerm ?? null, selectedUnit: input.selectedUnit ?? null,
+    ...original, ...(proposalEditDraft == null ? {} : { proposalEditDraft: { ...proposalEditDraft, expectedRevisionId: proposalEditDraft.expectedRevisionId ?? null, currentTarget: proposalEditDraft.currentTarget ?? null } }), selectedTerm: input.selectedTerm ?? null, selectedUnit: input.selectedUnit ?? null,
     termDraft: { ...input.termDraft, scopeUnitId: input.termDraft.scopeUnitId ?? null },
     contextRevision: input.contextRevision ?? null, correctionDraft: input.correctionDraft ?? null,
     factDraft: input.factDraft == null ? null : { ...input.factDraft, expectedDecisionId: input.factDraft.expectedDecisionId ?? null },
@@ -66,7 +71,8 @@ export function resourcePendingProject(pending: ResourceDraftPending) {
 function related(value: ResourceDraftValue, projectId: string) {
   const within = (sequence: string) => safeSequence(sequence) && BigInt(sequence) <= BigInt(value.editSeq);
   const typed = value.typedDrafts, knowledge = value.knowledgeDrafts, pending = value.pending;
-  return safeSequence(value.editSeq) && within(value.termSeq) && within(value.contextSeq)
+  return (value.proposalEditDraft == null || within(value.proposalEditDraft.editSeq) && value.proposalEditDraft.locale === value.locale
+    && value.proposalEditDraft.captureId === value.previewCaptureId) && safeSequence(value.editSeq) && within(value.termSeq) && within(value.contextSeq)
     && !(pending && value.factPending)
     && new Set(typed.map(draft => draft.key)).size === typed.length
     && new Set(knowledge.map(draft => draft.key)).size === knowledge.length

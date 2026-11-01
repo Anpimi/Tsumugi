@@ -4389,6 +4389,12 @@
           "decision": {
             "$ref": "#/definitions/ResourceDecisionKind"
           },
+          "editedTarget": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
           "entryId": {
             "type": "string"
           },
@@ -4875,6 +4881,16 @@
               }
             ]
           },
+          "proposalEditDraft": {
+            "anyOf": [
+              {
+                "$ref": "#/definitions/ResourceProposalEditDraft"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "selectedTerm": {
             "anyOf": [
               {
@@ -5130,6 +5146,58 @@
           "text",
           "actor",
           "reason",
+          "editSeq"
+        ],
+        "type": "object"
+      },
+      "ResourceProposalEditDraft": {
+        "additionalProperties": false,
+        "properties": {
+          "captureId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "currentTarget": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "editSeq": {
+            "$ref": "#/definitions/Revision"
+          },
+          "entryId": {
+            "type": "string"
+          },
+          "expectedRevisionId": {
+            "anyOf": [
+              {
+                "$ref": "#/definitions/ExecutionId"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "locale": {
+            "type": "string"
+          },
+          "originalTarget": {
+            "type": "string"
+          },
+          "source": {
+            "type": "string"
+          },
+          "target": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "captureId",
+          "entryId",
+          "locale",
+          "source",
+          "originalTarget",
+          "target",
           "editSeq"
         ],
         "type": "object"
@@ -15765,6 +15833,12 @@
           "decision": {
             "$ref": "#/definitions/ResourceDecisionKind"
           },
+          "editedTarget": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
           "entryId": {
             "type": "string"
           },
@@ -16161,6 +16235,16 @@
               }
             ]
           },
+          "proposalEditDraft": {
+            "anyOf": [
+              {
+                "$ref": "#/definitions/ResourceProposalEditDraft"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "selectedTerm": {
             "anyOf": [
               {
@@ -16394,6 +16478,60 @@
           "editSeq",
           "receipt",
           "recordedFields"
+        ],
+        "type": "object"
+      },
+      "ResourceProposalEditDraft": {
+        "additionalProperties": false,
+        "properties": {
+          "captureId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "currentTarget": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "editSeq": {
+            "$ref": "#/definitions/Revision"
+          },
+          "entryId": {
+            "type": "string"
+          },
+          "expectedRevisionId": {
+            "anyOf": [
+              {
+                "$ref": "#/definitions/ExecutionId"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "locale": {
+            "type": "string"
+          },
+          "originalTarget": {
+            "type": "string"
+          },
+          "source": {
+            "type": "string"
+          },
+          "target": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "captureId",
+          "entryId",
+          "locale",
+          "expectedRevisionId",
+          "source",
+          "currentTarget",
+          "originalTarget",
+          "target",
+          "editSeq"
         ],
         "type": "object"
       },

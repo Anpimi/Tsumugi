@@ -51,7 +51,7 @@ function restoredPending(value: ResourceDraftPending, session: SessionRequest): 
 
 export function resourceDraftValue(state: ResourceDraftState, editSeq: string): ResourceDraftValue {
   const knowledge = Object.values(state.knowledgeDrafts).filter(draft => knowledgeProposalDirty(draft) || state.pending?.kind === "knowledge-decision" && state.pending.draftKey === draft.key);
-  return { editSeq, locale: state.locale, selectedTerm: state.selectedTerm,
+  return { ...(state.proposalEditDraft ? { proposalEditDraft: { ...state.proposalEditDraft, editSeq: sequence(state.proposalEditDraft.editSeq) } } : {}), editSeq, locale: state.locale, selectedTerm: state.selectedTerm,
     termDraft: { ...state.termDraft, scopeUnitId: state.termDraft.scopeUnitId ?? null, reason: state.termDraft.reason ?? "" },
     aliasInput: state.aliasInput, termSeq: sequence(state.termSeq), newerTerm: state.newerTerm,
     selectedUnit: state.selectedUnit, contextRevision: state.contextRevision, contextDraft: state.contextDraft, contextReason: state.contextReason,
@@ -68,7 +68,7 @@ export function resourceDraftValue(state: ResourceDraftState, editSeq: string): 
     factPending: state.factPending ? resourceFactPendingValue(state.factPending) : null };
 }
 export function restoreResourceDraft(initial: ResourceDraftState, value: ResourceDraftValue, session: SessionRequest): ResourceDraftState {
-  return { ...initial, locale: value.locale, selectedTerm: value.selectedTerm, termDraft: value.termDraft, aliasInput: value.aliasInput,
+  return { ...initial, proposalEditDraft: value.proposalEditDraft ? { ...value.proposalEditDraft, editSeq: inputSequence(value.proposalEditDraft.editSeq) } : null, locale: value.locale, selectedTerm: value.selectedTerm, termDraft: value.termDraft, aliasInput: value.aliasInput,
     termSeq: inputSequence(value.termSeq), newerTerm: value.newerTerm, selectedUnit: value.selectedUnit, contextRevision: value.contextRevision,
     contextDraft: value.contextDraft, contextReason: value.contextReason, contextSeq: inputSequence(value.contextSeq), newerContext: value.newerContext,
     correctionDraft: value.correctionDraft ? { ...value.correctionDraft, evidence: { ...value.correctionDraft.evidence, current: false }, editSeq: inputSequence(value.correctionDraft.editSeq) } : null,

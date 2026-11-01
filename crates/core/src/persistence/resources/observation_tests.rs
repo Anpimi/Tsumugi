@@ -26,7 +26,7 @@ fn resource_original_observations_and_stable_rejections_never_reconcile_executio
     let correction=CaptureCorrectionTerm{action_id:ExecutionId::new(),basis:evidence.basis,source:evidence.source_text,
         target:"New".into(),protected:false,reason:"Explicit correction".into()};
     let correction_receipt=store.capture_correction_term(&correction).unwrap();
-    let decision=ResourceDecision{project_id:project,action_id:ExecutionId::new(),capture_id:correction_receipt.capture.capture_id,
+    let decision=ResourceDecision{ edited_target: None,project_id:project,action_id:ExecutionId::new(),capture_id:correction_receipt.capture.capture_id,
         entry_id:"term".into(),expected_revision_id:None,decision:ResourceDecisionKind::Keep};
     let decision_receipt=store.decide_glossary_entry(&decision).unwrap();
     store.execution_unknown.store(true,Ordering::Release);

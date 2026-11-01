@@ -132,7 +132,7 @@ fn seed(store: &mut ProjectStore) -> Vec<(&'static str, &'static str, Value, Val
         if resource_id == "receipt" && revision == "1" && license == "MIT"));
     let old_preview = store.glossary_preview(project, glossary.capture_id).unwrap();
     assert_eq!(old_preview.capture, old_capture);
-    let file = ResourceDecision {
+    let file = ResourceDecision { edited_target: None,
         project_id: project,
         action_id: ExecutionId::new(),
         capture_id: glossary.capture_id,

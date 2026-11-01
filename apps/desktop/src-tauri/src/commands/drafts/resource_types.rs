@@ -100,6 +100,16 @@ pub enum ResourceDraftPending {
 #[cfg_attr(feature = "wire-schema", derive(schemars::JsonSchema))]
 pub struct ResourceFactPending { pub request: ContextFactWrite, pub submitted_seq: Revision }
 
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+#[cfg_attr(feature = "wire-schema", derive(schemars::JsonSchema))]
+pub struct ResourceProposalEditDraft {
+    pub capture_id: ExecutionId, pub entry_id: String, pub locale: String,
+    pub expected_revision_id: Option<ExecutionId>, pub source: String,
+    pub current_target: Option<String>, pub original_target: String, pub target: String,
+    pub edit_seq: Revision,
+}
+
 /// Input only. Removed source/locale and incomplete fields remain recoverable.
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
@@ -117,6 +127,8 @@ pub struct ResourceDraftValue {
     /// A native picker has no exact replayable original request.
     pub picker_unknown: bool,
     pub pending: Option<ResourceDraftPending>, pub fact_pending: Option<ResourceFactPending>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub proposal_edit_draft: Option<ResourceProposalEditDraft>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]

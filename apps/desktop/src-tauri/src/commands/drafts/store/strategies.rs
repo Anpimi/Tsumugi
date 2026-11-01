@@ -62,6 +62,15 @@ pub(super) fn decode(key:&StrategyDraftKey,stored:Stored)->Result<StrategyDraftH
         return Err(fail(ErrorCode::CorruptLedger,"strategy-drafts-record"));
     }Ok(head)
 }
+pub(super) fn validate_existing(c:&Connection)->Result<()> {
+    let mut statement=c.prepare("SELECT project_id,revision,edit_seq,has_pending,CASE WHEN length(payload)<=?1 THEN payload END FROM strategy_draft_heads ORDER BY project_id").map_err(sql)?;
+    let rows=statement.query_map([MAX_RECORD as i64],|r|Ok((r.get::<_,String>(0)?,(r.get(1)?,r.get(2)?,r.get(3)?,r.get(4)?)))).map_err(sql)?;
+    for row in rows {
+        let (project,stored)=row.map_err(sql)?;
+        decode(&StrategyDraftKey{project_id:stored_id(&project)?},stored)?;
+    }
+    Ok(())
+}
 fn read(c:&Connection,key:&StrategyDraftKey,format:i64)->Result<StrategyDraftHead>{
     if format<STRATEGY_FORMAT{return Ok(empty(key));}
     let row=c.query_row("SELECT revision,edit_seq,has_pending,CASE WHEN length(payload)<=?2 THEN payload END
