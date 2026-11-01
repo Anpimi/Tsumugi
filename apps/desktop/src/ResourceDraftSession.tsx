@@ -58,7 +58,7 @@ function isReceiptFirstRejection(action: ResourcePending, value: unknown) {
   return action.kind === "typed-context" ? value.reason === "context-resource-current" || value.reason === "context-resource-source"
     : action.kind === "term" ? value.reason === "resource-current"
     : action.kind === "correction" ? value.reason === "correction-stale" || value.reason === "correction-existing"
-    : action.kind === "decision" && (value.reason === "correction-stale" || value.reason === "resource-current");
+    : action.kind === "decision" && (value.reason === "correction-stale" || value.reason === "conversation-term-stale" || value.reason === "resource-current");
 }
 export interface ResourceProposalEditDraft {
   captureId: string; entryId: string; locale: string; expectedRevisionId: string | null;
@@ -126,6 +126,8 @@ interface ResourceSession extends DecisionActivityOwner {
   knowledgeProposals: ReturnType<typeof createKnowledgeProposalMethods>;
   contextResources: ReturnType<typeof createContextResourceMethods>;
   canReceiveMcp: (capture: GlossaryCapture) => boolean;
+  canReceiveConversation: (capture: GlossaryCapture) => boolean;
+  openConversationPreview: (capture: GlossaryCapture, before: ResourceDraftState, proof: () => boolean) => Promise<boolean>;
   openMcpPreview: (capture: GlossaryCapture, before: ResourceDraftState, proof: () => boolean) => Promise<boolean>;
   correctionDirty: () => boolean;
   canReceiveCorrection: (locale: string) => boolean;
@@ -222,11 +224,13 @@ export function ResourceDraftSession({ project, children }: { project: ProjectVi
     return capture.origin.kind === "correction"
       ? live() && capture.origin.basis.projectId === session.projectId && capture.origin.basis.locale === capture.targetLocale
       : capture.origin.kind === "mcp" ? live() && capture.origin.provenance.basis.projectId === session.projectId && capture.origin.provenance.basis.locale === capture.targetLocale
+        : capture.origin.kind === "conversation" ? live() && capture.origin.proposal.projectId === session.projectId
+          && capture.captureId === capture.origin.proposal.revisionId
         : localeAvailable(capture.targetLocale);
   }
   function decisionLocaleAvailable(value: ResourceDraftState, decision?: ResourceDecision["decision"]) {
     const capture = value.previewCapture;
-    return !!capture && (localeAvailable(capture.targetLocale) || (capture.origin.kind === "correction" || capture.origin.kind === "mcp")
+    return !!capture && (localeAvailable(capture.targetLocale) || (capture.origin.kind === "correction" || capture.origin.kind === "mcp" || capture.origin.kind === "conversation")
       && (decision === "keep" || decision === "ignore") && canReadCapture(capture));
   }
   function termDirty() { const value = current(); return value.newerTerm || value.aliasInput !== (value.selectedTerm?.aliases.join(", ") ?? "") || !sameTerm(value.termDraft, resourceTermDraftFor(value.selectedTerm)); }
@@ -670,7 +674,7 @@ export function ResourceDraftSession({ project, children }: { project: ProjectVi
     finally { release(); }
   }
   function matchingEntry(preview: ResourcePreview, entry: { entryId: string; expectedRevisionId: string | null; decision: ResourceDecision["decision"]; editedTarget?: string }) {
-    if (preview.mcp && !preview.mcp.current && (entry.decision === "adopt" || entry.decision === "override")) return false;
+    if ((preview.mcp && !preview.mcp.current || preview.conversation && !preview.conversation.current) && (entry.decision === "adopt" || entry.decision === "override")) return false;
     const row = preview.rows.find(value => value.entry.id === entry.entryId);
     if (row) return !(preview.correction && (entry.decision === "override" || entry.decision === "adopt" && (!preview.correction.evidence.current || row.current !== null))) && nullable(row.current?.revisionId) === entry.expectedRevisionId && !(entry.decision === "adopt" && (row.kind === "unchanged" && entry.editedTarget === undefined || row.kind === "override"));
     return entry.editedTarget === undefined && preview.removed.some(value => value.externalEntryId === entry.entryId && value.revisionId === entry.expectedRevisionId);
@@ -688,18 +692,34 @@ export function ResourceDraftSession({ project, children }: { project: ProjectVi
   }
   async function retryPreview(isCurrent?: () => boolean) { const capture = current().previewCapture; if (capture) await openPreview(capture, isCurrent); }
   function canReceiveMcp(capture: GlossaryCapture) {
-    return capture.origin.kind === "mcp" && canReadCapture(capture) && !reserved() && !termDirty() && !contextDirty() && !factDirty() && !correctionDirty()
+    return capture.origin.kind === "mcp" && canReceiveExternalCapture(capture);
+  }
+  function canReceiveConversation(capture: GlossaryCapture) {
+    return capture.origin.kind === "conversation" && canReceiveExternalCapture(capture);
+  }
+  function canReceiveExternalCapture(capture: GlossaryCapture) {
+    return canReadCapture(capture) && !reserved() && !termDirty() && !contextDirty() && !factDirty() && !correctionDirty()
+      && !contextResources.hasDrafts() && !knowledgeProposals.hasDrafts()
       && !current().proposalEditDraft && !tool.blocked() && !tool.hasDraft();
   }
   async function openMcpPreview(capture: GlossaryCapture, before: ResourceDraftState, proof: () => boolean) {
     if (current() !== before || !canReceiveMcp(capture) || !proof()) return false;
+    return await openExternalPreview(capture, before, proof);
+  }
+  async function openConversationPreview(capture: GlossaryCapture, before: ResourceDraftState, proof: () => boolean) {
+    if (current() !== before || !canReceiveConversation(capture) || !proof()) return false;
+    return await openExternalPreview(capture, before, proof);
+  }
+  async function openExternalPreview(capture: GlossaryCapture, before: ResourceDraftState, proof: () => boolean) {
     if (before.locale !== capture.targetLocale && localeAvailable(capture.targetLocale) && !setLocale(capture.targetLocale)) return false;
     const original = current(), sequence = tool.draftSequence.current;
     const unchanged = () => proof() && live() && current().termSeq === original.termSeq && current().contextSeq === original.contextSeq
       && current().correctionDraft === original.correctionDraft && current().factDraft === original.factDraft && current().locale === original.locale
+      && current().proposalEditDraft === original.proposalEditDraft && !contextResources.hasDrafts() && !knowledgeProposals.hasDrafts()
       && tool.draftSequence.current === sequence && !current().pending && !current().factPending;
     await openPreview(capture, unchanged);
-    return unchanged() && current().previewCapture?.captureId === capture.captureId && current().preview?.mcp != null && !current().previewNeedsRefresh;
+    return unchanged() && current().previewCapture?.captureId === capture.captureId
+      && (capture.origin.kind === "conversation" ? current().preview?.conversation != null : current().preview?.mcp != null) && !current().previewNeedsRefresh;
   }
   async function chooseFile(isCurrent: () => boolean = live) {
     const locale = current().locale;
@@ -730,7 +750,7 @@ export function ResourceDraftSession({ project, children }: { project: ProjectVi
   return <ResourceContext.Provider value={{ journal: journalState, flush: () => journal.flush(), retryJournal: () => journal.retry(),
     subscribe: journal.subscribe, getDecisionActivity: journal.getDecisionActivity,
     keepLocal: expected => journalState.conflict ? journal.keepLocal(expected, journalState.conflict) : Promise.resolve(false), blocked, hasDraft, readRetainedSource, readRetainedContext,
-    knowledgeProposals, contextResources, canReceiveMcp, openMcpPreview, correctionDirty,canReceiveCorrection,receiveCorrection,editCorrection,discardCorrection,captureCorrection,checkPending, factDirty,factBlocked,beginFact,editFact,discardFact,saveFact,checkFact,retryFact, tool, state, current, inFlight: () => running.current, termDirty, contextDirty, localeAvailable,
+    knowledgeProposals, contextResources, canReceiveMcp, openMcpPreview, canReceiveConversation, openConversationPreview, correctionDirty,canReceiveCorrection,receiveCorrection,editCorrection,discardCorrection,captureCorrection,checkPending, factDirty,factBlocked,beginFact,editFact,discardFact,saveFact,checkFact,retryFact, tool, state, current, inFlight: () => running.current, termDirty, contextDirty, localeAvailable,
     setLocale, beginTerm, adoptTerm, editTerm, discardTerm, beginContext, canReceiveContext, receiveContext, adoptContext, editContext, editContextReason, discardContext, discard,
     canReadCapture, saveTerm: proof => fresh("term", undefined, proof), saveContext: proof => fresh("context", undefined, proof), captureContext: proof => fresh("capture", undefined, proof),
     beginProposalEdit, editProposalTarget, rebaseProposalEdit, discardProposalEdit, adoptProposalEdit,

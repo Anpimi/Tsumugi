@@ -2235,6 +2235,37 @@
               "questions"
             ],
             "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "properties": {
+              "entries": {
+                "items": {
+                  "$ref": "#/definitions/ConversationTermEntry"
+                },
+                "type": "array"
+              },
+              "kind": {
+                "const": "term-proposal",
+                "type": "string"
+              },
+              "questions": {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              "summary": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "kind",
+              "summary",
+              "entries",
+              "questions"
+            ],
+            "type": "object"
           }
         ]
       },
@@ -2666,6 +2697,41 @@
           "request",
           "authorization",
           "receipt"
+        ],
+        "type": "object"
+      },
+      "ConversationTermEntry": {
+        "additionalProperties": false,
+        "properties": {
+          "aliases": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "protected": {
+            "type": "boolean"
+          },
+          "reason": {
+            "type": "string"
+          },
+          "source": {
+            "type": "string"
+          },
+          "target": {
+            "type": "string"
+          },
+          "unitId": {
+            "$ref": "#/definitions/ExecutionId"
+          }
+        },
+        "required": [
+          "unitId",
+          "source",
+          "aliases",
+          "target",
+          "protected",
+          "reason"
         ],
         "type": "object"
       },
@@ -13427,6 +13493,37 @@
               "questions"
             ],
             "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "properties": {
+              "entries": {
+                "items": {
+                  "$ref": "#/definitions/ConversationTermEntry"
+                },
+                "type": "array"
+              },
+              "kind": {
+                "const": "term-proposal",
+                "type": "string"
+              },
+              "questions": {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              "summary": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "kind",
+              "summary",
+              "entries",
+              "questions"
+            ],
+            "type": "object"
           }
         ]
       },
@@ -13868,6 +13965,41 @@
           "request",
           "authorization",
           "receipt"
+        ],
+        "type": "object"
+      },
+      "ConversationTermEntry": {
+        "additionalProperties": false,
+        "properties": {
+          "aliases": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "protected": {
+            "type": "boolean"
+          },
+          "reason": {
+            "type": "string"
+          },
+          "source": {
+            "type": "string"
+          },
+          "target": {
+            "type": "string"
+          },
+          "unitId": {
+            "$ref": "#/definitions/ExecutionId"
+          }
+        },
+        "required": [
+          "unitId",
+          "source",
+          "aliases",
+          "target",
+          "protected",
+          "reason"
         ],
         "type": "object"
       },

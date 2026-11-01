@@ -1,4 +1,13 @@
 export const knowledgeProposalEn = {
+  proposalConversation: "Terminology from a conversation proposal",
+  proposalOriginConversation: "Conversation",
+  proposalOriginProposal: "Proposal",
+  proposalOriginRevision: "Proposal version",
+  proposalOriginAttempt: "Original request",
+  proposalOriginResult: "Original result",
+  proposalOriginInputDigest: "Original input digest",
+  proposalOriginResultDigest: "Original result digest",
+  proposalOriginalResult: "Read the original term result and source material",
   knowledgeScopeUnset: "Choose where this resource should apply.",
   reviewTitle: "Review a knowledge proposal",
   reviewHelp: "Compare this saved proposal with project knowledge. Choose the destination and scope yourself, edit the content, then record your decision.",
@@ -43,6 +52,15 @@ export const knowledgeProposalEn = {
 };
 
 export const knowledgeProposalZh: typeof knowledgeProposalEn = {
+  proposalConversation: "来自对话提议的术语",
+  proposalOriginConversation: "对话",
+  proposalOriginProposal: "提议",
+  proposalOriginRevision: "提议版本",
+  proposalOriginAttempt: "原请求",
+  proposalOriginResult: "原始结果",
+  proposalOriginInputDigest: "原始输入摘要",
+  proposalOriginResultDigest: "原始结果摘要",
+  proposalOriginalResult: "读取原始术语结果与源材料",
   knowledgeScopeUnset: "请选择这份资料的适用范围。",
   reviewTitle: "核对知识提议",
   reviewHelp: "把已保存提议与项目资料放在一起核对。请明确选择目标和适用范围，修改正文后，再记录你的决定。",

@@ -57,7 +57,7 @@ fn origin_in(
     let output = conversation_planning::validate_output(&input, &result)?;
     if !matches!(
         output.model,
-        ConversationPlanningModelOutput::Proposal { .. }|ConversationPlanningModelOutput::KnowledgeProposal { .. }
+        ConversationPlanningModelOutput::Proposal { .. }|ConversationPlanningModelOutput::KnowledgeProposal { .. }|ConversationPlanningModelOutput::TermProposal { .. }
     ) {
         return Err(fail(
             ErrorCode::InvalidInput,
@@ -83,13 +83,27 @@ fn content(
     value: &ConversationPlanningModelOutput,
     preview: &ConversationPlanningPreview,
 ) -> Result<(), ExecutionError> {
-    if !matches!(value, ConversationPlanningModelOutput::Proposal { .. }|ConversationPlanningModelOutput::KnowledgeProposal { .. }) {
+    if !matches!(value, ConversationPlanningModelOutput::Proposal { .. }|ConversationPlanningModelOutput::KnowledgeProposal { .. }|ConversationPlanningModelOutput::TermProposal { .. }) {
         return Err(fail(
             ErrorCode::InvalidInput,
             "conversation-proposal-content",
         ));
     }
     conversation_planning::validate_model(value, preview)
+}
+
+fn validate_term_revision_entries(
+    value: &ConversationPlanningModelOutput,
+    original: &ConversationPlanningModelOutput,
+) -> Result<(), ExecutionError> {
+    if let ConversationPlanningModelOutput::TermProposal { entries: original, .. } = original {
+        // Proposal revisions resolve the summary and questions. A target edit
+        // belongs to the explicit resource decision and its original CAS.
+        if !matches!(value, ConversationPlanningModelOutput::TermProposal { entries, .. } if entries == original) {
+            return Err(fail(ErrorCode::InvalidInput, "conversation-term-entries"));
+        }
+    }
+    Ok(())
 }
 
 fn capture_evidence(
@@ -169,7 +183,10 @@ pub(super) fn revision_in(
         value.origin.attempt_id,
         value.origin.result_id,
     )?;
-    if evidence.origin != value.origin || content(&value.content, &evidence.preview).is_err() {
+    if evidence.origin != value.origin
+        || content(&value.content, &evidence.preview).is_err()
+        || validate_term_revision_entries(&value.content, &evidence.model).is_err()
+    {
         return Err(corrupt());
     }
     if let Some(previous) = value.previous_revision_id {
@@ -192,6 +209,47 @@ pub(super) fn revision_in(
 fn head(c: &Connection, proposal: ExecutionId) -> Result<Option<ExecutionId>, ExecutionError> {
     c.query_row("SELECT revision_id FROM application_conversation_proposals WHERE proposal_id=?1 ORDER BY revision DESC LIMIT 1", [proposal.to_string()], |r|r.get::<_,String>(0))
         .optional().map_err(sql)?.map(|id|ExecutionId::parse(&id).map_err(|_|corrupt())).transpose()
+}
+
+/// Historical ledger evidence, with an optional check of the original saving action.
+/// Reading this does not grant a new model call or resource mutation.
+pub(in crate::persistence) fn term_evidence_in(
+    c: &Connection,
+    source: &ConversationProposalRef,
+    action_id: Option<ExecutionId>,
+) -> Result<(ConversationProposalRevision, ConversationPlanningPreview, bool), ExecutionError> {
+    let revision = revision_in(c, source.project_id, source.conversation_id, source.proposal_id, source.revision_id)?;
+    let ConversationPlanningModelOutput::TermProposal { questions, .. } = &revision.content else {
+        return Err(fail(ErrorCode::InvalidInput, "conversation-term-kind"));
+    };
+    let evidence = origin_in(c, source.project_id, source.conversation_id, revision.origin.attempt_id, revision.origin.result_id)?;
+    if let Some(action_id) = action_id {
+        let row: (Vec<u8>, String, Vec<u8>, String) = c.query_row(
+            "SELECT request,request_digest,receipt,receipt_digest FROM application_conversation_actions WHERE action_id=?1",
+            [action_id.to_string()], |r| Ok((r.get(0)?,r.get(1)?,r.get(2)?,r.get(3)?))).map_err(sql)?;
+        let action: Action = decode(&row.0, &row.1)?;
+        let receipt: Receipt = decode(&row.2, &row.3)?;
+        let matches = match action {
+            Action::CaptureProposal { request } => request.action_id == action_id
+                && request.project_id == source.project_id && request.conversation_id == source.conversation_id
+                && request.proposal_id == source.proposal_id && request.revision_id == source.revision_id
+                && request.attempt_id == revision.origin.attempt_id && request.result_id == revision.origin.result_id
+                && revision.previous_revision_id.is_none(),
+            Action::ReviseProposal { request } => request.action_id == action_id
+                && request.project_id == source.project_id && request.conversation_id == source.conversation_id
+                && request.proposal_id == source.proposal_id && request.revision_id == source.revision_id
+                && Some(request.expected_revision_id) == revision.previous_revision_id && request.content == revision.content,
+            _ => false,
+        };
+        if !matches || !matches!(receipt, Receipt::Proposal { receipt } if receipt == revision) { return Err(corrupt()); }
+    }
+    let source_current = match knowledge::source_current(c, &evidence) {
+        Ok(()) => true,
+        Err(error) if error.code == ErrorCode::DependencyConflict => false,
+        Err(error) => return Err(error),
+    };
+    let current = questions.is_empty() && head(c, source.proposal_id)? == Some(source.revision_id) && source_current;
+    Ok((revision, evidence.preview, current))
 }
 
 fn save_revision(
@@ -254,6 +312,11 @@ pub(super) fn validate(
         let id = ExecutionId::parse(&id).map_err(|_| corrupt())?;
         let raw = raw_revision(c, id)?;
         let value = revision_in(c, project, raw.conversation_id, raw.proposal_id, id)?;
+        if matches!(value.content, ConversationPlanningModelOutput::TermProposal { .. }) {
+            let captured: bool = c.query_row("SELECT EXISTS(SELECT 1 FROM resource_captures WHERE capture_id=?1 AND project_id=?2 AND capture_kind='conversation')",
+                params![id.to_string(), project.to_string()], |r| r.get(0)).map_err(sql)?;
+            if !captured { return Err(corrupt()); }
+        }
         let ordinal = ordinals.entry(value.conversation_id).or_default();
         *ordinal += 1;
         if value.ordinal.get() != *ordinal
@@ -274,7 +337,7 @@ impl ProjectStore {
         &self,
         r: &CaptureConversationProposal,
     ) -> Result<ConversationProposalRevision, ExecutionError> {
-        let tx = self.execution_write_scoped(ChangeScope::Project)?;
+        let mut tx = self.execution_write_scoped(ChangeScope::Project)?;
         owned(&tx, r.project_id)?;
         let request = Action::CaptureProposal { request: r.clone() };
         if let Some(Receipt::Proposal { receipt }) = original(&tx, &request)? {
@@ -287,7 +350,7 @@ impl ProjectStore {
             ));
         }
         let evidence = capture_evidence(&tx, r)?;
-        if !matches!(evidence.model,ConversationPlanningModelOutput::KnowledgeProposal{..}) {
+        if !matches!(evidence.model,ConversationPlanningModelOutput::KnowledgeProposal{..}|ConversationPlanningModelOutput::TermProposal{..}) {
             planning::validate_material_in(self, &tx, &evidence.preview, &evidence.material)?;
         }
         let receipt = ConversationProposalRevision {
@@ -302,6 +365,10 @@ impl ProjectStore {
             content: evidence.model,
         };
         save_revision(&tx, &receipt)?;
+        crate::persistence::resources::capture_conversation_terms_in(&tx, &receipt, r.action_id)?;
+        if matches!(receipt.content, ConversationPlanningModelOutput::TermProposal { .. }) {
+            tx.observer.add_scope(ChangeScope::Resources);
+        }
         record(
             &tx,
             &request,
@@ -317,7 +384,7 @@ impl ProjectStore {
         &self,
         r: &ReviseConversationProposal,
     ) -> Result<ConversationProposalRevision, ExecutionError> {
-        let tx = self.execution_write_scoped(ChangeScope::Project)?;
+        let mut tx = self.execution_write_scoped(ChangeScope::Project)?;
         owned(&tx, r.project_id)?;
         let request = Action::ReviseProposal { request: r.clone() };
         if let Some(Receipt::Proposal { receipt }) = original(&tx, &request)? {
@@ -343,8 +410,9 @@ impl ProjectStore {
             prior.origin.attempt_id,
             prior.origin.result_id,
         )?;
+        validate_term_revision_entries(&r.content, &evidence.model)?;
         content(&r.content, &evidence.preview)?;
-        if !matches!(evidence.model,ConversationPlanningModelOutput::KnowledgeProposal{..}) {
+        if !matches!(evidence.model,ConversationPlanningModelOutput::KnowledgeProposal{..}|ConversationPlanningModelOutput::TermProposal{..}) {
             planning::validate_material_in(self, &tx, &evidence.preview, &evidence.material)?;
         }
         let next = prior
@@ -362,6 +430,10 @@ impl ProjectStore {
             ..prior
         };
         save_revision(&tx, &receipt)?;
+        crate::persistence::resources::capture_conversation_terms_in(&tx, &receipt, r.action_id)?;
+        if matches!(receipt.content, ConversationPlanningModelOutput::TermProposal { .. }) {
+            tx.observer.add_scope(ChangeScope::Resources);
+        }
         record(
             &tx,
             &request,
@@ -482,7 +554,7 @@ impl ProjectStore {
                     value.origin.attempt_id,
                     value.origin.result_id,
                 )?;
-                if matches!(value.content,ConversationPlanningModelOutput::KnowledgeProposal{..}) {
+                if matches!(value.content,ConversationPlanningModelOutput::KnowledgeProposal{..}|ConversationPlanningModelOutput::TermProposal{..}) {
                     knowledge::source_current(c,&evidence)?;
                 } else {
                     planning::validate_material_in(self, c, &evidence.preview, &evidence.material)?;
@@ -602,4 +674,4 @@ impl ProjectStore {
 }
 
 #[cfg(test)]
-mod tests;
+pub(in crate::persistence) mod tests;

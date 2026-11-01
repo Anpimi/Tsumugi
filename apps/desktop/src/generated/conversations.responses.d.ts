@@ -167,7 +167,7 @@ export type ConversationActionOutcome2 =
       kind: "mismatch";
     };
 export type UnsignedDecimal = string;
-export type ConversationPlanningPurpose = "knowledge";
+export type ConversationPlanningPurpose = "knowledge" | "terminology";
 export type ConversationPlanningScope =
   | {
       kind: "conversation-only";
@@ -210,6 +210,12 @@ export type ConversationPlanningModelOutput =
   | {
       entries: ConversationKnowledgeEntry[];
       kind: "knowledge-proposal";
+      questions: string[];
+      summary: string;
+    }
+  | {
+      entries: ConversationTermEntry[];
+      kind: "term-proposal";
       questions: string[];
       summary: string;
     };
@@ -1220,6 +1226,14 @@ export interface TeamExecutionMember {
   roleVersionId: ExecutionId;
   toolHandles: ExecutionId[];
   unitIds: ExecutionId[];
+}
+export interface ConversationTermEntry {
+  aliases: string[];
+  protected: boolean;
+  reason: string;
+  source: string;
+  target: string;
+  unitId: ExecutionId;
 }
 export interface AiUsageView {
   cacheReadTokens: UnsignedDecimal | null;

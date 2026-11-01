@@ -6,6 +6,8 @@ mod work_plans;
 pub use work_plans::*;
 mod knowledge;
 pub use knowledge::*;
+mod terminology;
+pub use terminology::*;
 
 fn required_previous<'de, D: serde::Deserializer<'de>>(
     deserializer: D,

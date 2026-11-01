@@ -50,7 +50,7 @@ pub(super) fn completed(
 ) -> CaptureConversationProposal {
     completed_profile(store,units,output,validated,None)
 }
-pub(super) fn completed_profile(store:&mut ProjectStore,units:&[ExecutionId],output:ConversationPlanningModelOutput,validated:bool,purpose:Option<ConversationPlanningPurpose>)->CaptureConversationProposal {
+pub(in crate::persistence) fn completed_profile(store:&mut ProjectStore,units:&[ExecutionId],output:ConversationPlanningModelOutput,validated:bool,purpose:Option<ConversationPlanningPurpose>)->CaptureConversationProposal {
     let project = ExecutionId::parse(&store.metadata().unwrap().project_id().to_string()).unwrap();
     let thread = ExecutionId::new();
     store
@@ -149,34 +149,7 @@ pub(super) fn revise(
     }
 }
 fn rows(c: &Connection, version: i64) -> BTreeMap<String, Vec<Vec<rusqlite::types::Value>>> {
-    let names=c.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%' ORDER BY name").unwrap().query_map([],|r|r.get::<_,String>(0)).unwrap().collect::<Result<Vec<_>,_>>().unwrap();
-    names
-        .into_iter()
-        .filter(|name| {
-            if version == 61 {
-                !name.starts_with("application_conversation")
-            } else {
-                name != "application_conversation_proposals" && name != "application_conversation_work_plans"
-                    && name != "application_conversation_planning_attempts"
-            }
-        })
-        .map(|name| {
-            let mut q = c
-                .prepare(&format!("SELECT * FROM \"{name}\" ORDER BY rowid"))
-                .unwrap();
-            let count = q.column_count();
-            let values = q
-                .query_map([], |r| {
-                    (0..count)
-                        .map(|i| r.get(i))
-                        .collect::<rusqlite::Result<Vec<rusqlite::types::Value>>>()
-                })
-                .unwrap()
-                .collect::<Result<Vec<_>, _>>()
-                .unwrap();
-            (name, values)
-        })
-        .collect()
+    crate::persistence::legacy_fixture_rows(c, version)
 }
 
 #[test]
@@ -679,6 +652,7 @@ fn proposal_migration_preserves_supported_history_across_abort_boundaries() {
             if version == 61 {
                 c.execute_batch("DROP TABLE application_conversation_actions; DROP TABLE application_conversation_messages; DROP TABLE application_conversations;").unwrap();
             }
+            crate::persistence::prepare_legacy_fixture_schema(&c, version).unwrap();
             c.pragma_update(None, "user_version", version).unwrap();
             drop(c);
             let marker = temp.path().join("migration-marker");

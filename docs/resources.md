@@ -113,3 +113,7 @@ Both TMX and TBX previews paginate mapped items and loss categories at 20 items 
 ---
 
 Resource and context history are stored in the project's SQLite database. See the [README](../README.md#development) for current database schema compatibility.
+
+## Model-generated terminology proposals
+
+Terminology proposals saved from a conversation are captured in the original resource store, with their conversation, proposal revision, model attempt/result and input/result digests. They are external suggestions until a human adopts them. Formal proposal revisions preserve the original model entries; summary and questions can still be revised. Each term keeps its original entry scope and target language; changing the target before adoption does not change the source, aliases, protection preference, reason or model provenance. The comparison shows the exact original proposal and current resource state. Older heads, unresolved questions and changed source remain historical and cannot be adopted as current. See [terminology planning](work-plans.md#terminology-proposals) for the original material and consent flow.

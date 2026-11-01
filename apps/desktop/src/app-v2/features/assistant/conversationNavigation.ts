@@ -16,3 +16,4 @@ export interface ConversationTeamQuestionTarget {
 }
 export type ConversationKnowledgeProposalRef = Pick<ConversationProposalRevision, "projectId" | "conversationId" | "proposalId" | "revisionId">;
 export type OpenKnowledgeProposal = (proposal: ConversationKnowledgeProposalRef, current: () => boolean) => Promise<boolean>;
+export type OpenTermProposal = OpenKnowledgeProposal;

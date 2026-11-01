@@ -9,6 +9,7 @@ import { resourceCommands, type TermRevision } from "../../../resourceCommands";
 import type { KnowledgeOwner } from "./knowledgeTypes";
 import { knowledgeBlocked } from "./knowledgeState";
 import { knowledgeCurrentKey, useKnowledgeCurrent, useKnowledgeScope } from "./knowledgeReads";
+import { TermConversationOrigin } from "./TermConversationOrigin";
 import styles from "./Knowledge.module.css";
 
 export default function KnowledgeDetails({ project, owner, visible, disabled, current }: {
@@ -60,6 +61,7 @@ export default function KnowledgeDetails({ project, owner, visible, disabled, cu
     </section> : null}
     {captureId ? <section><h3>{t("originalSource")}</h3>{provenance.isFetching ? <LoadingState label={t("readingSource")}/> : provenance.error ? <ErrorState title={t("originFailed")} action={<Button onClick={() => void provenance.refetch()}>{t("refresh")}</Button>}/>
       : original ? <>{original.kind === "file" ? <dl><dt>{t("source")}</dt><dd>{original.resourceId}</dd><dt>{t("sourceVersion")}</dt><dd>{original.revision}</dd><dt>{t("license")}</dt><dd>{original.license}</dd></dl>
+        : original.kind === "conversation" ? <TermConversationOrigin key={captureId} origin={original} active={visible && !disabled}/>
         : <p>{t(original.kind === "correction" ? "correctionOrigin" : "mcpOrigin")}</p>}</> : null}</section> : null}
     <section><h3>{t("history")}</h3><p className={styles.meta}>{t("historyHelp")}</p>
       {history.isFetching && !history.data ? <LoadingState label={t("readingHistory")}/> : history.error ? <ErrorState title={t("historyFailed")} action={<Button onClick={() => void (history.isFetchNextPageError ? history.fetchNextPage() : history.refetch())}>{t("refresh")}</Button>}/> : null}

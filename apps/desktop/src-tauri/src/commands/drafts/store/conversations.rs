@@ -328,6 +328,7 @@ fn validate_value(key: &ConversationDraftKey, value: &ConversationDraftValue) ->
                 draft.content,
                 ConversationPlanningModelOutput::Proposal { .. }
                     | ConversationPlanningModelOutput::KnowledgeProposal { .. }
+                    | ConversationPlanningModelOutput::TermProposal { .. }
             )
         {
             return Err(fail(
@@ -557,6 +558,11 @@ pub(super) fn decode(key: &ConversationDraftKey, row: Stored, format: i64) -> Re
             || matches!(value.pending, Some(ConversationDraftPending::TeamQuestionResponse { .. })))
         || format < TEAM_RECOVERY_FORMAT && value.is_some_and(|value| value.team_drafts.iter().any(|draft| draft.recovery.is_some() || draft.recovery_recorded.is_some())
             || matches!(value.pending, Some(ConversationDraftPending::TeamRecovery { .. })))
+        || format < TERM_PROPOSAL_FORMAT && value.is_some_and(|value| {
+            value.proposal_edits.iter().any(|draft| matches!(draft.content, ConversationPlanningModelOutput::TermProposal { .. }))
+                || matches!(&value.pending, Some(ConversationDraftPending::ProposalRevision { request, .. })
+                    if matches!(request.content, ConversationPlanningModelOutput::TermProposal { .. }))
+        })
         || format < KNOWLEDGE_PROPOSAL_FORMAT && value.is_some_and(|value| {
             value.proposal_edits.iter().any(|draft| matches!(draft.content, ConversationPlanningModelOutput::KnowledgeProposal { .. }))
                 || matches!(&value.pending, Some(ConversationDraftPending::ProposalRevision { request, .. })
@@ -865,3 +871,5 @@ mod recovery_tests;
 
 #[cfg(test)]
 mod question_tests;
+#[cfg(test)]
+mod term_tests;

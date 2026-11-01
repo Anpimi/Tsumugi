@@ -16,6 +16,7 @@ import { TranslationDraftSession } from "../../../TranslationDraftSession";
 import { fixtureIdentity } from "../../../testSupport/executionFixture";
 import { retrievalCapture, retrievalQuery, retrievalResourcePreview } from "../../../testSupport/mcpRetrievalFixture";
 import type { ResourceDecision, ResourcePreview } from "../../../resourceCommands";
+import { termProposalFixture } from "../../../testSupport/termProposalFixture";
 import { InteractionGate } from "../../workspace/interactionGate";
 import TermProposalPanel from "./TermProposalPanel";
 import type { KnowledgeOwner } from "./knowledgeTypes";
@@ -59,6 +60,10 @@ function Content() {
   const owner = useResourceDraftSession(); observed = owner;
   return <TermProposalPanel project={project} owner={owner} disabled={false} gate={gate} viewId="knowledge-view"
     current={dialogId => gate.canDispatch({ viewId: "knowledge-view", source: "button", dialogId })}/>;
+}
+function observedOwner(): KnowledgeOwner {
+  if (!observed) throw new Error("The synthetic resource owner has not mounted");
+  return observed;
 }
 async function open() {
   installResourceDraftFixture();
@@ -169,7 +174,8 @@ function editedReceipt(request: ResourceDecision) {
   if (!validateResponseTerm(raw)) throw new Error("Synthetic term revision required");
   return { request, actionId: request.actionId, decision: request.decision,
     revision: { ...raw, revisionId: fixtureIdentity(901), source: preview.rows[0].entry.source,
-      target: request.editedTarget ?? preview.rows[0].entry.target, captureId: request.captureId,
+      target: request.editedTarget ?? preview.rows[0].entry.target, aliases: [...preview.rows[0].entry.aliases], protected: preview.rows[0].entry.protected,
+      reason: preview.rows[0].entry.reason, scopeUnitId: preview.rows[0].scopeUnitId, captureId: request.captureId,
       externalEntryId: request.entryId, previousRevisionId: request.expectedRevisionId ?? null } };
 }
 
@@ -198,7 +204,8 @@ it.each(["en-US", "zh-CN"])("adopts an edited proposal through its original reso
   expect(invoke.mock.calls.filter(([command]) => command === "save_term")).toHaveLength(0);
 });
 
-it("keeps newer B when edited A is acknowledged and advances only its confirmed base", async () => {
+it.each(["file", "conversation"] as const)("keeps newer B when edited A is acknowledged and advances only its confirmed base (%s)", async origin => {
+  if (origin === "conversation") { preview = termProposalFixture({ projectId: project.metadata.projectId, conversationId: fixtureIdentity(950) }).preview; preview.rows = preview.rows.slice(0, 1); }
   let acknowledge: ((value: ReturnType<typeof editedReceipt>) => void) | undefined;
   let submitted: ResourceDecision | undefined;
   const original = invoke.getMockImplementation();
@@ -257,7 +264,8 @@ it("keeps the edited target after a current-term conflict and requires explicit 
   expect(screen.getByRole("button", { name: label("proposalAdoptEdited") })).toBeEnabled();
 });
 
-it("retains an edited action after a mismatched receipt and reconciles the same request without resending", async () => {
+it.each(["file", "conversation"] as const)("retains an edited action after a mismatched receipt and reconciles the same request without resending (%s)", async origin => {
+  if (origin === "conversation") { preview = termProposalFixture({ projectId: project.metadata.projectId, conversationId: fixtureIdentity(950) }).preview; preview.rows = preview.rows.slice(0, 1); }
   let submitted: ResourceDecision | undefined;
   const original = invoke.getMockImplementation();
   invoke.mockImplementation((command, payload) => {
@@ -287,5 +295,125 @@ it("retains an edited action after a mismatched receipt and reconciles the same 
   await user.click(screen.getByRole("button", { name: label("proposalCheck") }));
   await waitFor(() => expect(observed?.current().pending).toBeNull());
   expect(observed?.current().proposalEditDraft).toBeNull();
+  expect(decisions()).toHaveLength(1);
+});
+
+
+it("reads conversation provenance and keeps stale terminology visible while refusing adoption", async () => {
+  const fixture = termProposalFixture({ projectId: project.metadata.projectId, conversationId: fixtureIdentity(950) });
+  preview = fixture.preview;
+  if (!preview.conversation) throw new Error("Expected original proposal provenance");
+  preview.conversation.current = false;
+  const original = invoke.getMockImplementation();
+  invoke.mockImplementation((command, payload) => command === "read_conversation_planning" ? Promise.resolve(structuredClone(fixture.run)) : original?.(command, payload));
+  render(<SessionReadProvider context={executionContext(project)} reads={reads} bridge={false}>
+    <TranslationDraftSession project={project}><ExecutionTaskSession project={project}>
+      <ResourceDraftSession project={project}><Content/></ResourceDraftSession>
+    </ExecutionTaskSession></TranslationDraftSession>
+  </SessionReadProvider>);
+  const user = userEvent.setup();
+  await waitFor(() => expect(observed?.journal.hydration).toBe("ready"));
+  await user.click(await screen.findByRole("button", { name: label("proposalOpen") }));
+  await screen.findByText(label("proposalStale"));
+  screen.getAllByRole("button", { name: label("proposalAdopt") }).forEach(button => expect(button).toBeDisabled());
+  screen.getAllByRole("button", { name: label("proposalEdit") }).forEach(button => expect(button).toBeDisabled());
+  expect(screen.getByText("Hi", { exact: true })).toBeVisible();
+  expect(screen.getByText(fixture.revision.origin.resultDigest)).not.toBeVisible();
+  await user.click(within(screen.getByRole("region", { name: label("proposalConversation") })).getByText(label("details")));
+  expect(screen.getByText(fixture.revision.origin.resultDigest)).toBeVisible();
+  await user.click(screen.getByRole("button", { name: label("proposalOriginalResult") }));
+  await screen.findByText(/"purpose":"term-proposal"/);
+  expect(invoke.mock.calls.filter(([name]) => name === "read_conversation_planning")).toHaveLength(1);
+  expect(decisions()).toHaveLength(0);
+  const reject = screen.getAllByRole("button", { name: label("proposalIgnore") })[0];
+  await waitFor(() => expect(reject).toBeEnabled()); await user.click(reject);
+  await waitFor(() => expect(decisions()).toHaveLength(1));
+  expect(decisions()[0][1].request.decision).toMatchObject({ captureId: fixture.revision.revisionId, entryId: "0", decision: "ignore" });
+});
+
+it("adopts several conversation terms sequentially through the original capture and never changes their evidence", async () => {
+  preview = termProposalFixture({ projectId: project.metadata.projectId, conversationId: fixtureIdentity(950) }).preview;
+  const original = invoke.getMockImplementation();
+  invoke.mockImplementation((command, payload) => {
+    if (command === "decide_resource_entry") {
+      if (!validateRequestDecision(payload.request)) throw new Error("Expected original term decision");
+      const request = payload.request.decision;
+      const entry = preview.rows.find(row => row.entry.id === request.entryId);
+      if (!entry) throw new Error("Expected unprocessed original entry");
+      preview = { ...preview, rows: preview.rows.filter(row => row !== entry) };
+      return Promise.resolve({ request, actionId: request.actionId, decision: request.decision, revision: null });
+    }
+    return original?.(command, payload);
+  });
+  render(<SessionReadProvider context={executionContext(project)} reads={reads} bridge={false}>
+    <TranslationDraftSession project={project}><ExecutionTaskSession project={project}>
+      <ResourceDraftSession project={project}><Content/></ResourceDraftSession>
+    </ExecutionTaskSession></TranslationDraftSession>
+  </SessionReadProvider>);
+  const user = userEvent.setup();
+  await waitFor(() => expect(observed?.journal.hydration).toBe("ready"));
+  await user.click(await screen.findByRole("button", { name: label("proposalOpen") }));
+  await waitFor(() => expect(screen.getAllByRole("button", { name: label("proposalAdopt") })[0]).toBeEnabled());
+  await user.click(screen.getAllByRole("button", { name: label("proposalAdopt") })[0]);
+  await waitFor(() => expect(observed?.current().pending).toBeNull());
+  const previewRegion = screen.getByRole("region", { name: label("proposalTitle") });
+  await user.click(within(previewRegion).getAllByRole("button", { name: label("proposalReadAgain") })[0]);
+  await waitFor(() => expect(screen.getByRole("button", { name: label("proposalAdopt") })).toBeEnabled());
+  await user.click(screen.getByRole("button", { name: label("proposalAdopt") }));
+  await waitFor(() => expect(observed?.current().pending).toBeNull());
+  expect(decisions().map(([, payload]) => payload.request.decision.entryId)).toEqual(["0", "1"]);
+  expect(decisions().every(([, payload]) => payload.request.decision.captureId === preview.capture.captureId)).toBe(true);
+  expect(decisions().every(([, payload]) => Object.keys(payload.request.decision).sort().join(",") === "actionId,captureId,decision,entryId,expectedRevisionId,projectId")).toBe(true);
+});
+
+it("reopens an unknown conversation decision with B intact and refuses to replace its capture before explicit reconciliation", async () => {
+  const fixture = termProposalFixture({ projectId: project.metadata.projectId, conversationId: fixtureIdentity(950) });
+  preview = fixture.preview; preview.rows = preview.rows.slice(0, 1);
+  let submitted: ResourceDecision | undefined;
+  const original = invoke.getMockImplementation();
+  invoke.mockImplementation((command, payload) => {
+    if (command === "decide_resource_entry") {
+      if (!validateRequestDecision(payload.request)) throw new Error("Expected original terminology decision");
+      const candidate = payload.request.decision;
+      if (!candidate) throw new Error("Expected original decision request");
+      submitted = candidate;
+      const receipt = editedReceipt(candidate);
+      return Promise.resolve({ ...receipt, revision: { ...receipt.revision, target: "Unconfirmed acknowledgement" } });
+    }
+    if (command === "read_resource_decision_action" && submitted) return Promise.resolve({ request: submitted, receipt: editedReceipt(submitted) });
+    return original?.(command, payload);
+  });
+  const user = await open();
+  await user.click(screen.getByRole("button", { name: label("proposalEdit") }));
+  const input = screen.getByRole("textbox", { name: label("proposalEditedTarget") });
+  await user.clear(input); await user.type(input, "Original edited A");
+  await user.click(screen.getByRole("button", { name: label("proposalAdoptEdited") }));
+  await waitFor(() => expect(observed?.current().pendingUncertain).toBe(true));
+  await user.clear(input); await user.type(input, "New B after uncertain A");
+  await act(async () => { expect(await observed?.flush()).toBe(true); });
+  const pending = structuredClone(observed?.current().pending);
+  cleanup(); observed = undefined;
+  render(<SessionReadProvider context={executionContext(project)} reads={reads} bridge={false}>
+    <TranslationDraftSession project={project}><ExecutionTaskSession project={project}>
+      <ResourceDraftSession project={project}><Content/></ResourceDraftSession>
+    </ExecutionTaskSession></TranslationDraftSession>
+  </SessionReadProvider>);
+  await waitFor(() => expect(observedOwner().journal.hydration).toBe("ready"));
+  const restored = screen.getByRole("textbox", { name: label("proposalEditedTarget") });
+  expect(restored).toHaveValue("New B after uncertain A");
+  expect(observedOwner().current().pending).toEqual(pending);
+  expect(observedOwner().current().previewCaptureId).toBe(fixture.revision.revisionId);
+  const other = termProposalFixture({ projectId: project.metadata.projectId, conversationId: fixtureIdentity(951) }).preview.capture;
+  other.captureId = fixtureIdentity(952);
+  if (other.origin.kind !== "conversation") throw new Error("Expected another conversation capture");
+  other.origin.proposal.revisionId = other.captureId;
+  expect(observedOwner().canReceiveConversation(other)).toBe(false);
+  await act(async () => { const owner = observedOwner(); expect(await owner.openConversationPreview(other, owner.current(), () => true)).toBe(false); });
+  expect(observedOwner().current().previewCaptureId).toBe(fixture.revision.revisionId);
+  expect(invoke.mock.calls.filter(([name]) => name === "read_resource_decision_action")).toHaveLength(0);
+  await user.click(screen.getByRole("button", { name: label("proposalCheck") }));
+  await waitFor(() => expect(observed?.current().pending).toBeNull());
+  expect(restored).toHaveValue("New B after uncertain A");
+  expect(observedOwner().current().proposalEditDraft?.expectedRevisionId).toBe(fixtureIdentity(901));
   expect(decisions()).toHaveLength(1);
 });

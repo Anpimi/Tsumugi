@@ -14,6 +14,11 @@ export type GlossaryCaptureOrigin =
       kind: "correction";
     }
   | {
+      kind: "conversation";
+      modelOrigin: ConversationProposalOrigin;
+      proposal: ConversationProposalRef;
+    }
+  | {
       kind: "mcp";
       provenance: McpTermProvenance;
     };
@@ -174,6 +179,18 @@ export interface CorrectionTermBasis {
 export interface RevisionSelectionRef {
   revisionId: ExecutionId;
   selectionId: ExecutionId;
+}
+export interface ConversationProposalOrigin {
+  attemptId: ExecutionId;
+  inputDigest: string;
+  resultDigest: string;
+  resultId: ExecutionId;
+}
+export interface ConversationProposalRef {
+  conversationId: ExecutionId;
+  projectId: ExecutionId;
+  proposalId: ExecutionId;
+  revisionId: ExecutionId;
 }
 export interface McpTermProvenance {
   attemptId: ExecutionId;

@@ -13,6 +13,11 @@ export type GlossaryCaptureOrigin =
       kind: "correction";
     }
   | {
+      kind: "conversation";
+      modelOrigin: ConversationProposalOrigin;
+      proposal: ConversationProposalRef;
+    }
+  | {
       kind: "mcp";
       provenance: McpTermProvenance;
     };
@@ -381,6 +386,18 @@ export interface RevisionSelectionRef {
   revisionId: ExecutionId;
   selectionId: ExecutionId;
 }
+export interface ConversationProposalOrigin {
+  attemptId: ExecutionId;
+  inputDigest: string;
+  resultDigest: string;
+  resultId: ExecutionId;
+}
+export interface ConversationProposalRef {
+  conversationId: ExecutionId;
+  projectId: ExecutionId;
+  proposalId: ExecutionId;
+  revisionId: ExecutionId;
+}
 export interface McpTermProvenance {
   attemptId: ExecutionId;
   basis: McpTermQueryBasis;
@@ -465,18 +482,6 @@ export interface ContextResourceProposalOrigin {
   entryIndex: number;
   modelOrigin: ConversationProposalOrigin;
   proposal: ConversationProposalRef;
-}
-export interface ConversationProposalOrigin {
-  attemptId: ExecutionId;
-  inputDigest: string;
-  resultDigest: string;
-  resultId: ExecutionId;
-}
-export interface ConversationProposalRef {
-  conversationId: ExecutionId;
-  projectId: ExecutionId;
-  proposalId: ExecutionId;
-  revisionId: ExecutionId;
 }
 export interface ContentScope {
   currentSnapshot: ExecutionId | null;
@@ -745,10 +750,16 @@ export interface SaveTerm {
 }
 export interface ResourcePreview {
   capture: GlossaryCapture;
+  conversation?: ConversationTermPreview | null;
   correction: CorrectionTermPreview | null;
   mcp: McpTermCapturePreview | null;
   removed: TermRevision[];
   rows: ResourcePreviewRow[];
+}
+export interface ConversationTermPreview {
+  current: boolean;
+  modelOrigin: ConversationProposalOrigin;
+  proposal: ConversationProposalRef;
 }
 export interface CorrectionTermPreview {
   decision: ResourceDecisionResult | null;

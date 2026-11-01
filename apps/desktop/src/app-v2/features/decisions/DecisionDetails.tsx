@@ -11,6 +11,7 @@ import { Button } from "../../../design-system/Button";
 import { Banner, LoadingState } from "../../../design-system/Feedback";
 import { TokenizedText } from "../../../design-system/TokenizedText";
 import { decisionTargetKey, DecisionTargetReadError, readDecisionTarget, type DecisionTargetDetails } from "./decisionTargetReads";
+import { TermConversationOrigin } from "../knowledge/TermConversationOrigin";
 import styles from "./DecisionDetails.module.css";
 
 export interface DecisionDetailsProps {
@@ -53,7 +54,7 @@ function ResourceDetails({ view }: { view: Extract<DecisionTargetDetails, { kind
   const { t } = useTranslation(undefined, { keyPrefix: "workbenchV2" });
   const { preview, proposal } = view, origin = preview.capture.origin;
   const term = proposal.kind === "row" ? proposal.row.entry : proposal.term;
-  const stale = preview.correction?.evidence.current === false || preview.mcp?.current === false;
+  const stale = preview.correction?.evidence.current === false || preview.mcp?.current === false || preview.conversation?.current === false;
   return <div className={styles.body}>
     <p>{t("decisionDetailsResourceReadOnly")}</p>
     {stale ? <Banner tone="warning" role="status">{t("decisionDetailsResourceStale")}</Banner> : null}
@@ -74,6 +75,7 @@ function ResourceDetails({ view }: { view: Extract<DecisionTargetDetails, { kind
         {preview.correction ? <><TextBlock label={t("decisionDetailsSource")} text={preview.correction.evidence.sourceText}/>
           <TextBlock label={t("decisionDetailsBefore")} text={preview.correction.evidence.beforeText}/>
           <TextBlock label={t("decisionDetailsAfter")} text={preview.correction.evidence.afterText}/></> : null}</> : null}
+      {origin.kind === "conversation" ? <TermConversationOrigin key={preview.capture.captureId} origin={origin}/> : null}
       {origin.kind === "mcp" ? <><p>{t("decisionDetailsOriginMcp", { server: origin.provenance.tool.serverName, tool: origin.provenance.tool.toolName })}</p>
         <TextBlock label={t("decisionDetailsQuery")} text={origin.provenance.query}/></> : null}
     </section>

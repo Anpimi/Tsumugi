@@ -12,15 +12,16 @@ import { Menu } from "../../../design-system/Menu";
 import type { InteractionGate } from "../../workspace/interactionGate";
 import type { ConversationInput, ConversationSession } from "./ConversationSession";
 import { editableProposal, planningUnitLabels, validProposalContent, validProposalQuestion } from "./proposalDraft";
-import type { ConversationProposalTarget, OpenKnowledgeProposal } from "./conversationNavigation";
+import type { ConversationProposalTarget, OpenKnowledgeProposal, OpenTermProposal } from "./conversationNavigation";
 import { ConversationKnowledgeEntries, ConversationKnowledgeFields } from "./ConversationKnowledgeEntries";
+import { ConversationTermEntries, ConversationSavedTermEntries } from "./ConversationTermEntries";
 import { ProposalRunSetup } from "./ProposalRunSetup";
 import styles from "./ConversationPanel.module.css";
 
 interface ContextProps {
   owner: ConversationSession; input: ConversationInput; visible: boolean; disabled: boolean;
   gate: InteractionGate; viewId: string | null; parentDialogId?: string;
-  onOpenKnowledgeProposal?: OpenKnowledgeProposal;
+  onOpenKnowledgeProposal?: OpenKnowledgeProposal; onOpenTermProposal?: OpenTermProposal;
 }
 
 function ProposalEditor({ owner, input, draft, visible, disabled, gate, viewId, parentDialogId, focusRequest }: ContextProps & { draft: ConversationProposalDraft; focusRequest: RefObject<boolean> }) {
@@ -62,7 +63,7 @@ function ProposalEditor({ owner, input, draft, visible, disabled, gate, viewId, 
   return <section ref={root} tabIndex={-1} className={styles.proposalEditor} aria-label={t("proposalEditor")}
     onFocusCapture={() => gate.setInputOwner(viewId, inputOwner)} onBlurCapture={event => { if (!event.currentTarget.contains(event.relatedTarget)) gate.releaseOwner(inputOwner); }}
     onCompositionStartCapture={() => gate.setComposing(inputOwner, true)} onCompositionEndCapture={() => gate.setComposing(inputOwner, false)}>
-    <h3>{t("proposalEditor")}</h3><p>{t(content.kind === "knowledge-proposal" ? "knowledgeEditHelp" : "proposalEditHelp")}</p>
+    <h3>{t("proposalEditor")}</h3><p>{t(content.kind === "term-proposal" ? "termEditHelp" : content.kind === "knowledge-proposal" ? "knowledgeEditHelp" : "proposalEditHelp")}</p>
     {base.data ? <p>{t("proposalBasedOn", { number: base.data.revision })}</p> : null}
     {readFailed ? <Banner tone="error"><p>{t("proposalReadFailed")}</p><CommandFailureDetails failure={commandFailure(base.error ?? latest.error ?? origin.error)}/></Banner>
       : reading ? <LoadingState label={t("proposalReading")}/> : materialUnavailable ? <Banner tone="warning">{t("proposalMaterialUnavailable")}</Banner> : null}
@@ -75,6 +76,7 @@ function ProposalEditor({ owner, input, draft, visible, disabled, gate, viewId, 
           <ul>{latest.data.content.unitIds.map((unitId, index) => <li key={unitId}>{labels.get(unitId)?.key || t("proposalEntryNumber", { number: index + 1 })}</li>)}</ul>
           <p>{global(`ai.plan.policies.${latest.data.content.options.selectionPolicy}`)}</p></> : null}
         {latest.data.content.kind === "knowledge-proposal" ? <ConversationKnowledgeEntries entries={latest.data.content.entries}/> : null}
+        {latest.data.content.kind === "term-proposal" ? <ConversationTermEntries entries={latest.data.content.entries} locale={scope?.kind === "units" ? scope.locale : undefined} labels={labels}/> : null}
         <p>{t("proposalRebaseHelp")}</p><Button size="sm" disabled={blocked || (!!input.busy || input.journalBusy) || pending || readFailed || reading || !run} onClick={() => {
           if (allowed() && latest.data) { focusRequest.current = true; owner.acceptProposalBase(latest.data, draft.editSeq); }
         }}>{t("proposalUseLatestBase")}</Button></div> : null}
@@ -101,6 +103,8 @@ function ProposalEditor({ owner, input, draft, visible, disabled, gate, viewId, 
     </fieldset> : null}
     {content.kind === "proposal" ? <ProposalRunSetup owner={owner} conversationId={conversationId} draft={draft} content={content} labels={labels} active={visible}
       editable={() => allowed() && !pending && !input.busy}/>
+      : content.kind === "term-proposal" ? <><ConversationTermEntries entries={content.entries} locale={scope?.kind === "units" ? scope.locale : undefined} labels={labels}/>
+        {!validProposalContent(content, run) ? <p role="status">{t("termProposalInvalid")}</p> : null}</>
       : <><ConversationKnowledgeFields entries={content.entries} unitIds={scope?.kind === "units" ? scope.unitIds : []} labels={labels} disabled={blocked} allowed={allowed}
       change={edit => owner.editProposal(conversationId, proposalId, value => value.kind === "knowledge-proposal" ? { ...value, entries: edit(value.entries) } : value)}/>
       {!validProposalContent(content, run) ? <p role="status">{t("knowledgeProposalInvalid")}</p> : null}</>}
@@ -129,7 +133,7 @@ export function ConversationProposals({ revisions, proposalTarget, proposalFocus
   proposalFocusTargets: RefObject<WeakSet<ConversationProposalTarget>>;
 }) {
   const { t } = useTranslation(undefined, { keyPrefix: "conversation" });
-  const { owner, input, visible, disabled, gate, viewId, parentDialogId, onOpenKnowledgeProposal } = props;
+  const { owner, input, visible, disabled, gate, viewId, parentDialogId, onOpenKnowledgeProposal, onOpenTermProposal } = props;
   const reads = useSessionReads(), conversationId = input.key.conversationId;
   const focusRequest = useRef(false);
   const [opening, setOpening] = useState<string | null>(null), [openFailure, setOpenFailure] = useState<ReturnType<typeof commandFailure> | null>(null);
@@ -183,9 +187,10 @@ export function ConversationProposals({ revisions, proposalTarget, proposalFocus
   async function openKnowledge(revision: ConversationProposalRevision) {
     const current = () => live.current.visible && !live.current.disabled && !reads.retired && owner.getSnapshot().activeId === conversationId
       && gate.canDispatch({ viewId, source: "button", dialogId: parentDialogId });
-    if (!onOpenKnowledgeProposal || navigation.current || !current() || revision.content.kind !== "knowledge-proposal") return;
+    const open = revision.content.kind === "term-proposal" ? onOpenTermProposal : revision.content.kind === "knowledge-proposal" ? onOpenKnowledgeProposal : undefined;
+    if (!open || navigation.current || !current()) return;
     navigation.current = true; setOpening(revision.revisionId); setOpenFailure(null);
-    try { if (!await onOpenKnowledgeProposal({ projectId: revision.projectId, conversationId: revision.conversationId, proposalId: revision.proposalId, revisionId: revision.revisionId }, current) && current()) setOpenFailure(commandFailure(new Error("The knowledge proposal destination changed"))); }
+    try { if (!await open({ projectId: revision.projectId, conversationId: revision.conversationId, proposalId: revision.proposalId, revisionId: revision.revisionId }, current) && current()) setOpenFailure(commandFailure(new Error("The proposal destination changed"))); }
     catch (cause) { if (current()) setOpenFailure(commandFailure(cause)); }
     finally { navigation.current = false; setOpening(null); }
   }
@@ -206,14 +211,15 @@ export function ConversationProposals({ revisions, proposalTarget, proposalFocus
         {opened?.revisionId === revision.revisionId ? <p>{t("proposalTargetOriginal")}</p> : null}
         <p className={styles.text}>{revision.content.summary}</p>{revision.content.kind === "proposal" ? <p>{t("proposalScope", { count: revision.content.unitIds.length })}</p> : null}
         {revision.content.kind === "knowledge-proposal" ? <><p>{t("knowledgeProposal")}</p><ConversationKnowledgeEntries entries={revision.content.entries}/></> : null}
+        {revision.content.kind === "term-proposal" ? <><p>{t("termProposal")}</p><ConversationSavedTermEntries revision={revision} active={visible && !disabled}/></> : null}
         {revision.content.questions.length ? <p>{t("proposalQuestionsRemaining", { count: revision.content.questions.length })}</p> : null}
         {opened?.revisionId === revision.revisionId ? revision.content.questions.length ? <ul aria-label={t("proposalQuestions")}>
           {revision.content.questions.map((question, index) => <li className={styles.text} key={index}>{question}</li>)}
         </ul> : <p>{t("proposalTargetNoQuestions")}</p> : null}
         <Button size="sm" disabled={disabled || !visible} onClick={() => { if (allowed()) { focusRequest.current = true; owner.beginProposalEdit(revision); } }}>{t(edits.some(edit => edit.proposalId === revision.proposalId) ? "proposalContinueEditing" : "proposalEdit")}</Button>
         {revision.content.kind === "proposal" ? <Button size="sm" disabled={disabled || !visible || (!!input.busy || input.journalBusy) || !!input.workPlan.busy || !!input.value.pending} onClick={() => { if (allowed()) owner.beginWorkPlan(revision); }}>{t("planReviewOpen")}</Button> : null}
-        {revision.content.kind === "knowledge-proposal" && onOpenKnowledgeProposal ? <Button size="sm" disabled={disabled || !visible || opening !== null} pending={opening === revision.revisionId}
-          onClick={() => { void openKnowledge(revision); }}>{t("knowledgeOpenReview")}</Button> : null}
+        {(revision.content.kind === "knowledge-proposal" && onOpenKnowledgeProposal || revision.content.kind === "term-proposal" && onOpenTermProposal) ? <Button size="sm" disabled={disabled || !visible || opening !== null} pending={opening === revision.revisionId}
+          onClick={() => { void openKnowledge(revision); }}>{t(revision.content.kind === "term-proposal" ? "termOpenReview" : "knowledgeOpenReview")}</Button> : null}
       </article>)}
     </section> : null}
   </>;

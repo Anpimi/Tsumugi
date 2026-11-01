@@ -172,6 +172,12 @@ export type ConversationPlanningModelOutput =
       kind: "knowledge-proposal";
       questions: string[];
       summary: string;
+    }
+  | {
+      entries: ConversationTermEntry[];
+      kind: "term-proposal";
+      questions: string[];
+      summary: string;
     };
 /**
  * Read-only concerns project state; proposals are not already-adopted changes.
@@ -1175,6 +1181,14 @@ export interface ConversationKnowledgeEntry {
   name: string;
   text: string;
   unitIds: ExecutionId[];
+}
+export interface ConversationTermEntry {
+  aliases: string[];
+  protected: boolean;
+  reason: string;
+  source: string;
+  target: string;
+  unitId: ExecutionId;
 }
 export interface AuthorizeConversationProposalWorkPlan {
   actionId: ExecutionId;

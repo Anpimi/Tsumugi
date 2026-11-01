@@ -785,6 +785,7 @@ pub(super) fn preview(
         rows,
         removed: vec![],
         correction: None,
+        conversation: None,
         mcp: Some(McpTermCapturePreview {
             current: current(c, &value)?,
         }),

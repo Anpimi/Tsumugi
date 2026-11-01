@@ -1020,6 +1020,54 @@
           }
         ]
       },
+      "ConversationProposalOrigin": {
+        "additionalProperties": false,
+        "properties": {
+          "attemptId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "inputDigest": {
+            "type": "string"
+          },
+          "resultDigest": {
+            "type": "string"
+          },
+          "resultId": {
+            "$ref": "#/definitions/ExecutionId"
+          }
+        },
+        "required": [
+          "attemptId",
+          "resultId",
+          "inputDigest",
+          "resultDigest"
+        ],
+        "type": "object"
+      },
+      "ConversationProposalRef": {
+        "additionalProperties": false,
+        "properties": {
+          "conversationId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "projectId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "proposalId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "revisionId": {
+            "$ref": "#/definitions/ExecutionId"
+          }
+        },
+        "required": [
+          "projectId",
+          "conversationId",
+          "proposalId",
+          "revisionId"
+        ],
+        "type": "object"
+      },
       "CorrectionTermBasis": {
         "additionalProperties": false,
         "properties": {
@@ -1136,6 +1184,27 @@
             "required": [
               "kind",
               "basis"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "properties": {
+              "kind": {
+                "const": "conversation",
+                "type": "string"
+              },
+              "modelOrigin": {
+                "$ref": "#/definitions/ConversationProposalOrigin"
+              },
+              "proposal": {
+                "$ref": "#/definitions/ConversationProposalRef"
+              }
+            },
+            "required": [
+              "kind",
+              "proposal",
+              "modelOrigin"
             ],
             "type": "object"
           },

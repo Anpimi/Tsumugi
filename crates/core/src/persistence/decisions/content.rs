@@ -118,7 +118,8 @@ fn resource_proposals(store: &ProjectStore, c: &Connection, project: ExecutionId
             return Err(failure(ErrorCode::CorruptLedger, "decision-resource-locale"));
         }
         let current = preview.correction.as_ref().map(|value| value.evidence.current)
-            .or_else(|| preview.mcp.as_ref().map(|value| value.current)).unwrap_or(true);
+            .or_else(|| preview.mcp.as_ref().map(|value| value.current))
+            .or_else(|| preview.conversation.as_ref().map(|value| value.current)).unwrap_or(true);
         let state = if current { DecisionState::Pending } else { DecisionState::Stale };
         let mut proposals = preview.rows.into_iter().filter(|row| row.kind != resources::ResourceChangeKind::Unchanged)
             .map(|row| (row.entry.id, row.scope_unit_id, row.current.map(|term| term.revision_id)))

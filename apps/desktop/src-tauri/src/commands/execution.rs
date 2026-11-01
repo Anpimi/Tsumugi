@@ -408,6 +408,10 @@ impl ExecutionHost {
             Arc::new(tsumugi_core::ai::conversation_planning::ConversationPlanningRunner::with_knowledge_service(provider_service.clone())),
             tsumugi_core::execution::RecoveryPolicy::ExternalUnknown,
         ).map_err(map_read)?;
+        host.runtime.register_with_policy(
+            Arc::new(tsumugi_core::ai::conversation_planning::ConversationPlanningRunner::with_terminology_service(provider_service.clone())),
+            tsumugi_core::execution::RecoveryPolicy::ExternalUnknown,
+        ).map_err(map_read)?;
         host.runtime
             .register_with_policy(
                 Arc::new(tsumugi_core::ai::semantic_review::AiSemanticReviewRunner::with_service(

@@ -9,6 +9,7 @@ import { SessionReads } from "../../../sessionReads";
 import { canonicalConversationDraft, type ConversationDraftHead } from "../../../conversationDraftCommands";
 import type { ConversationProposalRevision } from "../../../conversationCommands";
 import { validateResponseConversationWritten } from "../../../generated/draft.validators";
+import { termProposalFixture } from "../../../testSupport/termProposalFixture";
 import { conversationProposalFixture, knowledgeProposalFixture } from "../../../testSupport/conversationProposalFixture";
 import { fixtureIdentity as id } from "../../../testSupport/executionFixture";
 import { connectionFixture } from "../../../testSupport/connectionFixture";
@@ -39,10 +40,10 @@ function expectNoExecution() {
     "capture_conversation_proposal", "revise_conversation_proposal", "read_conversation_proposal_work_plans", "read_model_connections",
   ].includes(command))).toEqual([]);
 }
-function harness(saved = true, knowledge = false) {
+function harness(saved = true, knowledge: boolean | "terminology" = false) {
   const planFixture = conversationProposalFixture(key);
   if (planFixture.revision.content.kind !== "proposal") throw new Error("Synthetic history must contain a proposal");
-  const content = planFixture.revision.content, fixture = knowledge ? knowledgeProposalFixture(key) : planFixture;
+  const content = planFixture.revision.content, fixture = knowledge === "terminology" ? termProposalFixture(key) : knowledge ? knowledgeProposalFixture(key) : planFixture;
   const state = {
     head: { key, revision: "0", writerId: null, value: null } as ConversationDraftHead,
     revisions: saved ? [structuredClone(fixture.revision)] : [] as ConversationProposalRevision[],
@@ -106,14 +107,14 @@ function harness(saved = true, knowledge = false) {
     }
     throw new Error(`Unexpected synthetic command: ${command}`);
   });
-  const open = async (initialTarget: ConversationProposalTarget | null = null, options: { strict?: boolean; visible?: boolean; onOpenKnowledgeProposal?: OpenKnowledgeProposal } = {}) => {
+  const open = async (initialTarget: ConversationProposalTarget | null = null, options: { strict?: boolean; visible?: boolean; onOpenKnowledgeProposal?: OpenKnowledgeProposal; onOpenTermProposal?: OpenKnowledgeProposal } = {}) => {
     const reads = new SessionReads(context), gate = new InteractionGate(); gate.setVisibleOwner("entries");
     const owner = new ConversationSession(context, () => reads.invalidate(["project"]), () => {});
     expect(await owner.initialize()).toBe(true); expect(await owner.open(conversationId)).toBe(true);
     let target = initialTarget, visible = options.visible ?? true;
     const tree = () => {
       const content = <ApplicationReadProvider><SessionReadProvider context={context} reads={reads} bridge={false}>
-        <ConversationPanel owner={owner} visible={visible} disabled={false} gate={gate} viewId="entries" proposalTarget={target} onOpenKnowledgeProposal={options.onOpenKnowledgeProposal}/>
+        <ConversationPanel owner={owner} visible={visible} disabled={false} gate={gate} viewId="entries" proposalTarget={target} onOpenKnowledgeProposal={options.onOpenKnowledgeProposal} onOpenTermProposal={options.onOpenTermProposal}/>
       </SessionReadProvider></ApplicationReadProvider>;
       return options.strict ? <StrictMode>{content}</StrictMode> : content;
     };
@@ -517,5 +518,48 @@ it("rereads a failed exact version in place without creating a draft or claiming
   expect(calls("read_conversation_proposal").every(([, payload]) => payload.request.revisionId === h.revision.revisionId)).toBe(true);
   expect(session.owner.getSnapshot().inputs.get(conversationId)?.value.proposalEdits).toBeUndefined();
   expect(calls("write_local_conversation_draft")).toHaveLength(0);
+  expectNoExecution();
+});
+
+
+it("saves typed terminology, resolves questions in a new version, preserves B and opens that exact capture without a work plan", async () => {
+  await i18n.changeLanguage("en-US");
+  const h = harness(false, "terminology"), onOpen = vi.fn<OpenKnowledgeProposal>(async () => true);
+  h.revision.content.questions = ["Which greeting is intended?"];
+  if (!h.run.output) throw new Error("A model result is required");
+  h.run.output.model.questions = [...h.revision.content.questions];
+  const first = await h.open(null, { onOpenTermProposal: onOpen });
+  const reply = within(await screen.findByRole("region", { name: i18n.t("conversation.reply") }));
+  expect(reply.getByRole("heading", { name: i18n.t("conversation.termProposal") })).toBeVisible();
+  expect(reply.getByText("Hello", { exact: true })).toBeVisible(); expect(reply.getByText("你好", { exact: true })).toBeVisible();
+  expect(reply.getByText("Hi", { exact: true })).toBeVisible(); expect(reply.getByText("dialogue.1", { exact: true })).toBeVisible();
+  fireEvent.click(reply.getByRole("button", { name: i18n.t("conversation.proposalCapture") }));
+  await screen.findByText(i18n.t("conversation.proposalRecorded")); await first.flush();
+  expect(h.state.revisions[0].content.kind).toBe("term-proposal");
+  const editor = await h.edit();
+  expect(editor.queryByRole("textbox", { name: i18n.t("conversation.knowledgeText", { number: 1 }) })).toBeNull();
+  fireEvent.click(editor.getByRole("button", { name: i18n.t("conversation.proposalRemoveQuestion", { number: 1 }) }));
+  const summary = editor.getByRole("textbox", { name: i18n.t("conversation.proposalSummary") });
+  fireEvent.change(summary, { target: { value: "Resolved terminology A" } });
+  h.state.revisionWait = deferred(); fireEvent.click(editor.getByRole("button", { name: i18n.t("conversation.proposalSaveVersion") }));
+  await waitFor(() => expect(calls("revise_conversation_proposal")).toHaveLength(1));
+  fireEvent.change(summary, { target: { value: "New summary B stays local" } });
+  await act(async () => { h.state.revisionWait?.resolve(); });
+  await waitFor(() => expect(h.state.revisions).toHaveLength(2)); await first.flush();
+  const latest = h.state.revisions[1];
+  expect(latest.content.questions).toEqual([]);
+  expect(latest.content).toMatchObject({ kind: "term-proposal", entries: h.revision.content.kind === "term-proposal" ? h.revision.content.entries : [] });
+  expect(summary).toHaveValue("New summary B stays local");
+  expect(h.state.head.value?.proposalEdits?.[0]).toMatchObject({ expectedRevisionId: latest.revisionId, content: { kind: "term-proposal", summary: "New summary B stays local" } });
+  const history = within(await screen.findByRole("region", { name: i18n.t("conversation.proposalHistory") }));
+  const latestCard = history.getByText("Resolved terminology A").closest("article");
+  if (!latestCard) throw new Error("The saved term version is required");
+  fireEvent.click(within(latestCard).getByRole("button", { name: i18n.t("conversation.termOpenReview") }));
+  await waitFor(() => expect(onOpen).toHaveBeenCalledOnce());
+  expect(onOpen.mock.calls[0][0]).toEqual({ ...key, proposalId: latest.proposalId, revisionId: latest.revisionId });
+  expect(history.queryByRole("button", { name: i18n.t("conversation.planReviewOpen") })).toBeNull();
+  first.view.unmount(); first.retire(); await h.open();
+  expect(await screen.findByRole("textbox", { name: i18n.t("conversation.proposalSummary") })).toHaveValue("New summary B stays local");
+  expect(calls("capture_conversation_proposal")).toHaveLength(1); expect(calls("revise_conversation_proposal")).toHaveLength(1);
   expectNoExecution();
 });

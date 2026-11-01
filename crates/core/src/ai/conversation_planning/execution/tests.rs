@@ -355,3 +355,5 @@ fn planning_requires_complete_bounded_output_and_one_request_accounting() {
     let foreign = FixedInput::capture(foreign).unwrap();
     assert!(validate_output(&input, &result(&foreign, reply(), 1)).is_err());
 }
+
+mod terminology;

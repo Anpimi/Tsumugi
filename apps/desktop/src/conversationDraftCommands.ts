@@ -85,7 +85,7 @@ function head(value: Head, key: Head["key"]) {
     && revocations.every(slot => slot.request.projectId === key.projectId && slot.request.actionId !== primaryAction
       && BigInt(slot.request.expectedGeneration) > 0n && BigInt(slot.submittedSeq) <= BigInt(draft.editSeq))
     && BigInt(messageSeq) <= BigInt(draft.editSeq) && teamDraftsMatch(draft)
-    && new Set(edits.map(edit => edit.proposalId)).size === edits.length && edits.every(edit => BigInt(edit.editSeq) <= BigInt(draft.editSeq) && (edit.content.kind === "proposal" || edit.content.kind === "knowledge-proposal")
+    && new Set(edits.map(edit => edit.proposalId)).size === edits.length && edits.every(edit => BigInt(edit.editSeq) <= BigInt(draft.editSeq) && (edit.content.kind === "proposal" || edit.content.kind === "knowledge-proposal" || edit.content.kind === "term-proposal")
       && (pending?.kind !== "proposal-revision" || pending.request.proposalId !== edit.proposalId || pending.submittedSeq !== edit.editSeq
         || edit.expectedRevisionId === pending.request.expectedRevisionId && same(edit.content, pending.request.content)))
     && (pending == null || target?.projectId === key.projectId && target.conversationId === key.conversationId

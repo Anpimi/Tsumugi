@@ -131,7 +131,7 @@ pub use translation::{
 const DATABASE_FILENAME: &str = "project.sqlite3";
 const LOCK_FILENAME: &str = ".tsumugi.lock";
 const APPLICATION_ID: i64 = 0x5453_4D47;
-pub(crate) const SCHEMA_VERSION: i64 = 72;
+pub(crate) const SCHEMA_VERSION: i64 = 73;
 #[cfg(test)]
 pub(crate) enum UnsupportedFixtureDomain {
     Arena,
@@ -159,6 +159,56 @@ pub(crate) fn remove_unsupported_fixture_domain(
         connection.execute_batch(&format!("DROP TABLE {table}"))?;
     }
     Ok(())
+}
+
+/// Restore only structures introduced after the requested supported fixture.
+/// Conversation tables are retained or removed by each fixture's own scenario.
+#[cfg(test)]
+pub(in crate::persistence) fn prepare_legacy_fixture_schema(c: &Connection, version: i64) -> rusqlite::Result<()> {
+    assert!((61..=72).contains(&version));
+    assert!(c.is_autocommit());
+    if version < 70 { content::lineage_corrections::make_legacy_schema(c)?; }
+    if version < 66 {
+        resources::make_legacy_context_schema(c)?;
+    } else if version < 68 {
+        translation::make_legacy_memory_schema(c)?;
+    } else if version < 69 {
+        c.execute_batch("DROP TABLE source_validation_history")?;
+    }
+    if version < 72 { c.execute_batch("ALTER TABLE resource_decisions DROP COLUMN edited_target")?; }
+    resources::make_legacy_capture_schema(c)
+}
+
+/// Compare every original legacy column and row identity across migration.
+/// Added tables and nullable columns are outside the older storage format.
+#[cfg(test)]
+pub(in crate::persistence) fn legacy_fixture_rows(c: &Connection, version: i64)
+    -> std::collections::BTreeMap<String, Vec<Vec<rusqlite::types::Value>>> {
+    let tables = c.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%' ORDER BY name").unwrap()
+        .query_map([], |r| r.get::<_,String>(0)).unwrap().collect::<Result<Vec<_>,_>>().unwrap();
+    tables.into_iter().filter(|name| {
+        !(version == 61 && name.starts_with("application_conversation"))
+            && !(version < 63 && name == "application_conversation_proposals")
+            && !(version < 64 && name == "application_conversation_work_plans")
+            && !(version < 65 && name == "application_conversation_planning_attempts")
+            && !(version < 69 && name == content::validation_history::TABLE)
+            && !(version < 70 && content::lineage_corrections::TABLES.iter().any(|(added,_)| name == added))
+    }).map(|name| {
+        let columns = c.prepare("SELECT name FROM pragma_table_info(?1) ORDER BY cid").unwrap()
+            .query_map([&name], |r| r.get::<_,String>(0)).unwrap().collect::<Result<Vec<_>,_>>().unwrap()
+            .into_iter().filter(|column| {
+                !(version < 68 && name == "translation_revisions" && column == "reuse_origin_json")
+                    && !(version < 72 && name == "resource_decisions" && column == "edited_target")
+                    && !(version < 66 && name == "context_revisions" && ["context_id","subject_id","resource_kind","record_json"].contains(&column.as_str()))
+                    && !(version < 66 && name == "context_current" && column == "context_id")
+                    && !(version < 66 && name == "resource_changes" && ["scope_json","old_scope_json"].contains(&column.as_str()))
+            }).map(|column| format!("\"{column}\"")).collect::<Vec<_>>().join(",");
+        let mut q = c.prepare(&format!("SELECT rowid,{columns} FROM \"{name}\" ORDER BY rowid")).unwrap();
+        let count = q.column_count();
+        let values = q.query_map([], |row| (0..count).map(|i|row.get(i)).collect::<rusqlite::Result<Vec<rusqlite::types::Value>>>()).unwrap()
+            .collect::<Result<Vec<_>,_>>().unwrap();
+        (name, values)
+    }).collect()
 }
 
 /// A real pre-AI origin constraint for an isolated unsupported snapshot. Only
@@ -963,7 +1013,7 @@ fn validate_existing_connection(
     let user_version: i64 = connection
         .query_row("PRAGMA user_version", [], |row| row.get(0))
         .map_err(|error| map_sqlite(error, PersistenceStage::Open))?;
-    if ![61, 62, 63, 64, 65, 66, 67, 68, 69, 70, 71, SCHEMA_VERSION].contains(&user_version) {
+    if ![61, 62, 63, 64, 65, 66, 67, 68, 69, 70, 71, 72, SCHEMA_VERSION].contains(&user_version) {
         return Err(PersistenceError::UnsupportedSchema {
             found_version: user_version,
             stage: PersistenceStage::Open,
@@ -991,7 +1041,7 @@ fn validate_existing_connection(
         // Validate the complete supported schema and storage pragmas before
         // replacing any tables.
         // SQLite's rollback journal makes both schema and version one durable
-        // unit; a crash leaves the original supported schema or complete 72.
+        // unit; a crash leaves the original supported schema or complete 73.
         let transaction = connection
             .transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)
             .map_err(|error| map_sqlite(error, PersistenceStage::Open))?;
@@ -1043,6 +1093,8 @@ fn validate_existing_connection(
             resources::migrate_edited_decisions(&transaction)
                 .map_err(|error| map_sqlite(error, PersistenceStage::Open))?;
         }
+        resources::migrate_conversation_captures(&transaction)
+            .map_err(|error| map_sqlite(error, PersistenceStage::Open))?;
         #[cfg(test)]
         migration_crash_hook("conversation-after-ddl");
         transaction.pragma_update(None, "user_version", SCHEMA_VERSION)

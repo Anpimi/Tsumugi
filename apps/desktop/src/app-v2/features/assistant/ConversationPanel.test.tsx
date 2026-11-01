@@ -23,7 +23,7 @@ beforeEach(async () => { invoke.mockReset(); await i18n.changeLanguage("zh-CN");
 const recoveryResources: { owner: ConversationSession; reads: SessionReads; gate: InteractionGate }[] = [];
 afterEach(() => { cleanup(); recoveryResources.splice(0).forEach(({ owner, reads, gate }) => { owner.retire(); reads.retire(); gate.dispose(); }); });
 
-it.each(["conversation-only", "units", "knowledge"] as const)("reviews %s material and exact limits before one request, clears changed consent, and blocks IME and other dialogs", async mode => {
+it.each(["conversation-only", "units", "knowledge", "terminology"] as const)("reviews %s material and exact limits before one request, clears changed consent, and blocks IME and other dialogs", async mode => {
   let head: ConversationDraftHead = { key, revision: "0", writerId: null, value: null };
   const message = { ...key, messageId: fixtureIdentity(902), body: "  请先解释这条消息，不要改译文。\n", author: "human", ordinal: "1" };
   const config = { ...defaultAiConfig, endpoint: "http://127.0.0.1:11434/v1/chat/completions", model: "模拟助理", credentialEnv: "",
@@ -43,8 +43,8 @@ it.each(["conversation-only", "units", "knowledge"] as const)("reviews %s materi
       const system = "Synthetic instructions";
       const units = request.scope.kind === "units" ? request.scope.unitIds.map((unitId: string) => ({ unitId, sourceLocale: "en", targetLocale: request.scope.locale,
         nativeKey: "greeting", sourceText: "Hello {name}", terms: request.config.shareTerms ? [{ source: "Hello", target: "你好", protected: false }] : [], context: null, humanProtected: true })) : [];
-      const input = JSON.stringify({ ...(request.purpose ? { purpose: "knowledge-proposal" } : {}), messages: [message.body], units });
-      prepared = { preparationId: fixtureIdentity(915), previewDigest: "b".repeat(64), preview: { version: request.purpose === "knowledge" ? 3 : 2, ...key, config: request.config, ...(request.purpose ? { purpose: request.purpose } : {}),
+      const input = JSON.stringify({ ...(request.purpose ? { purpose: request.purpose === "terminology" ? "term-proposal" : "knowledge-proposal" } : {}), messages: [message.body], units });
+      prepared = { preparationId: fixtureIdentity(915), previewDigest: "b".repeat(64), preview: { version: request.purpose === "terminology" ? 4 : request.purpose === "knowledge" ? 3 : 2, ...key, config: request.config, ...(request.purpose ? { purpose: request.purpose } : {}),
         scope: request.scope, selectedMessages: [message], units: units.map((unit: { unitId: string; terms: unknown[] }) => ({ unitId: unit.unitId, sourceSnapshotId: fixtureIdentity(920), sourceRevisionId: fixtureIdentity(921), selectionId: fixtureIdentity(922), translationRevisionId: fixtureIdentity(923),
           protection: { unitId: unit.unitId, locale: request.scope.locale, revision: "1", protected: true }, sharedTermRevisionIds: unit.terms.length ? [fixtureIdentity(924)] : [], sharedContextRevisionId: null })),
         system, input, byteLength: new TextEncoder().encode(JSON.stringify({ system, input })).length,
@@ -79,7 +79,7 @@ it.each(["conversation-only", "units", "knowledge"] as const)("reviews %s materi
     rendered.rerender(tree());
     fireEvent.click(screen.getByRole("checkbox", { name: i18n.t("ai.shareTerms") }));
   }
-  if (mode === "knowledge") fireEvent.click(screen.getByRole("radio", { name: "整理知识提议" }));
+  if (mode === "knowledge" || mode === "terminology") fireEvent.click(screen.getByRole("radio", { name: i18n.t(mode === "terminology" ? "conversation.askPurposeTerminology" : "conversation.askPurposeKnowledge") }));
   expect(screen.getByRole("button", { name: "核对发送内容" })).toBeDisabled();
   fireEvent.click(screen.getByRole("checkbox", { name: "发送第 1 条消息" }));
   await screen.findByRole("option", { name: "Synthetic 模拟助理 · 模拟助理" });
@@ -108,16 +108,17 @@ it.each(["conversation-only", "units", "knowledge"] as const)("reviews %s materi
     rendered.rerender(tree());
     expect(owner.getSnapshot().inputs.get(conversationId)?.planning.selection).toBeNull();
     fireEvent.click(screen.getByRole("button", { name: "带入当前选择（1）" }));
-    if (mode === "knowledge") fireEvent.click(screen.getByRole("radio", { name: "整理知识提议" }));
+    if (mode === "knowledge" || mode === "terminology") fireEvent.click(screen.getByRole("radio", { name: i18n.t(mode === "terminology" ? "conversation.askPurposeTerminology" : "conversation.askPurposeKnowledge") }));
     fireEvent.click(screen.getByRole("button", { name: "核对发送内容" }));
     fireEvent.click(within(await screen.findByRole("region", { name: "核对这次请求" })).getByRole("checkbox"));
   }
-  if (mode === "knowledge") {
-    expect(owner.getSnapshot().inputs.get(conversationId)?.planning.prepared?.preview.purpose).toBe("knowledge");
+  if (mode === "knowledge" || mode === "terminology") {
+    expect(owner.getSnapshot().inputs.get(conversationId)?.planning.prepared?.preview.purpose).toBe(mode);
+    expect(owner.getSnapshot().inputs.get(conversationId)?.planning.prepared?.preview.version).toBe(mode === "terminology" ? 4 : 3);
     fireEvent.click(screen.getByRole("radio", { name: i18n.t("conversation.askPurposePlanning") }));
     expect(screen.queryByRole("region", { name: "核对这次请求" })).not.toBeInTheDocument();
     expect(owner.getSnapshot().inputs.get(conversationId)?.planning.consent).toBe(false);
-    fireEvent.click(screen.getByRole("radio", { name: i18n.t("conversation.askPurposeKnowledge") }));
+    fireEvent.click(screen.getByRole("radio", { name: i18n.t(mode === "terminology" ? "conversation.askPurposeTerminology" : "conversation.askPurposeKnowledge") }));
   }
   fireEvent.change(screen.getByRole("spinbutton", { name: i18n.t("ai.maxOutputTokens") }), { target: { value: "1500" } });
   expect(screen.queryByRole("region", { name: "核对这次请求" })).not.toBeInTheDocument();

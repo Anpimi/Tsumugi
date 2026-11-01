@@ -249,7 +249,12 @@ export const resourceCommands = {
         && value.capture.origin.basis.projectId === request.projectId && value.capture.origin.basis.locale === value.capture.targetLocale
         : value.correction === null) && (value.capture.origin.kind === "mcp" ? value.mcp !== null
           && value.capture.origin.provenance.basis.projectId === request.projectId && value.capture.origin.provenance.basis.locale === value.capture.targetLocale
-          : value.mcp === null)),
+          : value.mcp === null) && (value.capture.origin.kind === "conversation" ? value.conversation != null
+            && value.capture.captureId === value.capture.origin.proposal.revisionId
+            && value.capture.origin.proposal.projectId === request.projectId
+            && jsonIdentity(value.conversation.proposal) === jsonIdentity(value.capture.origin.proposal)
+            && jsonIdentity(value.conversation.modelOrigin) === jsonIdentity(value.capture.origin.modelOrigin)
+            : value.conversation == null)),
   decide: (request: DecisionRequest) => checkedInvoke("decide_resource_entry", request, validateResponseDecision),
   saveTerm: (request: TermRequest) => checkedInvoke("save_term", request, validateResponseTerm),
   termAction: (request: TermRequest) => checkedInvoke("read_term_save_action", request,

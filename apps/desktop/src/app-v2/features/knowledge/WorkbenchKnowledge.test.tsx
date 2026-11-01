@@ -179,3 +179,59 @@ it("recovers an initial knowledge host failure through an explicit retry of the 
     expect(screen.queryByText(w("actionFailed"))).toBeNull();
   } finally { errors.mockRestore(); }
 });
+
+it("opens a saved typed term proposal from the conversation and adopts an edited target through the original resource owner", async () => {
+  const { termProposalFixture } = await import("../../../testSupport/termProposalFixture");
+  const { fixtureIdentity } = await import("../../../testSupport/executionFixture");
+  const { validateRequestDecision } = await import("../../../generated/resource.validators");
+  const conversationId = fixtureIdentity(980), key = { projectId: project.metadata.projectId, conversationId };
+  const fixture = termProposalFixture(key), preview = fixture.preview;
+  vi.mocked(conversationCommands.list).mockResolvedValue({ projectId: key.projectId, rows: [{ ...key, title: "Terminology conversation", ordinal: "1" }], nextAfter: null });
+  vi.spyOn(conversationDraftCommands, "read").mockImplementation(async request => ({ key: request.key, revision: "0", writerId: null, value: null }));
+  vi.spyOn(conversationCommands, "messages").mockResolvedValue({ ...key, rows: fixture.run.preview.selectedMessages, nextAfter: null });
+  vi.spyOn(conversationCommands, "planningAttempts").mockResolvedValue({ ...key, rows: [], nextAfter: null });
+  vi.spyOn(conversationCommands, "proposalRevisions").mockResolvedValue({ ...key, rows: [fixture.revision], nextAfter: null });
+  vi.spyOn(conversationCommands, "proposalWorkPlans").mockResolvedValue({ ...key, rows: [], nextAfter: null });
+  vi.spyOn(conversationCommands, "readProposal").mockResolvedValue(fixture.revision);
+  vi.spyOn(conversationCommands, "readPlanning").mockResolvedValue(fixture.run);
+  const original = invoke.getMockImplementation();
+  invoke.mockImplementation((command, payload) => {
+    if (command === "list_resource_captures") return Promise.resolve([preview.capture]);
+    if (command === "read_resource_preview") return Promise.resolve(structuredClone(preview));
+    if (command === "create_execution_identity") return Promise.resolve(fixtureIdentity(981));
+    if (command === "decide_resource_entry") {
+      if (!validateRequestDecision(payload.request)) throw new Error("Expected original term request");
+      const request = payload.request.decision, row = preview.rows.find(value => value.entry.id === request.entryId);
+      if (!row) throw new Error("Expected fixed terminology entry");
+      return Promise.resolve({ request, actionId: request.actionId, decision: request.decision, revision: { ...term, revisionId: fixtureIdentity(982),
+        termId: "conversation-term", originKind: "external", source: row.entry.source, target: request.editedTarget ?? row.entry.target,
+        aliases: row.entry.aliases, protected: row.entry.protected, scopeUnitId: row.scopeUnitId, reason: row.entry.reason,
+        captureId: request.captureId, externalEntryId: request.entryId, previousRevisionId: request.expectedRevisionId } });
+    }
+    return original?.(command, payload);
+  });
+  installResourceDraftFixture();
+  controller = new ProjectLifecycle({ open: async () => project, close: async () => ({ closed: true }), status: async () => ({ active: false, quiescing: false, queryCount: 0, error: null }) });
+  render(<WorkbenchApp controller={controller} native/>); const user = userEvent.setup();
+  await user.click(screen.getByRole("button", { name: i18n.t("startup.openExisting") }));
+  await user.type(screen.getByRole("textbox", { name: w("projectFolder") }), project.locator);
+  await user.click(screen.getByRole("button", { name: w("openProject") }));
+  await screen.findByRole("navigation", { name: w("activity") });
+  const picker = await screen.findByRole("button", { name: i18n.t("conversation.chooseThread") });
+  await waitFor(() => expect(picker).toBeEnabled()); picker.focus(); fireEvent.keyDown(picker, { key: "ArrowDown" });
+  await user.click(await screen.findByRole("menuitem", { name: "Terminology conversation" }));
+  const open = await screen.findByRole("button", { name: i18n.t("conversation.termOpenReview") });
+  await user.click(open);
+  const panel = within(await screen.findByRole("region", { name: k("proposalTitle") }));
+  await waitFor(() => expect(panel.getAllByRole("button", { name: k("proposalEdit") })[0]).toBeEnabled());
+  expect(invoke.mock.calls.filter(([name]) => name === "decide_resource_entry")).toHaveLength(0);
+  await user.click(panel.getAllByRole("button", { name: k("proposalEdit") })[0]);
+  const target = panel.getByRole("textbox", { name: k("proposalEditedTarget") });
+  await user.clear(target); await user.type(target, "Edited greeting");
+  await user.click(panel.getByRole("button", { name: k("proposalAdoptEdited") }));
+  await waitFor(() => expect(panel.queryByRole("textbox", { name: k("proposalEditedTarget") })).toBeNull());
+  const decisions = invoke.mock.calls.filter(([name]) => name === "decide_resource_entry");
+  expect(decisions).toHaveLength(1);
+  expect(decisions[0][1].request.decision).toMatchObject({ captureId: fixture.revision.revisionId, entryId: "0", expectedRevisionId: null, decision: "adopt", editedTarget: "Edited greeting" });
+  expect(invoke.mock.calls.some(([name]) => name === "save_term" || name === "start_conversation_planning" || name === "start_work_plan")).toBe(false);
+});

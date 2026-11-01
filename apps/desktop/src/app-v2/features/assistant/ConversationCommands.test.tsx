@@ -45,11 +45,13 @@ async function harness(held = false) {
     }
     throw new Error(`Unexpected command: ${command}`);
   });
+  const append = vi.fn(async (request: Parameters<typeof conversationCommands.append>[0]) => ({ projectId: request.projectId,
+    conversationId: request.conversationId, messageId: request.messageId, body: request.body, author: "human" as const, ordinal: "1" }));
   const reads = new SessionReads(context), gate = new InteractionGate(); gate.setVisibleOwner(viewId);
   const owner = new ConversationSession(context, () => reads.invalidate(["project"]), () => {}, {
     identity: () => fixtureIdentity(identity++), list: async () => ({ items: [], next: null }),
     read: async request => structuredClone(heads.get(request.key.conversationId) ?? { key: request.key, revision: "0", writerId: null, value: null }),
-    write: async request => commit(request.write), resolve: async request => commit(request.resolve.write), create,
+    write: async request => commit(request.write), resolve: async request => commit(request.resolve.write), create, append,
   });
   resources.push({ owner, reads, gate }); await owner.initialize();
   const bindings = new CommandBindings(workspaceCommandCatalog), commands = new WorkbenchCommands(bindings), scope = { ...context, area: "translation" as const };
@@ -67,7 +69,7 @@ async function harness(held = false) {
   const show = (next: { visible?: boolean; disabled?: boolean; parentDialogId?: string }) => {
     visible = next.visible ?? true; disabled = next.disabled ?? false; parentDialogId = next.parentDialogId; rendered.rerender(tree());
   };
-  return { owner, gate, commands, bindings, dispatcher, scope, create, release, key, settled, show, rendered };
+  return { owner, gate, commands, bindings, dispatcher, scope, create, append, release, key, settled, show, rendered };
 }
 
 it("creates once through the shared command, blocks another creation in flight, and rebinds the same button action without a model", async () => {
@@ -131,4 +133,20 @@ it("routes command palette actions to the same explicit composer input without r
   expect(h.commands.dispatch("conversation.review", h.scope)).toBe(false); act(close);
   h.show({ visible: false }); expect(h.commands.dispatch("conversation.terms", h.scope)).toBe(false);
   expect(invoke.mock.calls.some(([command]) => command === "start_conversation_planning" || command === "start_work_plan" || command === "prepare_conversation_planning")).toBe(false);
+});
+
+
+it.each(["/术语", "/terms"])("saves %s as an ordinary message and explicitly prepares terminology without dispatching a model", async command => {
+  const h = await harness();
+  act(() => { h.commands.dispatch("conversation.new-thread", h.scope); }); await h.settled();
+  const field = screen.getByRole("textbox", { name: "Message" });
+  fireEvent.change(field, { target: { value: `${command} Keep the greeting consistent.` } });
+  fireEvent.click(screen.getByRole("button", { name: i18n.t("conversation.saveMessage") }));
+  await waitFor(() => expect(h.append).toHaveBeenCalledOnce()); await h.settled();
+  const input = h.owner.getSnapshot().inputs.get(h.owner.getSnapshot().activeId!);
+  expect(input?.planning).toMatchObject({ open: true, purpose: "terminology", prepared: null, consent: false });
+  expect(input?.planning.messageIds).toEqual([h.append.mock.calls[0][0].messageId]);
+  expect(h.append.mock.calls[0][0].body).toBe(`${command} Keep the greeting consistent.`);
+  expect(screen.getByText(i18n.t("conversation.askTerminologyNeedsEntries"))).toBeVisible();
+  expect(invoke.mock.calls.some(([name]) => name === "prepare_conversation_planning" || name === "start_conversation_planning" || name === "decide_resource_entry")).toBe(false);
 });

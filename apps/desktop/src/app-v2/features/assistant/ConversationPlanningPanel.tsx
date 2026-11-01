@@ -38,7 +38,7 @@ export function ConversationPlanningPanel({ owner, input, visible, disabled, gat
     && owner.getSnapshot().activeId === conversationId && gate.canDispatch({ viewId, source: "button", dialogId: parentDialogId })
     && connectionConfigCurrent(facts.current(), owner.getSnapshot().inputs.get(conversationId)?.planning.config ?? planning.config);
   const valid = validAiLimits(planning.config) && !!planning.config.endpoint.trim() && !!planning.config.model.trim()
-    && (planning.purpose !== "knowledge" || workspaceSelectionIds(planning.selection).length > 0);
+    && (planning.purpose === null || workspaceSelectionIds(planning.selection).length > 0);
   const connectionCurrent = connectionConfigCurrent(facts.current(), planning.config);
   const selectedCount = workspaceSelectionIds(selection).length, fixedCount = workspaceSelectionIds(planning.selection).length;
   const fixedLocale = planning.selection?.kind === "ids" ? planning.selection.locale : planning.selection?.selection.capture.locale;
@@ -71,6 +71,9 @@ export function ConversationPlanningPanel({ owner, input, visible, disabled, gat
       <label className={styles.check}><TextInput type="radio" className={styles.checkbox} name={`${id}-purpose`} checked={planning.purpose === "knowledge"} disabled={fixedCount === 0}
         onChange={() => { if (allowed()) owner.setPlanningPurpose(conversationId, "knowledge"); }}/><span>{t("askPurposeKnowledge")}</span></label>
       <p>{t("askKnowledgeHelp")}</p>{fixedCount === 0 ? <p>{t("askKnowledgeNeedsEntries")}</p> : null}
+      <label className={styles.check}><TextInput type="radio" className={styles.checkbox} name={`${id}-purpose`} checked={planning.purpose === "terminology"} disabled={fixedCount === 0}
+        onChange={() => { if (allowed()) owner.setPlanningPurpose(conversationId, "terminology"); }}/><span>{t("askPurposeTerminology")}</span></label>
+      <p>{t("askTerminologyHelp")}</p>{planning.purpose === "terminology" && fixedCount === 0 ? <p role="status">{t("askTerminologyNeedsEntries")}</p> : null}
     </fieldset>
     <fieldset className={styles.configuration} disabled={blocked}><legend>{t("askDestination")}</legend>
       <ModelConnectionPicker config={planning.config} label={global("connections.choose")} active={visible} disabled={blocked} editSeq={planning.sequence}
@@ -100,7 +103,7 @@ export function ConversationPlanningPanel({ owner, input, visible, disabled, gat
     <Button size="sm" pending={planning.busy === "prepare"} disabled={blocked || !valid || !connectionCurrent || planning.messageIds.length === 0}
       onClick={event => { if (!allowed()) return; focus.current = { origin: event.currentTarget, preview: true }; void owner.preparePlanning(conversationId, current); }}>{t("askPrepare")}</Button>
     {prepared ? <section ref={previewRegion} tabIndex={-1} className={styles.preview} aria-label={t("askPreview")}>
-      <h4>{t("askPreview")}</h4><p>{t(prepared.preview.purpose === "knowledge" ? "askPurposeKnowledge" : "askPurposePlanning")}</p><p className={styles.text}>{prepared.preview.config.model} · {prepared.preview.config.endpoint}</p>
+      <h4>{t("askPreview")}</h4><p>{t(prepared.preview.purpose === "terminology" ? "askPurposeTerminology" : prepared.preview.purpose === "knowledge" ? "askPurposeKnowledge" : "askPurposePlanning")}</p><p className={styles.text}>{prepared.preview.config.model} · {prepared.preview.config.endpoint}</p>
       <p>{t(isChatGptSubscription(prepared.preview.config) ? "askSubscriptionBudget" : "askBudget", { tokens: prepared.preview.config.maxOutputTokens, seconds: prepared.preview.config.timeoutSeconds })}</p>
       <p>{t(prepared.preview.scope.kind === "units" ? "askEntriesMaterialSummary" : "askMaterialSummary", {
         count: prepared.preview.selectedMessages.length, units: prepared.preview.brief.units,

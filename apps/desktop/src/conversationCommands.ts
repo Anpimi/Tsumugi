@@ -55,7 +55,8 @@ function page<T extends { ordinal: string }>(value: { rows: T[]; nextAfter: stri
 }
 
 function planningPreview(preview: Responses["planning"]["preview"], request: Requests["preparePlanning"]) {
-  return (request.purpose === "knowledge" ? preview.version === 3 && preview.purpose === "knowledge" && request.scope.kind === "units"
+  return (request.purpose === "terminology" ? preview.version === 4 && preview.purpose === "terminology" && request.scope.kind === "units"
+    : request.purpose === "knowledge" ? preview.version === 3 && preview.purpose === "knowledge" && request.scope.kind === "units"
     : preview.version === 2 && preview.purpose == null) && preview.projectId === request.projectId && preview.conversationId === request.conversationId
     && sameAiConfig(preview.config, request.config) && jsonIdentity(preview.scope) === jsonIdentity(request.scope)
     && preview.selectedMessages.length >= 1 && preview.selectedMessages.length <= 16
@@ -85,6 +86,9 @@ function planningRun(value: NonNullable<Responses["planningRun"]>, request: Requ
     || new Set(model.unitIds).size !== model.unitIds.length || model.unitIds.some(id => !preview.units.some(unit => unit.unitId === id)))) return false;
   if (model?.kind === "knowledge-proposal" && (preview.purpose !== "knowledge" || preview.scope.kind !== "units"
     || !knowledgeEntries(model.entries, preview.units.map(unit => unit.unitId)))) return false;
+  if (model?.kind === "term-proposal" && (preview.purpose !== "terminology" || preview.scope.kind !== "units"
+    || !termProposalEntries(model.entries, preview.units.map(unit => unit.unitId)) || bytes.encode(JSON.stringify(model)).length > 60 * 1024
+    || !termSourceFragments(model.entries, preview.input))) return false;
   if (model?.kind === "proposal" && preview.purpose != null) return false;
   return planningReceipt(receipt, { ...request, consent: receipt.consent }) && receipt.consent.attemptId === request.attemptId
     && receipt.consent.shareUnits === (preview.scope.kind === "units")
@@ -109,7 +113,8 @@ function proposal(value: Responses["proposal"], request: { projectId: string; co
     && (value.previousRevisionId === null ? value.revision === "1" : BigInt(value.revision) > 1n && value.previousRevisionId !== value.revisionId)
     && /^[0-9a-f]{64}$/.test(value.origin.inputDigest) && /^[0-9a-f]{64}$/.test(value.origin.resultDigest)
     && (content.kind === "proposal" ? content.unitIds.length >= 1 && content.unitIds.length <= 100 && new Set(content.unitIds).size === content.unitIds.length
-      : content.kind === "knowledge-proposal" && knowledgeEntries(content.entries))
+      : content.kind === "knowledge-proposal" ? knowledgeEntries(content.entries)
+        : content.kind === "term-proposal" && termProposalEntries(content.entries))
     && content.summary.length > 0 && bytes.encode(content.summary).length <= 8192
     && content.questions.length <= 8 && content.questions.every(question => question.length > 0 && bytes.encode(question).length <= 2048)
     && bytes.encode(JSON.stringify(value)).length <= 64 * 1024;
@@ -119,6 +124,23 @@ function knowledgeEntries(entries: Extract<ConversationProposalRevision["content
     && bytes.encode(entry.name).length <= 512 && /\P{White_Space}/u.test(entry.text) && bytes.encode(entry.text).length <= 16384
     && entry.unitIds.length > 0 && entry.unitIds.length <= 100 && new Set(entry.unitIds).size === entry.unitIds.length
     && (!units || entry.unitIds.every(unit => units.includes(unit))));
+}
+
+function termProposalEntries(entries: Extract<ConversationProposalRevision["content"], { kind: "term-proposal" }>["entries"], units?: readonly string[]) {
+  const text = (value: string, max: number) => /\P{White_Space}/u.test(value) && !value.includes("\0") && bytes.encode(value).length <= max;
+  return entries.length > 0 && entries.length <= 16 && new Set(entries.map(entry => JSON.stringify([entry.unitId, entry.source]))).size === entries.length
+    && entries.every(entry => text(entry.source, 512) && text(entry.target, 16384) && text(entry.reason, 16384)
+      && entry.aliases.length <= 16 && new Set(entry.aliases).size === entry.aliases.length
+      && entry.aliases.every(alias => text(alias, 512) && alias !== entry.source) && (!units || units.includes(entry.unitId)));
+}
+
+function termSourceFragments(entries: Extract<ConversationProposalRevision["content"], { kind: "term-proposal" }>["entries"], input: string) {
+  let material: unknown;
+  try { material = JSON.parse(input); } catch { return false; }
+  if (typeof material !== "object" || material === null || !("units" in material) || !Array.isArray(material.units)) return false;
+  const units: unknown[] = material.units;
+  return entries.every(entry => units.some(unit => typeof unit === "object" && unit !== null && "unitId" in unit && unit.unitId === entry.unitId
+    && "sourceText" in unit && typeof unit.sourceText === "string" && unit.sourceText.includes(entry.source)));
 }
 
 function sameKnowledgeDecision(actual: Responses["knowledgeDecisionRecovery"]["request"], expected: Requests["knowledgeDecision"]["decision"]) {

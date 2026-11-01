@@ -72,6 +72,10 @@ pub enum GlossaryCaptureOrigin {
     Correction {
         basis: CorrectionTermBasis,
     },
+    Conversation {
+        proposal: crate::application::ConversationProposalRef,
+        model_origin: crate::application::ConversationProposalOrigin,
+    },
     Mcp {
         provenance: crate::application::McpTermProvenance,
     },
@@ -113,6 +117,7 @@ pub(super) enum CapturedGlossary {
     File(GlossaryFile),
     Correction(CaptureCorrectionTerm),
     Mcp(super::mcp::CapturedMcpTerms),
+    Conversation(super::conversation::CapturedConversationTerms),
 }
 
 fn historic_source(
@@ -489,6 +494,7 @@ pub(super) fn preview(
         removed: Vec::new(),
         correction: Some(CorrectionTermPreview { evidence, decision }),
         mcp: None,
+        conversation: None,
     })
 }
 

@@ -56,7 +56,7 @@ import type { ComparisonView } from "../arenaCommands";
 import type { SegmentRow } from "../segmentCommands";
 import type { ConversationSession } from "./features/assistant/ConversationSession";
 import type { ConversationRecoveryTarget } from "./features/assistant/ConversationPanel";
-import type { ConversationProposalTarget, ConversationKnowledgeProposalRef, ConversationTeamQuestionTarget, OpenKnowledgeProposal } from "./features/assistant/conversationNavigation";
+import type { ConversationProposalTarget, ConversationKnowledgeProposalRef, ConversationTeamQuestionTarget, OpenKnowledgeProposal, OpenTermProposal } from "./features/assistant/conversationNavigation";
 import type { KnowledgeReviewTarget } from "./features/knowledge/KnowledgeProposalPanel";
 import type { DecisionItem } from "../decisionCommands";
 import { contextKindForKnowledge, type KnowledgeOwner, type ResourceProposalTarget } from "./features/knowledge/knowledgeTypes";
@@ -1428,13 +1428,34 @@ function WorkspaceShell() {
     if (!current() || disabled || !gate.canDispatch({ viewId: currentId, source: "button", dialogId: narrow && drawer ? "workspace-dock" : undefined })) return false;
     return await openKnowledgeTarget(proposal, null, current);
   };
+  const openTermProposal: OpenTermProposal = async (proposal, current) => {
+    const origin = document.activeElement, owner = knowledgeOwner;
+    const present = () => current() && !disabled && !session.reads.retired && proposal.projectId === session.project.metadata.projectId
+      && (document.activeElement === origin || document.activeElement === document.body)
+      && gate.canDispatch({ viewId: currentId, source: "button", dialogId: narrow && drawer ? "workspace-dock" : undefined });
+    if (!present()) return false;
+    requestKnowledge();
+    if (!owner || owner.blocked()) { await openKnowledge(false, true); return false; }
+    const { resolveTermProposalReview } = await import("./features/knowledge/termProposalNavigation");
+    const capture = await resolveTermProposalReview(executionContext(session.project), proposal, present);
+    if (!present()) return false;
+    if (!owner.canReceiveConversation(capture)) { await openKnowledge(false, true); return false; }
+    if (!await owner.openConversationPreview(capture, owner.current(), present) || !present()) return false;
+    if (narrow && drawer) closeDrawer();
+    const state = store.getState(), existing = state.viewOrder.map(id => state.views[id]).find(item => item.kind === "knowledge");
+    const target = { locale: capture.targetLocale, preset: "terms", knowledgeExchange: null };
+    const accepted = existing ? await runtime.navigation.update(existing.id, target)
+      : await runtime.navigation.open({ kind: "knowledge", ...target });
+    if (accepted) { setKnowledgeReview(null); setResourceReview(null); }
+    return accepted;
+  };
   function panel() {
     return <TabsRoot value={view?.dock ?? "agent"} onValueChange={value => { if (view && (value === "agent" || value === "details")) dispatcher.dispatch(value === "agent" ? "workspace.agent" : "workspace.details", { source: "button", viewId: currentId, dialogId: narrow && drawer ? "workspace-dock" : undefined }); }} className={styles.dockTabs}>
       <div className={styles.dockHeader}><TabsList aria-label={message("dockTabs")}><TabsTrigger value="agent"><Sparkles />{message("agent")}</TabsTrigger><TabsTrigger value="details">{message("detail")}</TabsTrigger></TabsList>
         {conversationMode ? <Button size="sm" disabled={disabled || !commandsReady} onClick={() => dispatch("workspace.conversation-mode")}>{message("returnToView")}</Button> : null}
       </div>
       <TabsContent value="agent" forceMount className={styles.dockContent}><FeatureBoundary fallback={conversationFallback(<ErrorState title={t("conversation.unavailable")}/>)}><Suspense fallback={conversationFallback(<LoadingState label={t("conversation.loading")}/>)}>
-        {conversations ? <ConversationPanel commands={commandsReady ? commands : undefined} showWorkPlans={view?.kind !== "runs" || view.runsMode === "strategy" || !!conversationTeamQuestion} onOpenCandidate={openRunCandidate} onOpenCandidateBatch={openRunCandidateBatch} onOpenTeamCandidate={openTeamCandidate} onOpenTeamFinding={openTeamFinding} onPrepareFindingRepair={prepareTeamFindingRepair} onOpenKnowledgeProposal={openKnowledgeProposal} owner={conversations} visible={(view?.dock ?? "agent") === "agent" && (!narrow || drawer)} disabled={disabled} gate={gate} viewId={currentId} parentDialogId={narrow && drawer ? "workspace-dock" : undefined}
+        {conversations ? <ConversationPanel commands={commandsReady ? commands : undefined} showWorkPlans={view?.kind !== "runs" || view.runsMode === "strategy" || !!conversationTeamQuestion} onOpenCandidate={openRunCandidate} onOpenCandidateBatch={openRunCandidateBatch} onOpenTeamCandidate={openTeamCandidate} onOpenTeamFinding={openTeamFinding} onPrepareFindingRepair={prepareTeamFindingRepair} onOpenKnowledgeProposal={openKnowledgeProposal} onOpenTermProposal={openTermProposal} owner={conversations} visible={(view?.dock ?? "agent") === "agent" && (!narrow || drawer)} disabled={disabled} gate={gate} viewId={currentId} parentDialogId={narrow && drawer ? "workspace-dock" : undefined}
           selection={view?.kind === "entries" && !importVisible ? view.selection : null} targetLocale={activeLocale}
           contextFilter={view?.kind === "entries" && !importVisible ? entryQuery(view.preset, view.query) : null} onOpenEntryReference={openEntryReference}
           decisionTray={decisionTray()} projectBrief={projectBrief} maintenanceBrief={sourceBrief()} recoveryTarget={conversationRecovery} proposalTarget={conversationProposal} questionTarget={conversationTeamQuestion}/>

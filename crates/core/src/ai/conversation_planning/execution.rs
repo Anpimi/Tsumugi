@@ -32,6 +32,11 @@ pub enum ConversationPlanningModelOutput {
         entries: Vec<crate::application::ConversationKnowledgeEntry>,
         questions: Vec<String>,
     },
+    TermProposal {
+        summary: String,
+        entries: Vec<crate::application::ConversationTermEntry>,
+        questions: Vec<String>,
+    },
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
@@ -110,7 +115,7 @@ pub(crate) fn settings(input: &FixedInput) -> Result<Settings, ExecutionError> {
     let e = input.envelope();
     if e.operation != OPERATION
         || e.capability_id != CAPABILITY
-        || !matches!(e.capability_version.as_str(), "1" | "2")
+        || !matches!(e.capability_version.as_str(), "1" | "2" | "3")
         || e.plugin.is_some()
         || e.automation.is_some()
         || e.previous_attempt_id.is_some()
@@ -325,12 +330,7 @@ fn validate_preview(preview: &ConversationPlanningPreview) -> Result<(), Executi
             json!({"kind":"units","targetLocale":locale})
         }
     };
-    if projected["purpose"]
-        != if preview.purpose.is_some() {
-            "knowledge-proposal"
-        } else {
-            "conversation-planning"
-        }
+    if projected["purpose"] != super::purpose_name(preview.purpose)
         || projected["scope"] != expected_scope
         || projected["messages"] != expected_messages
         || preview.byte_length as usize
@@ -435,6 +435,22 @@ pub(crate) fn validate_model(
             }
             (summary, questions)
         }
+        ConversationPlanningModelOutput::TermProposal { summary, entries, questions } => {
+            if preview.purpose != Some(ConversationPlanningPurpose::Terminology) {
+                return Err(invalid());
+            }
+            validate_proposal_draft_content(model).map_err(|_| invalid())?;
+            codec::encode(model, 60 * 1024).map_err(|_| invalid())?;
+            let ConversationPlanningScope::Units { unit_ids: allowed, .. } = &preview.scope else { return Err(invalid()); };
+            let material: Value = codec::decode(preview.input.as_bytes(), MAX_CONVERSATION_PLANNING_PREVIEW_BYTES)?;
+            for entry in entries {
+                if !allowed.contains(&entry.unit_id) || !material["units"].as_array().is_some_and(|units| units.iter().any(|unit|
+                    unit["unitId"] == json!(entry.unit_id) && unit["sourceText"].as_str().is_some_and(|text| text.contains(&entry.source)))) {
+                    return Err(invalid());
+                }
+            }
+            (summary, questions)
+        }
     };
     if summary.trim().is_empty()
         || summary.len() > 8192
@@ -491,6 +507,18 @@ pub fn validate_proposal_draft_content(
                         || e.unit_ids.iter().collect::<BTreeSet<_>>().len() != e.unit_ids.len()
                 })
             {
+                return Err(invalid());
+            }
+            (summary, questions)
+        }
+        ConversationPlanningModelOutput::TermProposal { summary, entries, questions } => {
+            let valid_text = |text: &str, max: usize| !text.trim().is_empty() && text.len() <= max && !text.contains('\0');
+            if entries.is_empty() || entries.len() > 16
+                || entries.iter().map(|entry| (entry.unit_id, &entry.source)).collect::<BTreeSet<_>>().len() != entries.len()
+                || entries.iter().any(|entry| !valid_text(&entry.source, 512) || !valid_text(&entry.target, 16384)
+                    || !valid_text(&entry.reason, 16384) || entry.aliases.len() > 16
+                    || entry.aliases.iter().collect::<BTreeSet<_>>().len() != entry.aliases.len()
+                    || entry.aliases.iter().any(|alias| !valid_text(alias, 512) || alias == &entry.source)) {
                 return Err(invalid());
             }
             (summary, questions)
@@ -567,6 +595,9 @@ impl ConversationPlanningRunner {
             service,
             version: "2",
         }
+    }
+    pub fn with_terminology_service(service: Arc<super::super::provider::ProviderService>) -> Self {
+        Self { service, version: "3" }
     }
 }
 impl Runner for ConversationPlanningRunner {

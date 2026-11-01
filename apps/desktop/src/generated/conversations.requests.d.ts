@@ -31,7 +31,7 @@ export type ContextResourceScope =
     };
 export type Revision = string;
 export type ConversationKnowledgeDecisionKind = "adopt" | "keep" | "reject";
-export type ConversationPlanningPurpose = "knowledge";
+export type ConversationPlanningPurpose = "knowledge" | "terminology";
 export type ConversationPlanningScope =
   | {
       kind: "conversation-only";
@@ -57,6 +57,12 @@ export type ConversationPlanningModelOutput =
   | {
       entries: ConversationKnowledgeEntry[];
       kind: "knowledge-proposal";
+      questions: string[];
+      summary: string;
+    }
+  | {
+      entries: ConversationTermEntry[];
+      kind: "term-proposal";
       questions: string[];
       summary: string;
     };
@@ -737,6 +743,14 @@ export interface ConversationKnowledgeEntry {
   name: string;
   text: string;
   unitIds: ExecutionId[];
+}
+export interface ConversationTermEntry {
+  aliases: string[];
+  protected: boolean;
+  reason: string;
+  source: string;
+  target: string;
+  unitId: ExecutionId;
 }
 export interface ReadConversationReferencesRequest {
   after: number;

@@ -572,33 +572,9 @@ fn concurrent_same_confirmation_creates_one_original_plan_and_association() {
 }
 
 fn snapshot(c: &Connection, version: i64) -> BTreeMap<String, Vec<Vec<rusqlite::types::Value>>> {
-    let names=c.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%' ORDER BY name").unwrap().query_map([],|r|r.get::<_,String>(0)).unwrap().collect::<Result<Vec<_>,_>>().unwrap();
-    names
-        .into_iter()
-        .filter(|name| {
-            name != "application_conversation_work_plans"
-                && name != "application_conversation_planning_attempts"
-                && !(version == 61 && name.starts_with("application_conversation"))
-                && !(version == 62 && name == "application_conversation_proposals")
-        })
-        .map(|name| {
-            let mut q = c
-                .prepare(&format!("SELECT * FROM \"{name}\" ORDER BY rowid"))
-                .unwrap();
-            let columns = q.column_count();
-            let rows = q
-                .query_map([], |r| {
-                    (0..columns)
-                        .map(|i| r.get(i))
-                        .collect::<rusqlite::Result<Vec<rusqlite::types::Value>>>()
-                })
-                .unwrap()
-                .collect::<Result<Vec<_>, _>>()
-                .unwrap();
-            (name, rows)
-        })
-        .collect()
+    crate::persistence::legacy_fixture_rows(c, version)
 }
+
 #[test]
 fn work_plan_migration_child() {
     let Ok(path) = std::env::var("TSUMUGI_PROPOSAL_PLAN_MIGRATION_PROJECT") else {
@@ -676,6 +652,7 @@ fn supported_migrations_preserve_plans_discussions_proposals_and_receipts_at_abo
             if version == 61 {
                 c.execute_batch("DROP TABLE application_conversation_actions; DROP TABLE application_conversation_messages; DROP TABLE application_conversations;").unwrap();
             }
+            crate::persistence::prepare_legacy_fixture_schema(&c, version).unwrap();
             c.pragma_update(None, "user_version", version).unwrap();
             drop(c);
             let marker = temp.path().join("migration-marker");

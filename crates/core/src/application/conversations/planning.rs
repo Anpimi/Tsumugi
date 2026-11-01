@@ -21,7 +21,7 @@ pub const MAX_CONVERSATION_PLANNING_PREVIEW_BYTES: usize = 256 * 1024;
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
 #[cfg_attr(feature = "wire-schema", derive(schemars::JsonSchema))]
-pub enum ConversationPlanningPurpose { Knowledge }
+pub enum ConversationPlanningPurpose { Knowledge, Terminology }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(

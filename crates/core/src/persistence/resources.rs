@@ -19,6 +19,8 @@ pub(super) use context_resources::capture_in as capture_context_resources_in;
 pub(in crate::persistence) use context_resources::save_in as save_context_resource_in;
 pub(in crate::persistence) use context_resources::{revision_in as context_resource_revision_in,current_in as current_context_resource_in,check_scope as check_context_resource_scope};
 mod correction;
+mod conversation;
+pub(super) use conversation::capture_in as capture_conversation_terms_in;
 pub(crate) mod mcp;
 pub(crate) mod strategy;
 pub use correction::{
@@ -292,6 +294,8 @@ pub struct ResourcePreview {
         schemars(schema_with = "crate::application::mcp_retrieval::capture_preview_schema")
     )]
     pub mcp: Option<crate::application::McpTermCapturePreview>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub conversation: Option<crate::application::ConversationTermPreview>,
 }
 
 #[cfg_attr(feature = "wire-schema", derive(schemars::JsonSchema))]
@@ -633,7 +637,7 @@ const TABLES: &[(&str, &str)] = &[
     ("resource_captures", "CREATE TABLE resource_captures (
         capture_id TEXT PRIMARY KEY NOT NULL,
         project_id TEXT NOT NULL,
-        capture_kind TEXT NOT NULL CHECK(capture_kind IN ('file','correction','mcp')),
+        capture_kind TEXT NOT NULL CHECK(capture_kind IN ('file','correction','mcp','conversation')),
         correction_key TEXT UNIQUE,
         resource_id TEXT,
         resource_revision TEXT,
@@ -647,7 +651,7 @@ const TABLES: &[(&str, &str)] = &[
         UNIQUE(project_id,resource_id,resource_revision),
         CHECK((capture_kind='file' AND correction_key IS NULL AND resource_id IS NOT NULL AND resource_revision IS NOT NULL AND license IS NOT NULL)
            OR (capture_kind='correction' AND correction_key IS NOT NULL AND length(correction_key)=64 AND resource_id IS NULL AND resource_revision IS NULL AND license IS NULL)
-           OR (capture_kind='mcp' AND correction_key IS NULL AND resource_id IS NULL AND resource_revision IS NULL AND license IS NULL)))"),
+           OR (capture_kind IN ('mcp','conversation') AND correction_key IS NULL AND resource_id IS NULL AND resource_revision IS NULL AND license IS NULL)))"),
     ("term_revisions", "CREATE TABLE term_revisions (
         revision_id TEXT PRIMARY KEY NOT NULL,
         term_id TEXT NOT NULL,
@@ -752,6 +756,42 @@ pub(super) fn initialize(connection: &Connection) -> rusqlite::Result<()> {
 
 pub(super) fn migrate_edited_decisions(connection: &Connection) -> rusqlite::Result<()> {
     connection.execute_batch("ALTER TABLE resource_decisions ADD COLUMN edited_target TEXT")
+}
+
+pub(super) fn migrate_conversation_captures(c: &Connection) -> rusqlite::Result<()> {
+    c.execute_batch("PRAGMA defer_foreign_keys=ON")?;
+    let ddl = TABLES.iter().find(|(name, _)| *name == "resource_captures").unwrap().1;
+    c.execute_batch(&ddl.replacen("CREATE TABLE resource_captures (", "CREATE TABLE resource_captures_v73 (", 1))?;
+    // Capture and change identities are historical references. Keep rowid gaps,
+    // original bytes, action digests and every existing foreign-key target.
+    c.execute_batch("INSERT INTO resource_captures_v73(rowid,capture_id,project_id,capture_kind,correction_key,resource_id,resource_revision,source_locale,target_locale,license,digest,bytes,action_id,request_digest)
+        SELECT rowid,capture_id,project_id,capture_kind,correction_key,resource_id,resource_revision,source_locale,target_locale,license,digest,bytes,action_id,request_digest FROM resource_captures;
+        DROP TABLE resource_captures;
+        ALTER TABLE resource_captures_v73 RENAME TO resource_captures;")?;
+    if c.prepare("PRAGMA foreign_key_check")?.exists([])? { return Err(rusqlite::Error::InvalidQuery); }
+    c.execute_batch("PRAGMA defer_foreign_keys=OFF")?;
+    Ok(())
+}
+
+/// Reconstruct the original capture constraint in an owned, closed fixture.
+#[cfg(test)]
+pub(in crate::persistence) fn make_legacy_capture_schema(c: &Connection) -> rusqlite::Result<()> {
+    assert!(c.is_autocommit());
+    let foreign_keys: bool = c.pragma_query_value(None, "foreign_keys", |r| r.get(0))?;
+    c.pragma_update(None, "foreign_keys", false)?;
+    let ddl = TABLES.iter().find(|(name, _)| *name == "resource_captures").unwrap().1
+        .replace(",'conversation'", "").replace("capture_kind IN ('mcp')", "capture_kind='mcp'")
+        .replacen("CREATE TABLE resource_captures (", "CREATE TABLE resource_captures_legacy (", 1);
+    let result = (|| {
+        c.execute_batch("BEGIN IMMEDIATE")?;
+        c.execute_batch(&ddl)?;
+        c.execute_batch("INSERT INTO resource_captures_legacy(rowid,capture_id,project_id,capture_kind,correction_key,resource_id,resource_revision,source_locale,target_locale,license,digest,bytes,action_id,request_digest)
+            SELECT rowid,capture_id,project_id,capture_kind,correction_key,resource_id,resource_revision,source_locale,target_locale,license,digest,bytes,action_id,request_digest FROM resource_captures;
+            DROP TABLE resource_captures; ALTER TABLE resource_captures_legacy RENAME TO resource_captures; COMMIT;")
+    })();
+    if result.is_err() && !c.is_autocommit() { c.execute_batch("ROLLBACK")?; }
+    c.pragma_update(None, "foreign_keys", foreign_keys)?;
+    result
 }
 
 fn validate_edited_decision(request: &ResourceDecision) -> Result<(), ExecutionError> {
@@ -906,6 +946,7 @@ pub(super) fn validate_version(connection: &Connection, version: i64) -> rusqlit
     }
     correction::validate(connection).map_err(|_| rusqlite::Error::InvalidQuery)?;
     mcp::validate_captures(connection).map_err(|_| rusqlite::Error::InvalidQuery)?;
+    conversation::validate(connection).map_err(|_| rusqlite::Error::InvalidQuery)?;
     if version >= 66 {
         context_resources::validate(connection).map_err(|_| rusqlite::Error::InvalidQuery)?;
     }
@@ -1273,6 +1314,23 @@ fn capture_by_id(
                 correction::CapturedGlossary::Mcp(captured),
             )
         }
+        "conversation" => {
+            let captured: conversation::CapturedConversationTerms = codec::decode(&bytes, MAX_RESOURCE_BYTES)?;
+            let (proposal, locale, _) = conversation::evidence(connection, &captured)?;
+            let crate::ai::conversation_planning::ConversationPlanningModelOutput::TermProposal { entries, .. } = &proposal.content else {
+                return Err(failure(ErrorCode::CorruptLedger, "conversation-term-capture"));
+            };
+            let metadata = super::read_metadata_from(connection).map_err(|_| failure(ErrorCode::CorruptLedger, "resource-project"))?;
+            if resource_id.is_some() || revision.is_some() || license.is_some()
+                || captured.action_id != action || captured.proposal.project_id != project_id
+                || captured.proposal.revision_id != capture_id || locale != target_locale
+                || metadata.source_locale().as_str() != source_locale || request_digest != file_digest
+                || codec::encode(&captured, MAX_RESOURCE_BYTES)? != bytes {
+                return Err(failure(ErrorCode::CorruptLedger, "conversation-term-capture"));
+            }
+            (GlossaryCaptureOrigin::Conversation { proposal: captured.proposal.clone(), model_origin: captured.model_origin.clone() },
+                entries.len() as u32, correction::CapturedGlossary::Conversation(captured))
+        }
         _ => return Err(failure(ErrorCode::CorruptLedger, "resource-capture")),
     };
     Ok((
@@ -1619,6 +1677,7 @@ impl ProjectStore {
                 let current=match data{
                     correction::CapturedGlossary::File(file)=>current_term(c,request.project_id,&external_term_id(&file.resource_id,&request.entry_id))?,
                     correction::CapturedGlossary::Correction(capture)=>correction::check_decision_admission(c,request,&capture)?,
+                    correction::CapturedGlossary::Conversation(capture)=>conversation::check_decision_admission(c,request,&capture)?,
                     correction::CapturedGlossary::Mcp(capture)=>current_term(c,request.project_id,&mcp::term_id(&capture.provenance,&request.entry_id)?)?,
                 };
                 check_term_revision(current.as_ref(),request.expected_revision_id)?;
@@ -1722,6 +1781,9 @@ impl ProjectStore {
                     }
                     correction::CapturedGlossary::Correction(capture) => {
                         correction::validate_decision(c, &receipt, &capture)?;
+                    }
+                    correction::CapturedGlossary::Conversation(capture) => {
+                        conversation::validate_decision(c, &receipt, &capture)?;
                     }
                     correction::CapturedGlossary::Mcp(capture) => {
                         mcp::validate_decision(c, &receipt, &capture)?;
@@ -2840,6 +2902,9 @@ impl ProjectStore {
             .map_err(|_| failure(ErrorCode::StorageFailed, "resource-read"))?;
         let (capture, data) = capture_by_id(connection, project_id, capture_id)?;
         let file = match data {
+            correction::CapturedGlossary::Conversation(value) => {
+                return conversation::preview(connection, capture, value);
+            }
             correction::CapturedGlossary::Mcp(value) => {
                 return mcp::preview(connection, capture, value);
             }
@@ -2916,6 +2981,7 @@ impl ProjectStore {
             removed,
             correction: None,
             mcp: None,
+            conversation: None,
         })
     }
 
@@ -3054,6 +3120,9 @@ impl ProjectStore {
         validate_edited_decision(request)?;
         let (_, data) = capture_by_id(&tx, request.project_id, request.capture_id)?;
         let revision = match data {
+            correction::CapturedGlossary::Conversation(capture) => {
+                conversation::decide(&tx, request, &capture, &request_digest)?
+            }
             correction::CapturedGlossary::Mcp(capture) => {
                 mcp::decide(&tx, request, &capture, &request_digest)?
             }

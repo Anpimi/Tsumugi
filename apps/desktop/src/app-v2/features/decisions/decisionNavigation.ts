@@ -125,7 +125,7 @@ export async function resolveDecisionNavigation(context: SessionRequest, item: D
       const exact = await commands.proposal({ ...request, revisionId: action.revisionId });
       present();
       match(exact.projectId === ctx.projectId && exact.conversationId === action.conversationId && exact.proposalId === action.proposalId
-        && exact.revisionId === action.revisionId && (exact.content.kind === "proposal" || exact.content.kind === "knowledge-proposal") && exact.content.questions.length > 0);
+        && exact.revisionId === action.revisionId && (exact.content.kind === "proposal" || exact.content.kind === "knowledge-proposal" || exact.content.kind === "term-proposal") && exact.content.questions.length > 0);
       const latest = await commands.proposal({ ...request, revisionId: null });
       present();
       match(latest.projectId === ctx.projectId && latest.conversationId === action.conversationId && latest.proposalId === action.proposalId

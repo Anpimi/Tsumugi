@@ -229,7 +229,7 @@ fn edited_proposal_original_request_and_newer_input_survive_reopen_and_resolutio
 }
 
 #[test]
-fn format_16_resource_bytes_remain_unchanged_until_a_valid_format_17_write() {
+fn format_16_resource_bytes_remain_unchanged_until_a_valid_current_write() {
     let temp=tempfile::tempdir().unwrap();let store=DraftStore::at(temp.path().join("drafts")).unwrap();
     let mut original=write(ExecutionId::new());let head=store.write_resource(&original).unwrap();
     let c=Connection::open(store.directory.join(DATABASE)).unwrap();set_legacy_format(&c,16).unwrap();
@@ -245,7 +245,7 @@ fn format_16_resource_bytes_remain_unchanged_until_a_valid_format_17_write() {
     original.expected_revision=head.revision;original.value.edit_seq=rev(11);original.value.context_draft="More input".into();
     store.write_resource(&original).unwrap();
     let c=Connection::open(store.directory.join(DATABASE)).unwrap();
-    assert_eq!(c.pragma_query_value(None,"user_version",|r|r.get::<_,i64>(0)).unwrap(),17);
+    assert_eq!(c.pragma_query_value(None,"user_version",|r|r.get::<_,i64>(0)).unwrap(),FORMAT);
 }
 
 #[test]

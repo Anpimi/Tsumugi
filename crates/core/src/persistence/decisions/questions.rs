@@ -53,7 +53,7 @@ pub(super) fn project(
         let revision = store.read_conversation_proposal(project, head.conversation_id,
             head.proposal_id, Some(head.revision_id))?;
         let questions=match &revision.content {
-            ConversationPlanningModelOutput::Proposal{questions,..}|ConversationPlanningModelOutput::KnowledgeProposal{questions,..}=>questions,
+            ConversationPlanningModelOutput::Proposal{questions,..}|ConversationPlanningModelOutput::TermProposal { questions, .. } | ConversationPlanningModelOutput::KnowledgeProposal{questions,..}=>questions,
             _=>return Err(failure(ErrorCode::CorruptLedger,"decision-question-content")),
         };
         if questions.is_empty() { continue; }

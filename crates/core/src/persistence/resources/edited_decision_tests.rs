@@ -60,7 +60,7 @@ fn schema_71_upgrade_preserves_original_decision_digest_and_history() {
     connection.execute_batch("ALTER TABLE resource_decisions DROP COLUMN edited_target").unwrap();
     connection.pragma_update(None,"user_version",71).unwrap(); drop(connection);
     let mut store = ProjectStore::open(temp.path().join("project")).unwrap();
-    assert_eq!(store.connection().unwrap().pragma_query_value(None,"user_version",|r|r.get::<_,i64>(0)).unwrap(),72);
+    assert_eq!(store.connection().unwrap().pragma_query_value(None,"user_version",|r|r.get::<_,i64>(0)).unwrap(),crate::persistence::SCHEMA_VERSION);
     assert_eq!(store.connection().unwrap().query_row("SELECT request_digest FROM resource_decisions", [], |r|r.get::<_,String>(0)).unwrap(),saved_digest);
     assert_eq!(store.decide_glossary_entry(&original).unwrap(),receipt);
     let mut edited = original; edited.action_id=ExecutionId::new(); edited.expected_revision_id=Some(receipt.revision.unwrap().revision_id);
@@ -117,11 +117,11 @@ fn schema_71_upgrade_crashes_preserve_original_rows_and_column_version_atomicity
             String::from_utf8_lossy(&output.stdout), String::from_utf8_lossy(&output.stderr))), point);
         let raw = Connection::open(path.join(super::super::DATABASE_FILENAME)).unwrap();
         let committed = point == "conversation-after-commit";
-        assert_eq!(raw.pragma_query_value(None, "user_version", |r| r.get::<_, i64>(0)).unwrap(), if committed { 72 } else { 71 });
+        assert_eq!(raw.pragma_query_value(None, "user_version", |r| r.get::<_, i64>(0)).unwrap(), if committed { crate::persistence::SCHEMA_VERSION } else { 71 });
         assert_eq!(edited_column(&raw), committed);
         assert_eq!(migration_rows(&raw), before); drop(raw);
         let reopened = ProjectStore::open(&path).unwrap();
-        assert_eq!(reopened.connection().unwrap().pragma_query_value(None, "user_version", |r| r.get::<_, i64>(0)).unwrap(), 72);
+        assert_eq!(reopened.connection().unwrap().pragma_query_value(None, "user_version", |r| r.get::<_, i64>(0)).unwrap(), crate::persistence::SCHEMA_VERSION);
         assert!(edited_column(reopened.connection().unwrap()));
         assert_eq!(migration_rows(reopened.connection().unwrap()), before);
         assert_eq!(reopened.resource_decision_request_observation(&request).unwrap().unwrap().receipt, receipt);

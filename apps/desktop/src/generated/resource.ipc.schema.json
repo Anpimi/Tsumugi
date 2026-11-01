@@ -3684,6 +3684,26 @@
         ],
         "type": "object"
       },
+      "ConversationTermPreview": {
+        "additionalProperties": false,
+        "properties": {
+          "current": {
+            "type": "boolean"
+          },
+          "modelOrigin": {
+            "$ref": "#/definitions/ConversationProposalOrigin"
+          },
+          "proposal": {
+            "$ref": "#/definitions/ConversationProposalRef"
+          }
+        },
+        "required": [
+          "proposal",
+          "modelOrigin",
+          "current"
+        ],
+        "type": "object"
+      },
       "CorrectionTermBasis": {
         "additionalProperties": false,
         "properties": {
@@ -3980,6 +4000,27 @@
             "required": [
               "kind",
               "basis"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "properties": {
+              "kind": {
+                "const": "conversation",
+                "type": "string"
+              },
+              "modelOrigin": {
+                "$ref": "#/definitions/ConversationProposalOrigin"
+              },
+              "proposal": {
+                "$ref": "#/definitions/ConversationProposalRef"
+              }
+            },
+            "required": [
+              "kind",
+              "proposal",
+              "modelOrigin"
             ],
             "type": "object"
           },
@@ -4782,6 +4823,16 @@
         "properties": {
           "capture": {
             "$ref": "#/definitions/GlossaryCapture"
+          },
+          "conversation": {
+            "anyOf": [
+              {
+                "$ref": "#/definitions/ConversationTermPreview"
+              },
+              {
+                "type": "null"
+              }
+            ]
           },
           "correction": {
             "anyOf": [

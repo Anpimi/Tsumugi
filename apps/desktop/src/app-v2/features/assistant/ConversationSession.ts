@@ -1260,7 +1260,7 @@ export class ConversationSession {
     return this.kernel.live && !record.action && !busy && !value.pending && !failure
       && planning.messageIds.length > 0 && planning.messageIds.length <= 16 && validAiLimits(planning.config)
       && !!planning.config.endpoint.trim() && !!planning.config.model.trim()
-      && (planning.purpose !== "knowledge" || workspaceSelectionIds(planning.selection).length > 0);
+      && (planning.purpose === null || workspaceSelectionIds(planning.selection).length > 0);
   }
   async preparePlanning(conversationId: string, current: () => boolean = () => true) {
     const record = this.records.get(conversationId); if (!record || !this.canPrepare(record) || !current()) return;

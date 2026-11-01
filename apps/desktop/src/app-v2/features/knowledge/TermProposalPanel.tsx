@@ -16,6 +16,7 @@ import { Banner, EmptyState, LoadingState } from "../../../design-system/Feedbac
 import type { InteractionGate } from "../../workspace/interactionGate";
 import type { KnowledgeOwner, ResourceProposalTarget } from "./knowledgeTypes";
 import { CorrectionTermDraftForm } from "../entries/EntryCorrectionTerm";
+import { TermConversationOrigin } from "./TermConversationOrigin";
 import styles from "./TermProposalPanel.module.css";
 
 interface Props {
@@ -56,10 +57,10 @@ export default function TermProposalPanel({ project, owner, disabled, current, g
   const sourceKey = ["resource-source-scope"];
   const source = useSessionQuery({ key: sourceKey, scopes: ["source"], enabled: !disabled && !reads.retired,
     read: () => sourceCommands.scope(context) });
-  const captures = useSessionQuery({ key: ["resource-captures", 100], scopes: ["resources"], enabled: !disabled && !reads.retired,
+  const captures = useSessionQuery({ key: ["resource-captures", 100], scopes: ["resources", "project"], enabled: !disabled && !reads.retired,
     read: () => resourceCommands.captures({ ...context, limit: 100 }) });
   const previewKey = ["resource-preview-current", capture?.captureId ?? ""];
-  const latest = useSessionQuery({ key: previewKey, scopes: ["source", "translation", "resources"],
+  const latest = useSessionQuery({ key: previewKey, scopes: ["source", "translation", "resources", "project", "execution"],
     enabled: !disabled && !reads.retired && !!capture && !!preview && !state.previewNeedsRefresh && owner.canReadCapture(capture),
     read: async () => {
       if (!capture) throw new Error("Missing term proposal capture");
@@ -81,7 +82,7 @@ export default function TermProposalPanel({ project, owner, disabled, current, g
       || choice.preview.capture.origin.kind !== "file" && live.current.owner.canReadCapture(choice.preview.capture)
       && (choice.decision === "keep" || choice.decision === "ignore");
     if (!allowed) return false;
-    if ((observed.mcp && !observed.mcp.current || observed.correction && !observed.correction.evidence.current)
+    if ((observed.mcp && !observed.mcp.current || observed.correction && !observed.correction.evidence.current || observed.conversation && !observed.conversation.current)
       && (choice.decision === "adopt" || choice.decision === "override")) return false;
     if (choice.removed) {
       return (choice.decision === "adopt" || choice.decision === "keep")
@@ -121,7 +122,7 @@ export default function TermProposalPanel({ project, owner, disabled, current, g
   }
   function label(value: GlossaryCapture) {
     return value.origin.kind === "file" ? t("proposalFile", { resource: value.origin.resourceId, version: value.origin.revision })
-      : value.origin.kind === "correction" ? t("proposalCorrection") : t("proposalMcp", { server: value.origin.provenance.tool.serverName });
+      : value.origin.kind === "correction" ? t("proposalCorrection") : value.origin.kind === "conversation" ? t("proposalConversation") : t("proposalMcp", { server: value.origin.provenance.tool.serverName });
   }
   function recovery(dialog?: string) {
     const pending = state.pending;
@@ -158,7 +159,7 @@ export default function TermProposalPanel({ project, owner, disabled, current, g
       onClick={() => { if (present()) void captures.refetch(); }}>{t("proposalReadAgain")}</Button>}>
       <p>{t("proposalReadFailed")}</p><CommandFailureDetails failure={commandFailure(captures.error)}/></Banner> : null}
     {readable.length ? <ul className={styles.sources} aria-label={t("proposalSaved")}>{readable.map(value => <li key={value.captureId}>
-      <span>{label(value)}</span><Button size="sm" disabled={!present() || busy || dirty || !fresh(["resource-captures", 100], captures.data)}
+      <span>{label(value)}{value.origin.kind === "conversation" ? <p className={styles.meta}>{t("proposalOriginRevision")}: {value.origin.proposal.revisionId}</p> : null}</span><Button size="sm" disabled={!present() || busy || dirty || !fresh(["resource-captures", 100], captures.data)}
         onClick={() => { if (present() && !busy && !dirty) void owner.openPreview(value, () => present()); }}>{t("proposalOpen")}</Button>
     </li>)}</ul> : captures.isSuccess && !captures.error ? <p>{t("proposalEmpty")}</p> : null}
     {captures.data?.length === 100 ? <p className={styles.meta}>{t("proposalLimited")}</p> : null}
@@ -186,7 +187,8 @@ export default function TermProposalPanel({ project, owner, disabled, current, g
       {source.error || latest.error ? <Banner tone="error" role="alert"><p>{t("proposalReadFailed")}</p>
         <CommandFailureDetails failure={commandFailure(source.error ?? latest.error)}/></Banner> : null}
       {changed ? <Banner tone="warning" role="status">{t("proposalChanged")}</Banner> : null}
-      {preview?.mcp && !preview.mcp.current || preview?.correction && !preview.correction.evidence.current ? <Banner tone="warning">{t("proposalStale")}</Banner> : null}
+      {preview?.mcp && !preview.mcp.current || preview?.correction && !preview.correction.evidence.current || preview?.conversation && !preview.conversation.current ? <Banner tone="warning">{t("proposalStale")}</Banner> : null}
+      {capture.origin.kind === "conversation" ? <TermConversationOrigin key={capture.captureId} origin={capture.origin} active={present()}/> : null}
       {preview ? <div className={styles.scroll}><table className={styles.table}><thead><tr>
         <th scope="col">{t("proposalSource")}</th><th scope="col">{t("proposalCurrent")}</th><th scope="col">{t("proposalProposed")}</th><th scope="col">{t("proposalActions")}</th>
       </tr></thead><tbody>{preview.rows.map(row => {
@@ -194,7 +196,7 @@ export default function TermProposalPanel({ project, owner, disabled, current, g
         const action = make(row.kind === "override" && !preview.correction ? "override" : "adopt");
         const targeted = target?.captureId === preview.capture.captureId && target.entryId === row.entry.id;
         return <tr key={row.entry.id} ref={targeted ? targetRow : undefined} tabIndex={targeted ? -1 : undefined} aria-label={targeted ? row.entry.source : undefined}><th scope="row">{row.entry.source}<p className={styles.meta}>{row.entry.nativeKey || t(row.scopeUnitId ? "proposalScopeEntry" : "proposalScopeProject")}</p></th>
-          <td>{row.current?.target ?? t("proposalMissingValue")}</td><td>{row.entry.target}<p className={styles.meta}>{global(`resource.changeKind.${row.kind}`)}</p>
+          <td>{row.current?.target ?? t("proposalMissingValue")}</td><td>{row.entry.target}{row.entry.aliases.length ? <p aria-label={t("aliases")}>{row.entry.aliases.join(", ")}</p> : null}<p className={styles.meta}>{global(`resource.changeKind.${row.kind}`)}</p>
             {row.entry.protected ? <Badge>{t("proposalProtected")}</Badge> : null}{row.entry.reason ? <p aria-label={t("proposalReason")}>{row.entry.reason}</p> : null}</td>
           <td><div className={styles.actions}><Button size="sm" disabled={!!edit || busy || dirty || !matching({ ...action, editedTarget: row.entry.target })}
             onClick={event => { const choice = { ...action, editedTarget: row.entry.target }; if (!edit && !busy && !dirty && matching(choice)) { editingOrigin.current = event.currentTarget; owner.beginProposalEdit(row, () => matching(choice)); } }}>{t("proposalEdit")}</Button>
