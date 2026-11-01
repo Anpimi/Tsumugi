@@ -1,4 +1,8 @@
 export const conversationRunResultsEn = {
+  runResultsRetryEffect: "Retry original processing",
+  runResultsRetryEffectHelp: "Retry only the original candidate checks and authorized processing. This does not generate another translation or grant new permission.",
+  runResultsRetryingEffect: "Checking and retrying the original processing…",
+  runResultsRetryEffectFailed: "The processing could not be confirmed. Read the original results again before taking another action.",
   runResultsTitle: "Results from this start", runResultsShow: "View generated results", runResultsHide: "Hide generated results",
   runResultsReadHelp: "View the results recorded for this start. Reading again does not send another model request.",
   runResultsRefresh: "Read results again", runResultsLoading: "Reading recorded results…",
@@ -26,6 +30,10 @@ export const conversationRunResultsEn = {
 };
 
 export const conversationRunResultsZh: typeof conversationRunResultsEn = {
+  runResultsRetryEffect: "重试原处理",
+  runResultsRetryEffectHelp: "仅重试原候选的检查及已授权处理，不重新生成译文，也不授予新权限。",
+  runResultsRetryingEffect: "正在核对并重试原处理…",
+  runResultsRetryEffectFailed: "尚未确认处理结果。请先重新读取原结果，再决定下一步。",
   runResultsTitle: "这次启动的结果", runResultsShow: "查看生成结果", runResultsHide: "收起生成结果",
   runResultsReadHelp: "查看这次启动已记录的结果。重新读取不会再次请求模型。",
   runResultsRefresh: "重新读取结果", runResultsLoading: "正在读取已记录的结果…",

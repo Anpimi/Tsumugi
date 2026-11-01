@@ -186,7 +186,7 @@ function RunObservation({ owner, input, link, visible, disabled, gate, viewId, p
       <Disclosure title={<>{t("runFixedDetails")}</>}><RunPlanDetails status={status}/></Disclosure>
       {input.value.pending || input.failure ? <Banner tone="warning">{t("runPending")}</Banner> : null}
       {input.runFailure?.planId === link.planId ? <Banner tone="error"><p>{t("runActionFailed")}</p><CommandFailureDetails failure={input.runFailure.cause}/></Banner> : null}
-      {runBusy ? <p role="status">{t(runBusy.kind === "check" ? "runChecking" : "runSending")}</p> : null}
+      {runBusy ? <p role="status">{t(runBusy.kind === "effect-retry" ? "runResultsRetryingEffect" : runBusy.kind === "check" ? "runChecking" : "runSending")}</p> : null}
       {!fresh ? <p role="status">{t("runStale")}</p> : null}
       {!connectionCurrent && needsConnections ? <Banner tone="warning"><p>{t("runConnectionChanged")}</p>
         {connectionRead.isFetching ? <p role="status">{t("runConnectionLoading")}</p> : null}
@@ -223,6 +223,16 @@ function RunObservation({ owner, input, link, visible, disabled, gate, viewId, p
     <ConversationRunHistory context={owner.context} link={link} status={status} visible={visible} canRead={canRead}
       onOpenCandidate={onOpenCandidate} onOpenTeamCandidate={onOpenTeamCandidate}/>
     <ConversationRunProgress onOpenCandidate={onOpenCandidate} onOpenTeamCandidate={onOpenTeamCandidate} context={owner.context} link={link} status={status} visible={visible} canRead={canRead}
+      canRetryEffect={() => !!status && allowed() && statusCurrent(status) && owner.canRetryEffect(link.conversationId, status)}
+      onRetryEffect={async (target, current) => {
+        if (!status || !allowed() || !statusCurrent(status) || !owner.canRetryEffect(link.conversationId, status)) return false;
+        const proof = capture(true);
+        try {
+          const run = await workPlanCommands.run({ ...owner.context, planId: link.planId });
+          if (!current() || !proof.current() || !run.lastStart || run.lastStart.actionId !== target.startActionId || run.lastStart.attemptId !== target.attemptId) return false;
+          return await owner.retryRunEffect(link, status, run.lastStart, target, () => current() && proof.current());
+        } finally { proof.dispose(); }
+      }}
       teamActions={status ? (view, current) => <ConversationTeamActions owner={owner} input={input} link={link} status={status} view={view} current={() => canRead() && statusCurrent(status) && current()}
         visible={visible} disabled={disabled} gate={gate} viewId={viewId} refresh={() => { if (canRead()) reads.invalidate(["execution"]); }}/> : undefined}
       onTeamReply={post => {

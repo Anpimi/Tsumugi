@@ -9,7 +9,7 @@ import { conversationWorkPlanFixture } from "../../../testSupport/conversationWo
 import { fixtureIdentity as id } from "../../../testSupport/executionFixture";
 import { InteractionGate } from "../../workspace/interactionGate";
 import { ConversationRunResults } from "./ConversationRunResults";
-import type { OpenConversationRunCandidate } from "./conversationRunResultReads";
+import { conversationRunEffectTarget, type OpenConversationRunCandidate, type RetryConversationRunEffect } from "./conversationRunResultReads";
 
 const invoke = vi.hoisted(() => vi.fn());
 vi.mock("@tauri-apps/api/core", () => ({ invoke }));
@@ -42,10 +42,12 @@ function fixture(count = 100) {
   const link = { ...prepared.proposal, planId: plan.planId, planDigest: plan.digest, actionId: id(61002), ordinal: "1" };
   return { context, link, plan, start, view };
 }
-function harness(count = 100, callback = vi.fn<OpenConversationRunCandidate>(async () => true)) {
+function harness(count = 100, callback = vi.fn<OpenConversationRunCandidate>(async () => true), retry?: RetryConversationRunEffect) {
   const h = fixture(count), reads = new SessionReads(h.context), gate = new InteractionGate(); gate.setVisibleOwner("entries");
+  if (retry) h.view.rows[0].automation = { actionId: id(69001), phase: "failed", retryable: true, receipt: null, error: { code: "outcome-unknown", stage: "execution-read", outcome: "unknown", recoveryRequired: true } };
   invoke.mockImplementation(async command => { if (command === "read_ai_translation") return structuredClone(h.view); throw new Error(`Unexpected result command: ${command}`); });
-  const props = { ...h, visible: true, canRead: () => gate.canDispatch({ viewId: "entries", source: "button" }), onOpenCandidate: callback };
+  const props = { ...h, visible: true, canRead: () => gate.canDispatch({ viewId: "entries", source: "button" }), onOpenCandidate: callback,
+    canRetryEffect: () => true, onRetryEffect: retry };
   const tree = () => <SessionReadProvider context={h.context} reads={reads} bridge={false}><label>Other draft<input aria-label="Other draft" defaultValue="Retained B"/></label>
     <ConversationRunResults {...props}/></SessionReadProvider>;
   const rendered = render(tree());
@@ -59,6 +61,23 @@ beforeEach(async () => { invoke.mockReset(); await i18n.changeLanguage("en-US");
 afterEach(() => { cleanup(); disposals.splice(0).forEach(dispose => dispose()); expect(invoke.mock.calls.every(([command]) => command === "read_ai_translation")).toBe(true); });
 
 describe("conversation run result UI", () => {
+it("offers only a retryable original effect and passes its exact current proof to the retained owner", async () => {
+  const retry = vi.fn<RetryConversationRunEffect>(async (_target, current) => { expect(current()).toBe(true); return true; });
+  const h = harness(1, undefined, retry); await expand();
+  fireEvent.click(screen.getByRole("button", { name: t("runResultsRetryEffect") }));
+  await waitFor(() => expect(retry).toHaveBeenCalledOnce());
+  expect(retry.mock.calls[0][0]).toEqual(conversationRunEffectTarget(h.link, h.start, h.view.rows[0]));
+  expect(invoke.mock.calls.every(([command]) => command === "read_ai_translation")).toBe(true);
+});
+it("withdraws an effect proof on composition or hidden results without repeating the original action", async () => {
+  const finishing = deferred<boolean>(), retry = vi.fn<RetryConversationRunEffect>(async () => finishing.promise);
+  const h = harness(1, undefined, retry); await expand();
+  fireEvent.click(screen.getByRole("button", { name: t("runResultsRetryEffect") }));
+  await waitFor(() => expect(retry).toHaveBeenCalledOnce()); const current = retry.mock.calls[0][1];
+  h.gate.setComposing("editor", true); expect(current()).toBe(false); h.gate.setComposing("editor", false);
+  h.visible(false); expect(current()).toBe(false); finishing.resolve(true);
+  await act(async () => { await finishing.promise; }); expect(retry).toHaveBeenCalledOnce();
+});
 it("waits for explicit expansion, renders 25 of 100 rows and keeps saved, pending, invalid and unknown results distinct", async () => {
   const h = harness(); expect(invoke).not.toHaveBeenCalled(); await expand();
   const region = resultRegion(), rows = within(region).getAllByRole("article"); expect(rows).toHaveLength(25);

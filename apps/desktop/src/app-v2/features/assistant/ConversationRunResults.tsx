@@ -11,12 +11,13 @@ import { Button } from "../../../design-system/Button";
 import { Banner, LoadingState } from "../../../design-system/Feedback";
 import { TokenizedText } from "../../../design-system/TokenizedText";
 import type { ConversationPlanLink } from "./conversationRun";
-import { conversationRunCandidateTarget, readConversationRunResults, type OpenConversationRunCandidate } from "./conversationRunResultReads";
+import { conversationRunCandidateTarget, conversationRunEffectTarget, readConversationRunResults, type OpenConversationRunCandidate, type RetryConversationRunEffect } from "./conversationRunResultReads";
 import styles from "./ConversationRunResults.module.css";
 
 interface Props {
   context: SessionRequest; link: ConversationPlanLink; plan: WorkPlanView; start: WorkPlanStartReceipt;
   visible: boolean; canRead: () => boolean; onOpenCandidate?: OpenConversationRunCandidate;
+  canRetryEffect?: () => boolean; onRetryEffect?: RetryConversationRunEffect;
 }
 const pageSize = 25;
 const executionKeys = {
@@ -38,7 +39,7 @@ function ReturnedText({ row }: { row: AiRow }) {
   </Disclosure>;
 }
 
-/** Expansion owns a read-only snapshot, never execution or candidate permission. */
+/** Expansion observes the original result. Retrying requires its retained owner. */
 export function ConversationRunResults(props: Props) {
   const { t } = useTranslation(undefined, { keyPrefix: "conversation" });
   const identity = JSON.stringify([props.context.projectId, props.context.sessionToken, props.link, props.plan, props.start]);
@@ -56,16 +57,16 @@ export function ConversationRunResults(props: Props) {
   </section>;
 }
 
-function RunResultsRead({ context, link, plan, start, visible, canRead, onOpenCandidate, identity }: Props & { identity: string }) {
+function RunResultsRead({ context, link, plan, start, visible, canRead, onOpenCandidate, canRetryEffect, onRetryEffect, identity }: Props & { identity: string }) {
   const { t } = useTranslation(undefined, { keyPrefix: "conversation" }), { t: global } = useTranslation();
   const reads = useSessionReads(), id = useId();
-  const mounted = useRef(false), live = useRef({ visible, identity, canRead, onOpenCandidate });
-  const navigation = useRef<{ itemId: string; dispose: () => void } | null>(null);
+  const mounted = useRef(false), live = useRef({ visible, identity, canRead, onOpenCandidate, canRetryEffect, onRetryEffect });
+  const navigation = useRef<{ itemId: string; kind: "candidate" | "effect"; dispose: () => void } | null>(null);
   const [busyItem, setBusyItem] = useState<string | null>(null), [page, setPage] = useState(0);
-  const [feedback, setFeedback] = useState<{ itemId: string; cause: CommandFailure | null } | null>(null);
+  const [feedback, setFeedback] = useState<{ itemId: string; cause: CommandFailure | null; effect?: boolean } | null>(null);
   const resultRegion = useRef<HTMLElement>(null), failureRegion = useRef<HTMLDivElement>(null), navigationFailureRegion = useRef<HTMLDivElement>(null);
   const readFocus = useRef<{ origin: HTMLElement | null } | null>(null), failureFocus = useRef<HTMLElement | null>(null), pageFocus = useRef<HTMLElement | null>(null);
-  useLayoutEffect(() => { live.current = { visible, identity, canRead, onOpenCandidate }; });
+  useLayoutEffect(() => { live.current = { visible, identity, canRead, onOpenCandidate, canRetryEffect, onRetryEffect }; });
   useLayoutEffect(() => {
     mounted.current = true;
     readFocus.current = { origin: document.activeElement instanceof HTMLElement ? document.activeElement : null };
@@ -122,7 +123,7 @@ function RunResultsRead({ context, link, plan, start, visible, canRead, onOpenCa
     const target = conversationRunCandidateTarget(link, start, row);
     if (!target) return;
     const witness = reads.watchExactQuery(key), original = witness.current(), version = original?.state.dataUpdateCount;
-    const flight = { itemId: row.itemId, dispose: () => witness.dispose() };
+    const flight = { itemId: row.itemId, kind: "candidate" as const, dispose: () => witness.dispose() };
     const focusOwner = shouldFocus(origin) ? resultRegion.current : null;
     focusOwner?.focus();
     const current = () => navigation.current === flight && live.current.onOpenCandidate === callback && currentView(expected)
@@ -134,6 +135,28 @@ function RunResultsRead({ context, link, plan, start, visible, canRead, onOpenCa
       if (current() && !opened) { failureFocus.current = focusOwner ?? origin; setFeedback({ itemId: row.itemId, cause: null }); }
     } catch (error) {
       if (current()) { failureFocus.current = focusOwner ?? origin; setFeedback({ itemId: row.itemId, cause: commandFailure(error) }); }
+    } finally {
+      flight.dispose();
+      if (navigation.current === flight) { navigation.current = null; if (mounted.current) setBusyItem(null); }
+    }
+  }
+  async function retryEffect(row: AiRow, origin: HTMLElement) {
+    const callback = onRetryEffect, expected = view;
+    if (!callback || !live.current.canRetryEffect?.() || !expected || !currentView(expected) || navigation.current || !expected.rows.includes(row)) return;
+    const target = conversationRunEffectTarget(link, start, row);
+    if (!target) return;
+    const witness = reads.watchExactQuery(key), original = witness.current(), version = original?.state.dataUpdateCount;
+    const flight = { itemId: row.itemId, kind: "effect" as const, dispose: () => witness.dispose() };
+    const focusOwner = shouldFocus(origin) ? resultRegion.current : null;
+    focusOwner?.focus(); navigation.current = flight; setBusyItem(row.itemId); setFeedback(null);
+    const current = () => navigation.current === flight && !!live.current.onRetryEffect && currentView(expected)
+      && witness.current() === original && original?.state.dataUpdateCount === version && expected.rows.includes(row);
+    try {
+      if (!current()) return;
+      const requested = await callback(target, current);
+      if (current() && !requested) { failureFocus.current = focusOwner ?? origin; setFeedback({ itemId: row.itemId, cause: null, effect: true }); }
+    } catch (error) {
+      if (current()) { failureFocus.current = focusOwner ?? origin; setFeedback({ itemId: row.itemId, cause: commandFailure(error), effect: true }); }
     } finally {
       flight.dispose();
       if (navigation.current === flight) { navigation.current = null; if (mounted.current) setBusyItem(null); }
@@ -154,15 +177,15 @@ function RunResultsRead({ context, link, plan, start, visible, canRead, onOpenCa
         saved: view.rows.filter(row => row.savedRevisionId !== null).length })}</p>
       <p>{t("runResultsMeaning")}</p>
       {!fresh ? <p role="status">{t("runResultsStale")}</p> : null}
-      {busyItem ? <p role="status">{t("runResultsOpeningCandidate")}</p> : null}
-      {feedback ? <Banner ref={navigationFailureRegion} tabIndex={-1} tone="warning" role="alert"><p>{t("runResultsOpenFailed")}</p>
+      {busyItem ? <p role="status">{t(navigation.current?.kind === "effect" ? "runResultsRetryingEffect" : "runResultsOpeningCandidate")}</p> : null}
+      {feedback ? <Banner ref={navigationFailureRegion} tabIndex={-1} tone="warning" role="alert"><p>{t(feedback.effect ? "runResultsRetryEffectFailed" : "runResultsOpenFailed")}</p>
         {feedback.cause ? <CommandFailureDetails failure={feedback.cause}/> : null}
         <Button size="sm" disabled={!present() || read.isFetching || !!busyItem} onClick={event => refresh(event.currentTarget)}>{t("runResultsRecoverRead")}</Button>
       </Banner> : null}
       {view.rows.length === 0 ? <p>{t("runResultsEmpty")}</p> : <ol className={styles.rows} start={currentPage * pageSize + 1}>
         {rows.map(row => {
           const item = statuses.get(row.itemId), output = row.output, target = onOpenCandidate ? conversationRunCandidateTarget(link, start, row) : null;
-          const decision = row.candidateDecision, effect = row.automation;
+          const decision = row.candidateDecision, effect = row.automation, retryTarget = onRetryEffect ? conversationRunEffectTarget(link, start, row) : null;
           return <li key={row.itemId}><article className={styles.row}>
             <h6><TokenizedText text={row.item.nativeKey || t("runResultsUnnamedEntry")}/></h6>
             {item ? <><p>{t(executionKeys[item.status.execution])}</p><p>{t(validationKeys[item.status.validation])}</p>
@@ -174,6 +197,8 @@ function RunResultsRead({ context, link, plan, start, visible, canRead, onOpenCa
             {effect ? <div className={styles.processing}><p>{global(`ai.effects.phases.${effect.phase}`)}</p>
               {effect.receipt?.blocked ? <p>{global(`ai.effects.blocks.${effect.receipt.blocked}`)}</p> : null}
               {effect.error ? <Disclosure title={<>{t("runResultsProcessingDetails")}</>}><CommandFailureDetails failure={effect.error}/></Disclosure> : null}
+              {retryTarget ? <><p>{t("runResultsRetryEffectHelp")}</p><Button size="sm" disabled={!fresh || !!busyItem || !canRetryEffect?.()}
+                onClick={event => void retryEffect(row, event.currentTarget)}>{t("runResultsRetryEffect")}</Button></> : null}
             </div> : null}
             {decision ? <div className={styles.decision}><p>{t(decision.request.disposition === "rejected" ? "runResultsCandidateRejected" : "runResultsCandidateRestored")}</p>
               {decision.request.reason ? <Disclosure title={<>{t("runResultsDecisionReason")}</>}><p className={styles.text}><TokenizedText text={decision.request.reason}/></p></Disclosure> : null}

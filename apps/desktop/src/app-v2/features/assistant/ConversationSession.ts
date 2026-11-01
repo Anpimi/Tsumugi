@@ -1,6 +1,6 @@
 import { commandFailure, type CommandFailure } from "../../../CommandFailure";
 import { conversationCommands, isConversationMessageText, type ConversationPlanningRun, type ConversationProposalRevision, type PreparedConversationPlanning } from "../../../conversationCommands";
-import { defaultAiConfig, editedAiConfig, validAiLimits, type AiConfig } from "../../../aiCommands";
+import { aiCommands, defaultAiConfig, editedAiConfig, validAiLimits, type AiConfig } from "../../../aiCommands";
 import { conversationDraftCommands, canonicalConversationDraft, conversationPendingActionId, isConversationTeamPending, locallyReplayableConversationRequest, type ConversationDraftHead, type ConversationDraftKey, type ConversationDraftPending, type ConversationDraftSummary, type ConversationDraftValue, type ConversationProposalDraft, type ConversationDraftRevocation, type ConversationDraftResolveTarget, type ConversationDraftDisposition, type ConversationTeamDraft, type ConversationTeamGuidanceDraft, type ConversationTeamPublicationDraft } from "../../../conversationDraftCommands";
 import type { SessionRequest } from "../../../executionCommands";
 import type { SessionReads } from "../../../sessionReads";
@@ -31,6 +31,8 @@ import type { WorkPlanTeamRecoveryStateView, TeamRecoveryReceipt } from "../../.
 import { initialConversationRecoveryState, initialConversationRecoveryDraft, newConversationRecoveryMember, unchangedConversationRecoveryMember, conversationRecoveryProblem, recoveryBasisMatches,
   type ConversationRecoveryState, type ConversationRecoveryDraft, type ConversationRecoveryMember } from "./conversationRecovery";
 import { teamQuestionCommands, type TeamQuestionView } from "../../../teamQuestionCommands";
+import { conversationRunEffectTarget, readConversationRunResults, type ConversationRunEffectTarget } from "./conversationRunResultReads";
+import type { WorkPlanStartReceipt } from "../../../generated/ai.responses";
 import type { RespondTeamQuestion } from "../../../generated/ai.requests";
 import type { ConversationTeamQuestionDraft } from "../../../generated/draft.responses";
 type ConversationQuestionPending = Extract<ConversationDraftPending, { kind: "team-question-response" }>;
@@ -39,6 +41,7 @@ type ConversationRecoveryPending = Extract<ConversationDraftPending, { kind: "te
 type Ports = typeof conversationDraftCommands & Pick<typeof conversationCommands, "create" | "append" | "recoverCreate" | "recoverMessage" | "preparePlanning" | "validatePlanning" | "startPlanning" | "readPlanning" | "captureProposal" | "reviseProposal" | "validateProposal" | "prepareProposalWorkPlan" | "authorizeProposalWorkPlan" | "recoverPlanning" | "recoverProposalCapture" | "recoverProposalRevision" | "recoverProposalWorkPlan"> & {
   identity: () => string; now: () => number; captureSelection: typeof reviewCommands.captureScope;
   planStatus: typeof workPlanCommands.status; startPlan: typeof workPlanCommands.start; readPlanStartSettlement: typeof workPlanCommands.startSettlement;
+  readPlanRun: typeof workPlanCommands.run; readAiResults: typeof aiCommands.read; retryEffect: typeof aiCommands.retryEffect;
   controlPlan: typeof workPlanCommands.control; readPlanControlSettlement: typeof workPlanCommands.controlSettlement;
   readProposalWorkPlan: typeof conversationCommands.readProposalWorkPlan;
   readTeamExecution: typeof workPlanCommands.teamExecution; sendTeamMessage: typeof workPlanCommands.sendTeamMessage;
@@ -73,7 +76,7 @@ export interface ConversationInput {
   readyRuns: ReadonlyMap<string, ConversationRunReady>;
   recoveryStates: ReadonlyMap<string, ConversationRecoveryState>;
   runFailure: ConversationRunFailure | null;
-  runBusy: { planId: string; kind: "start" | "control" | "check" } | null;
+  runBusy: { planId: string; kind: "start" | "control" | "check" | "effect-retry" } | null;
 }
 export interface ConversationPlanningInput {
   open: boolean;
@@ -131,6 +134,7 @@ export class ConversationSession {
       reviseProposal: conversationCommands.reviseProposal, validateProposal: conversationCommands.validateProposal,
       prepareProposalWorkPlan: conversationCommands.prepareProposalWorkPlan, authorizeProposalWorkPlan: conversationCommands.authorizeProposalWorkPlan,
       planStatus: workPlanCommands.status, startPlan: workPlanCommands.start, readPlanStartSettlement: workPlanCommands.startSettlement,
+      readPlanRun: workPlanCommands.run, readAiResults: aiCommands.read, retryEffect: aiCommands.retryEffect,
       controlPlan: workPlanCommands.control, readPlanControlSettlement: workPlanCommands.controlSettlement,
       readProposalWorkPlan: conversationCommands.readProposalWorkPlan, readTeamExecution: workPlanCommands.teamExecution,
       sendTeamMessage: workPlanCommands.sendTeamMessage, publishTeam: workPlanCommands.publishTeam,
@@ -517,6 +521,47 @@ export class ConversationSession {
   private runAvailable(record: RecordState, planId: string) {
     return this.kernel.live && !record.action && !record.input.busy && !record.input.journalBusy && !record.input.value.pending && !record.input.failure
       && !(record.input.value.revocations ?? []).some(slot => slot.request.planId === planId);
+  }
+  canRetryEffect(conversationId: string, status: WorkPlanStatusView) {
+    const record = this.records.get(conversationId);
+    return !!record && this.runAvailable(record, status.plan.planId) && status.state === "active"
+      && BigInt(status.expiresAt) > BigInt(Math.floor(this.ports.now() / 1000));
+  }
+  /** Retry the retained effect, never a model request or a new generation. */
+  async retryRunEffect(link: ConversationPlanLink, expected: WorkPlanStatusView, start: WorkPlanStartReceipt,
+    target: ConversationRunEffectTarget, current: () => boolean = () => true): Promise<boolean> {
+    const record = this.records.get(link.conversationId);
+    if (!record || !runMatchesLink(expected, link) || link.projectId !== this.context.projectId
+      || target.projectId !== link.projectId || target.conversationId !== link.conversationId || target.planId !== link.planId
+      || target.planDigest !== link.planDigest || !this.canRetryEffect(link.conversationId, expected) || !current()) return false;
+    const epoch = record.revocationEpoch.get(link.planId) ?? 0;
+    record.action = true; this.update(record, { busy: "check", runBusy: { planId: link.planId, kind: "effect-retry" }, runFailure: null });
+    const present = () => this.kernel.live && current() && epoch === (record.revocationEpoch.get(link.planId) ?? 0)
+      && expected.state === "active" && BigInt(expected.expiresAt) > BigInt(Math.floor(this.ports.now() / 1000));
+    let dispatched = false;
+    try {
+      const status = await this.currentRun(record, link, expected, true, present);
+      if (!status || !present() || start.expectedGeneration !== status.lease.generation) return false;
+      const [run, view] = await Promise.all([
+        this.ports.readPlanRun({ ...this.context, planId: link.planId }),
+        readConversationRunResults(this.context, link, status.plan, start, this.ports.readAiResults),
+      ]);
+      if (!present()) return false;
+      if (run.projectId !== this.context.projectId || run.planDigest !== link.planDigest || run.lease.generation !== status.lease.generation || run.state !== "active"
+        || !same(run.lastStart, start)) throw new Error("The recorded start or its authority changed");
+      const row = view.rows.find(item => item.itemId === target.itemId);
+      if (!row || !same(conversationRunEffectTarget(link, start, row), target)) throw new Error("The original effect changed; read its result again");
+      if (!present()) return false;
+      dispatched = true;
+      await this.ports.retryEffect({ ...this.context, attemptId: target.attemptId, itemId: target.itemId });
+      return true;
+    } catch (error) {
+      this.runFailed(record, link.planId, error); return false;
+    } finally {
+      // A lost acknowledgement is followed by observation, not another retry.
+      if (dispatched) this.onRecorded();
+      this.finishRun(record);
+    }
   }
   private async currentRun(record: RecordState, link: ConversationPlanLink, expected: WorkPlanStatusView, execution: boolean, current: () => boolean) {
     const status = await this.ports.planStatus({ ...this.context, planId: link.planId });

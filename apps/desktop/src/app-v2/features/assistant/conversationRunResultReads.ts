@@ -14,15 +14,32 @@ export interface ConversationRunCandidateTarget {
 }
 export type OpenConversationRunCandidate = (target: ConversationRunCandidateTarget, current: () => boolean) => Promise<boolean>;
 
+export interface ConversationRunEffectTarget {
+  projectId: string; conversationId: string; planId: string; planDigest: string;
+  startActionId: string; generation: string; taskId: string; attemptId: string;
+  unitId: string; locale: string; sourceRevisionId: string; sourceSnapshotId: string;
+  itemId: string; resultId: string | null; revisionId: string | null; effectActionId: string | null;
+}
+export type RetryConversationRunEffect = (target: ConversationRunEffectTarget, current: () => boolean) => Promise<boolean>;
+
+export function conversationRunEffectTarget(link: ConversationPlanLink, start: WorkPlanStartReceipt, row: AiView["rows"][number]): ConversationRunEffectTarget | null {
+  if (start.projectId !== link.projectId || start.planId !== link.planId || row.automation?.phase !== "failed"
+    || !row.automation.retryable || row.candidateDecision?.request.disposition === "rejected") return null;
+  return { projectId: link.projectId, conversationId: link.conversationId, planId: link.planId, planDigest: link.planDigest,
+    startActionId: start.actionId, generation: start.expectedGeneration, taskId: start.taskId, attemptId: start.attemptId,
+    unitId: row.item.unitId, locale: row.item.targetLocale, sourceRevisionId: row.item.sourceRevisionId, sourceSnapshotId: row.item.sourceSnapshotId,
+    itemId: row.itemId, resultId: row.resultId, revisionId: row.savedRevisionId, effectActionId: row.automation.actionId };
+}
+
 /** The conversation planning contract captures at most 100 source entries. */
-export async function readConversationRunResults(context: SessionRequest, link: ConversationPlanLink, plan: WorkPlanView, start: WorkPlanStartReceipt): Promise<AiView> {
+export async function readConversationRunResults(context: SessionRequest, link: ConversationPlanLink, plan: WorkPlanView, start: WorkPlanStartReceipt, read = aiCommands.read): Promise<AiView> {
   const captured = structuredClone({ context, link, plan, start });
   const { context: request, link: origin, plan: fixed, start: recorded } = captured;
   if (origin.projectId !== request.projectId || fixed.planId !== origin.planId || fixed.digest !== origin.planDigest
     || recorded.projectId !== request.projectId || recorded.planId !== origin.planId || !fixed.preview
     || fixed.options.teamExecution || fixed.options.mcpTermQuery || fixed.scope.length === 0 || fixed.scope.length > 100)
     throw new Error("Invalid conversation run result scope");
-  const value = await aiCommands.read({ ...request, attemptId: recorded.attemptId });
+  const value = await read({ ...request, attemptId: recorded.attemptId });
   const detail = value.detail, progress = detail.progress;
   const scopes = new Map(fixed.scope.map(unit => [unit.unitId, unit]));
   const material = new Map(fixed.preview.items.map(item => [item.unitId, item]));

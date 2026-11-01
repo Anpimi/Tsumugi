@@ -21,6 +21,10 @@ import type { ConversationRunConfirmation } from "./conversationRun";
 import type { ConversationDraftRevocation } from "../../../generated/draft.responses";
 import type { WorkPlanStartSettlementView, WorkPlanControlSettlementView } from "../../../generated/ai.responses";
 import { validateResponseWorkPlanStartSettlement, validateResponseWorkPlanControlSettlement } from "../../../generated/ai.validators";
+import aiWire from "../../../../test/fixtures/aiCommands.contract.json";
+import { aiCommands } from "../../../aiCommands";
+import { validateResponseView } from "../../../generated/ai.validators";
+import { conversationRunEffectTarget } from "./conversationRunResultReads";
 
 const context = { projectId: "10000000-0000-4000-8000-000000000001", sessionToken: "session" };
 function deferred<T>() { let resolve!: (value: T) => void, reject!: (value: unknown) => void; const promise = new Promise<T>((yes, no) => { resolve = yes; reject = no; }); return { promise, resolve, reject }; }
@@ -102,6 +106,8 @@ function harness() {
   const validateProposal = vi.fn<typeof conversationCommands.validateProposal>(), readPlanning = vi.fn<typeof conversationCommands.readPlanning>();
   const prepareProposalWorkPlan = vi.fn<typeof conversationCommands.prepareProposalWorkPlan>(), authorizeProposalWorkPlan = vi.fn<typeof conversationCommands.authorizeProposalWorkPlan>();
   const planStatus = vi.fn<typeof workPlanCommands.status>();
+  const readPlanRun = vi.fn<typeof workPlanCommands.run>(), readAiResults = vi.fn<typeof aiCommands.read>();
+  const retryEffect = vi.fn<typeof aiCommands.retryEffect>(async () => true);
   const startPlan = vi.fn<typeof workPlanCommands.start>(async (_request, expectedAttemptId) => {
     if (!validateResponseIdentity(expectedAttemptId)) throw new Error("Invalid synthetic start identity"); return expectedAttemptId;
   });
@@ -116,7 +122,7 @@ function harness() {
   const readPlanControlSettlement = vi.fn<typeof workPlanCommands.controlSettlement>(async request => controlSettlement(request, { kind: "pending" }));
   const readStrategyDefault = vi.fn<typeof strategyCommands.default>(async () => null);
   const all = { ...ports, readStrategyDefault, write, resolve, create, append, recoverCreate, recoverMessage, preparePlanning, validatePlanning, startPlanning, recoverPlanning, recoverProposalCapture, recoverProposalRevision, recoverProposalWorkPlan, captureSelection,
-    captureProposal, reviseProposal, validateProposal, readPlanning, prepareProposalWorkPlan, authorizeProposalWorkPlan, planStatus, startPlan, readPlanStartSettlement, controlPlan, readPlanControlSettlement };
+    captureProposal, reviseProposal, validateProposal, readPlanning, prepareProposalWorkPlan, authorizeProposalWorkPlan, planStatus, readPlanRun, readAiResults, retryEffect, startPlan, readPlanStartSettlement, controlPlan, readPlanControlSettlement };
   const make = () => new ConversationSession(context, recorded, reveal, all);
   const owner = make();
   return { owner, make, ports: all, heads, created, appended, recorded, reveal, journal, current: () => {
@@ -223,6 +229,66 @@ describe("ConversationSession", () => {
     const result: unknown = { ...pending.request, attemptId, taskId };
     if (!validateResponseWorkPlanStartAction(result) || result === null) throw new Error("Invalid synthetic recorded start"); return result;
   }
+  async function readyEffect() {
+    const h = await readyRun(), value: unknown = structuredClone(aiWire.responses.view), plan = h.status.plan;
+    if (!validateResponseView(value) || !plan.preview || !value.rows[0].output) throw new Error("Complete effect fixture required");
+    const view = value, original = value.rows[0], detail = value.detail.items[0];
+    view.planId = plan.planId; view.planGeneration = h.status.lease.generation;
+    view.config = structuredClone(plan.preview.config); view.recipe = plan.preview.recipe;
+    view.detail.attemptId = h.runAttemptId; view.detail.recovery.attemptId = h.runAttemptId;
+    view.rows = plan.preview.items.map((item, index) => ({ ...structuredClone(original), item: structuredClone(item),
+      itemId: `50000000-0000-4000-8000-${String(index + 1).padStart(12, "0")}`,
+      candidateDecision: null, automation: { actionId: h.ports.identity(), phase: "failed", retryable: true, receipt: null, error: { code: "outcome-unknown", stage: "execution-read", outcome: "unknown", recoveryRequired: true } },
+      output: { ...original.output!, unitId: item.unitId } }));
+    view.detail.items = view.rows.map(row => ({ ...structuredClone(detail), resultId: row.resultId,
+      scope: { kind: "translation", id: row.item.unitId, locale: row.item.targetLocale },
+      status: { ...detail.status, itemId: row.itemId, execution: "succeeded", validation: "valid" } }));
+    view.detail.progress = { total: view.rows.length, succeeded: view.rows.length, failed: 0, unknown: 0, queued: 0, running: 0, cancelled: 0, adopted: 0 };
+    view.detail.nextOffset = null;
+    if (!validateResponseView(view)) throw new Error("Invalid synthetic effect view");
+    const start = { projectId: context.projectId, planId: plan.planId, actionId: h.authorized.actionId,
+      expectedGeneration: h.status.lease.generation, taskId: view.detail.taskId, attemptId: view.detail.attemptId };
+    h.ports.readPlanRun.mockResolvedValue({ projectId: context.projectId, planId: plan.planId, planDigest: plan.digest, lease: h.status.lease, state: h.status.state,
+      lastStart: start, budget: null, budgetRootTaskId: null });
+    h.ports.readAiResults.mockImplementation(async () => structuredClone(view));
+    const target = conversationRunEffectTarget(h.link, start, view.rows[0]);
+    if (!target) throw new Error("Retryable original effect required");
+    return { ...h, view, start, target };
+  }
+  it("rechecks the exact original effect and retries it without starting another model run or replacing newer input", async () => {
+    const h = await readyEffect(); h.owner.edit(h.conversationId, "Newer message B"); await h.owner.flush();
+    const before = h.recorded.mock.calls.length;
+    expect(await h.owner.retryRunEffect(h.link, h.status, h.start, h.target)).toBe(true);
+    expect(h.ports.retryEffect).toHaveBeenCalledExactlyOnceWith({ ...context, attemptId: h.start.attemptId, itemId: h.target.itemId });
+    expect(h.current().value.text).toBe("Newer message B"); expect(h.current().value.pending).toBeNull();
+    expect(h.ports.startPlan).not.toHaveBeenCalled(); expect(h.ports.startPlanning).not.toHaveBeenCalled();
+    expect(h.recorded.mock.calls.length).toBe(before + 1);
+  });
+  it("refuses expired, non-retryable, replaced-result and changed-generation effect targets", async () => {
+    for (const reason of ["expiry", "policy", "result", "generation"] as const) {
+      const h = await readyEffect();
+      if (reason === "expiry") h.ports.now.mockReturnValue(Number(h.status.expiresAt) * 1000);
+      if (reason === "policy") h.view.rows[0].automation!.retryable = false;
+      if (reason === "result") { h.view.rows[0].resultId = h.ports.identity(); h.view.detail.items[0].resultId = h.view.rows[0].resultId; }
+      if (reason === "generation") h.ports.planStatus.mockResolvedValue({ ...h.status, lease: { ...h.status.lease, generation: "2" } });
+      expect(await h.owner.retryRunEffect(h.link, h.status, h.start, h.target)).toBe(false);
+      expect(h.ports.retryEffect).not.toHaveBeenCalled(); expect(h.current().value.pending).toBeNull();
+    }
+  });
+  it("revokes an effect retry before dispatch when its proof is withdrawn while reading the original run", async () => {
+    const h = await readyEffect(), reading = deferred<Awaited<ReturnType<typeof workPlanCommands.run>>>();
+    h.ports.readPlanRun.mockReturnValueOnce(reading.promise); let present = true;
+    const retrying = h.owner.retryRunEffect(h.link, h.status, h.start, h.target, () => present);
+    await vi.waitFor(() => expect(h.ports.readPlanRun).toHaveBeenCalledOnce()); present = false;
+    reading.resolve({ projectId: context.projectId, planId: h.link.planId, planDigest: h.link.planDigest, lease: h.status.lease, state: "active", lastStart: h.start, budget: null, budgetRootTaskId: null });
+    expect(await retrying).toBe(false); expect(h.ports.retryEffect).not.toHaveBeenCalled(); expect(h.current().runBusy).toBeNull();
+  });
+  it("keeps a lost effect acknowledgement as a failure and only requests observation, never automatically repeating it", async () => {
+    const h = await readyEffect(); h.ports.retryEffect.mockRejectedValueOnce({ code: "outcome-unknown", outcome: "unknown", stage: "execution-adopt" });
+    expect(await h.owner.retryRunEffect(h.link, h.status, h.start, h.target)).toBe(false);
+    expect(h.ports.retryEffect).toHaveBeenCalledOnce(); expect(h.current().runFailure?.planId).toBe(h.link.planId);
+    expect(h.current().value.pending).toBeNull(); expect(h.ports.startPlan).not.toHaveBeenCalled();
+  });
   it("uses the direct authorization receipt for a durable start and retains message B and unfinished proposals", async () => {
     const h = await readyRun(), originalWrite = h.ports.write.getMockImplementation()!, ack = deferred<void>();
     for (let index = 0; index < 2; index++) {
