@@ -13,6 +13,7 @@ import { readDecisionTarget, teamQuestionMatchesDecision } from "./decisionTarge
 import { teamQuestionCommands } from "../../../teamQuestionCommands";
 import { validateResponseProposalWorkPlanLink } from "../../../generated/conversations.validators";
 import type { SourceReviewTarget } from "../source/sourceTypes";
+import type { GlossaryCapture } from "../../../resourceCommands";
 
 export type DecisionNavigation =
   | { kind: "candidate"; unitId: string; locale: string; revisionId: string; afterOrdinal: string }
@@ -27,6 +28,8 @@ export type DecisionNavigation =
   | { kind: "conversation-proposal"; conversationId: string; proposalId: string; revisionId: string }
   | { kind: "conversation-team-question"; conversationId: string; planId: string; questionPostId: string }
   | { kind: "knowledge-proposal"; proposal: ConversationProposalRef; entryIndex: number }
+  | { kind: "resource-proposal"; capture: GlossaryCapture; entryId: string }
+  | { kind: "execution"; taskId: string; attemptId: string; itemId: string; operation: string }
   | { kind: "details" };
 
 export interface DecisionNavigationPorts {
@@ -87,6 +90,18 @@ export async function resolveDecisionNavigation(context: SessionRequest, item: D
   }
   present();
   switch (action.kind) {
+    case "review-resource": {
+      match(fixed.item.targets.some(target => target.kind === "resource" && target.captureId === action.captureId && target.entryId === action.entryId));
+      const target = await commands.sourceTarget(ctx, fixed.item, current); present();
+      match(target.kind === "resource");
+      return { kind: "resource-proposal", capture: target.preview.capture, entryId: action.entryId };
+    }
+    case "inspect-execution": {
+      const target = await commands.sourceTarget(ctx, fixed.item, current); present();
+      match(target.kind === "execution");
+      return { kind: "execution", taskId: target.detail.taskId, attemptId: target.detail.attemptId,
+        itemId: target.item.status.itemId, operation: target.detail.operation };
+    }
     case "answer-team-question": {
       const question = await commands.teamQuestion({ ...ctx, planId: action.planId, questionPostId: action.questionPostId }); present();
       match(teamQuestionMatchesDecision(fixed.item, question) && fixed.item.state === "pending" && question.state === "open" && question.response === null);

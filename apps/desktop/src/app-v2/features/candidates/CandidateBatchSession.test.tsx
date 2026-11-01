@@ -13,6 +13,7 @@ import type { CandidateDecision, CandidateDecisionRequest, TranslationCandidateS
 import type { WorkspaceSelection } from "../../workspace/workspaceSelection";
 import { TranslationDrafts, type TranslationDraftPorts } from "../editor/translationDrafts";
 import { CandidateBatchSession, type CandidateBatchMode } from "./CandidateBatchSession";
+import type { ExactCandidateBatchScope } from "./candidateBatchTargets";
 
 const invoke = vi.hoisted(() => vi.fn());
 vi.mock("@tauri-apps/api/core", () => ({ invoke }));
@@ -100,6 +101,64 @@ async function harness(initial = [row(0), row(1)]) {
   return { batch, drafts, reads, ports, slice, rows, disk, view, decide, lookup, receipt, selection, capture, decisions: () => hook.result.current,
     setVersion: (next: string) => { version = next; }, captureId: () => { const value = batch.current().captureId; if (value === null) throw new Error("No fixed batch"); return value; } };
 }
+
+function exactScope(rows: TranslationCandidateSliceRow[], selected = rows.map(value => value.revisions[0])): ExactCandidateBatchScope {
+  return { projectId: context.projectId, locale: rows[0]?.target.locale ?? "zh-CN", sourceSnapshotId: rows[0]?.target.sourceSnapshotId ?? id(999),
+    candidates: selected.map(value => {
+      if (!value?.attemptId || !value.itemId || !value.resultId) throw new Error("Expected original candidate result provenance");
+      return { unitId: value.unitId, locale: value.locale, sourceSnapshotId: value.sourceSnapshotId, sourceRevisionId: value.sourceRevisionId,
+        revisionId: value.revisionId, attemptId: value.attemptId, itemId: value.itemId, resultId: value.resultId };
+    }) };
+}
+
+it("does not substitute a later run's sole candidate for the original run's saved version", async () => {
+  const initial = [row(1)], original = exactScope(initial), h = await harness(initial), current = h.rows.get(initial[0].target.unitId)!;
+  current.revisions = [{ ...current.revisions[0], revisionId: id(65000), attemptId: id(65001), itemId: id(65002), resultId: id(65003), text: "Later run" }];
+  expect(await h.batch.captureExact(original, () => true)).toBe(true);
+  expect(h.batch.current().items[0]).toMatchObject({ revision: null, status: "skipped", skipReason: "candidate-changed" });
+  await h.batch.confirm(h.captureId(), () => true);
+  expect(h.ports.write).not.toHaveBeenCalled(); expect(h.ports.save).not.toHaveBeenCalled(); expect(h.ports.select).not.toHaveBeenCalled();
+});
+
+it("stages the exact requested version among several available candidates, including after a later candidate arrives", async () => {
+  const initial = [row(1, 2)], original = exactScope(initial, [initial[0].revisions[1]]), h = await harness(initial);
+  expect(await h.batch.captureExact(original, () => true)).toBe(true);
+  expect(h.batch.current().items[0]).toMatchObject({ revision: { revisionId: original.candidates[0].revisionId }, status: "ready" });
+  const current = h.rows.get(initial[0].target.unitId)!;
+  current.revisions.push({ ...current.revisions[0], revisionId: id(65010), actionId: id(65011), ordinal: "3", text: "A later candidate" }); current.candidateCount = 3;
+  await h.batch.confirm(h.captureId(), () => true);
+  expect(h.batch.current().items[0].status).toBe("staged");
+  expect(h.disk.get(initial[0].target.unitId)?.value?.text).toBe(initial[0].revisions[1].text);
+  expect(h.ports.save).not.toHaveBeenCalled(); expect(h.ports.select).not.toHaveBeenCalled();
+});
+
+it.each(["new-input", "protected", "source", "manual-selection", "provenance"] as const)("preserves exact-batch safety after %s changes", async change => {
+  const initial = [row(1)], original = exactScope(initial), h = await harness(initial);
+  expect(await h.batch.captureExact(original, () => true)).toBe(true);
+  const item = h.batch.current().items[0], current = h.rows.get(item.key.unitId)!;
+  if (change === "new-input") h.drafts.edit(item.key, "Newer human input B");
+  else if (change === "protected") current.protection = { ...current.protection, protected: true, revision: "2" };
+  else if (change === "source") {
+    current.target = { ...current.target, sourceRevisionId: id(65020), sourceText: "Changed source" };
+    current.revisions = [{ ...current.revisions[0], sourceRevisionId: current.target.sourceRevisionId }];
+  } else if (change === "manual-selection") current.selectedOriginKind = "manual";
+  else current.revisions[0].itemId = id(65021);
+  await h.batch.confirm(h.captureId(), () => true);
+  expect(h.batch.current().items[0].status).toBe("skipped");
+  expect(h.disk.get(item.key.unitId)?.value?.text ?? null).toBe(change === "new-input" ? "Newer human input B" : null);
+  expect(h.ports.save).not.toHaveBeenCalled(); expect(h.ports.select).not.toHaveBeenCalled();
+});
+
+it("rejects an empty exact scope and retains per-member outcomes for a partially available original batch", async () => {
+  const initial = [row(0), row(1)], original = exactScope(initial), h = await harness(initial);
+  expect(await h.batch.captureExact({ ...original, candidates: [] }, () => true)).toBe(false); expect(h.slice).not.toHaveBeenCalled();
+  const unavailable = h.rows.get(initial[1].target.unitId)!; unavailable.revisions = []; unavailable.candidateCount = 0;
+  expect(await h.batch.captureExact(original, () => true)).toBe(true);
+  expect(h.batch.current().items.map(item => item.status)).toEqual(["ready", "skipped"]);
+  await h.batch.confirm(h.captureId(), () => true);
+  expect(h.batch.current().items.map(item => item.status)).toEqual(["staged", "skipped"]);
+  expect(h.disk.get(initial[0].target.unitId)?.value?.text).toBe(""); expect(h.disk.has(initial[1].target.unitId)).toBe(false);
+});
 
 it("previews one fixed cross-page set, preserves protected and human selections, then stages only eligible Host drafts", async () => {
   const protectedRow = row(1); protectedRow.protection.protected = true;

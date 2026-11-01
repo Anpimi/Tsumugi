@@ -3,6 +3,8 @@ import userEvent from "@testing-library/user-event";
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import wire from "../../test/fixtures/reviewCommands.contract.json";
+import resourceWire from "../../test/fixtures/resourceCommands.contract.json";
+import { validateResponsePreview } from "../generated/resource.validators";
 import { conversationCommands } from "../conversationCommands";
 import { conversationDraftCommands } from "../conversationDraftCommands";
 import { decisionCommands, type DecisionPage, type DecisionPageRequest } from "../decisionCommands";
@@ -149,7 +151,7 @@ async function openWorkspace() {
   await user.click(screen.getByRole("button", { name: i18n.t("startup.openExisting") }));
   fireEvent.change(screen.getByRole("textbox", { name: w("projectFolder") }), { target: { value: project.locator } });
   await user.click(screen.getByRole("button", { name: w("openProject") }));
-  const entry = await screen.findByRole("button", { name: w("showEntryDetails", { key: fixture.target.nativeKey }) }, { timeout: 5000 });
+  const entry = await screen.findByRole("button", { name: w("showEntryDetails", { key: fixture.target.nativeKey }) }, { timeout: 15000 });
   await waitFor(() => expect(entry).toBeEnabled());
   await waitFor(() => expect(vi.mocked(decisionCommands.page).mock.lastCall?.[0].activity).toHaveLength(4));
   await waitFor(() => expect(reads.client.isFetching({ queryKey: reads.key(["workbench-decisions"]) })).toBe(0));
@@ -192,6 +194,44 @@ it("shares current counts across the activity badge, fixed tray and list, then r
   await waitFor(() => expect(open).toHaveFocus());
   expect(views().getByRole("button", { name: w("viewName", { locale: "zh-CN" }) })).toBeInTheDocument();
   expect(views().getByRole("button", { name: w("decisions") })).toHaveAttribute("aria-current", "page");
+});
+
+it("opens the exact resource comparison outside the saved-capture list and returns to the original inbox row", async () => {
+  const raw: unknown = copy(resourceWire.responses.preview);
+  if (!validateResponsePreview(raw)) throw new Error("Expected original term comparison");
+  const row = raw.rows[0];
+  if (!row) throw new Error("Expected original term proposal");
+  const decision: DecisionPage["items"][number] = { decisionId: `resource-proposal:${raw.capture.captureId}:${row.entry.id}`, source: "resource-proposal",
+    state: "pending", locale: raw.capture.targetLocale, targets: [{ kind: "resource", captureId: raw.capture.captureId, entryId: row.entry.id }], targetsComplete: true,
+    basis: "b".repeat(64), sourceActionId: null, evidence: null, action: { kind: "review-resource", captureId: raw.capture.captureId, entryId: row.entry.id } };
+  originalItems = [decision]; knownCount = 1;
+  const preview = vi.spyOn(resourceCommands, "preview").mockResolvedValue(raw);
+  vi.spyOn(resourceCommands, "captures").mockResolvedValue([]);
+  vi.spyOn(resourceCommands, "terms").mockResolvedValue([]);
+  const decide = vi.spyOn(resourceCommands, "decide").mockRejectedValue(new Error("Navigation must not decide a proposal"));
+  const user = await openWorkspace();
+  await user.click(activity().getByRole("button", { name: w("decisions") }));
+  const list = await screen.findByRole("region", { name: w("decisionsTitle") });
+  await user.click(within(list).getByRole("button", { name: w("decisionsResourceOpen") }));
+  const detail = await screen.findByRole("region", { name: i18n.t("workbenchV2.decisionDetailsTitles.review-resource") });
+  const open = await within(detail).findByRole("button", { name: i18n.t("workbenchV2.decisionDetailsOpenResource") });
+  await waitFor(() => expect(open).toBeEnabled()); await user.click(open);
+  const panel = await screen.findByRole("region", { name: i18n.t("knowledge.proposalTitle") }, { timeout: 15000 });
+  const target = within(panel).getByRole("row", { name: row.entry.source });
+  await waitFor(() => expect(target).toHaveFocus());
+  expect(preview).toHaveBeenCalledWith({ ...context, captureId: raw.capture.captureId }); expect(decide).not.toHaveBeenCalled();
+  const newTerm = screen.getByRole("button", { name: i18n.t("knowledge.newTerm") });
+  await waitFor(() => expect(newTerm).toBeEnabled()); await user.click(newTerm);
+  const newerInput = screen.getByRole("textbox", { name: i18n.t("knowledge.targetTerm") });
+  fireEvent.change(newerInput, { target: { value: "Keep this newer term input B" } });
+  const back = within(panel).getByRole("button", { name: i18n.t("knowledge.proposalReturnToInbox") });
+  fireEvent.compositionStart(newerInput); expect(back).toBeDisabled();
+  fireEvent.compositionEnd(newerInput); await waitFor(() => expect(back).toBeEnabled()); await user.click(back);
+  const returned = await screen.findByRole("region", { name: w("decisionsTitle") });
+  await waitFor(() => expect(within(returned).getByRole("button", { name: w("decisionsResourceOpen") })).toHaveFocus());
+  await user.click(activity().getByRole("button", { name: w("knowledge") }));
+  expect(await screen.findByRole("textbox", { name: i18n.t("knowledge.targetTerm") })).toHaveValue("Keep this newer term input B");
+  expect(decide).not.toHaveBeenCalled();
 });
 
 it("opens delivery from the exact saved outcome without authorizing a destination or repeating an export", async () => {

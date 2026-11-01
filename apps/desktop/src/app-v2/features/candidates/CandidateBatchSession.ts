@@ -11,11 +11,12 @@ import type { LifecycleParticipant } from "../../platform/projectLifecycle";
 import { copyWorkspaceSelection, workspaceSelectionIds, type WorkspaceSelection } from "../../workspace/workspaceSelection";
 import type { DraftEntry, RevisionStageCapture, TranslationDrafts } from "../editor/translationDrafts";
 import { readCandidateSliceRows } from "./candidateBatchReads";
+import { candidateRevisionMatches, type CandidateRevisionTarget, type ExactCandidateBatchScope } from "./candidateBatchTargets";
 
 export type CandidateBatchMode = "stage" | "reject" | "restore";
 export type CandidateBatchPhase = "idle" | "capturing" | "preview" | "running" | "paused" | "complete" | "retired";
 export type CandidateBatchSkipReason = "no-candidate" | "multiple-candidates" | "protected" | "human-selection" | "existing-draft"
-  | "draft-input" | "merge" | "pending" | "unavailable" | "basis-changed" | "source-changed" | "ended";
+  | "draft-input" | "merge" | "pending" | "unavailable" | "basis-changed" | "source-changed" | "candidate-changed" | "ended";
 export type CandidateBatchPauseReason = "context-changed" | "audit-changed" | "unknown" | "journal" | "failed" | "requested" | "stale";
 export interface CandidateBatchItem {
   id: string;
@@ -25,6 +26,7 @@ export interface CandidateBatchItem {
   revision: TranslationRevision | null;
   row: TranslationCandidateSliceRow;
   capture: RevisionStageCapture | null;
+  exact: CandidateRevisionTarget | null;
   status: "ready" | "skipped" | "running" | "staged" | "recorded" | "pending" | "undurable" | "failed";
   skipReason: CandidateBatchSkipReason | null;
   request: CandidateDecisionRequest | null;
@@ -45,6 +47,7 @@ export interface CandidateBatchSnapshot {
   failure: CommandFailure | null;
   pauseReason: CandidateBatchPauseReason | null;
   ended: boolean;
+  exact: ExactCandidateBatchScope | null;
 }
 type Decisions = ReturnType<typeof useCandidateDecisionSession>;
 export interface CandidateBatchOptions {
@@ -98,7 +101,7 @@ export class CandidateBatchSession {
   private paused = false;
   private disposed = false;
   private state: CandidateBatchSnapshot = freeze({ revision: 0, captureId: null, phase: "idle", mode: null, selection: null,
-    locale: null, sourceSnapshotId: null, scopeId: null, excluded: [], audit: null, items: [], failure: null, pauseReason: null, ended: false });
+    locale: null, sourceSnapshotId: null, scopeId: null, excluded: [], audit: null, items: [], failure: null, pauseReason: null, ended: false, exact: null });
   constructor(private readonly options: CandidateBatchOptions) {
     this.project = options.project; this.context = executionContext(options.project);
     if (options.reads.context.projectId !== this.context.projectId || options.reads.context.sessionToken !== this.context.sessionToken) throw new Error("Candidate batch belongs to another project session");
@@ -126,6 +129,18 @@ export class CandidateBatchSession {
   }
   private unresolved() { return this.state.items.some(item => item.status === "pending" || item.status === "undurable"); }
   async capture(selection: WorkspaceSelection, mode: CandidateBatchMode, proof: () => boolean): Promise<boolean> {
+    return this.captureMembers(selection, mode, proof);
+  }
+  captureExact(scope: ExactCandidateBatchScope, proof: () => boolean): Promise<boolean> {
+    const fixed = structuredClone(scope), candidates = fixed.candidates;
+    if (fixed.projectId !== this.context.projectId || !candidates.length || candidates.length > 100
+      || new Set(candidates.map(value => value.unitId)).size !== candidates.length
+      || candidates.some(value => value.locale !== fixed.locale || value.sourceSnapshotId !== fixed.sourceSnapshotId
+        || !value.unitId || !value.sourceRevisionId || !value.revisionId || !value.attemptId || !value.itemId || !value.resultId)) return Promise.resolve(false);
+    return this.captureMembers({ kind: "ids", locale: fixed.locale, sourceSnapshotId: fixed.sourceSnapshotId,
+      unitIds: candidates.map(value => value.unitId) }, "stage", proof, fixed);
+  }
+  private async captureMembers(selection: WorkspaceSelection, mode: CandidateBatchMode, proof: () => boolean, exact: ExactCandidateBatchScope | null = null): Promise<boolean> {
     if (!this.live() || !proof() || this.state.phase !== "idle" && this.state.phase !== "complete") return false;
     const copied = copyWorkspaceSelection(selection); if (!copied) return false;
     if (copied.kind === "scope" && (!validContentSelection(copied.selection) || copied.selection.projectId !== this.context.projectId
@@ -138,10 +153,11 @@ export class CandidateBatchSession {
     const current = () => this.live() && this.generation === generation && !this.paused && proof() && this.project.metadata.targetLocales.includes(locale);
     this.paused = false;
     this.update({ captureId, mode, phase: "capturing", selection: copied, locale, sourceSnapshotId, scopeId,
-      excluded: copied.kind === "scope" ? [...copied.selection.excluded] : [], items: [], audit: null, failure: null, pauseReason: null, ended: false });
+      excluded: copied.kind === "scope" ? [...copied.selection.excluded] : [], items: [], audit: null, failure: null, pauseReason: null, ended: false, exact });
     try {
       const items: CandidateBatchItem[] = []; let readVersion: string | undefined;
       const bases = new Map(copied.kind === "scope" ? copied.selection.capture.units.map(unit => [unit.unitId, unit.expectedBasis]) : []);
+      const originalRevisions = new Map(exact?.candidates.map(value => [value.unitId, value]) ?? []);
       for (let offset = 0; offset < unitIds.length; offset += 50) {
         const members = unitIds.slice(offset, offset + 50), request = { ...this.context, locale, sourceSnapshotId,
           ...(scopeId ? { scopeId } : {}), unitIds: members, state: mode === "restore" ? "rejected" as const : "available" as const,
@@ -156,17 +172,20 @@ export class CandidateBatchSession {
         if (!current()) throw new Error("Candidate batch preview changed");
         for (const [index, row] of page.rows.entries()) {
           const key = keys[index], originalBasis = bases.get(key.unitId);
+          const expected = originalRevisions.get(key.unitId), exactRevision = expected ? row.revisions.find(revision => candidateRevisionMatches(expected, revision)) : undefined;
           let reason: CandidateBatchSkipReason | null = originalBasis !== undefined && originalBasis !== row.target.basis ? "basis-changed" : null;
+          if (!reason && expected && (row.target.sourceSnapshotId !== expected.sourceSnapshotId || row.target.sourceRevisionId !== expected.sourceRevisionId)) reason = "source-changed";
+          if (!reason && expected && !exactRevision) reason = "candidate-changed";
           if (!reason && row.candidateCount === 0) reason = "no-candidate";
           if (mode === "stage") {
-            if (!reason && row.candidateCount !== 1) reason = "multiple-candidates";
+            if (!reason && !expected && row.candidateCount !== 1) reason = "multiple-candidates";
             if (!reason && row.protection.protected) reason = "protected";
             if (!reason && row.selectedOriginKind !== null && row.selectedOriginKind !== "ai") reason = "human-selection";
             if (!reason) reason = draftSkip(opened[index], row);
           }
-          const revisions = mode === "stage" || row.revisions.length === 0 ? [row.revisions[0] ?? null] : row.revisions;
+          const revisions = expected ? [exactRevision ?? null] : mode === "stage" || row.revisions.length === 0 ? [row.revisions[0] ?? null] : row.revisions;
           for (const revision of revisions) items.push({ id: `${key.unitId}:${locale}:${revision?.revisionId ?? "none"}`, key, nativeKey: row.target.nativeKey,
-            target: row.target, revision, row, capture: mode === "stage" && opened[index]?.value
+            target: row.target, revision, row, exact: expected ?? null, capture: mode === "stage" && opened[index]?.value
               ? { editSeq: opened[index]!.value!.editSeq, basis: { ...opened[index]!.value!.basis } } : null,
             status: reason ? "skipped" : "ready", skipReason: reason, request: null, failure: null });
         }
@@ -199,7 +218,7 @@ export class CandidateBatchSession {
         if (this.state.mode === "stage") {
           const items = this.state.items.filter(item => item.status === "ready").slice(0, 50);
           this.update({ items: this.state.items.map(item => items.some(member => member.id === item.id) ? { ...item, status: "running" } : item) });
-          const inputs = items.map(item => { if (!item.capture) throw new Error("Missing fixed draft input"); return { row: item.row, capture: item.capture }; });
+          const inputs = items.map(item => { if (!item.capture) throw new Error("Missing fixed draft input"); return { row: item.row, capture: item.capture, ...(item.exact ? { exact: item.exact } : {}) }; });
           const results = await this.options.drafts.stageCandidateBatch(inputs, current);
           if (!this.live() || this.generation !== generation) return;
           if (results.length !== items.length || results.some((result, index) => result.key.projectId !== items[index].key.projectId
