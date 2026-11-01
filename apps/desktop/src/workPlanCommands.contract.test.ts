@@ -166,7 +166,7 @@ const requests: Pick<Requests, "workPlanPrepare" | "workPlanAuthorize" | "workPl
   workProtectionRead: fixture.requests.protectionRead,
   workProtectionSet: fixture.requests.protectionSet,
 };
-it("uses generated contracts and preserves all eight scoped commands", async () => {
+it("uses generated contracts and preserves scoped commands", async () => {
   for (const [validate, value] of [
     [validators.validateRequestWorkPlanPrepare, requests.workPlanPrepare],
     [validators.validateRequestWorkPlanAuthorize, requests.workPlanAuthorize],
@@ -183,6 +183,7 @@ it("uses generated contracts and preserves all eight scoped commands", async () 
     [validators.validateResponseWorkPlanAction, fixture.responses.action],
     [validators.validateResponseWorkPlanAction, null],
     [validators.validateResponseWorkProtection, fixture.responses.protection],
+    [validators.validateResponseWorkProtectionRecovery, fixture.responses.protectionRecovery],
   ] as const) expect(validate(value), validate.name).toBe(true);
   for (const [command, request, response, call] of [
     ["prepare_work_plan", requests.workPlanPrepare, fixture.responses.plan, () => workPlanCommands.prepare(requests.workPlanPrepare)],
@@ -193,11 +194,43 @@ it("uses generated contracts and preserves all eight scoped commands", async () 
     ["read_work_plan_action", requests.workPlanAction, fixture.responses.action, () => workPlanCommands.action(requests.workPlanAction)],
     ["read_work_protection", requests.workProtectionRead, fixture.responses.protection, () => workPlanCommands.protection(requests.workProtectionRead)],
     ["set_work_protection", requests.workProtectionSet, fixture.responses.protection, () => workPlanCommands.setProtection(requests.workProtectionSet)],
+    ["recover_work_protection", requests.workProtectionSet, fixture.responses.protectionRecovery, () => workPlanCommands.recoverProtection(requests.workProtectionSet)],
   ] as const) {
     invoke.mockResolvedValueOnce(response);
     expect(await call()).toEqual(response);
     expect(invoke).toHaveBeenLastCalledWith(command, { request });
   }
+});
+
+it("checks every original protection field and receipt without treating malformed recovery as absence", async () => {
+  const request = requests.workProtectionSet, response = fixture.responses.protectionRecovery;
+  for (const outcome of [{ kind: "pending" }, { kind: "mismatch" }]) {
+    invoke.mockResolvedValueOnce({ request: response.request, outcome });
+    expect((await workPlanCommands.recoverProtection(request)).outcome).toEqual(outcome);
+  }
+  const alteredRequests = [
+    { ...response.request, projectId: fixtureIdentity(1801) },
+    { ...response.request, actionId: fixtureIdentity(1802) },
+    { ...response.request, unitId: fixtureIdentity(1803) },
+    { ...response.request, locale: "fr-FR" },
+    { ...response.request, sourceRevisionId: fixtureIdentity(1804) },
+    { ...response.request, selectionId: fixtureIdentity(1805) },
+    { ...response.request, expectedRevision: "9007199254740994" },
+    { ...response.request, protected: true },
+    { ...response.request, confirmedRelease: false },
+  ];
+  for (const original of alteredRequests) {
+    invoke.mockResolvedValueOnce({ ...response, request: original });
+    await expect(workPlanCommands.recoverProtection(request)).rejects.toMatchObject({ outcome: "unknown" });
+  }
+  for (const wrong of [null, undefined, {}, { ...response, outcome: { kind: "pending", receipt: response.outcome.receipt } },
+    { ...response, outcome: { kind: "mismatch", extra: true } }, { ...response, request: { ...response.request, sessionToken: request.sessionToken } },
+    ...[{ unitId: fixtureIdentity(1806) }, { locale: "fr-FR" }, { revision: "9007199254740995" }, { protected: true }]
+      .map(change => ({ ...response, outcome: { kind: "recorded", receipt: { ...response.outcome.receipt, ...change } } }))]) {
+    invoke.mockResolvedValueOnce(wrong);
+    await expect(workPlanCommands.recoverProtection(request)).rejects.toThrow();
+  }
+  expect(invoke.mock.calls.every(([name]) => name === "recover_work_protection")).toBe(true);
 });
 
 it("keeps generations exact and rejects unsupported semantic or raw input fields", () => {

@@ -81,7 +81,7 @@ export default function EntryProtection({ project, target, drafts, owners, comma
   const section = useRef<HTMLElement>(null), releaseButton = useRef<HTMLButtonElement>(null), cancelButton = useRef<HTMLButtonElement>(null);
   const [release, setRelease] = useState<ReleaseCapture | null>(null), releaseRef = useRef<ReleaseCapture | null>(null);
   const [working, setWorking] = useState(false), flight = useRef(false), mounted = useRef(true);
-  const [feedback, setFeedback] = useState<{ scope: string; key: "entryProtectionSaved" | "entryProtectionReleased" | "entryProtectionChanged" | "entryProtectionFailed" | "entryProtectionReconciled" } | null>(null);
+  const [feedback, setFeedback] = useState<{ scope: string; key: "entryProtectionSaved" | "entryProtectionReleased" | "entryProtectionChanged" | "entryProtectionFailed" | "entryProtectionReconciled" | "entryProtectionCheckPending" | "entryProtectionCheckMismatch" } | null>(null);
   const [opening, setOpening] = useState<{ identity: string; failed: boolean; pending: boolean }>({ identity, failed: false, pending: true });
   const live = useRef({ visible, disabled, scope, identity, viewId, parentDialogId });
   const returnFocus = useRef<{ scope: string; trigger: HTMLButtonElement | null } | null>(null), dialogRelease = useRef<(() => void) | null>(null);
@@ -190,6 +190,20 @@ export default function EntryProtection({ project, target, drafts, owners, comma
     } catch { if (stillPresent()) setFeedback({ scope, key: "entryProtectionFailed" }); }
     finally { flight.current = false; if (mounted.current) setWorking(false); }
   }
+  async function check(payload: TranslationProtectionPendingCommandPayload) {
+    const original = session.current().pending; if (!original || original.request !== payload.request) return;
+    const proof = () => stillPresent() && interactionAllowed() && session.current().pending?.request === original.request;
+    flight.current = true; setWorking(true); setFeedback(null);
+    try {
+      const recovery = await session.check(proof);
+      if (recovery && stillPresent()) {
+        setFeedback({ scope, key: recovery.outcome.kind === "recorded" ? "entryProtectionReconciled"
+          : recovery.outcome.kind === "mismatch" ? "entryProtectionCheckMismatch" : "entryProtectionCheckPending" });
+        if (recovery.outcome.kind === "recorded") await query.refetch();
+      }
+    } catch { if (stillPresent()) setFeedback({ scope, key: "entryProtectionFailed" }); }
+    finally { flight.current = false; if (mounted.current) setWorking(false); }
+  }
   useLayoutEffect(() => {
     if (!visible) return;
     const metadata = { category: "translation" as const, scope: commandScope, binding: null, risk: "writes-translation" as const };
@@ -197,6 +211,7 @@ export default function EntryProtection({ project, target, drafts, owners, comma
       commands.register({ ...metadata, id: "translation.protect-work", nameKey: "protection.protect", payloadKind: "translation-protection", confirmation: "none", availability: changeAvailability, handler: payload => { void change(payload); } }),
       commands.register({ ...metadata, id: "translation.release-work", nameKey: "protection.confirmRelease", payloadKind: "translation-protection", confirmation: "required", availability: changeAvailability, handler: payload => { void change(payload); } }),
       commands.register({ ...metadata, id: "translation.retry-protection", nameKey: "protection.retry", payloadKind: "translation-protection-pending", confirmation: "none", availability: pendingAvailability, handler: payload => { void retry(payload); } }),
+      commands.register({ ...metadata, id: "translation.check-protection", nameKey: "workbenchV2.entryProtectionCheck", risk: "reads-execution", payloadKind: "translation-protection-pending", confirmation: "none", availability: pendingAvailability, handler: payload => { void check(payload); } }),
     ];
     return () => remove.forEach(dispose => dispose());
   });
@@ -225,7 +240,10 @@ export default function EntryProtection({ project, target, drafts, owners, comma
     {message ? <Banner tone={message.key === "entryProtectionSaved" || message.key === "entryProtectionReleased" || message.key === "entryProtectionReconciled" ? "success" : "warning"} role="status">{t(message.key)}</Banner> : null}
     {state.failure && message?.key !== "entryProtectionFailed" ? <Banner tone="error" role="alert">{t("entryProtectionFailed")}</Banner> : null}
     {!pending && (working || state.busy) ? <p role="status">{t("entryProtectionPending")}</p> : null}
-    {pending ? <Banner tone="warning" role="status" action={pending.phase === "unknown" && pendingPayload ? <Button disabled={!pendingAvailability(pendingPayload).enabled} onClick={() => commands.dispatch("translation.retry-protection", commandScope, pendingPayload)}>{t("entryProtectionRetry")}</Button> : undefined}>{t(pending.phase === "unknown" ? pending.request.protected ? "entryProtectionUnknown" : "entryProtectionUnknownRelease" : "entryProtectionPending", { key: pending.key, locale: pending.request.locale })}</Banner> : null}
+    {pending ? <Banner tone="warning" role="status" action={pending.phase === "unknown" && pendingPayload ? <div className={styles.actions}>
+      <Button disabled={!pendingAvailability(pendingPayload).enabled} onClick={() => commands.dispatch("translation.check-protection", commandScope, pendingPayload)}>{t("entryProtectionCheck")}</Button>
+      <Button disabled={!pendingAvailability(pendingPayload).enabled} onClick={() => commands.dispatch("translation.retry-protection", commandScope, pendingPayload)}>{t("entryProtectionRetry")}</Button>
+    </div> : undefined}>{t(pending.phase === "unknown" ? pending.request.protected ? "entryProtectionUnknown" : "entryProtectionUnknownRelease" : "entryProtectionPending", { key: pending.key, locale: pending.request.locale })}</Banner> : null}
     <div className={styles.actions}><Button size="sm" disabled={!protectPayload || !changeAvailability(protectPayload).enabled} onClick={() => { if (protectPayload) commands.dispatch("translation.protect-work", commandScope, protectPayload); }}>{t("entryProtectionProtect")}</Button>
       <Dialog open={modalOpen} onOpenChange={open => { if (open) openRelease(); else if (interactionAllowed(true)) closeRelease(); }}
         title={t("entryProtectionReleaseTitle")} description={t("entryProtectionReleaseHelp")} closeLabel={t("entryProtectionClose")}

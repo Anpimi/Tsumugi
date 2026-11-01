@@ -14,6 +14,7 @@ import { SessionReads } from "../../../sessionReads";
 import { WorkbenchCommands } from "../../../workbenchCommands";
 import { protectionKey, type ProtectionRequest } from "../../../WorkProtectionSession";
 import type { WorkProtection } from "../../../workPlanCommands";
+import { jsonIdentity } from "../../../pluginToolChoices";
 import { fixtureIdentity } from "../../../testSupport/executionFixture";
 import { reviewTargetFixture } from "../../../testSupport/reviewFixture";
 import { InteractionGate } from "../../workspace/interactionGate";
@@ -35,7 +36,7 @@ type TextKey = { [K in keyof typeof workbenchEn]: typeof workbenchEn[K] extends 
 const w = (key: TextKey) => i18n.t(`workbenchV2.${key}`);
 const calls = (command: string) => invoke.mock.calls.filter(([name]) => name === command);
 function deferred<T>() { let resolve!: (value: T) => void; const promise = new Promise<T>(done => { resolve = done; }); return { promise, resolve }; }
-let protections: Map<string, WorkProtection>, recorded: Map<string, WorkProtection>, identities: number;
+let protections: Map<string, WorkProtection>, recorded: Map<string, { request: Omit<ProtectionRequest, "sessionToken">; receipt: WorkProtection }>, identities: number;
 const resources: { reads: SessionReads; drafts: TranslationDrafts; lifecycle: ProjectLifecycle }[] = [];
 beforeEach(async () => {
   await i18n.changeLanguage("en-US"); protections = new Map(); recorded = new Map(); identities = 950; invoke.mockReset();
@@ -43,11 +44,20 @@ beforeEach(async () => {
     if (command === "create_execution_identity") return fixtureIdentity(++identities);
     const current = protections.get(identity(request)) ?? { unitId: request.unitId, locale: request.locale, revision: "0", protected: false };
     if (command === "read_work_protection") return copy(current);
+    const { sessionToken: _session, ...business } = request;
+    if (command === "recover_work_protection") {
+      const prior = recorded.get(request.actionId);
+      return copy({ request: business, outcome: !prior ? { kind: "pending" } : jsonIdentity(prior.request) === jsonIdentity(business)
+        ? { kind: "recorded", receipt: prior.receipt } : { kind: "mismatch" } });
+    }
     if (command === "set_work_protection") {
-      const prior = recorded.get(request.actionId); if (prior) return copy(prior);
+      const prior = recorded.get(request.actionId); if (prior) {
+        if (jsonIdentity(prior.request) !== jsonIdentity(business)) throw new Error("Synthetic action mismatch");
+        return copy(prior.receipt);
+      }
       if (current.revision !== request.expectedRevision) throw new Error("Synthetic protection revision conflict");
       const receipt = { unitId: request.unitId, locale: request.locale, revision: String(BigInt(current.revision) + 1n), protected: request.protected };
-      protections.set(identity(request), receipt); recorded.set(request.actionId, receipt); return copy(receipt);
+      protections.set(identity(request), receipt); recorded.set(request.actionId, { request: business, receipt }); return copy(receipt);
     }
     throw new Error(`Unexpected native command: ${command}`);
   });
@@ -217,4 +227,62 @@ it("keeps release disabled for a pending merge origin even when its text equals 
   expect(h.drafts.getEntry(h.key)?.value?.merge).toEqual(merge);
   expect(screen.getByRole("button", { name: w("entryProtectionRelease") })).toBeDisabled();
   expect(screen.getByText(w("entryProtectionDraftBlocked"))).toBeInTheDocument(); expect(calls("set_work_protection")).toHaveLength(0);
+});
+
+it("checks an acknowledged-lost release after newer protection B without replaying A or replacing current B", async () => {
+  const originalInvoke = invoke.getMockImplementation()!;
+  invoke.mockImplementation(async (command, payload) => {
+    const result = await originalInvoke(command, payload);
+    if (command === "set_work_protection") throw new Error("Lost release acknowledgement");
+    return result;
+  });
+  const h = await harness(), user = userEvent.setup(), { dialog } = await openRelease(user);
+  await user.click(within(dialog).getByRole("button", { name: w("entryProtectionConfirmRelease") }));
+  await waitFor(() => expect(h.owners().protection.current().pending?.phase).toBe("unknown"));
+  const original = copy(h.owners().protection.current().pending!.request);
+  const newer = { unitId: original.unitId, locale: original.locale,
+    revision: String(BigInt(original.expectedRevision) + 2n), protected: true };
+  protections.set(identity(original), newer);
+  act(() => { expect(h.drafts.edit(h.key, "New input B 👩🏽‍💻")).toBe(true); });
+  await user.click(await screen.findByRole("button", { name: w("entryProtectionCheck") }));
+  await waitFor(() => expect(h.owners().protection.current().pending).toBeNull());
+  await screen.findByText(w("entryProtectionReconciled"));
+  expect(calls("set_work_protection")).toHaveLength(1);
+  expect(calls("recover_work_protection").map(([, payload]) => payload.request)).toEqual([original]);
+  expect(calls("create_execution_identity")).toHaveLength(1);
+  await waitFor(() => expect(h.reads.client.getQueryData<WorkProtection>(h.reads.key(protectionKey(original.unitId, original.locale, original.sourceRevisionId,
+    original.selectionId ?? null)))).toEqual(newer));
+  expect(h.drafts.getSnapshot().mutationReserved).toBe(false);
+  expect(h.drafts.getEntry(h.key)?.value?.text).toBe("New input B 👩🏽‍💻");
+  expect(screen.getByText(w("entryProtectionProtected"))).toBeInTheDocument();
+});
+
+it("retains unknown and the original reservation for absent, mismatched, malformed and failed reads", async () => {
+  const originalInvoke = invoke.getMockImplementation()!;
+  invoke.mockImplementation((command, payload) => command === "set_work_protection"
+    ? Promise.reject(new Error("Unknown protection write")) : originalInvoke(command, payload));
+  const h = await harness({ protectedValue: false }), user = userEvent.setup();
+  await user.click(screen.getByRole("button", { name: w("entryProtectionProtect") }));
+  await waitFor(() => expect(h.owners().protection.current().pending?.phase).toBe("unknown"));
+  const pending = h.owners().protection.current().pending!, { sessionToken: _session, ...business } = pending.request;
+  act(() => { expect(h.drafts.edit(h.key, "Retained B")).toBe(true); });
+  const replies = [
+    { request: business, outcome: { kind: "pending" } },
+    { request: business, outcome: { kind: "mismatch" } },
+    { request: { ...business, actionId: fixtureIdentity(999) }, outcome: { kind: "pending" } },
+    null,
+    new Error("Read unavailable"),
+  ];
+  for (const reply of replies) {
+    invoke.mockImplementation((command, payload) => command === "recover_work_protection"
+      ? reply instanceof Error ? Promise.reject(reply) : Promise.resolve(reply) : originalInvoke(command, payload));
+    await user.click(await screen.findByRole("button", { name: w("entryProtectionCheck") }));
+    await waitFor(() => expect(h.owners().protection.current().busy).toBe(false));
+    expect(h.owners().protection.current().pending).toBe(pending);
+    expect(h.drafts.getSnapshot().mutationReserved).toBe(true);
+    expect(h.drafts.getEntry(h.key)?.value?.text).toBe("Retained B");
+    expect(calls("set_work_protection")).toHaveLength(1);
+  }
+  expect(calls("recover_work_protection")).toHaveLength(replies.length);
+  expect(calls("create_execution_identity")).toHaveLength(1);
 });

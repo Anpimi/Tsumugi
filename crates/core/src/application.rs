@@ -650,6 +650,7 @@ pub struct WorkProtection {
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
+#[cfg_attr(feature = "wire-schema", derive(schemars::JsonSchema))]
 pub struct SetWorkProtection {
     pub action_id: ExecutionId,
     pub project_id: ExecutionId,
@@ -660,6 +661,25 @@ pub struct SetWorkProtection {
     pub expected_revision: Revision,
     pub protected: bool,
     pub confirmed_release: bool,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "kebab-case", deny_unknown_fields)]
+#[cfg_attr(feature = "wire-schema", derive(schemars::JsonSchema))]
+pub enum WorkProtectionOutcome {
+    Recorded { receipt: WorkProtection },
+    /// No original receipt was found. This is not proof that the action cannot
+    /// subsequently be submitted, and does not authorize clearing its intent.
+    Pending {},
+    Mismatch {},
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+#[cfg_attr(feature = "wire-schema", derive(schemars::JsonSchema))]
+pub struct WorkProtectionRecovery {
+    pub request: SetWorkProtection,
+    pub outcome: WorkProtectionOutcome,
 }
 
 /// Explicit model sharing of guidance declared by the captured tools.

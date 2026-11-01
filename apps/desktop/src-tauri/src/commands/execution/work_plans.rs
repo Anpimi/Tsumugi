@@ -469,6 +469,18 @@ request!(
     }
 );
 
+impl WorkProtectionSetRequest {
+    fn business_request(self) -> SetWorkProtection {
+        SetWorkProtection {
+            action_id: self.action_id, project_id: self.project_id,
+            unit_id: self.unit_id, locale: self.locale,
+            source_revision_id: self.source_revision_id, selection_id: self.selection_id,
+            expected_revision: self.expected_revision, protected: self.protected,
+            confirmed_release: self.confirmed_release,
+        }
+    }
+}
+
 #[cfg_attr(feature = "wire-schema", derive(schemars::JsonSchema))]
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
@@ -1840,6 +1852,17 @@ pub async fn read_work_protection(
 }
 
 #[tauri::command]
+pub async fn recover_work_protection(
+    state: State<'_, AppState>,
+    request: WorkProtectionSetRequest,
+) -> Result<tsumugi_core::application::WorkProtectionRecovery, CommandError> {
+    state.sessions.run("recover_work_protection", CommandStage::ExecutionRead, move |sessions| {
+        let active = authorized(sessions, &request.session_token, request.project_id, CommandStage::ExecutionRead)?;
+        active.store.recover_work_protection(&request.business_request()).map_err(map_read)
+    }).await
+}
+
+#[tauri::command]
 pub async fn set_work_protection(
     state: State<'_, AppState>,
     request: WorkProtectionSetRequest,
@@ -1859,17 +1882,7 @@ pub async fn set_work_protection(
                 let (host, store) = active.execution_parts()?;
                 host.allow_mutation()?;
                 store
-                    .set_work_protection(&SetWorkProtection {
-                        action_id: request.action_id,
-                        project_id: request.project_id,
-                        unit_id: request.unit_id,
-                        locale: request.locale,
-                        source_revision_id: request.source_revision_id,
-                        selection_id: request.selection_id,
-                        expected_revision: request.expected_revision,
-                        protected: request.protected,
-                        confirmed_release: request.confirmed_release,
-                    })
+                    .set_work_protection(&request.business_request())
                     .map_err(map_adopt)
             },
         )
@@ -2003,6 +2016,7 @@ mod tests {
         round_trip!("responses", "status", WorkPlanStatusView);
         round_trip!("responses", "action", Option<WorkPlanReceiptView>);
         round_trip!("responses", "protection", WorkProtection);
+        round_trip!("responses", "protectionRecovery", tsumugi_core::application::WorkProtectionRecovery);
         let mut invalid = fixture["requests"]["authorize"].clone();
         invalid["expiresAt"] = json!(9007199254740993u64);
         assert!(serde_json::from_value::<WorkPlanAuthorizeRequest>(invalid).is_err());
@@ -4803,5 +4817,49 @@ mod tests {
                 .unwrap(),
             current
         );
+    }
+
+    #[test]
+    fn protection_recovery_uses_registered_read_boundary_and_original_request_after_reopen() {
+        let mut fixture = Fixture::create();
+        let request = json!({
+            "actionId":ExecutionId::new(), "unitId":fixture.unit, "locale":"zh-CN",
+            "sourceRevisionId":fixture.source_revision, "selectionId":null,
+            "expectedRevision":"0", "protected":true, "confirmedRelease":false,
+        });
+        let before = fixture.bytes();
+        assert_eq!(fixture.call("recover_work_protection", request.clone()).unwrap()["outcome"], json!({"kind":"pending"}));
+        assert_eq!(fixture.bytes(), before);
+        let receipt = fixture.call("set_work_protection", request.clone()).unwrap();
+        let newer = fixture.call("set_work_protection", json!({
+            "actionId":ExecutionId::new(), "unitId":fixture.unit, "locale":"zh-CN",
+            "sourceRevisionId":fixture.source_revision, "selectionId":null,
+            "expectedRevision":receipt["revision"], "protected":false, "confirmedRelease":true,
+        })).unwrap();
+        let before = fixture.bytes();
+        let observed = fixture.call("recover_work_protection", request.clone()).unwrap();
+        assert_eq!(observed["outcome"], json!({"kind":"recorded", "receipt":receipt}));
+        let mut business = request.clone(); business["projectId"] = fixture.context["projectId"].clone();
+        assert_eq!(observed["request"], business);
+        assert!(observed["request"].get("sessionToken").is_none());
+        let mut different = request.clone(); different["confirmedRelease"] = json!(true);
+        assert_eq!(fixture.call("recover_work_protection", different).unwrap()["outcome"], json!({"kind":"mismatch"}));
+        for field in ["projectId", "sessionToken", "unitId"] {
+            let mut wrong = request.clone(); wrong[field] = json!(ExecutionId::new());
+            assert!(fixture.call("recover_work_protection", wrong).is_err());
+        }
+        let mut malformed = request.clone(); malformed["expectedRevision"] = json!(0);
+        assert!(fixture.call("recover_work_protection", malformed).is_err());
+        assert_eq!(fixture.bytes(), before);
+        assert_eq!(fixture.call("read_work_protection", json!({"unitId":fixture.unit,"locale":"zh-CN"})).unwrap(), newer);
+        let old_context = fixture.context.clone();
+        fixture.reopen();
+        let before = fixture.bytes();
+        assert!(call(&fixture.webview, "recover_work_protection", {
+            let mut wrong = business.clone(); wrong["sessionToken"] = old_context["sessionToken"].clone(); wrong
+        }).is_err());
+        assert_eq!(fixture.call("recover_work_protection", request).unwrap(), observed);
+        assert_eq!(fixture.bytes(), before);
+        assert_eq!(fixture.call("read_work_protection", json!({"unitId":fixture.unit,"locale":"zh-CN"})).unwrap(), newer);
     }
 }

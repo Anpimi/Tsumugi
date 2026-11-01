@@ -204,7 +204,7 @@ macro_rules! handlers {
         work_plans::team::send_work_plan_team_message,work_plans::team::read_work_plan_team_message_action,
         work_plans::team::read_work_plan_team_message_settlement,work_plans::team::read_work_plan_team_publication_settlement,
         work_plans::control_work_plan,work_plans::read_work_plan_status,work_plans::read_work_plan_run,work_plans::read_work_plan_action,work_plans::read_work_plan_authorization_action,work_plans::read_work_plan_control_action,
-        work_plans::read_work_protection,work_plans::set_work_protection,$($extra),*
+        work_plans::read_work_protection,work_plans::set_work_protection,work_plans::recover_work_protection,$($extra),*
     ] };
 }
 pub(super) fn handler<R: tauri::Runtime>()

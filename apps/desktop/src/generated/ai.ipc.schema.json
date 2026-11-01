@@ -9466,6 +9466,57 @@
         ],
         "type": "object"
       },
+      "SetWorkProtection": {
+        "additionalProperties": false,
+        "properties": {
+          "actionId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "confirmedRelease": {
+            "type": "boolean"
+          },
+          "expectedRevision": {
+            "$ref": "#/definitions/Revision"
+          },
+          "locale": {
+            "type": "string"
+          },
+          "projectId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "protected": {
+            "type": "boolean"
+          },
+          "selectionId": {
+            "anyOf": [
+              {
+                "$ref": "#/definitions/ExecutionId"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "sourceRevisionId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "unitId": {
+            "$ref": "#/definitions/ExecutionId"
+          }
+        },
+        "required": [
+          "actionId",
+          "projectId",
+          "unitId",
+          "locale",
+          "sourceRevisionId",
+          "selectionId",
+          "expectedRevision",
+          "protected",
+          "confirmedRelease"
+        ],
+        "type": "object"
+      },
       "SharedTerm": {
         "additionalProperties": false,
         "properties": {
@@ -14861,6 +14912,70 @@
         ],
         "type": "object"
       },
+      "WorkProtectionOutcome": {
+        "oneOf": [
+          {
+            "additionalProperties": false,
+            "properties": {
+              "kind": {
+                "const": "recorded",
+                "type": "string"
+              },
+              "receipt": {
+                "$ref": "#/definitions/WorkProtection"
+              }
+            },
+            "required": [
+              "kind",
+              "receipt"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "description": "No original receipt was found. This is not proof that the action cannot\nsubsequently be submitted, and does not authorize clearing its intent.",
+            "properties": {
+              "kind": {
+                "const": "pending",
+                "type": "string"
+              }
+            },
+            "required": [
+              "kind"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "properties": {
+              "kind": {
+                "const": "mismatch",
+                "type": "string"
+              }
+            },
+            "required": [
+              "kind"
+            ],
+            "type": "object"
+          }
+        ]
+      },
+      "WorkProtectionRecovery": {
+        "additionalProperties": false,
+        "properties": {
+          "outcome": {
+            "$ref": "#/definitions/WorkProtectionOutcome"
+          },
+          "request": {
+            "$ref": "#/definitions/SetWorkProtection"
+          }
+        },
+        "required": [
+          "request",
+          "outcome"
+        ],
+        "type": "object"
+      },
       "WorkStage": {
         "enum": [
           "understanding",
@@ -15091,6 +15206,9 @@
       },
       "workProtection": {
         "$ref": "#/definitions/WorkProtection"
+      },
+      "workProtectionRecovery": {
+        "$ref": "#/definitions/WorkProtectionRecovery"
       }
     },
     "required": [
@@ -15145,7 +15263,8 @@
       "workPlanStartSettlement",
       "workPlanControlSettlement",
       "workPlanAuthorizationAction",
-      "workProtection"
+      "workProtection",
+      "workProtectionRecovery"
     ],
     "title": "Responses",
     "type": "object",

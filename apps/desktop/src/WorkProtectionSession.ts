@@ -74,6 +74,24 @@ export function useWorkProtectionSession(project: ProjectView, ports: { reserve:
     try { await submit(original.request, original.key); }
     finally { inFlight.current = false; update({ busy: false }); }
   }
-  return { state, current: () => currentState.current, inFlight, attemptedEdit, blocked: () => inFlight.current || !!currentState.current.pending, change, retry };
+  async function check(proof: () => boolean) {
+    const original = currentState.current.pending;
+    if (!mounted.current || inFlight.current || original?.phase !== "unknown" || !sameContext(original.request) || !proof()) return null;
+    inFlight.current = true; update({ busy: true, failure: null });
+    try {
+      const recovery = await workPlanCommands.recoverProtection(original.request);
+      if (!mounted.current || currentState.current.pending !== original) return null;
+      if (recovery.outcome.kind === "recorded") {
+        update({ pending: null }); release();
+        await reads.client.invalidateQueries({ queryKey: reads.key(protectionKey(original.request.unitId, original.request.locale,
+          original.request.sourceRevisionId, original.request.selectionId ?? null)), exact: true, refetchType: "none" });
+      }
+      return recovery;
+    } catch (error) {
+      if (mounted.current && currentState.current.pending === original) update({ failure: commandFailure(error) });
+      throw error;
+    } finally { inFlight.current = false; update({ busy: false }); }
+  }
+  return { state, current: () => currentState.current, inFlight, attemptedEdit, blocked: () => inFlight.current || !!currentState.current.pending, change, retry, check };
 }
 export type WorkProtectionSession = ReturnType<typeof useWorkProtectionSession>;
