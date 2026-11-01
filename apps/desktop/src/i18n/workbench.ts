@@ -2,6 +2,12 @@ import { decisionsEn, decisionsZh } from "./decisions";
 import { decisionDetailsEn, decisionDetailsZh } from "./decisionDetails";
 
 export const workbenchEn = {
+  copyEntryKey: "Copy key {{key}}",
+  entryKeyCopied: "Key copied.",
+  entryKeyCopyFailed: "Could not copy the key. Try again.",
+  entryProtectionCheck: "Check original action",
+  entryProtectionCheckPending: "No saved receipt was found. The original action remains unconfirmed; check again or explicitly retry it.",
+  entryProtectionCheckMismatch: "The saved action does not match the original request. The result remains unconfirmed and your input is preserved.",
   semanticBatchPairs: "Selected translations",
   semanticBatchRecapture: "Use the new language selection before previewing or sending a review.",
   semanticBatchTitle: "Review selected translations with AI", semanticBatchHelp: "Choose languages for the fixed selected entries. Only saved translations are sent after preview and separate consent. Switching ends the current local approval selection.",
@@ -385,7 +391,7 @@ export const workbenchEn = {
   "entryProtectionSaved": "Protection was recorded. Your translation and draft are kept.",
   "entryProtectionReleased": "Protection was released. Your current translation is kept.",
   "entryProtectionChanged": "The entry, your input, or the checked protection changed. Close this confirmation and check the current state before trying again.",
-  "entryProtectionFailed": "Could not confirm this protection change. Your input is kept. Check current state, or retry the retained original request if its result is uncertain.",
+  "entryProtectionFailed": "Could not confirm this protection change. Your input is kept. Check the original action first; retry explicitly only if you want to submit that same request again.",
   "entryProtectionUnknown": "The protection change for {{key}} · {{locale}} is uncertain. The original request is kept.",
   "entryProtectionPending": "Recording the protection change…",
   "entryProtectionRetry": "Retry original protection change",
@@ -397,7 +403,7 @@ export const workbenchEn = {
   "entryProtectionSource": "Current source",
   "entryProtectionTranslation": "Current selected translation",
   "entryProtectionReconciled": "The original protection change was confirmed. Your current input is kept.",
-  "entryProtectionUnknownRelease": "Confirm the original release for {{key}} · {{locale}}. Your current input is kept. Retry replays the same original request; it does not create a new action.",
+  "entryProtectionUnknownRelease": "Check the original release for {{key}} · {{locale}} without submitting it again. Your current input is kept. Retry explicitly submits the same original request.",
   candidateAi: "AI candidate",
   entryContextTab: "Terms and context",
   entryContextWorking: "Saving or checking context… Your newer input is kept.",
@@ -644,6 +650,12 @@ export const workbenchEn = {
 
 type Messages = { [K in keyof typeof workbenchEn]: typeof workbenchEn[K] extends string ? string : { [P in keyof typeof workbenchEn[K]]: string } };
 export const workbenchZh: Messages = {
+  copyEntryKey: "复制 key {{key}}",
+  entryKeyCopied: "已复制 key。",
+  entryKeyCopyFailed: "无法复制 key，请重试。",
+  entryProtectionCheck: "核对原操作",
+  entryProtectionCheckPending: "尚未找到已保存回执。原操作仍未确认；可再次核对，或明确重提原请求。",
+  entryProtectionCheckMismatch: "已保存的操作与原请求不一致。结果仍未确认，输入已保留。",
   semanticBatchPairs: "所选译文",
   semanticBatchRecapture: "请先应用新的语言选择，再预览或发送审阅。",
   semanticBatchTitle: "用 AI 审阅所选译文", semanticBatchHelp: "为固定选中的条目选择语言。预览并单独同意后才发送已保存译文。切换时会结束当前本地批准选择。",
@@ -1027,7 +1039,7 @@ export const workbenchZh: Messages = {
   "entryProtectionSaved": "已记录保护。译文和草稿均保留。",
   "entryProtectionReleased": "已解除保护，当前译文仍保留。",
   "entryProtectionChanged": "条目、输入或已核对的保护状态已变化。请关闭此确认，重新核对当前状态后再试。",
-  "entryProtectionFailed": "未能确认保护变更。输入已保留。请重新核对；若结果尚不确定，可重试已保留的原请求。",
+  "entryProtectionFailed": "未能确认保护变更，输入已保留。请先核对原操作；只有需要再次提交同一请求时，才明确重试。",
   "entryProtectionUnknown": "{{key}} · {{locale}} 的保护变更结果尚未确认，原请求已保留。",
   "entryProtectionPending": "正在记录保护变更…",
   "entryProtectionRetry": "重试原保护变更",
@@ -1039,7 +1051,7 @@ export const workbenchZh: Messages = {
   "entryProtectionSource": "当前源文",
   "entryProtectionTranslation": "当前选用译文",
   "entryProtectionReconciled": "原保护变更的结果已确认，当前输入仍保留。",
-  "entryProtectionUnknownRelease": "请核对 {{key}} · {{locale}} 的原解除操作，当前输入会保留。重试会重放同一原请求，不创建新操作。",
+  "entryProtectionUnknownRelease": "可核对 {{key}} · {{locale}} 的原解除操作，不会重新提交，当前输入会保留。明确重试会再次提交同一原请求。",
   candidateAi: "AI 候选",
   entryContextTab: "术语与上下文",
   entryContextWorking: "正在保存或核对上下文…新输入会保留。",

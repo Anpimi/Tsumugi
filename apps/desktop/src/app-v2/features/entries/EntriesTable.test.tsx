@@ -1,4 +1,5 @@
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import { createRef } from "react";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { i18n } from "../../../i18n";
@@ -88,6 +89,38 @@ it("shows the shared status glyph directly and keeps details beside the source k
   expect(screen.queryByText(w("protectedEntry"))).not.toBeInTheDocument();
   fireEvent.click(screen.getByRole("button", { name: i18n.t("workbenchV2.showEntryDetails", { key: "key.unit-0" }) }));
   expect(h.props.onDetails).toHaveBeenCalledWith("unit-0");
+});
+
+it("copies the exact key by click and keyboard, reports failure, and respects the interaction gate", async () => {
+  const user = userEvent.setup();
+  const writeText = vi.spyOn(navigator.clipboard, "writeText").mockResolvedValue();
+  const summary = row(0), key = "key.中文.e\u0301.👩🏽‍💻.{{name}}";
+  summary.content.nativeKey = key;
+  summary.content.translationPreview = "Different translation";
+  const h = surface({ rows: [summary], view: makeWorkspaceView({ kind: "entries", locale: "zh-CN", focus: "unit-0", entryPageMode: true }, "entries") });
+  const button = screen.getByRole("button", { name: `Copy key ${key}` });
+  await user.click(button);
+  expect(writeText).toHaveBeenLastCalledWith(key);
+  expect(screen.getByRole("status")).toHaveTextContent("Key copied.");
+  writeText.mockRejectedValueOnce(new Error("denied"));
+  button.focus();
+  await user.keyboard("{Enter}");
+  expect(writeText).toHaveBeenCalledTimes(2);
+  expect(screen.getByRole("status")).toHaveTextContent("Could not copy the key. Try again.");
+  await user.keyboard(" ");
+  expect(writeText).toHaveBeenCalledTimes(3);
+  expect(writeText).toHaveBeenLastCalledWith(key);
+  expect(h.props.onEdit).not.toHaveBeenCalled();
+  expect(h.props.onMove).not.toHaveBeenCalled();
+  expect(h.props.onSelection).not.toHaveBeenCalled();
+  act(() => h.gate.setComposing("editor", true));
+  await user.click(button);
+  expect(writeText).toHaveBeenCalledTimes(3);
+  act(() => h.gate.setComposing("editor", false));
+  h.update({ disabled: true });
+  expect(button).toBeDisabled();
+  await user.click(button);
+  expect(writeText).toHaveBeenCalledTimes(3);
 });
 
 it.each(["en-US", "zh-CN"] as const)("labels the table, global range and row actions with real %s resources", async language => {

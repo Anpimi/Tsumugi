@@ -21,12 +21,15 @@
 .source { color: var(--color-text-primary); }
 .target textarea { font-size: var(--text-editor); line-height: var(--line-editor); width: 100%; resize: vertical; background: var(--color-bg-surface); }
 .sourceActions { display: flex; align-items: center; gap: var(--space-3); margin-block-start: var(--space-4); font-size: var(--text-sm); line-height: var(--line-sm); }
-.sourceActions button { margin-inline-start: auto; flex-shrink: 0; }
+.sourceActions > button:last-child { margin-inline-start: auto; flex-shrink: 0; }
 .sourceVersions { display: flex; flex-direction: column; gap: var(--space-4); }
 .versionLabel { display: block; margin-block-end: var(--space-1); color: var(--color-text-secondary); font-size: var(--text-sm); line-height: var(--line-sm); }
 .previousVersion { padding-block-end: var(--space-4); border-block-end: var(--border-width) solid var(--color-border-subtle); }
-.key { font-family: var(--font-mono); color: var(--color-text-tertiary); overflow-wrap: anywhere; }
+.sourceActions .key { min-width: 0; min-height: 0; padding: 0; flex-shrink: 1; justify-content: flex-start; text-align: start; font-family: var(--font-mono); font-size: inherit; line-height: inherit; color: var(--color-text-tertiary); overflow-wrap: anywhere; }
+.sourceActions .key > span { min-width: 0; }
+.sourceActions .key:hover { background: var(--color-transparent); text-decoration: underline; }
 .entry:hover .key, .entry[data-selected] .key { color: var(--color-text-secondary); }
+.copyResult { margin: var(--space-2) 0 0; color: var(--color-text-secondary); font-size: var(--text-sm); line-height: var(--line-sm); }
 .meta { color: var(--color-text-secondary); }
 .footer { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-3); }
 .range { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; border: 0; }
