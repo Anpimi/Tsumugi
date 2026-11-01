@@ -15,9 +15,34 @@ import { conversationCommands } from "../../../conversationCommands";
 import { resourceCommands } from "../../../resourceCommands";
 import { knowledgeProposalFixture } from "../../../testSupport/conversationProposalFixture";
 import { fixtureIdentity } from "../../../testSupport/executionFixture";
+import executionWire from "../../../../test/fixtures/executionCommands.contract.json";
+import { executionCommands } from "../../../executionCommands";
+import { validateResponseAttempt } from "../../../generated/execution.validators";
 
 let reads: SessionReads | undefined;
 afterEach(() => { cleanup(); reads?.retire(); vi.restoreAllMocks(); });
+
+it("keeps an unlinked original execution read-only and does not retry or clear its unknown outcome", async () => {
+  await i18n.changeLanguage("en-US");
+  const raw: unknown = structuredClone(executionWire.detail);
+  if (!validateResponseAttempt(raw) || !raw.items[0]) throw new Error("Expected original attempt");
+  const original = raw.items[0]; original.resultId = null;
+  const context = executionWire.session;
+  vi.spyOn(executionCommands, "attempt").mockResolvedValue(raw);
+  const recover = vi.spyOn(executionCommands, "recover").mockRejectedValue(new Error("Opening a decision cannot retry execution"));
+  const item: DecisionItem = { decisionId: "original-unknown-execution", source: "execution-unknown", state: "awaiting-recheck", basis: "c".repeat(64),
+    locale: original.scope.locale, targets: [{ kind: "project" }], targetsComplete: true, evidence: null, sourceActionId: null,
+    action: { kind: "inspect-execution", taskId: raw.taskId, attemptId: raw.attemptId, itemId: original.status.itemId } };
+  const navigate = vi.fn(async () => false);
+  reads = new SessionReads(context);
+  render(<SessionReadProvider context={context} reads={reads} bridge={false}><DecisionDetails item={item} disabled={false} current={() => true}
+    onBack={vi.fn()} onOpenEntry={vi.fn(async () => false)} onNavigate={navigate}/></SessionReadProvider>);
+  const open = await screen.findByRole("button", { name: i18n.t("workbenchV2.decisionDetailsOpenExecution") });
+  await waitFor(() => expect(open).toBeEnabled()); await userEvent.setup().click(open);
+  expect(await screen.findByText(i18n.t("workbenchV2.decisionDetailsExecutionUnlinked"))).toBeVisible();
+  expect(screen.getByRole("region", { name: i18n.t("workbenchV2.decisionDetailsContent") })).toHaveFocus();
+  expect(navigate).toHaveBeenCalledOnce(); expect(recover).not.toHaveBeenCalled(); expect(original.status.execution).toBe("unknown");
+});
 
 it.each(["en-US", "zh-CN"])("reads the exact knowledge item without an external glossary capture and opens its review destination (%s)", async locale => {
   await i18n.changeLanguage(locale);

@@ -56,7 +56,9 @@ import type { ConversationRecoveryTarget } from "./features/assistant/Conversati
 import type { ConversationProposalTarget, ConversationKnowledgeProposalRef, ConversationTeamQuestionTarget, OpenKnowledgeProposal } from "./features/assistant/conversationNavigation";
 import type { KnowledgeReviewTarget } from "./features/knowledge/KnowledgeProposalPanel";
 import type { DecisionItem } from "../decisionCommands";
-import { contextKindForKnowledge, type KnowledgeOwner } from "./features/knowledge/knowledgeTypes";
+import { contextKindForKnowledge, type KnowledgeOwner, type ResourceProposalTarget } from "./features/knowledge/knowledgeTypes";
+import { executionRecoveryDestination } from "./features/decisions/executionRecoveryNavigation";
+import type { OpenRunCandidateBatch } from "./features/candidates/runCandidateBatch";
 import { knowledgeBlocked, knowledgeHasDraft, knowledgeRecovery, knowledgeEntryRecovery } from "./features/knowledge/knowledgeState";
 import { useDecisionFeed } from "./features/decisions/useDecisionFeed";
 import { DecisionBadge, DecisionTray } from "./features/decisions/DecisionList";
@@ -130,6 +132,7 @@ type SessionContext = { previousProject: RecentProject | null; session: ProjectS
   reviewOwner: ReviewOwner | null; requestReview: () => void; revealReview: () => void; reviewRecovery: boolean; hideReviewRecovery: () => void;
   reviewBatchOpen: boolean; setReviewBatchOpen: (open: boolean) => void; reviewBatchSelection: WorkspaceSelection | null; prepareReviewBatch: (selection: WorkspaceSelection) => void;
   candidateBatchOpen: boolean; setCandidateBatchOpen: (open: boolean) => void;
+  openRunCandidateBatch: OpenRunCandidateBatch;
   comparisonOwner: ComparisonSession | null; requestComparisons: () => void;
   knowledgeOwner: KnowledgeOwner | null; knowledgeLoadFailed: boolean; requestKnowledge: () => void; knowledgeReveal: number; revealKnowledge: () => void;
   knowledgeOpenIntent: KnowledgeOpenIntent | null; setKnowledgeOpenIntent: Dispatch<SetStateAction<KnowledgeOpenIntent | null>>;
@@ -264,7 +267,28 @@ function ProjectWorkspace({ session, lifecycle, gate, readOnly, requestOpen, req
     else if (operation === "ai-semantic-review" || operation === null && attemptId !== null && reviewStatus.current.owner?.semantic.current().attempts.includes(attemptId)) revealReview(); else revealImport();
   }, [revealReview, revealImport, revealSource, sourceOwner, revealDelivery]);
   const [candidateBatchOpen, setCandidateBatchOpen] = useState(false);
+  const runCandidateBatchFlight = useRef(false);
   const revealCandidateBatch = useCallback(() => { requestCandidates(); setCandidateBatchOpen(true); }, [requestCandidates]);
+  const openRunCandidateBatch = useCallback<OpenRunCandidateBatch>(async (target, sourceCurrent) => {
+    requestCandidates();
+    const owners = candidateStatus.current.owners, viewId = store.getState().activeViewId;
+    const parentDialogId = gate.getSnapshot().dialogs.at(-1);
+    const present = () => {
+      const now = lifecycle.getSnapshot();
+      return !readonlyRef.current && !session.reads.retired && now.phase === "idle" && !now.pending
+        && now.session?.project.sessionToken === session.project.sessionToken && store.getState().activeViewId === viewId
+        && sourceCurrent() && gate.canDispatch({ viewId, source: "button", dialogId: parentDialogId });
+    };
+    if (!owners || runCandidateBatchFlight.current || parentDialogId && parentDialogId !== "workspace-dock" || !present()) return false;
+    runCandidateBatchFlight.current = true;
+    try {
+      const { resolveRunCandidateBatch } = await import("./features/candidates/runCandidateBatch");
+      if (!present()) return false;
+      const exact = await resolveRunCandidateBatch(executionContext(session.project), target, present);
+      if (!exact || !present() || !await owners.batch.captureExact(exact, present) || !present()) return false;
+      setCandidateBatchOpen(true); return true;
+    } finally { runCandidateBatchFlight.current = false; }
+  }, [requestCandidates, store, gate, lifecycle, session]);
   const [comparisonsRequested, setComparisonsRequested] = useState(false), [comparisonOwner, setComparisonOwner] = useState<ComparisonSession | null>(null);
   const comparisonStatus = useRef({ requested: false, owner: null as ComparisonSession | null });
   const requestComparisons = useCallback(() => { comparisonStatus.current.requested = true; setComparisonsRequested(true); }, []);
@@ -446,7 +470,7 @@ function ProjectWorkspace({ session, lifecycle, gate, readOnly, requestOpen, req
     importOwners, importRecovery, requestImport, revealImport, hideImportRecovery,
     strategyOwner, requestStrategy, strategyReveal, strategyLoadFailed, retryStrategy,
     deliveryOwner, executionTasks, requestDelivery, deliveryReveal, deliveryLoadFailed, canRetryDelivery: !deliveryStatus.current.hadOwner, retryDelivery,
-    candidateOwners, requestCandidates, revealCandidates, candidateBatchOpen, setCandidateBatchOpen, comparisonOwner, requestComparisons,
+    candidateOwners, requestCandidates, revealCandidates, candidateBatchOpen, setCandidateBatchOpen, openRunCandidateBatch, comparisonOwner, requestComparisons,
     reviewOwner: executionTasks ? reviewOwner : null, requestReview, revealReview, reviewRecovery, hideReviewRecovery,
     reviewBatchOpen, setReviewBatchOpen, reviewBatchSelection, prepareReviewBatch,
     knowledgeOwner: executionTasks ? knowledgeOwner : null, knowledgeLoadFailed, requestKnowledge, knowledgeReveal, revealKnowledge, knowledgeOpenIntent, setKnowledgeOpenIntent,
@@ -518,9 +542,11 @@ function WorkspaceShell() {
   const strategyIntentSequence = useRef(0);
   const [strategyRequestTarget, setStrategyRequestTarget] = useState<{actionId: string; submittedSeq: string} | undefined>(undefined);
   const [knowledgeReview, setKnowledgeReview] = useState<KnowledgeReviewTarget | null>(null);
+  const [resourceReview, setResourceReview] = useState<{ viewId: string; target: ResourceProposalTarget; returnViewId: string | null; decisionId: string } | null>(null);
   const observedKnowledgeOpenIntent = useRef<KnowledgeOpenIntent | null>(null);
   useLayoutEffect(() => { if (view?.kind === "knowledge") requestKnowledge(); }, [view?.kind, requestKnowledge]);
   useLayoutEffect(() => { if (view?.kind === "runs" && view.runsMode === "strategy") requestStrategy(); }, [view?.kind, view?.runsMode, requestStrategy]);
+  useLayoutEffect(() => { if (view?.kind === "runs") requestCandidates(); }, [view?.kind, requestCandidates]);
   useLayoutEffect(() => { if (view?.kind === "delivery") requestDelivery(); }, [view?.kind, requestDelivery]);
   const interaction = useSyncExternalStore(gate.subscribe, gate.getSnapshot, gate.getSnapshot);
   const draftState = useSyncExternalStore(drafts?.subscribe ?? noDraftSubscription, drafts?.getSnapshot ?? getNoDraftState, drafts?.getSnapshot ?? getNoDraftState);
@@ -917,6 +943,34 @@ function WorkspaceShell() {
           questionPostId: destination.questionPostId, focus: focusRetained(), origin }); return true;
       }
       if (destination.kind === "knowledge-proposal") return await openKnowledgeTarget(destination.proposal, destination.entryIndex, current, intent.release);
+      if (destination.kind === "resource-proposal") {
+        const owner = knowledgeOwner;
+        const clean = () => !!owner && !owner.termDirty() && !owner.contextDirty() && !owner.correctionDirty() && !owner.factDirty()
+          && !owner.tool.hasDraft() && !owner.contextResources.hasDrafts() && !owner.knowledgeProposals.hasDrafts();
+        if (!owner || owner.blocked() || !clean() || !owner.canReadCapture(destination.capture)) return false;
+        if (owner.current().locale !== destination.capture.targetLocale && owner.localeAvailable(destination.capture.targetLocale)
+          && !owner.setLocale(destination.capture.targetLocale)) return false;
+        await owner.openPreview(destination.capture, () => current() && clean());
+        if (!current() || !clean() || owner.current().previewNeedsRefresh
+          || owner.current().preview?.capture.captureId !== destination.capture.captureId) return false;
+        const returnViewId = currentId;
+        intent.release();
+        const accepted = await runtime.navigation.open({ kind: "knowledge", locale: destination.capture.targetLocale, preset: "terms", editing: false, queueActive: false });
+        const openedViewId = store.getState().activeViewId;
+        if (accepted && openedViewId && !session.reads.retired) setResourceReview({ viewId: openedViewId,
+          target: { captureId: destination.capture.captureId, entryId: destination.entryId }, returnViewId, decisionId: item.decisionId });
+        return accepted;
+      }
+      if (destination.kind === "execution") {
+        const source = sourceOwner?.current(), delivery = deliveryOwner?.current();
+        const recovery = executionRecoveryDestination(destination, { source: [source?.attempt, source?.checkAttempt],
+          delivery: [delivery?.attempt, delivery?.checkAttempt], review: reviewOwner?.semantic.current().attempts ?? [] });
+        if (!current() || !recovery) return false;
+        intent.release();
+        if (recovery === "source") { setSourceTarget(null); setSourceOpen(true); return true; }
+        if (recovery === "review" && reviewOwner) { reviewOwner.semantic.showAttempt(destination.attemptId); revealReview(); return true; }
+        return await openDelivery(false, undefined, item.locale ?? activeLocale);
+      }
       if (destination.kind === "details") {
         const action = item.action;
         if (action.kind !== "inspect-delivery" && action.kind !== "inspect-delivery-outcome") return false;
@@ -941,6 +995,23 @@ function WorkspaceShell() {
       if (accepted && narrow) showDock();
       return accepted;
     } finally { intent.release(); }
+  }
+  async function returnToDecision() {
+    const target = resourceReview;
+    if (!target || disabled || !knowledgeCurrent() || !gate.canDispatch({ viewId: currentId, source: "button" })) return;
+    const origin = document.activeElement;
+    const previous = target.returnViewId ? store.getState().views[target.returnViewId] : null;
+    const accepted = previous?.kind === "decisions" ? await runtime.navigation.update(previous.id, { focus: null })
+      : await runtime.navigation.open({ kind: "decisions", locale: activeLocale, editing: false, queueActive: false });
+    if (!accepted || session.reads.retired) return;
+    setResourceReview(null);
+    requestAnimationFrame(() => {
+      if (session.reads.retired || store.getState().views[store.getState().activeViewId ?? ""]?.kind !== "decisions"
+        || document.activeElement !== origin && document.activeElement !== document.body) return;
+      const button = Array.from(document.querySelectorAll<HTMLButtonElement>("button[data-decision-id]"))
+        .find(node => node.dataset.decisionId === target.decisionId);
+      (button ?? main.current)?.focus();
+    });
   }
   function openDecisionsFromTray() {
     if (disabled || !gate.canDispatch({ viewId: currentId, source: "button", dialogId: narrow && drawer ? "workspace-dock" : undefined })) return;
@@ -1101,7 +1172,7 @@ function WorkspaceShell() {
     if (!page || !page.items.includes(item) || !decisionFeed.current(page.basis) || !decisionCurrent()
       || !gate.canDispatch({ viewId: currentId, source: "button" })) return false;
     if (["compare-candidate", "review-translation", "review-finding", "inspect-local-request", "clarify-conversation-proposal",
-      "review-knowledge-proposal", "compare-source-mapping", "resolve-source-mapping", "inspect-delivery", "inspect-delivery-outcome"].includes(item.action.kind)
+      "review-knowledge-proposal", "review-resource", "compare-source-mapping", "resolve-source-mapping", "inspect-delivery", "inspect-delivery-outcome"].includes(item.action.kind)
       || item.action.kind === "answer-team-question" && item.targets.some(target => target.kind === "conversation")) {
       return await navigateDecision(item, () => decisionFeed.current(page.basis));
     }
@@ -1351,7 +1422,8 @@ function WorkspaceShell() {
               onOpenEntry={async (unitId, locale) => decisionCurrent() && gate.canDispatch({ viewId: currentId, source: "button" }) ? inspectReview(unitId, locale) : false}/>
           </Suspense></FeatureBoundary> : view.kind === "knowledge" ? <FeatureBoundary key="knowledge-presentation" fallback={<ErrorState title={message("featureFailed")} description={message("featureFailedHelp")}/>}><Suspense fallback={<LoadingState label={t("knowledge.readingTerms")}/>}>
             {knowledgeOwner ? <KnowledgeView project={session.project} owner={knowledgeOwner} view={view} drafts={drafts} onEditTranslation={openCandidateEditor} onRevealTranslationDraft={(unitId, locale) => revealDraft({ projectId: session.project.metadata.projectId, unitId, locale })} disabled={disabled} gate={gate} current={knowledgeCurrent}
-              patch={patch => store.getState().patch(view.id, patch)} onDetails={() => { store.getState().patch(view.id, { dock: "details" }); showDock(); }} reviewTarget={knowledgeReview?.proposal.projectId === session.project.metadata.projectId ? knowledgeReview : null} onReviewOpened={() => setKnowledgeReview(null)}/>
+              patch={patch => store.getState().patch(view.id, patch)} onDetails={() => { store.getState().patch(view.id, { dock: "details" }); showDock(); }} reviewTarget={knowledgeReview?.proposal.projectId === session.project.metadata.projectId ? knowledgeReview : null} onReviewOpened={() => setKnowledgeReview(null)}
+              resourceTarget={resourceReview?.viewId === view.id ? resourceReview.target : null} onReturnToDecisions={() => { void returnToDecision().catch(() => setCommandFailed(true)); }}/>
               : <LoadingState label={t("knowledge.readingTerms")}/>}
           </Suspense></FeatureBoundary> : view.kind === "runs" ? <FeatureBoundary key="strategy-presentation" fallback={<ErrorState title={message("strategyLoadFailed")}/>}><Suspense fallback={<LoadingState label={message("strategyLoading")}/>}>
             <TabsRoot className={appStyles.runsWorkspace} value={view.runsMode} onValueChange={mode => {

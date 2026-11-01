@@ -13,6 +13,7 @@
 .table th { font-weight: var(--weight-medium); }
 .table thead { color: var(--color-text-secondary); }
 .table td { white-space: pre-wrap; }
+.table tr[tabindex="-1"]:focus-visible { outline: var(--focus-width) solid var(--color-accent-solid); outline-offset: calc(-1 * var(--focus-width)); }
 .table p { margin-block-start: var(--space-2); }
 .meta { color: var(--color-text-secondary); font-size: var(--text-sm); }
 .text { white-space: pre-wrap; overflow-wrap: anywhere; }

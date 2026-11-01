@@ -136,6 +136,35 @@ function batchPayload(owners: CandidateOwners): TranslationCandidateBatchCommand
   const audit: CandidateAuditCapture | null = state.mode === "stage" ? null : { actor: value.actor, reason: value.reason, editSeq: value.editSeq };
   return { kind: "translation-candidate-batch", captureId: state.captureId, revision: state.revision, audit };
 }
+it("shows every captured original candidate with source and current text, and stages only after explicit confirmation", async () => {
+  const h = await harness();
+  h.rows.forEach((row, index) => {
+    const revision = row.revisions[0]; revision.attemptId = fixtureIdentity(2400); revision.itemId = fixtureIdentity(2401 + index); revision.resultId = fixtureIdentity(2410 + index);
+  });
+  h.rows[0].revisions[0].text = "";
+  const candidates = h.rows.map(row => {
+    const value = row.revisions[0];
+    if (!value.attemptId || !value.itemId || !value.resultId) throw new Error("Expected saved original candidate");
+    return { unitId: value.unitId, locale: value.locale, sourceSnapshotId: value.sourceSnapshotId, sourceRevisionId: value.sourceRevisionId,
+      revisionId: value.revisionId, attemptId: value.attemptId, itemId: value.itemId, resultId: value.resultId };
+  });
+  await act(async () => { expect(await h.owners().batch.captureExact({ projectId: context.projectId, locale: "zh-CN", sourceSnapshotId: snapshotId, candidates }, () => true)).toBe(true); });
+  const dialog = await h.open(), table = within(dialog).getByRole("table", { name: w("candidateBatchResult") });
+  expect(within(table).getAllByRole("row")).toHaveLength(3);
+  expect(within(table).getByRole("columnheader", { name: i18n.t("workbenchV2.candidateBatchSourceText") })).toBeVisible();
+  expect(within(table).getByRole("columnheader", { name: i18n.t("workbenchV2.candidateBatchCurrentText") })).toBeVisible();
+  for (const row of h.rows) {
+    const entry = within(table).getByText(row.target.nativeKey), renderedRow = entry.closest("tr");
+    expect(entry).toBeVisible(); if (!renderedRow) throw new Error("Expected original batch row");
+    expect(within(renderedRow).getAllByRole("cell")[1]).toHaveTextContent(row.target.sourceText);
+  }
+  expect(within(table).getAllByText(i18n.t("workbenchV2.candidateBatchNoCurrentText"))).toHaveLength(2);
+  expect(h.ports.write).not.toHaveBeenCalled();
+  const confirm = within(dialog).getByRole("button", { name: w("candidateBatchConfirm") }); await waitFor(() => expect(confirm).toBeEnabled());
+  fireEvent.click(confirm); await waitFor(() => expect(h.owners().batch.current().phase).toBe("complete"));
+  expect(h.heads.get(h.rows[0].target.unitId)?.value?.text).toBe(""); expect(h.heads.get(h.rows[1].target.unitId)?.value?.text).toBe(h.rows[1].revisions[0].text);
+  expect(h.ports.save).not.toHaveBeenCalled(); expect(h.ports.select).not.toHaveBeenCalled();
+});
 async function closePanel(user: ReturnType<typeof userEvent.setup>) {
   const dialog = screen.getByRole("dialog", { name: w("candidateBatchTitle") });
   await user.click(within(dialog).getAllByRole("button", { name: w("close") }).at(-1)!);

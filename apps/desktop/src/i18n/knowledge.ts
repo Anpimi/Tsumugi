@@ -3,6 +3,9 @@ import { knowledgeProposalEn, knowledgeProposalZh } from "./knowledgeProposal";
 import { translationMemoryEn, translationMemoryZh } from "./translationMemory";
 import { resourceDraftRecoveryEn, resourceDraftRecoveryZh } from "./resourceDraftRecovery";
 export const knowledgeEn = {
+  proposalInboxTarget: "Review the term proposal selected from Decisions.",
+  proposalReturnToInbox: "Back to Decisions",
+  proposalTargetMissing: "This proposal is no longer in the current comparison. Read it again or return to Decisions.",
   ...resourceDraftRecoveryEn,
   ...translationMemoryEn,
   ...contextKnowledgeEn,
@@ -154,6 +157,9 @@ export const knowledgeEn = {
 };
 
 export const knowledgeZh = {
+  proposalInboxTarget: "正在查看从“待你决定”定位的术语提议。",
+  proposalReturnToInbox: "返回待你决定",
+  proposalTargetMissing: "当前比较中已没有这项提议。请重新读取或返回“待你决定”。",
   ...resourceDraftRecoveryZh,
   ...translationMemoryZh,
   ...contextKnowledgeZh,

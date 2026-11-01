@@ -15,7 +15,7 @@ import { sourceCommands } from "../../../sourceCommands";
 import type { WorkspaceView, ViewPatch } from "../../workspace/workspaceStore";
 import type { InteractionGate } from "../../workspace/interactionGate";
 import type { TranslationDrafts } from "../editor/translationDrafts";
-import { contextKindForKnowledge, knowledgeKinds, type KnowledgeOwner, type KnowledgeKind } from "./knowledgeTypes";
+import { contextKindForKnowledge, knowledgeKinds, type KnowledgeOwner, type KnowledgeKind, type ResourceProposalTarget } from "./knowledgeTypes";
 import { knowledgeBlocked } from "./knowledgeState";
 import { ResourceDraftRecovery } from "../../../ResourceDraftRecovery";
 import { knowledgeCurrentKey, knowledgeTermsKey, useKnowledgeCurrent, useKnowledgeScope, useKnowledgeTerms } from "./knowledgeReads";
@@ -32,11 +32,13 @@ export interface KnowledgeViewProps {
   onDetails: () => void;
   reviewTarget?: KnowledgeReviewTarget | null;
   onReviewOpened?: () => void;
+  resourceTarget?: ResourceProposalTarget | null;
+  onReturnToDecisions?: () => void;
   drafts?: TranslationDrafts | null;
   onEditTranslation?: (unitId: string, locale: string) => Promise<boolean>;
   onRevealTranslationDraft?: (unitId: string, locale: string) => void;
 }
-export default function KnowledgeView({ project, owner, view, disabled, gate, current, patch, onDetails, reviewTarget = null, onReviewOpened, drafts = null, onEditTranslation, onRevealTranslationDraft }: KnowledgeViewProps) {
+export default function KnowledgeView({ project, owner, view, disabled, gate, current, patch, onDetails, reviewTarget = null, onReviewOpened, resourceTarget, onReturnToDecisions, drafts = null, onEditTranslation, onRevealTranslationDraft }: KnowledgeViewProps) {
   const { t } = useTranslation(undefined, { keyPrefix: "knowledge" }), { t: exchange } = useTranslation(undefined, { keyPrefix: "knowledgeExchange" });
   const { selectedTerm, termDraft, aliasInput, locale, pending, busyMutation, notice, failure } = owner.state;
   const editingDisabled = disabled || owner.journal.hydration !== "ready" || owner.journal.retired;
@@ -162,7 +164,7 @@ export default function KnowledgeView({ project, owner, view, disabled, gate, cu
           <p className={styles.help}>{t("referencesUnknown")}</p>
           {source.isSuccess && !source.data?.currentSnapshot ? <p className={styles.help}>{t("noSource")}</p> : source.error ? <Banner tone="error" action={<Button onClick={() => void source.refetch()}>{t("refresh")}</Button>}>{t("sourceFailed")}</Banner> : null}
           {terms.hasNextPage ? <div className={styles.toolbar}><Button disabled={terms.isFetching} onClick={() => void terms.fetchNextPage()}>{t("moreTerms")}</Button></div> : null}
-          <TermProposalPanel project={project} owner={owner} disabled={disabled} gate={gate} viewId={view.id} current={current}/>
+          <TermProposalPanel project={project} owner={owner} disabled={disabled} gate={gate} viewId={view.id} current={current} target={resourceTarget} onReturnToDecisions={onReturnToDecisions}/>
         </div>
       </>}
       {kind !== "terms" && (dirty || pending && pending.kind !== "typed-context" && pending.kind !== "knowledge-decision") ? <Banner tone="warning" action={<Button onClick={() => { if (current()) patch({ preset: "terms" }); }}>{t("backToDraft")}</Button>}>{t("draftKept")}</Banner> : null}

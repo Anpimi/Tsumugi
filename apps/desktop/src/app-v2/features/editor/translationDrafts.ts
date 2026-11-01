@@ -8,6 +8,7 @@ import { jsonIdentity } from "../../../pluginToolChoices";
 import type { SessionReads } from "../../../sessionReads";
 import { translationCommands, type TranslationCandidateSliceRow, type TranslationRevision, type TranslationSaveReceipt, type TranslationSelection } from "../../../translationCommands";
 import { readCandidateSliceRows } from "../candidates/candidateBatchReads";
+import { candidateRevisionMatches, type CandidateRevisionTarget } from "../candidates/candidateBatchTargets";
 import type { LeaveIntent, LifecycleParticipant } from "../../platform/projectLifecycle";
 import { DraftKernel, nextEditSeq } from "../../workspace/draftKernel";
 import { DecisionActivityMemo } from "../../workspace/decisionActivity";
@@ -75,7 +76,7 @@ export interface MemoryStageCapture extends RevisionStageCapture {
   merge: DraftValue["merge"];
 }
 export interface RevisionStageResult { staged: boolean; durable: boolean }
-export interface CandidateBatchStage { row: TranslationCandidateSliceRow; capture: RevisionStageCapture }
+export interface CandidateBatchStage { row: TranslationCandidateSliceRow; capture: RevisionStageCapture; exact?: CandidateRevisionTarget }
 export interface CandidateBatchStageResult extends RevisionStageResult { key: DraftKey }
 interface RecordState {
   entry: DraftEntry;
@@ -107,9 +108,10 @@ function mergeMatches(view: ComparisonView, origin: DraftMergeOrigin, key: Draft
     && view.rows.every((row, index) => row.revisionId === origin.contributors[index]
       && row.basisCurrent && row.sourceRevisionId === basis.sourceRevisionId && row.candidateDisposition !== "rejected");
 }
-function sameBatchCandidate(left: TranslationCandidateSliceRow, right: TranslationCandidateSliceRow) {
-  const a = left.revisions[0], b = right.revisions[0];
-  return left.candidateCount === 1 && right.candidateCount === 1 && left.revisions.length === 1 && right.revisions.length === 1
+function sameBatchCandidate(left: TranslationCandidateSliceRow, right: TranslationCandidateSliceRow, exact?: CandidateRevisionTarget) {
+  const a = exact ? left.revisions.find(revision => candidateRevisionMatches(exact, revision)) : left.revisions[0];
+  const b = exact ? right.revisions.find(revision => candidateRevisionMatches(exact, revision)) : right.revisions[0];
+  return !!a && !!b && (exact !== undefined || left.candidateCount === 1 && right.candidateCount === 1 && left.revisions.length === 1 && right.revisions.length === 1)
     && left.target.unitId === right.target.unitId && left.target.locale === right.target.locale && left.target.basis === right.target.basis
     && left.target.sourceSnapshotId === right.target.sourceSnapshotId && left.target.sourceRevisionId === right.target.sourceRevisionId
     && left.target.sourceText === right.target.sourceText && left.target.selectionId === right.target.selectionId
@@ -118,6 +120,7 @@ function sameBatchCandidate(left: TranslationCandidateSliceRow, right: Translati
     && left.protection.locale === right.protection.locale && left.protection.revision === right.protection.revision
     && left.protection.protected === right.protection.protected && a.revisionId === b.revisionId && a.text === b.text
     && a.ordinal === b.ordinal && a.actionId === b.actionId && a.sourceRevisionId === b.sourceRevisionId
+    && a.sourceSnapshotId === b.sourceSnapshotId && a.attemptId === b.attemptId && a.itemId === b.itemId && a.resultId === b.resultId
     && (a.candidateDecision?.request.actionId ?? null) === (b.candidateDecision?.request.actionId ?? null);
 }
 function immutableEntry(entry: DraftEntry): DraftEntry {
@@ -435,11 +438,12 @@ export class TranslationDrafts {
         if (!opened[index] || !record || !value || !row || !this.fresh(record) || record.entry.failure !== null || record.entry.journalPending || record.entry.head.value !== null
           || value.pending || value.merge || value.editSeq !== item.capture.editSeq || !sameDraftBasis(value.basis, item.capture.basis)
           || value.text !== (value.basis.text ?? "") || record.entry.current.kind !== "current"
-          || record.entry.current.sourceText !== row.target.sourceText || !sameBatchCandidate(item.row, row)
+          || record.entry.current.sourceText !== row.target.sourceText || !sameBatchCandidate(item.row, row, item.exact)
           || row.protection.protected || row.selectedOriginKind !== null && row.selectedOriginKind !== "ai"
           || !sameDraftBasis(value.basis, { sourceRevisionId: row.target.sourceRevisionId, selectionId: row.target.selectionId,
             revisionId: row.target.revisionId, text: row.target.translationText })) continue;
-        if (!this.edit(key, row.revisions[0].text)) continue;
+        const exact = item.exact, candidate = exact ? row.revisions.find(revision => candidateRevisionMatches(exact, revision)) : row.revisions[0];
+        if (!candidate || !this.edit(key, candidate.text)) continue;
         results[index] = { key, staged: true, durable: await this.flush(key) };
         if (!results[index].durable) break;
       }

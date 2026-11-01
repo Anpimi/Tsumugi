@@ -25,6 +25,7 @@ const reasons = {
   "human-selection": "candidateBatchHumanSelection", "existing-draft": "candidateBatchExistingDraft", "draft-input": "candidateBatchDraftInput",
   merge: "candidateBatchMerge", pending: "candidateBatchPendingInput", unavailable: "candidateBatchItemUnavailable",
   "basis-changed": "candidateBatchBasisChanged", "source-changed": "candidateBatchSourceChanged", ended: "candidateBatchEnded",
+  "candidate-changed": "candidateBatchOriginalChanged",
 } as const satisfies Record<CandidateBatchSkipReason, string>;
 const statuses = { ready: "candidateBatchReady", skipped: "candidateBatchSkipped", running: "candidateBatchItemRunning", staged: "candidateBatchStaged",
   recorded: "candidateBatchRecorded", pending: "candidateBatchUnknown", undurable: "candidateStageUndurable", failed: "candidateBatchItemFailed" } as const;
@@ -130,6 +131,7 @@ export default function CandidateBatchPanel({ project, owner, owners, commands, 
       </div>
     </div>}>
     <div className={styles.content}>
+      {state.exact ? <Banner tone="info">{t("candidateBatchOriginalRun")}</Banner> : null}
       <div><p className={styles.key}>{t(modeKey)}</p><p className={styles.meta}>{t("candidateBatchScope", { total: totalMembers, excluded: state.excluded.length, locale: state.locale ?? "" })}</p>
         {state.phase === "preview" ? <p className={styles.meta}>{t("candidateBatchCounts", { eligible: state.items.filter(item => item.status === "ready").length,
           skipped: state.items.filter(item => item.status === "skipped").length })}</p> : state.items.length ? <p className={styles.meta}>{t("candidateBatchProgress", { done: processed, total: state.items.length })}</p> : null}</div>
@@ -146,9 +148,11 @@ export default function CandidateBatchPanel({ project, owner, owners, commands, 
       </div> : null}
       {state.items.length === 0 && state.phase !== "capturing" ? <EmptyState title={t("candidateBatchEmpty")} /> : null}
       {rows.length ? <div ref={pageRegion} className={styles.pageRegion} tabIndex={-1} aria-label={t("candidateBatchResult")} role="region">
-        <table className={styles.table} aria-label={t("candidateBatchResult")}><thead><tr><th className={styles.entryColumn} scope="col">{t("candidateBatchEntry")}</th><th scope="col">{t("candidateBatchText")}</th><th className={styles.resultColumn} scope="col">{t("candidateBatchResult")}</th></tr></thead>
+        <table className={styles.table} aria-label={t("candidateBatchResult")}><thead><tr><th className={styles.entryColumn} scope="col">{t("candidateBatchEntry")}</th>{state.exact ? <><th scope="col">{t("candidateBatchSourceText")}</th><th scope="col">{t("candidateBatchCurrentText")}</th></> : null}<th scope="col">{t("candidateBatchText")}</th><th className={styles.resultColumn} scope="col">{t("candidateBatchResult")}</th></tr></thead>
           <tbody>{rows.map(item => <tr key={item.id}><td><div className={styles.key}>{item.nativeKey}</div>
             {item.revision ? <p className={styles.meta}>{t("candidateBatchVersion", { ordinal: item.revision.ordinal })}</p> : null}</td>
+            {state.exact ? <><td><div className={styles.text}><TokenizedText text={item.target.sourceText}/></div></td>
+              <td><div className={styles.text}>{item.target.translationText === null ? t("candidateBatchNoCurrentText") : item.target.translationText === "" ? t("candidateBatchEmptyText") : <TokenizedText text={item.target.translationText}/>}</div></td></> : null}
             <td>{item.skipReason === "multiple-candidates" ? <p className={styles.meta}>{t("candidateBatchAmbiguous", { count: item.row.candidateCount })}</p>
               : item.revision ? <div className={`${styles.text} ${styles.ai}`}>{item.revision.text === "" ? t("candidateBatchEmptyText") : <TokenizedText text={item.revision.text} />}</div> : <p className={styles.meta}>{t("candidateBatchNoCandidate")}</p>}</td>
             <td>{result(item)}</td></tr>)}</tbody></table>

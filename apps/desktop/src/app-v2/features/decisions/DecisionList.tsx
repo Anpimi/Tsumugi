@@ -72,7 +72,7 @@ function DecisionRow({ item, selected, disabled, onSelect }: {
       {item.evidence?.kind === "source-comparison" ? <p className={styles.fileSummary}>
         {t("decisionsSourceMatches", { changed: item.evidence.changedCount, ambiguous: item.evidence.ambiguousCount, renamed: item.evidence.renameCandidateCount })}
       </p> : null}
-      <div className={styles.rowActions}><Button size="sm" disabled={disabled} aria-current={selected ? "true" : undefined}
+      <div className={styles.rowActions}><Button size="sm" data-decision-id={item.decisionId} disabled={disabled} aria-current={selected ? "true" : undefined}
         aria-describedby={description} onClick={() => onSelect(item)}>{t(knowledge ? "decisionsKnowledgeProposalOpen" : source.open)}<ArrowUpRight aria-hidden="true"/></Button></div>
     </div>
   </li>;

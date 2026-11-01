@@ -12,13 +12,14 @@ import { Button } from "../../../design-system/Button";
 import { Dialog } from "../../../design-system/Dialog";
 import { Banner, EmptyState, LoadingState } from "../../../design-system/Feedback";
 import type { InteractionGate } from "../../workspace/interactionGate";
-import type { KnowledgeOwner } from "./knowledgeTypes";
+import type { KnowledgeOwner, ResourceProposalTarget } from "./knowledgeTypes";
 import { CorrectionTermDraftForm } from "../entries/EntryCorrectionTerm";
 import styles from "./TermProposalPanel.module.css";
 
 interface Props {
   project: ProjectView; owner: KnowledgeOwner; disabled: boolean; current: (dialogId?: string) => boolean;
   gate: InteractionGate; viewId: string | null;
+  target?: ResourceProposalTarget | null; onReturnToDecisions?: () => void;
 }
 type Choice = {
   preview: ResourcePreview;
@@ -26,7 +27,7 @@ type Choice = {
 } & ({ removed: false; row: ResourcePreviewRow } | { removed: true; row: TermRevision });
 
 /** Saved captures are evidence. Decisions remain in the original resource owner. */
-export default function TermProposalPanel({ project, owner, disabled, current, gate, viewId }: Props) {
+export default function TermProposalPanel({ project, owner, disabled, current, gate, viewId, target, onReturnToDecisions }: Props) {
   const { t } = useTranslation(undefined, { keyPrefix: "knowledge" }), { t: global } = useTranslation();
   const reads = useSessionReads(), context = executionContext(project), dialogId = useId();
   useSyncExternalStore(gate.subscribe, gate.getSnapshot, gate.getSnapshot);
@@ -37,6 +38,12 @@ export default function TermProposalPanel({ project, owner, disabled, current, g
   useLayoutEffect(() => confirmation ? gate.pushDialog(dialogId) : undefined, [confirmation, dialogId, gate]);
   const present = (dialog?: string) => mounted.current && !reads.retired && !live.current.disabled && live.current.current(dialog);
   const state = owner.state, capture = state.previewCapture, preview = state.preview;
+  const targetRow = useRef<HTMLTableRowElement>(null), focusedTarget = useRef<ResourceProposalTarget | null>(null);
+  useLayoutEffect(() => {
+    if (!target || target === focusedTarget.current || capture?.captureId !== target.captureId || !targetRow.current || !present()) return;
+    focusedTarget.current = target;
+    if (document.activeElement === document.body) targetRow.current.focus();
+  });
   const sourceKey = ["resource-source-scope"];
   const source = useSessionQuery({ key: sourceKey, scopes: ["source"], enabled: !disabled && !reads.retired,
     read: () => sourceCommands.scope(context) });
@@ -113,6 +120,8 @@ export default function TermProposalPanel({ project, owner, disabled, current, g
   const changed = !!preview && (state.previewNeedsRefresh || !latest.data || !source.data || !fresh(sourceKey, source.data)
     || !fresh(previewKey, latest.data) || jsonIdentity(preview) !== jsonIdentity(latest.data));
   return <section className={styles.panel} aria-label={t("proposalTitle")}>
+    {target ? <Banner tone="info" action={onReturnToDecisions ? <Button size="sm" disabled={!present()} onClick={() => { if (present()) onReturnToDecisions(); }}>{t("proposalReturnToInbox")}</Button> : undefined}>{t("proposalInboxTarget")}</Banner> : null}
+    {target && preview && (preview.capture.captureId !== target.captureId || !preview.rows.some(row => row.entry.id === target.entryId) && !preview.removed.some(row => row.externalEntryId === target.entryId)) ? <Banner tone="warning">{t("proposalTargetMissing")}</Banner> : null}
     <CorrectionTermDraftForm project={project} owner={owner} disabled={disabled} visible current={() => present()} gate={gate} viewId={viewId}/>
     <header className={styles.header}><div><h2>{t("proposalTitle")}</h2><p>{t("proposalHelp")}</p></div>
       <Button size="sm" disabled={!present() || busy || dirty || !owner.localeAvailable(state.locale)}
@@ -143,7 +152,8 @@ export default function TermProposalPanel({ project, owner, disabled, current, g
       </tr></thead><tbody>{preview.rows.map(row => {
         const make = (decision: ResourceDecision["decision"]): Choice => ({ preview, row, removed: false, entryId: row.entry.id, revisionId: row.current?.revisionId ?? null, decision });
         const action = make(row.kind === "override" && !preview.correction ? "override" : "adopt");
-        return <tr key={row.entry.id}><th scope="row">{row.entry.source}<p className={styles.meta}>{row.entry.nativeKey || t(row.scopeUnitId ? "proposalScopeEntry" : "proposalScopeProject")}</p></th>
+        const targeted = target?.captureId === preview.capture.captureId && target.entryId === row.entry.id;
+        return <tr key={row.entry.id} ref={targeted ? targetRow : undefined} tabIndex={targeted ? -1 : undefined} aria-label={targeted ? row.entry.source : undefined}><th scope="row">{row.entry.source}<p className={styles.meta}>{row.entry.nativeKey || t(row.scopeUnitId ? "proposalScopeEntry" : "proposalScopeProject")}</p></th>
           <td>{row.current?.target ?? t("proposalMissingValue")}</td><td>{row.entry.target}<p className={styles.meta}>{global(`resource.changeKind.${row.kind}`)}</p>
             {row.entry.protected ? <Badge>{t("proposalProtected")}</Badge> : null}{row.entry.reason ? <p aria-label={t("proposalReason")}>{row.entry.reason}</p> : null}</td>
           <td><div className={styles.actions}><Button size="sm" disabled={!canChoose(action)} onClick={() => choose(action)}>{t(action.decision === "override" ? "proposalOverride" : "proposalAdopt")}</Button>
@@ -151,7 +161,8 @@ export default function TermProposalPanel({ project, owner, disabled, current, g
             <Button size="sm" disabled={!canChoose(make("ignore"))} onClick={() => choose(make("ignore"))}>{t("proposalIgnore")}</Button></div></td></tr>;
       })}{preview.removed.map(term => {
         const make = (decision: "adopt" | "keep"): Choice => ({ preview, row: term, removed: true, entryId: term.externalEntryId ?? "", revisionId: term.revisionId, decision });
-        return <tr key={`removed:${term.termId}`}><th scope="row">{term.source}<p className={styles.meta}>{t(term.scopeUnitId ? "proposalScopeEntry" : "proposalScopeProject")}</p></th>
+        const targeted = target?.captureId === preview.capture.captureId && target.entryId === term.externalEntryId;
+        return <tr key={`removed:${term.termId}`} ref={targeted ? targetRow : undefined} tabIndex={targeted ? -1 : undefined} aria-label={targeted ? term.source : undefined}><th scope="row">{term.source}<p className={styles.meta}>{t(term.scopeUnitId ? "proposalScopeEntry" : "proposalScopeProject")}</p></th>
           <td>{term.target}</td><td>{t("proposalRemovalHelp")}</td><td><div className={styles.actions}>
             <Button size="sm" disabled={!term.externalEntryId || !canChoose(make("adopt"))} onClick={() => choose(make("adopt"))}>{t("proposalRemove")}</Button>
             <Button size="sm" disabled={!term.externalEntryId || !canChoose(make("keep"))} onClick={() => choose(make("keep"))}>{t("proposalKeep")}</Button></div></td></tr>;

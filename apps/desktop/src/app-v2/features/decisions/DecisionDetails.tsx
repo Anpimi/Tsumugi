@@ -223,7 +223,7 @@ function DetailsRead({ item, disabled, current, onBack, onOpenEntry, onNavigate 
   const { t, i18n } = useTranslation(undefined, { keyPrefix: "workbenchV2" }), reads = useSessionReads(), titleId = useId();
   const mounted = useRef(false), live = useRef({ disabled, current, onOpenEntry, onNavigate });
   const result = useRef<HTMLDivElement>(null), navigation = useRef(false);
-  const [opening, setOpening] = useState(false), [failure, setFailure] = useState<{ cause: CommandFailure | null } | null>(null);
+  const [opening, setOpening] = useState(false), [failure, setFailure] = useState<{ cause: CommandFailure | null; executionUnlinked?: boolean } | null>(null);
   const [sourceOffsets, setSourceOffsets] = useState([0]), sourceAfter = sourceOffsets[sourceOffsets.length - 1];
   const pageFocus = useRef<{ after: number; origin: Element | null; moved: boolean; dispose: () => void } | null>(null);
   useLayoutEffect(() => { live.current = { disabled, current, onOpenEntry, onNavigate }; });
@@ -281,6 +281,17 @@ function DetailsRead({ item, disabled, current, onBack, onOpenEntry, onNavigate 
     catch (cause) { if (currentView(expected)) setFailure({ cause: commandFailure(cause) }); }
     finally { navigation.current = false; if (mounted.current) setOpening(false); }
   }
+  async function openOriginalOwner() {
+    const expected = view, callback = live.current.onNavigate;
+    if (!expected || expected.kind !== "resource" && expected.kind !== "execution" || !callback || !currentView(expected) || navigation.current) return;
+    navigation.current = true; setOpening(true); setFailure(null);
+    try {
+      if (!await callback(item, () => currentView(expected)) && currentView(expected)) {
+        setFailure({ cause: null, executionUnlinked: expected.kind === "execution" }); result.current?.focus();
+      }
+    } catch (cause) { if (currentView(expected)) { setFailure({ cause: commandFailure(cause) }); result.current?.focus(); } }
+    finally { navigation.current = false; if (mounted.current) setOpening(false); }
+  }
   async function openSource() {
     const expected = view, callback = live.current.onNavigate;
     if (!expected || expected.kind !== "mapping" && expected.kind !== "source-comparison" || !callback || !currentView(expected) || navigation.current) return;
@@ -325,8 +336,9 @@ function DetailsRead({ item, disabled, current, onBack, onOpenEntry, onNavigate 
     {view && !fresh ? <Banner tone="warning" role="status">{t("decisionDetailsChanged")}</Banner> : null}
     <div className={styles.body} ref={result} tabIndex={-1} role="region" aria-label={t("decisionDetailsContent")}>
       {opening ? <p role="status">{t("decisionDetailsOpening")}</p> : null}
-      {failure ? <Banner tone="warning" role="alert"><p>{t("decisionDetailsOpenFailed")}</p><CommandFailureDetails failure={failure.cause}/></Banner> : null}
-      {view?.kind === "resource" ? <ResourceDetails view={view}/> : null}
+      {failure ? <Banner tone="warning" role="alert"><p>{t(failure.executionUnlinked ? "decisionDetailsExecutionUnlinked" : "decisionDetailsOpenFailed")}</p><CommandFailureDetails failure={failure.cause}/></Banner> : null}
+      {view?.kind === "resource" ? <><ResourceDetails view={view}/>{onNavigate ? <Button size="sm" disabled={!fresh || opening}
+        onClick={() => void openOriginalOwner()}>{t("decisionDetailsOpenResource")}</Button> : null}</> : null}
       {view?.kind === "team-question" ? <>
         <p>{t(view.conversationId === null ? "decisionDetailsTeamQuestionReadOnly" : "decisionDetailsTeamQuestionHelp")}</p>
         <TextBlock label={t("decisionDetailsTeamQuestionBody")} text={view.view.question.publication.body}/>
@@ -345,6 +357,7 @@ function DetailsRead({ item, disabled, current, onBack, onOpenEntry, onNavigate 
         onNext={after => { if (view.page.nextOrdinal === after) readSourcePage([...sourceOffsets, after]); }}/>: null}
       {view?.kind === "source-comparison" && onNavigate ? <Button size="sm" disabled={!fresh || opening} onClick={() => void openSource()}>{t("decisionDetailsReviewSource")}</Button> : null}
       {view?.kind === "execution" ? <ExecutionDetails view={view} item={item} blocked={!fresh || opening} openEntry={(unitId, locale) => void openEntry(unitId, locale)}/> : null}
+      {view?.kind === "execution" && onNavigate ? <Button size="sm" disabled={!fresh || opening} onClick={() => void openOriginalOwner()}>{t("decisionDetailsOpenExecution")}</Button> : null}
       {view?.kind === "delivery" ? <DeliveryDetails view={view} blocked={!fresh || opening} openEntry={(unitId, locale) => void openEntry(unitId, locale)}/> : null}
       {view?.kind === "delivery-outcome" ? <DeliveryOutcomeDetails view={view}/> : null}
       {onNavigate && (view?.kind === "delivery" || view?.kind === "delivery-outcome" && view.record) ? <Button size="sm" disabled={!fresh || opening}

@@ -1,4 +1,7 @@
 export const decisionDetailsEn = {
+  decisionDetailsOpenResource: "Review this term proposal",
+  decisionDetailsOpenExecution: "Open original recovery",
+  decisionDetailsExecutionUnlinked: "The original task could not be matched to an available recovery view. You can still read its saved record; this does not change or retry its outcome.",
   decisionDetailsTeamQuestionHelp: "Read the member’s original question, then open its saved conversation to answer it.",
   decisionDetailsTeamQuestionReadOnly: "This question has no saved conversation association. Its original text remains available here; no conversation or answer permission is created.",
   decisionDetailsTeamQuestionBody: "Original member question", decisionDetailsTeamQuestionResponse: "Recorded human response",
@@ -42,7 +45,7 @@ export const decisionDetailsEn = {
   decisionDetailsSource: "Source text", decisionDetailsProposed: "Proposed translation", decisionDetailsCurrent: "Current translation",
   decisionDetailsReason: "Recorded reason", decisionDetailsAliases: "Other names", decisionDetailsProtected: "Protected term",
   decisionDetailsChange: { added: "Add term", edited: "Change term", removed: "Remove term", unchanged: "Unchanged term", override: "Override term" },
-  decisionDetailsResourceReadOnly: "This view shows the proposal. Handling knowledge proposals is not available here yet.",
+  decisionDetailsResourceReadOnly: "Opening this record does not apply it. Review it in the original term proposal panel.",
   decisionDetailsResourceStale: "The proposal’s source has changed. The recorded proposal is kept for review.",
   decisionDetailsRemoval: "This proposal removes the term shown below. It does not propose a replacement.",
   decisionDetailsOrigin: "Proposal source", decisionDetailsOriginFile: "Imported resource: {{resource}} · {{version}}",
@@ -78,6 +81,9 @@ export const decisionDetailsEn = {
 };
 
 export const decisionDetailsZh: typeof decisionDetailsEn = {
+  decisionDetailsOpenResource: "处理这项术语提议",
+  decisionDetailsOpenExecution: "打开原运行核对",
+  decisionDetailsExecutionUnlinked: "无法将原任务与当前可用的核对入口准确关联。仍可查看原记录，不会据此变更结果或重试。",
   decisionDetailsTeamQuestionHelp: "先核对成员提出的原问题，再回到它所属的已保存会话回答。",
   decisionDetailsTeamQuestionReadOnly: "这个问题没有关联已保存的会话。这里保留原文供你查看，不会新建会话或建立回答许可。",
   decisionDetailsTeamQuestionBody: "成员的原问题", decisionDetailsTeamQuestionResponse: "已记录的人工答复",
@@ -121,7 +127,7 @@ export const decisionDetailsZh: typeof decisionDetailsEn = {
   decisionDetailsSource: "源文", decisionDetailsProposed: "提议译法", decisionDetailsCurrent: "当前译法",
   decisionDetailsReason: "当时记录的理由", decisionDetailsAliases: "其他名称", decisionDetailsProtected: "受保护的术语",
   decisionDetailsChange: { added: "新增术语", edited: "修改术语", removed: "移除术语", unchanged: "术语未变", override: "覆盖术语" },
-  decisionDetailsResourceReadOnly: "这里可以查看提议；目前还不能在此处理知识提议。",
+  decisionDetailsResourceReadOnly: "打开记录不会采用提议。请进入原术语提议面板处理。",
   decisionDetailsResourceStale: "提议依据的内容已有变化，原提议仍保留供你核对。",
   decisionDetailsRemoval: "这个提议会移除下方术语，没有提供替代译法。",
   decisionDetailsOrigin: "提议来源", decisionDetailsOriginFile: "导入的资源：{{resource}} · {{version}}",
