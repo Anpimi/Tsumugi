@@ -13,6 +13,7 @@ import { TokenizedText } from "../../../design-system/TokenizedText";
 import type { ConversationPlanLink } from "./conversationRun";
 import { conversationTeamCandidateTarget, readConversationTeamToolResults, readConversationTeamExecution, readConversationTeamHistory, readConversationTeamPost, type OpenConversationTeamCandidate } from "./conversationTeamReads";
 import styles from "./ConversationTeamProgress.module.css";
+import { ConversationText } from "./ConversationText";
 
 export interface ConversationTeamProgressProps {
   context: SessionRequest; link: ConversationPlanLink; status: WorkPlanStatusView;
@@ -27,10 +28,16 @@ const cursorFor = (cursor: Cursor | null, frame: string) => cursor?.frame === fr
 function ReadFailure({ label, error }: { label: string; error: unknown }) {
   return <Banner tone="warning" role="alert"><p>{label}</p><CommandFailureDetails failure={commandFailure(error)}/></Banner>;
 }
-function PostCard({ post, roles, status, allowed, openPost, onReply }: {
+function DiscussionText({ text }: { text: string }) {
+  const [open, setOpen] = useState(false);
+  return <Disclosure onToggle={event => setOpen(event.currentTarget.open)} title={<span className={styles.discussionSummary}>{Array.from(text.split("\n", 1)[0]).slice(0, 100).join("")}</span>}>
+    {open ? <ConversationText text={text}/> : null}
+  </Disclosure>;
+}
+function PostCard({ post, roles, status, allowed, openPost, onReply, fullText = false }: {
   post: TeamDiscussionPost; roles: readonly TeamMemberRole[]; status: WorkPlanStatusView; allowed: boolean;
   openPost: (postId: string, origin: HTMLButtonElement) => void;
-  onReply?: (post: TeamDiscussionPost) => void;
+  onReply?: (post: TeamDiscussionPost) => void; fullText?: boolean;
 }) {
   const { t } = useTranslation(undefined, { keyPrefix: "conversationTeam" });
   const author = post.author;
@@ -38,7 +45,7 @@ function PostCard({ post, roles, status, allowed, openPost, onReply }: {
   const target = post.publication.target, entry = status.plan.scope.find(unit => unit.unitId === target.unitId)?.nativeKey ?? t("entryUnknown");
   return <article className={styles.post} aria-label={t("target", { entry, locale: target.locale })}>
     <h5>{author.kind !== "member" ? t("localUser") : role?.request.displayName ?? t("memberUnknown")} · {t(`postKind.${post.publication.kind}`)}</h5>
-    <p className={styles.meta}>{t("target", { entry, locale: target.locale })}</p><p className={styles.text}>{post.publication.body}</p>
+    <p className={styles.meta}>{t("target", { entry, locale: target.locale })}</p>{fullText ? <ConversationText text={post.publication.body}/> : <DiscussionText text={post.publication.body}/>}
     <div className={styles.actions}>
       {onReply ? <Button size="sm" disabled={!allowed} onClick={() => { if (allowed) onReply(post); }}>{t("reply")}</Button> : null}
       {post.publication.replyTo ? <Button size="sm" disabled={!allowed} onClick={event => { if (allowed && post.publication.replyTo) openPost(post.publication.replyTo, event.currentTarget); }}>{t("readReply")}</Button> : null}
@@ -251,8 +258,8 @@ function TeamRecords({ context, link, status, visible, canRead, onOpenCandidate,
               {human?.priorWork.length ? <><h6>{t("priorWork")}</h6><ul>{human.priorWork.map(reference => <li key={reference.attemptId}><code>{reference.taskId}</code> · <code>{reference.attemptId}</code></li>)}</ul></> : null}
             </Disclosure>
             {outcome?.kind === "translation" ? <><p>{t(work.candidateRevisionId ? "candidate" : "suggestion")}</p><Disclosure title={<>{t("fullText")}</>}>{outcome.text === "" ? <p>{t("emptyTranslation")}</p> : <p className={styles.text}><TokenizedText text={outcome.text} tone="ai"/></p>}</Disclosure></> : null}
-            {outcome?.kind === "review" ? <p>{t(`verdict.${outcome.verdict}`)}</p> : outcome?.kind === "waiting" ? <p>{t("waiting")}</p> : outcome?.kind === "awaiting-human" ? <p>{t("awaitingHuman")}</p> : outcome?.kind === "evidence" ? <p>{t("evidence")}</p> : null}
-            <div className={styles.actions}>{postButtons([...(work.request?.postIds ?? human?.postIds ?? []), ...(outcome?.kind === "review" || outcome?.kind === "evidence" ? outcome.postIds : [])])}
+            {outcome?.kind === "review" ? <section className={styles.finding} aria-label={t("finding")}><h6>{t("finding")}</h6><p>{t(`verdict.${outcome.verdict}`)}</p><p>{t("target", { entry: entryName(work.target.unitId), locale: work.target.locale })}</p>{postButtons(outcome.postIds)}</section> : outcome?.kind === "waiting" ? <p>{t("waiting")}</p> : outcome?.kind === "awaiting-human" ? <p>{t("awaitingHuman")}</p> : outcome?.kind === "evidence" ? <p>{t("evidence")}</p> : null}
+            <div className={styles.actions}>{postButtons([...(work.request?.postIds ?? human?.postIds ?? []), ...(outcome?.kind === "evidence" ? outcome.postIds : [])].filter(id => outcome?.kind !== "review" || !outcome.postIds.includes(id)))}
               {candidate && onOpenCandidate ? <Button size="sm" disabled={!fresh || busyWork !== null} onClick={() => void openCandidate(work)}>{t(busyWork === work.receipt.intentId ? "openingCandidate" : "openCandidate")}</Button> : null}
             </div>
             {feedback?.intentId === work.receipt.intentId ? <Banner tone="warning" role="status"><p>{t("candidateChanged")}</p>{feedback.cause ? <CommandFailureDetails failure={feedback.cause}/> : null}</Banner> : null}
@@ -264,7 +271,7 @@ function TeamRecords({ context, link, status, visible, canRead, onOpenCandidate,
       </section>
       <section aria-label={t("messages")}><h5>{t("messages")}</h5>{!page.messages.length && fresh ? <p>{t("noMessages")}</p> : page.messages.map(message => {
         const included = page.consumptions.filter(item => item.messageId === message.messageId);
-        return <article className={styles.message} key={message.messageId}><h6>{message.sender.kind !== "member" ? t("localUser") : memberName(message.sender.author.memberId, message.sender.author.roleVersionId)} → {memberName(message.recipientMemberId, message.recipientRoleVersionId)}</h6><p className={styles.meta}>{t("target", { entry: entryName(message.target.unitId), locale: message.target.locale })}</p><p className={styles.text}>{message.body}</p><p className={styles.meta}>{t(included.length ? "included" : "addressed", { count: included.length })}</p><div className={styles.actions}>{postButtons(message.postIds)}</div></article>;
+        return <article className={styles.message} key={message.messageId}><h6>{message.sender.kind !== "member" ? t("localUser") : memberName(message.sender.author.memberId, message.sender.author.roleVersionId)} → {memberName(message.recipientMemberId, message.recipientRoleVersionId)}</h6><p className={styles.meta}>{t("target", { entry: entryName(message.target.unitId), locale: message.target.locale })}</p><DiscussionText text={message.body}/><p className={styles.meta}>{t(included.length ? "included" : "addressed", { count: included.length })}</p><div className={styles.actions}>{postButtons(message.postIds)}</div></article>;
       })}
         <div className={styles.actions}><Button size="sm" disabled={!fresh || afterMessage === null} onClick={() => { if (fresh) setMessageCursor({ frame, value: null }); }}>{t("firstMessage")}</Button><Button size="sm" disabled={!fresh || !page.nextMessageAfter} onClick={() => { if (fresh && page.nextMessageAfter) setMessageCursor({ frame, value: page.nextMessageAfter }); }}>{t("nextMessage")}</Button></div>
       </section>
@@ -277,7 +284,7 @@ function TeamRecords({ context, link, status, visible, canRead, onOpenCandidate,
       <div className={styles.actions}><Button size="sm" disabled={!present() || history.isFetching} onClick={() => { if (present()) void history.refetch(); }}>{t("refreshHistory")}</Button><Button size="sm" disabled={!historyCurrent() || afterHistory === null} onClick={() => { if (historyCurrent()) setHistoryCursor({ frame, value: null }); }}>{t("firstHistory")}</Button><Button size="sm" disabled={!historyCurrent() || !posts?.nextAfter} onClick={() => { if (historyCurrent() && posts?.nextAfter) setHistoryCursor({ frame, value: posts.nextAfter }); }}>{t("nextHistory")}</Button></div>
     </section> : null}
     {postId ? <section className={styles.original} aria-label={t("originalPost")}><h5 tabIndex={-1} ref={postHeading}>{t("originalPost")}</h5><Button size="sm" disabled={!present()} onClick={() => { if (present()) { setPostId(null); postOrigin.current = null; const origin = postReturn.current; postReturn.current = null; if (origin?.isConnected) origin.focus(); } }}>{t("closePost")}</Button>
-      {focused.isPending || focused.isFetching ? <p role="status">{t("historyLoading")}</p> : null}{focused.error ? <ReadFailure label={t("historyFailed")} error={focused.error}/> : focused.data ? <PostCard post={focused.data.post} roles={focused.data.roles} status={status} allowed={present()} openPost={openPost}
+      {focused.isPending || focused.isFetching ? <p role="status">{t("historyLoading")}</p> : null}{focused.error ? <ReadFailure label={t("historyFailed")} error={focused.error}/> : focused.data ? <PostCard fullText post={focused.data.post} roles={focused.data.roles} status={status} allowed={present()} openPost={openPost}
         onReply={onReply ? original => { if (present() && !focused.isFetching && !focused.error) onReply(original); } : undefined}/> : null}
       <Button size="sm" disabled={!present() || focused.isFetching} onClick={() => { if (present()) void focused.refetch(); }}>{t("refreshPost")}</Button>
     </section> : null}

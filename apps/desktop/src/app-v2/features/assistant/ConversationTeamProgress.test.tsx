@@ -150,7 +150,10 @@ describe("conversation team records", () => {
     expect(invoke).toHaveBeenCalledWith("read_work_plan_team_post", { request: { ...h.context, planId: h.link.planId, postId: h.post.publication.postId } });
     expect(invoke).toHaveBeenCalledWith("read_work_plan_team_history", { request: { ...h.context, planId: h.link.planId, after: "23", limit: 16 } });
     expect(draft).toHaveFocus(); expect(draft).toHaveValue("Newer B"); expect(section("originalPost").querySelector("script")).toBeNull();
-    fireEvent.click(within(section("history")).getByRole("button", { name: t("nextHistory") })); await within(section("history")).findByText(h.post.publication.body, { normalizer: value => value });
+    fireEvent.click(within(section("history")).getByRole("button", { name: t("nextHistory") }));
+    const summary = await within(section("history")).findByText(h.post.publication.body.split("\n", 1)[0]);
+    fireEvent.click(summary);
+    await within(section("history")).findByText(h.post.publication.body, { normalizer: value => value });
     expect(draft).toHaveFocus(); expect(draft).toHaveValue("Newer B");
   });
 

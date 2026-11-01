@@ -26,6 +26,8 @@ import { ProjectLifecycle, type ProjectSession } from "./platform/projectLifecyc
 import { useNativeProjectClose, useProjectLifecycle } from "./platform/useProjectLifecycle";
 import type { OpenConversationRunCandidate } from "./features/assistant/conversationRunResultReads";
 import type { OpenConversationTeamCandidate } from "./features/assistant/conversationTeamReads";
+import type { OpenConversationEntryReference } from "./features/assistant/ConversationEntryReferences";
+import { entryQuery } from "./features/entries/entryReads";
 import type { EntryReviewEditorRequest } from "./features/review/navigationTypes";
 import { createWorkspaceStore, type WorkspaceView, type DeliveryNavigationTarget } from "./workspace/workspaceStore";
 import { createWorkspaceRouter } from "./workspace/workspaceRouter";
@@ -1080,6 +1082,51 @@ function WorkspaceShell() {
     if (accepted && narrow) showDock();
     return accepted;
   }
+  const entryReferenceFlight = useRef<{ dispose: () => void } | null>(null);
+  useLayoutEffect(() => () => { entryReferenceFlight.current?.dispose(); entryReferenceFlight.current = null; }, []);
+  const openEntryReference: OpenConversationEntryReference = async (target, current) => {
+    const reference = { ...target };
+    const dialogId = narrow && drawer ? "workspace-dock" : undefined;
+    const origin = document.activeElement, from = currentId ? store.getState().views[currentId] : null;
+    const inputVersion = drafts?.inputVersion(), reads = session.reads;
+    if (entryReferenceFlight.current || !from || disabled || reads.retired || !current()
+      || reference.projectId !== session.project.metadata.projectId || !session.project.metadata.targetLocales.includes(reference.locale)
+      || !gate.canDispatch({ viewId: currentId, source: "button", dialogId })) return false;
+    const witness = reads.watchExactQuery(["conversation", reference.conversationId, "planning", reference.attemptId]);
+    const original = witness.current(), version = original?.state.dataUpdateCount;
+    let changed = false, focusMoved = false;
+    const stopChanges = reads.subscribeChanges(scopes => { if (scopes.includes("project") || scopes.includes("source")) changed = true; });
+    const moved = (event: FocusEvent) => { if (event.target !== origin && event.target !== document.body) focusMoved = true; };
+    document.addEventListener("focusin", moved);
+    const flight = { dispose: () => { document.removeEventListener("focusin", moved); stopChanges(); witness.dispose(); } };
+    entryReferenceFlight.current = flight;
+    const proof = () => {
+      const latest = lifecycle.getSnapshot(), state = store.getState(), query = witness.current();
+      return entryReferenceFlight.current === flight && !changed && !focusMoved && !reads.retired && current()
+        && latest.phase === "idle" && !latest.pending && latest.session?.project.sessionToken === session.project.sessionToken
+        && state.activeViewId === currentId && state.views[from.id] === from && drafts?.inputVersion() === inputVersion
+        && !!original && query === original && query.state.status === "success" && query.state.fetchStatus === "idle"
+        && !query.state.isInvalidated && query.state.dataUpdateCount === version
+        && gate.canDispatch({ viewId: currentId, source: "button", dialogId });
+    };
+    try {
+      if (!proof()) return false;
+      const { resolveConversationEntryReference } = await import("./features/assistant/conversationEntryNavigation");
+      if (!proof()) return false;
+      const patch = await resolveConversationEntryReference(executionContext(session.project), reference, proof);
+      if (!proof()) return false;
+      // Closing our own Sheet is the last presentation step before the original guarded route.
+      document.removeEventListener("focusin", moved);
+      if (dialogId) closeDrawer();
+      const accepted = from.kind === "entries" ? await runtime.navigation.update(from.id, patch)
+        : await runtime.navigation.open({ kind: "entries", ...patch, locale: reference.locale });
+      if (accepted && narrow) showDock();
+      return accepted;
+    } finally {
+      flight.dispose();
+      if (entryReferenceFlight.current === flight) entryReferenceFlight.current = null;
+    }
+  };
   async function openEntryTermCapture(captureId: string): Promise<boolean> {
     const capture = knowledgeOwner?.current().previewCapture, dialogId = narrow && drawer ? "workspace-dock" : undefined;
     if (disabled || session.reads.retired || !capture || capture.captureId !== captureId
@@ -1297,7 +1344,9 @@ function WorkspaceShell() {
       <TabsList aria-label={message("dockTabs")}><TabsTrigger value="agent"><Sparkles />{message("agent")}</TabsTrigger><TabsTrigger value="details">{message("detail")}</TabsTrigger></TabsList>
       <TabsContent value="agent" className={styles.dockContent}><FeatureBoundary fallback={conversationFallback(<ErrorState title={t("conversation.unavailable")}/>)}><Suspense fallback={conversationFallback(<LoadingState label={t("conversation.loading")}/>)}>
         {conversations ? <ConversationPanel commands={commandsReady ? commands : undefined} showWorkPlans={view?.kind !== "runs" || view.runsMode === "strategy" || !!conversationTeamQuestion} onOpenCandidate={openRunCandidate} onOpenCandidateBatch={openRunCandidateBatch} onOpenTeamCandidate={openTeamCandidate} onOpenKnowledgeProposal={openKnowledgeProposal} owner={conversations} visible={(view?.dock ?? "agent") === "agent" && (!narrow || drawer)} disabled={disabled} gate={gate} viewId={currentId} parentDialogId={narrow && drawer ? "workspace-dock" : undefined}
-          selection={view?.kind === "entries" && !importVisible ? view.selection : null} decisionTray={decisionTray()} projectBrief={projectBrief} maintenanceBrief={sourceBrief()} recoveryTarget={conversationRecovery} proposalTarget={conversationProposal} questionTarget={conversationTeamQuestion}/>
+          selection={view?.kind === "entries" && !importVisible ? view.selection : null} targetLocale={activeLocale}
+          contextFilter={view?.kind === "entries" && !importVisible ? entryQuery(view.preset, view.query) : null} onOpenEntryReference={openEntryReference}
+          decisionTray={decisionTray()} projectBrief={projectBrief} maintenanceBrief={sourceBrief()} recoveryTarget={conversationRecovery} proposalTarget={conversationProposal} questionTarget={conversationTeamQuestion}/>
           : conversationFallback(conversationLoadFailed ? <ErrorState title={t("conversation.unavailable")} action={<Button onClick={retryConversations}>{t("conversation.retryRead")}</Button>}/> : <LoadingState label={t("conversation.loading")}/>)}
       </Suspense></FeatureBoundary></TabsContent>
       <TabsContent value="details" className={styles.dockContent}><div className={styles.actions}><Button disabled={disabled || !settings.openReferences} onClick={event => {

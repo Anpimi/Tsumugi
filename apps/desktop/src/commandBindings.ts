@@ -1,5 +1,6 @@
 import type { WorkbenchCommandId } from "./workbenchCommands";
 import type { TranslationKey } from "./i18n/types";
+import { assistantComposerCommands } from "./assistantComposerCommands";
 
 export interface BindingEntry { id: WorkbenchCommandId; nameKey: TranslationKey; binding: string | null }
 export const workspaceCommandCatalog = [
@@ -11,6 +12,7 @@ export const workspaceCommandCatalog = [
   { id: "workspace.pin-view", nameKey: "workbenchV2.pinView", binding: null },
   { id: "workspace.agent", nameKey: "workbenchV2.agent", binding: "Mod+L" },
   { id: "conversation.new-thread", nameKey: "conversation.newThread", binding: "Mod+N" },
+  ...assistantComposerCommands,
   { id: "workspace.details", nameKey: "workbenchV2.detail", binding: "Mod+I" },
   { id: "workspace.decisions", nameKey: "workbenchV2.decisions", binding: null },
   { id: "workspace.delivery", nameKey: "workbenchV2.delivery", binding: null },

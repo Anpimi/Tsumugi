@@ -15,6 +15,7 @@ import { publishedTeamFixture, teamContext } from "../../../testSupport/teamDisc
 import { InteractionGate } from "../../workspace/interactionGate";
 import { ConversationSession } from "./ConversationSession";
 import { ConversationTeamActions } from "./ConversationTeamActions";
+import { ConversationMemberRoutes, type ConversationMemberRoute } from "./ConversationMemberRoutes";
 
 const invoke = vi.hoisted(() => vi.fn<(command: string, args: unknown) => Promise<unknown>>(async () => { throw new Error("Unexpected native or external request"); }));
 vi.mock("@tauri-apps/api/core", () => ({ invoke }));
@@ -74,14 +75,16 @@ async function harness() {
   gate.setVisibleOwner("conversation"); await owner.initialize(); expect(await owner.open(conversationId)).toBe(true);
   const input = () => { const value = owner.getSnapshot().inputs.get(conversationId); if (!value) throw new Error("Conversation input required"); return value; };
   const proof = () => current && gate.canDispatch({ viewId: "conversation", source: "button" });
+  let memberRoutes: readonly ConversationMemberRoute[] = [];
+  const registry = { register: (_key: string, routes: readonly ConversationMemberRoute[]) => { memberRoutes = routes; return () => { if (memberRoutes === routes) memberRoutes = []; }; } };
   function Surface() {
     useSyncExternalStore(owner.subscribe, owner.getSnapshot); useSyncExternalStore(gate.subscribe, gate.getSnapshot);
-    return mounted ? <ConversationTeamActions owner={owner} input={input()} link={link} status={status} view={view}
-      current={proof} visible disabled={false} gate={gate} viewId="conversation" refresh={refresh}/> : null;
+    return mounted ? <ConversationMemberRoutes.Provider value={registry}><ConversationTeamActions owner={owner} input={input()} link={link} status={status} view={view}
+      current={proof} visible disabled={false} gate={gate} viewId="conversation" refresh={refresh}/></ConversationMemberRoutes.Provider> : null;
   }
   const rendered = render(<Surface/>), user = userEvent.setup();
   disposals.push(() => { owner.retire(); gate.dispose(); });
-  return { owner, gate, input, link, status, ports, user, refresh, view: initialView, head: () => structuredClone(head),
+  return { owner, gate, input, link, status, ports, user, refresh, view: initialView, memberRoutes: () => memberRoutes, head: () => structuredClone(head),
     setMounted(value: boolean) { mounted = value; rendered.rerender(<Surface/>); },
     setCurrent(value: boolean) { current = value; rendered.rerender(<Surface/>); },
     setView(value: typeof initialView) { view = checked(value, validateResponseWorkPlanTeamExecution); rendered.rerender(<Surface/>); } };
@@ -250,4 +253,26 @@ describe("conversation team inputs", () => {
     expect(h.input().value.text).toBe("Separate conversation input"); expect(h.owner.teamDraft(h.link.conversationId, h.link.planId)?.guidance).toBeNull();
     expect(h.ports.sendTeamMessage).not.toHaveBeenCalled(); expect(h.ports.publishTeam).not.toHaveBeenCalled();
   });
+});
+
+
+it("routes a named member from its exact current roster into the existing guidance draft without sending", async () => {
+  const h = await harness(), member = h.view.roster[0];
+  const route = h.memberRoutes().find(value => value.name === member.displayName);
+  expect(route?.key).toContain(member.roleVersionId);
+  expect(route?.current()).toBe(true);
+  act(() => route?.open("New local guidance"));
+  expect(h.input().value.teamDrafts?.[0]?.guidance?.body).toBe("New local guidance");
+  act(() => route?.open("Do not overwrite the earlier draft"));
+  expect(h.input().value.teamDrafts?.[0]?.guidance?.body).toBe("New local guidance");
+  expect(group("guidanceTitle").getByRole("button", { name: t("memberChoice", { member: member.displayName }) })).toBeVisible();
+  expect(h.input().value.teamDrafts?.[0]?.guidance?.memberId).toBe(member.memberId);
+  expect(h.ports.sendTeamMessage).not.toHaveBeenCalled();
+  expect(h.ports.publishTeam).not.toHaveBeenCalled();
+  await flush(h);
+  act(() => h.setCurrent(false));
+  expect(route?.current()).toBe(false);
+  act(() => route?.open());
+  expect(h.ports.sendTeamMessage).not.toHaveBeenCalled();
+  act(() => h.setMounted(false)); expect(route?.current()).toBe(false);
 });

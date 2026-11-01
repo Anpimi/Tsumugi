@@ -68,13 +68,15 @@ it.each(["conversation-only", "units", "knowledge"] as const)("reviews %s materi
   const rendered = render(tree());
   await screen.findByText("请先解释这条消息，不要改译文。");
   expect(invoke.mock.calls.some(([command]) => command === "prepare_conversation_planning" || command === "start_conversation_planning")).toBe(false);
+  if (mode === "conversation-only") fireEvent.click(screen.getByRole("button", { name: i18n.t("conversation.contextRemove", { label: i18n.t("conversation.contextSelection", { count: 1 }) }) }));
   fireEvent.click(screen.getByRole("button", { name: "询问助理" }));
-  expect(screen.getByRole("radio", { name: i18n.t("conversation.askPurposeKnowledge") })).toBeDisabled();
+  if (mode === "conversation-only") expect(screen.getByRole("radio", { name: i18n.t("conversation.askPurposeKnowledge") })).toBeDisabled();
   if (mode !== "conversation-only") {
     fireEvent.click(screen.getByRole("button", { name: "带入当前选择（1）" }));
     expect(screen.getByText("已固定 1 个条目 → zh-CN。之后改筛选不会改变这个范围。")).toBeInTheDocument();
     rendered.rerender(tree({ kind: "ids", locale: "ja-JP", sourceSnapshotId: fixtureIdentity(926), unitIds: [fixtureIdentity(927)] }));
-    expect(screen.getByText("已固定 1 个条目 → zh-CN。之后改筛选不会改变这个范围。")).toBeInTheDocument();
+    expect(screen.getByText("已固定 1 个条目 → ja-JP。之后改筛选不会改变这个范围。")).toBeInTheDocument();
+    rendered.rerender(tree());
     fireEvent.click(screen.getByRole("checkbox", { name: i18n.t("ai.shareTerms") }));
   }
   if (mode === "knowledge") fireEvent.click(screen.getByRole("radio", { name: "整理知识提议" }));
@@ -94,6 +96,22 @@ it.each(["conversation-only", "units", "knowledge"] as const)("reviews %s materi
   } else expect(within(preview).getByText("只分享这 1 条消息，不带项目条目或资源。")).toBeInTheDocument();
   expect(screen.getByRole("button", { name: "发送一次" })).toBeDisabled();
   const consent = within(preview).getByRole("checkbox"); fireEvent.click(consent);
+  if (mode !== "conversation-only") {
+    rendered.rerender(tree({ kind: "ids", locale: "ja-JP", sourceSnapshotId: fixtureIdentity(926), unitIds: [fixtureIdentity(927)] }));
+    expect(owner.getSnapshot().inputs.get(conversationId)?.planning.prepared).toBeNull();
+    expect(owner.getSnapshot().inputs.get(conversationId)?.planning.consent).toBe(false);
+    rendered.rerender(tree());
+    fireEvent.click(screen.getByRole("button", { name: i18n.t("conversation.contextRemove", { label: i18n.t("conversation.contextLocale", { locale: "zh-CN" }) }) }));
+    expect(owner.getSnapshot().inputs.get(conversationId)?.planning.selection).toBeNull();
+    expect(owner.getSnapshot().inputs.get(conversationId)?.planning.consent).toBe(false);
+    expect(screen.queryByRole("region", { name: "核对这次请求" })).not.toBeInTheDocument();
+    rendered.rerender(tree());
+    expect(owner.getSnapshot().inputs.get(conversationId)?.planning.selection).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "带入当前选择（1）" }));
+    if (mode === "knowledge") fireEvent.click(screen.getByRole("radio", { name: "整理知识提议" }));
+    fireEvent.click(screen.getByRole("button", { name: "核对发送内容" }));
+    fireEvent.click(within(await screen.findByRole("region", { name: "核对这次请求" })).getByRole("checkbox"));
+  }
   if (mode === "knowledge") {
     expect(owner.getSnapshot().inputs.get(conversationId)?.planning.prepared?.preview.purpose).toBe("knowledge");
     fireEvent.click(screen.getByRole("radio", { name: i18n.t("conversation.askPurposePlanning") }));
@@ -155,12 +173,12 @@ it("shows saved messages and keeps composer input across presentation changes wi
   const input = await screen.findByRole("textbox", { name: "消息" });
   fireEvent.focus(input); fireEvent.change(input, { target: { value: "  先看这几条 🙂\n" } });
   await waitFor(() => expect(screen.getByRole("button", { name: "保存消息" })).toBeEnabled());
-  fireEvent.compositionStart(input); fireEvent.keyDown(input, { key: "Enter", metaKey: true });
+  fireEvent.compositionStart(input); fireEvent.keyDown(input, { key: "Enter" });
   expect(messages).toHaveLength(0); fireEvent.compositionEnd(input);
-  fireEvent.keyDown(input, { key: "Enter", metaKey: true, keyCode: 229 });
-  fireEvent.keyDown(input, { key: "Enter" }); expect(messages).toHaveLength(0);
-  const closeDialog = gate.pushDialog("another-dialog"); fireEvent.keyDown(input, { key: "Enter", metaKey: true }); expect(messages).toHaveLength(0); closeDialog();
-  fireEvent.keyDown(input, { key: "Enter", metaKey: true });
+  fireEvent.keyDown(input, { key: "Enter", keyCode: 229 });
+  fireEvent.keyDown(input, { key: "Enter", shiftKey: true }); expect(messages).toHaveLength(0);
+  const closeDialog = gate.pushDialog("another-dialog"); fireEvent.keyDown(input, { key: "Enter" }); expect(messages).toHaveLength(0); closeDialog();
+  fireEvent.keyDown(input, { key: "Enter" });
   await waitFor(() => expect(input).toHaveValue("")); expect(messages).toHaveLength(1);
   expect(await screen.findByText("先看这几条 🙂")).toBeInTheDocument();
   expect(invoke.mock.calls.filter(([command]) => command === "append_project_conversation_message")[0][1].request.body).toBe("  先看这几条 🙂\n");
@@ -182,6 +200,27 @@ it("shows saved messages and keeps composer input across presentation changes wi
   await screen.findByText("消息已保存。");
   expect(screen.getByRole("textbox", { name: "消息" })).toHaveValue("核对期间继续写 C");
   expect(messages).toHaveLength(2);
+  invoke.mockImplementation(original);
+  fireEvent.change(screen.getByRole("textbox", { name: "消息" }), { target: { value: "/解释 先核对这条，不要执行" } });
+  await waitFor(() => expect(screen.getByRole("button", { name: "保存消息" })).toBeEnabled());
+  fireEvent.focus(screen.getByRole("textbox", { name: "消息" }));
+  fireEvent.keyDown(screen.getByRole("textbox", { name: "消息" }), { key: "Enter" });
+  await screen.findByRole("region", { name: "询问助理" });
+  expect(owner.getSnapshot().inputs.get(conversationId)?.planning.messageIds).toContain(messages[2].messageId);
+  expect(owner.getSnapshot().inputs.get(conversationId)?.planning.consent).toBe(false);
+  for (let number = messages.length; number < 16; number++) {
+    await act(async () => { owner.edit(conversationId, `Earlier context ${number}`); await owner.flush(); await owner.append(conversationId); });
+  }
+  const selectedIds = messages.map(message => message.messageId);
+  act(() => owner.setPlanningMessages(conversationId, selectedIds));
+  fireEvent.change(screen.getByRole("textbox", { name: "消息" }), { target: { value: "/翻译 保留已经选择的消息" } });
+  await waitFor(() => expect(screen.getByRole("button", { name: "保存消息" })).toBeEnabled());
+  fireEvent.click(screen.getByRole("button", { name: "保存消息" }));
+  await screen.findByText(i18n.t("conversation.composerMessageLimit"));
+  expect(messages).toHaveLength(17);
+  expect(owner.getSnapshot().inputs.get(conversationId)?.planning.messageIds).toEqual(selectedIds);
+  expect(owner.getSnapshot().inputs.get(conversationId)?.planning.prepared).toBeNull();
+  expect(owner.getSnapshot().inputs.get(conversationId)?.planning.consent).toBe(false);
   expect(invoke.mock.calls.some(([command]) => command === "start_conversation_planning" || command === "create_project_conversation")).toBe(false);
   owner.retire(); reads.retire();
 });

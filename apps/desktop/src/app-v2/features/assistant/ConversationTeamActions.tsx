@@ -13,6 +13,7 @@ import type { TeamExecutionView, WorkPlanStatusView } from "../../../workPlanCom
 import type { InteractionGate } from "../../workspace/interactionGate";
 import type { ConversationInput, ConversationSession } from "./ConversationSession";
 import type { ConversationPlanLink } from "./conversationRun";
+import { useConversationMemberRoutes } from "./ConversationMemberRoutes";
 import styles from "./ConversationTeamActions.module.css";
 
 export interface ConversationTeamActionsProps {
@@ -24,12 +25,14 @@ export interface ConversationTeamActionsProps {
 export function ConversationTeamActions({ owner, input, link, status, view, current, visible, disabled, gate, viewId, refresh }: ConversationTeamActionsProps) {
   const { t } = useTranslation(undefined, { keyPrefix: "conversationTeamActions" });
   const [open, setOpen] = useState(false), id = useId(), inputOwner = `team-input-${id}`;
+  const routes = useConversationMemberRoutes(), guidanceRegion = useRef<HTMLFieldSetElement>(null), focusGuidance = useRef(false), mounted = useRef(true);
   const binding = useMemo(() => jsonIdentity([link, status.lease, status.effects, status.expiresAt, view.effectiveVersion, view.roster]),
     [link, status.lease, status.effects, status.expiresAt, view.effectiveVersion, view.roster]);
   const live = useRef({ current, visible, disabled, open, binding });
   useLayoutEffect(() => { live.current = { current, visible, disabled, open, binding }; });
   useLayoutEffect(() => () => gate.releaseOwner(inputOwner), [gate, inputOwner]);
-  const editable = () => live.current.visible && !live.current.disabled && !owner.getSnapshot().retired;
+  useLayoutEffect(() => { mounted.current = true; return () => { mounted.current = false; }; }, []);
+  const editable = () => mounted.current && live.current.visible && !live.current.disabled && !owner.getSnapshot().retired;
   const allowed = () => editable() && live.current.open && live.current.binding === binding && live.current.current();
   const saved = input.value.teamDrafts?.find(value => value.planId === link.planId), guidance = saved?.guidance, publication = saved?.publication;
   useLayoutEffect(() => { if (publication?.replyTo) setOpen(true); }, [publication?.replyTo]);
@@ -45,6 +48,23 @@ export function ConversationTeamActions({ owner, input, link, status, view, curr
   const guidanceReady = available && !!guidanceUnit && !!guidance?.body.trim() && !guidanceProblem && teamGuidanceActive(status, view);
   const publicationReady = available && !!publicationUnit && !!publication?.body.trim() && !publicationProblem && teamPublicationActive(status);
   const hasSpace = !!saved || (input.value.teamDrafts?.length ?? 0) < 32;
+  useLayoutEffect(() => {
+    if (!routes) return;
+    return routes.register(link.planId, view.roster.map(value => ({ key: `${link.planId}:${value.memberId}:${value.roleVersionId}`,
+      name: value.displayName, plan: link.ordinal,
+      current: () => editable() && hasSpace && live.current.binding === binding && live.current.current(),
+      open: (body?: string) => {
+        if (!editable() || !hasSpace || live.current.binding !== binding || !live.current.current()) return;
+        const original = owner.teamDraft(link.conversationId, link.planId)?.guidance;
+        owner.editTeamGuidance(link, { memberId: value.memberId, unitId: value.unitIds.includes(original?.unitId ?? "") ? original?.unitId ?? null : null,
+          ...(!original?.body && body ? { body } : {}) });
+        focusGuidance.current = true; setOpen(true);
+      },
+    })));
+  }, [routes, link.planId, binding, hasSpace, gate, viewId]);
+  useLayoutEffect(() => {
+    if (open && focusGuidance.current && visible && !disabled) { focusGuidance.current = false; guidanceRegion.current?.focus(); }
+  }, [open, guidance?.memberId, visible, disabled]);
   function entryChoice(kind: "guidance" | "publication") {
     const selected = kind === "guidance" ? guidanceUnit : publicationUnit;
     const units = kind === "guidance" ? status.plan.scope.filter(unit => member?.unitIds.includes(unit.unitId)) : status.plan.scope;
@@ -68,7 +88,7 @@ export function ConversationTeamActions({ owner, input, link, status, view, curr
         <Button size="sm" disabled={!editable() || !!input.busy || input.journalBusy} onClick={() => {
           if (editable() && owner.clearTeamPreparationFailure(link.conversationId)) refresh();
         }}>{t("recheck")}</Button></Banner> : null}
-      <fieldset className={styles.body}><legend>{t("guidanceTitle")}</legend>
+      <fieldset ref={guidanceRegion} tabIndex={-1} className={styles.body}><legend>{t("guidanceTitle")}</legend>
         <p>{t("guidanceHelp")}</p>
         {!teamGuidanceActive(status, view) ? <p role="status">{t("guidanceUnavailable")}</p> : null}
         <Menu label={t("chooseMember")} trigger={<Button size="sm" disabled={!editable() || !hasSpace}>
