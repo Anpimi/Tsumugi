@@ -86,7 +86,7 @@ macro_rules! handlers {
         conversations::recover_project_conversation_message,
         conversations::planning::prepare_conversation_planning,conversations::planning::validate_conversation_planning,
         conversations::planning::start_conversation_planning,conversations::planning::recover_conversation_planning,conversations::planning::read_conversation_planning,
-        conversations::planning::read_conversation_planning_attempts,
+        conversations::planning::read_conversation_planning_attempts,conversations::planning::read_conversation_references,
         conversations::proposals::capture_conversation_proposal,conversations::proposals::revise_conversation_proposal,
         conversations::proposals::read_conversation_proposal,conversations::proposals::read_conversation_proposal_revisions,conversations::proposals::validate_conversation_proposal,
         conversations::proposals::recover_conversation_proposal_capture,conversations::proposals::recover_conversation_proposal_revision,

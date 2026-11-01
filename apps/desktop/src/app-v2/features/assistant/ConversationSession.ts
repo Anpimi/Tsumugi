@@ -218,6 +218,27 @@ export class ConversationSession {
     this.changed++; this.update(record, { value, dirty: true, notice: null });
     if (!record.input.failure && !record.action || (isConversationTeamPending(value.pending) || value.pending?.kind === "team-recovery" || value.pending?.kind === "team-question-response") && !record.job && record.input.failure?.kind !== "journal") void this.persist(record);
   }
+  /** Prepare local intent only. Original finding reads belong to the caller;
+   * this owner preserves the composer, journal and explicit planning consent. */
+  async prepareFindingRepair(expected: ConversationInput, selected: Extract<WorkspaceSelection, { kind: "ids" }>, body: string): Promise<boolean> {
+    const conversationId = expected.key.conversationId, record = this.records.get(conversationId);
+    if (!record || !this.kernel.live || this.state.hydration !== "ready" || this.state.activeId !== conversationId
+      || record.input !== expected || record.action || record.job || record.writing || record.revoking.size
+      || expected.busy || expected.journalBusy || expected.runBusy || expected.value.pending || expected.value.revocations?.length
+      || expected.outcome === "unknown" || expected.failure || expected.planning.busy || expected.planning.failure
+      || expected.workPlan.busy || expected.workPlan.failure || expected.runFailure || expected.proposalFailure
+      || selected.kind !== "ids" || selected.unitIds.length !== 1 || !isConversationMessageText(body)) return false;
+    const selection = copyWorkspaceSelection(selected);
+    try { planningSelectionScope(this.context, selection); } catch { return false; }
+    const text = expected.value.text === "" ? body : `${expected.value.text}\n\n${body}`;
+    if (!isConversationMessageText(text)) return false;
+    const editSeq = nextEditSeq(expected.value.editSeq);
+    this.changed++;
+    this.update(record, { value: { ...expected.value, text, editSeq, messageEditSeq: editSeq }, dirty: true, notice: null,
+      planning: { ...expected.planning, open: true, sequence: expected.planning.sequence + 1, selection,
+        config: planningConfig(expected.planning.config, selection), purpose: null, messageIds: [], prepared: null, consent: false } });
+    return this.persist(record);
+  }
   async append(conversationId: string) {
     const record = this.records.get(conversationId);
     if (!record || !this.kernel.live || record.action || record.input.busy || record.input.value.pending || record.input.failure) return;

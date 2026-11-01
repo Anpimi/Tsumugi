@@ -511,6 +511,21 @@ export type AutomationEffect =
   | "publish-discussion"
   | "dispatch-team-work"
   | "send-team-message";
+export type ConversationMaterialReference =
+  | {
+      current: ConversationTermReferenceValue | null;
+      kind: "term";
+      original: ConversationTermReferenceValue;
+      unit: ConversationReferenceUnit;
+    }
+  | {
+      artifactId: ExecutionId;
+      kind: "file";
+      logicalPath: string;
+      role: string;
+      unit: ConversationReferenceUnit;
+    };
+export type TermOrigin = "manual" | "external";
 
 export interface Responses {
   conversation: ProjectConversation;
@@ -539,6 +554,7 @@ export interface Responses {
   proposalWorkPlanPage: ConversationProposalWorkPlanPage;
   proposalWorkPlanReceipt: ConversationProposalWorkPlanReceiptView;
   proposalWorkPlanRecovery: ConversationProposalWorkPlanRecovery;
+  references: ConversationReferencePage | null;
 }
 /**
  * Stable identity independent of any WorkPlan. Later associations can refer to
@@ -1677,4 +1693,33 @@ export interface AuthorizeConversationProposalWorkPlan {
   planId: ExecutionId;
   proposal: ConversationProposalRef;
   toolExecution: boolean;
+}
+export interface ConversationReferencePage {
+  after: number;
+  attemptId: ExecutionId;
+  conversationId: ExecutionId;
+  currentSnapshotId: ExecutionId | null;
+  inputDigest: string;
+  nextAfter: number | null;
+  projectId: ExecutionId;
+  rows: ConversationMaterialReference[];
+  total: number;
+}
+export interface ConversationTermReferenceValue {
+  originKind: TermOrigin;
+  protected: boolean;
+  removed: boolean;
+  revisionId: ExecutionId;
+  source: string;
+  target: string;
+  termId: string;
+}
+/**
+ * A local navigation target in the immutable planning material, never permission.
+ */
+export interface ConversationReferenceUnit {
+  locale: string;
+  sourceRevisionId: ExecutionId;
+  sourceSnapshotId: ExecutionId;
+  unitId: ExecutionId;
 }

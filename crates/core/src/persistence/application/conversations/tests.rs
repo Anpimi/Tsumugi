@@ -75,6 +75,9 @@ fn make_legacy(path: &std::path::Path) {
     ] {
         c.execute_batch(&format!("DROP TABLE {name}")).unwrap();
     }
+    // Reconstruct the supported schema, rather than relabeling current tables.
+    crate::persistence::content::lineage_corrections::make_legacy_schema(&c).unwrap();
+    crate::persistence::resources::make_legacy_context_schema(&c).unwrap();
     c.execute_batch("ALTER TABLE resource_decisions DROP COLUMN edited_target").unwrap();
     c.pragma_update(None, "user_version", 61).unwrap();
 }
@@ -523,6 +526,10 @@ fn migration_interruptions_preserve_all_original_plan_team_and_receipt_rows() {
         let path = store.directory().to_path_buf();
         store.close().unwrap();
         make_legacy(&path);
+        let raw = Connection::open(path.join(super::super::super::DATABASE_FILENAME)).unwrap();
+        let before_legacy = legacy_rows(&raw);
+        assert_eq!(version(&raw), 61);
+        drop(raw);
         let marker = temp.path().join("migration-hook");
         let output = Command::new(std::env::current_exe().unwrap())
             .args([
@@ -540,7 +547,9 @@ fn migration_interruptions_preserve_all_original_plan_team_and_receipt_rows() {
             "crash child unexpectedly succeeded"
         );
         assert_eq!(
-            std::fs::read_to_string(&marker).unwrap(),
+            std::fs::read_to_string(&marker).unwrap_or_else(|error| panic!(
+                "migration child did not reach {point}: {error}; stdout: {}; stderr: {}",
+                String::from_utf8_lossy(&output.stdout), String::from_utf8_lossy(&output.stderr))),
             point,
             "the actual migration hook must run"
         );
@@ -553,7 +562,7 @@ fn migration_interruptions_preserve_all_original_plan_team_and_receipt_rows() {
                 61
             }
         );
-        assert_eq!(legacy_rows(&raw), before);
+        assert_eq!(legacy_rows(&raw), if point == "conversation-after-commit" { before.clone() } else { before_legacy });
         drop(raw);
         let reopened = ProjectStore::open(&path).unwrap();
         assert_eq!(version(reopened.connection().unwrap()), crate::persistence::SCHEMA_VERSION);

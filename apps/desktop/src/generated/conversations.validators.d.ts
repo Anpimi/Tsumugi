@@ -27,6 +27,7 @@ export declare function validateRequestRecoverPlanning(value: unknown): value is
 export declare function validateRequestRecoverProposalCapture(value: unknown): value is Requests["recoverProposalCapture"];
 export declare function validateRequestRecoverProposalRevision(value: unknown): value is Requests["recoverProposalRevision"];
 export declare function validateRequestRecoverProposalWorkPlan(value: unknown): value is Requests["recoverProposalWorkPlan"];
+export declare function validateRequestReferences(value: unknown): value is Requests["references"];
 export declare function validateRequestReviseProposal(value: unknown): value is Requests["reviseProposal"];
 export declare function validateRequestStartPlanning(value: unknown): value is Requests["startPlanning"];
 export declare function validateRequestValidatePlanning(value: unknown): value is Requests["validatePlanning"];
@@ -57,3 +58,4 @@ export declare function validateResponseProposalWorkPlanLink(value: unknown): va
 export declare function validateResponseProposalWorkPlanPage(value: unknown): value is Responses["proposalWorkPlanPage"];
 export declare function validateResponseProposalWorkPlanReceipt(value: unknown): value is Responses["proposalWorkPlanReceipt"];
 export declare function validateResponseProposalWorkPlanRecovery(value: unknown): value is Responses["proposalWorkPlanRecovery"];
+export declare function validateResponseReferences(value: unknown): value is Responses["references"];

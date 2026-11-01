@@ -186,6 +186,7 @@ export interface Requests {
   recoverProposalCapture: CaptureConversationProposalRequest;
   recoverProposalRevision: ReviseConversationProposalRequest;
   recoverProposalWorkPlan: AuthorizeConversationProposalWorkPlanRequest;
+  references: ReadConversationReferencesRequest;
   reviseProposal: ReviseConversationProposalRequest;
   startPlanning: StartConversationPlanningRequest;
   validatePlanning: ValidateConversationPlanningRequest;
@@ -736,6 +737,14 @@ export interface ConversationKnowledgeEntry {
   name: string;
   text: string;
   unitIds: ExecutionId[];
+}
+export interface ReadConversationReferencesRequest {
+  after: number;
+  attemptId: ExecutionId;
+  conversationId: ExecutionId;
+  limit: number;
+  projectId: ExecutionId;
+  sessionToken: string;
 }
 export interface StartConversationPlanningRequest {
   consent: ConversationPlanningConsent;

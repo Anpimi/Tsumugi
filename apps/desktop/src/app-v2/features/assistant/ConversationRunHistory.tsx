@@ -1,3 +1,4 @@
+import type { OpenConversationTeamFinding } from "./teamFindingReads";
 import type { OpenRunCandidateBatch } from "../candidates/runCandidateBatch";
 import { Disclosure } from "../../../design-system/Disclosure";
 import { useId, useLayoutEffect, useRef, useState } from "react";
@@ -21,7 +22,7 @@ import styles from "./ConversationRunHistory.module.css";
 interface Props {
   context: SessionRequest; link: ConversationPlanLink; status: WorkPlanStatusView | null;
   visible: boolean; canRead: () => boolean;
-  onOpenCandidate?: OpenConversationRunCandidate; onOpenCandidateBatch?: OpenRunCandidateBatch; onOpenTeamCandidate?: OpenConversationTeamCandidate;
+  onOpenCandidate?: OpenConversationRunCandidate; onOpenCandidateBatch?: OpenRunCandidateBatch; onOpenTeamCandidate?: OpenConversationTeamCandidate; onOpenTeamFinding?: OpenConversationTeamFinding; onPrepareFindingRepair?: OpenConversationTeamFinding;
 }
 interface Cursor { after: string; baseline: WorkPlanHistoryBaseline | null }
 const states = { active: "active", paused: "paused", stopped: "stopped", "taken-over": "takenOver" } as const;
@@ -49,7 +50,7 @@ export function ConversationRunHistory(props: Props) {
   </section>;
 }
 
-function HistoryRead({ context, link, status, visible, canRead, onOpenCandidate, onOpenCandidateBatch, onOpenTeamCandidate, identity }: Props & { identity: string }) {
+function HistoryRead({ context, link, status, visible, canRead, onOpenCandidate, onOpenCandidateBatch, onOpenTeamCandidate, onOpenTeamFinding, onPrepareFindingRepair, identity }: Props & { identity: string }) {
   const { t } = useTranslation(undefined, { keyPrefix: "conversationRunHistory" }), { t: global } = useTranslation(), reads = useSessionReads(), id = useId();
   const [cursor, setCursor] = useState<Cursor>({ after: "0", baseline: null }), [revision, setRevision] = useState(0);
   const [selected, setSelected] = useState<string | null>(null), region = useRef<HTMLElement>(null);
@@ -117,7 +118,7 @@ function HistoryRead({ context, link, status, visible, canRead, onOpenCandidate,
             if (!fresh) return; focusForAction(event.currentTarget); setSelected(selectedRow ? null : row.actionId);
           }}>{t(selectedRow ? "hideAttempt" : "showAttempt")}</Button> : null}
           <div id={`${id}-${row.actionId}`} hidden={!selectedRow}>{selectedRow && row.start ? <HistoryAttempt key={`${row.actionId}:${jsonIdentity(page.baseline)}`} context={context} link={link} page={page} row={row}
-            visible={visible} canRead={() => present() && fresh} status={status} onOpenCandidate={onOpenCandidate} onOpenCandidateBatch={onOpenCandidateBatch} onOpenTeamCandidate={onOpenTeamCandidate}/> : null}</div>
+            visible={visible} canRead={() => present() && fresh} status={status} onOpenCandidate={onOpenCandidate} onOpenCandidateBatch={onOpenCandidateBatch} onOpenTeamCandidate={onOpenTeamCandidate} onOpenTeamFinding={onOpenTeamFinding} onPrepareFindingRepair={onPrepareFindingRepair}/> : null}</div>
         </article></li>;
       })}</ol>}
       {page.nextAfter ? <Button size="sm" disabled={!fresh} onClick={event => {
@@ -128,7 +129,7 @@ function HistoryRead({ context, link, status, visible, canRead, onOpenCandidate,
   </section>;
 }
 
-function HistoryAttempt({ context, link, page, row, visible, canRead, status, onOpenCandidate, onOpenCandidateBatch, onOpenTeamCandidate }:
+function HistoryAttempt({ context, link, page, row, visible, canRead, status, onOpenCandidate, onOpenCandidateBatch, onOpenTeamCandidate, onOpenTeamFinding, onPrepareFindingRepair }:
   Props & { page: WorkPlanHistoryPage; row: WorkPlanHistoryRow }) {
   const { t } = useTranslation(undefined, { keyPrefix: "conversationRunHistory" });
   const reads = useSessionReads(), [offset, setOffset] = useState(0);
@@ -160,7 +161,7 @@ function HistoryAttempt({ context, link, page, row, visible, canRead, status, on
         if (present() && !read.isFetching && detail.nextOffset !== null) { keepFocus(event.currentTarget); setOffset(detail.nextOffset); }
       }}>{t("nextItems")}</Button> : null}
       {supported && plan?.options.teamExecution && status ? <>
-        <p>{t("teamResultsHelp")}</p><ConversationTeamProgress context={context} link={link} status={status} visible={visible} canRead={present} onOpenCandidate={onOpenTeamCandidate}/>
+        <p>{t("teamResultsHelp")}</p><ConversationTeamProgress context={context} link={link} status={status} visible={visible} canRead={present} onOpenCandidate={onOpenTeamCandidate} onOpenFinding={onOpenTeamFinding} onPrepareFindingRepair={onPrepareFindingRepair}/>
       </> : supported && plan?.preview && !plan.options.mcpTermQuery && row.start ? <ConversationRunResults context={context} link={link} plan={plan} start={row.start}
         visible={visible} canRead={present} onOpenCandidate={onOpenCandidate} onOpenCandidateBatch={onOpenCandidateBatch}/> : null}
     </> : null}

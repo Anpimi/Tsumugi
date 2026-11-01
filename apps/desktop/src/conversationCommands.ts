@@ -9,6 +9,7 @@ import type { Responses } from "./generated/conversations.responses";
 import { validateResponseConversation, validateResponsePage, validateResponseMessage, validateResponseMessagePage, validateResponseCreateRecovery, validateResponseMessageRecovery, validateResponsePlanning, validateResponsePlanningReceipt, validateResponsePlanningRecovery, validateResponsePlanningRun } from "./generated/conversations.validators";
 import { validateResponseProposal, validateResponseProposalPage, validateResponseProposalCaptureRecovery, validateResponseProposalRevisionRecovery } from "./generated/conversations.validators";
 import { validateRequestAuthorizeProposalWorkPlan, validateResponseProposalWorkPlan, validateResponseProposalWorkPlanReceipt, validateResponseProposalWorkPlanRecovery, validateResponseProposalWorkPlanLink, validateResponseProposalWorkPlanPage } from "./generated/conversations.validators";
+import { validateResponseReferences } from "./generated/conversations.validators";
 import { validateResponsePlanningAttemptPage } from "./generated/conversations.validators";
 import { validateResponseKnowledgeAdoption, validateResponseKnowledgeDecision, validateResponseKnowledgeDecisionRead,
   validateResponseKnowledgeDecisionAction, validateResponseKnowledgeDecisionRecovery } from "./generated/conversations.validators";
@@ -22,6 +23,8 @@ export type PreparedConversationPlanning = Responses["planning"];
 export type ConversationPlanningConsent = Requests["startPlanning"]["consent"];
 export type ConversationPlanningReceipt = Responses["planningReceipt"];
 export type ConversationPlanningRun = NonNullable<Responses["planningRun"]>;
+export type ConversationReferencePage = NonNullable<Responses["references"]>;
+export type ConversationMaterialReference = ConversationReferencePage["rows"][number];
 export type ConversationProposalRevision = Responses["proposal"];
 export type { ConversationProposalRef, ConversationKnowledgeEntry, ConversationKnowledgeAdoptionPreview,
   ConversationKnowledgeDecision, ConversationKnowledgeDecisionRecovery } from "./generated/conversations.responses";
@@ -170,6 +173,17 @@ function proposalPlanAcknowledgement(value: Responses["proposalWorkPlanLink"], r
 
 /** Project conversations, explicit planning permission and original-action history. */
 export const conversationCommands = {
+  references: (request: Requests["references"]) => checkedInvoke("read_conversation_references", request,
+    (value): value is Responses["references"] => validateResponseReferences(value) && (value === null ||
+      value.projectId === request.projectId && value.conversationId === request.conversationId && value.attemptId === request.attemptId
+      && value.after === request.after && value.rows.length <= request.limit && value.after <= value.total
+      && value.rows.length === Math.min(request.limit, value.total - value.after)
+      && value.nextAfter === (value.after + value.rows.length < value.total ? value.after + value.rows.length : null)
+      && /^[a-f0-9]{64}$/.test(value.inputDigest)
+      && new Set(value.rows.map(row => JSON.stringify([row.kind, row.unit.unitId, row.kind === "term" ? row.original.revisionId : row.artifactId]))).size === value.rows.length
+      && value.rows.every(row => row.kind !== "term" || !row.original.removed && (row.current === null || row.current.termId === row.original.termId))
+      && bytes.encode(JSON.stringify(value)).length <= 1024 * 1024)),
+
   prepareKnowledgeAdoption: (request: Requests["knowledgeAdoption"]) => checkedInvoke("preview_conversation_knowledge_adoption", request,
     (value): value is Responses["knowledgeAdoption"] => validateResponseKnowledgeAdoption(value)
       && request.adoption.proposal.projectId === request.projectId && jsonIdentity(value.proposal) === jsonIdentity(request.adoption.proposal)

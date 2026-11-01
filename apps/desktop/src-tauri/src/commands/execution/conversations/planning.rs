@@ -145,6 +145,28 @@ request!(
 );
 request!(
     #[cfg_attr(feature = "wire-schema", derive(schemars::JsonSchema))]
+    ReadConversationReferencesRequest {
+        conversation_id: ExecutionId,
+        attempt_id: ExecutionId,
+        after: u32,
+        #[cfg_attr(feature = "wire-schema", schemars(range(min = 1, max = 16)))]
+        limit: u32
+    }
+);
+
+#[tauri::command]
+pub async fn read_conversation_references(
+    state: State<'_, AppState>, request: ReadConversationReferencesRequest,
+) -> Result<Option<ConversationReferencePage>, CommandError> {
+    state.sessions.run("read_conversation_references", CommandStage::ExecutionRead, move |sessions| {
+        let active = authorized(sessions, &request.session_token, request.project_id, CommandStage::ExecutionRead)?;
+        active.store.conversation_references(request.project_id, request.conversation_id, request.attempt_id,
+            request.after, request.limit).map_err(map_read)
+    }).await
+}
+
+request!(
+    #[cfg_attr(feature = "wire-schema", derive(schemars::JsonSchema))]
     ReadConversationPlanningAttemptsRequest {
         conversation_id: ExecutionId,
         after: Revision,

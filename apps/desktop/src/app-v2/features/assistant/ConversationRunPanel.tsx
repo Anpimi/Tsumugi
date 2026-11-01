@@ -1,3 +1,4 @@
+import type { OpenConversationTeamFinding } from "./teamFindingReads";
 import type { OpenRunCandidateBatch } from "../candidates/runCandidateBatch";
 import { Disclosure } from "../../../design-system/Disclosure";
 import { useEffect, useId, useLayoutEffect, useRef, useState } from "react";
@@ -35,7 +36,7 @@ import styles from "./ConversationRunPanel.module.css";
 
 interface Props {
   owner: ConversationSession; input: ConversationInput; link: ConversationPlanLink;
-  visible: boolean; disabled: boolean; gate: InteractionGate; viewId: string | null; parentDialogId?: string; onOpenCandidate?: OpenConversationRunCandidate; onOpenCandidateBatch?: OpenRunCandidateBatch; onOpenTeamCandidate?: OpenConversationTeamCandidate;
+  visible: boolean; disabled: boolean; gate: InteractionGate; viewId: string | null; parentDialogId?: string; onOpenCandidate?: OpenConversationRunCandidate; onOpenCandidateBatch?: OpenRunCandidateBatch; onOpenTeamCandidate?: OpenConversationTeamCandidate; onOpenTeamFinding?: OpenConversationTeamFinding; onPrepareFindingRepair?: OpenConversationTeamFinding;
   questionTarget?: ConversationTeamQuestionTarget | null;
   expandedPlans?: readonly string[]; onExpandedPlan?: (planId: string, open: boolean) => void;
 }
@@ -93,7 +94,7 @@ export function ConversationRunPanel(props: Props) {
   </section>;
 }
 
-function RunObservation({ owner, input, link, visible, disabled, gate, viewId, parentDialogId, onOpenCandidate, onOpenCandidateBatch, onOpenTeamCandidate, questionTarget }: Props) {
+function RunObservation({ owner, input, link, visible, disabled, gate, viewId, parentDialogId, onOpenCandidate, onOpenCandidateBatch, onOpenTeamCandidate, onOpenTeamFinding, onPrepareFindingRepair, questionTarget }: Props) {
   const { t, i18n } = useTranslation(undefined, { keyPrefix: "conversation" });
   const reads = useSessionReads(), facts = useConnectionFacts(), id = useId(), inputOwner = `conversation-run-${id}`;
   const statusRegion = useRef<HTMLDivElement>(null);
@@ -222,8 +223,8 @@ function RunObservation({ owner, input, link, visible, disabled, gate, viewId, p
     </> : null}
     <ConversationRunRevocations owner={owner} input={input} link={link} canRead={canRead} onFinished={finishAction}/>
     <ConversationRunHistory context={owner.context} link={link} status={status} visible={visible} canRead={canRead}
-      onOpenCandidate={onOpenCandidate} onOpenCandidateBatch={onOpenCandidateBatch} onOpenTeamCandidate={onOpenTeamCandidate}/>
-    <ConversationRunProgress onOpenCandidate={onOpenCandidate} onOpenCandidateBatch={onOpenCandidateBatch} onOpenTeamCandidate={onOpenTeamCandidate} context={owner.context} link={link} status={status} visible={visible} canRead={canRead}
+      onOpenCandidate={onOpenCandidate} onOpenCandidateBatch={onOpenCandidateBatch} onOpenTeamCandidate={onOpenTeamCandidate} onOpenTeamFinding={onOpenTeamFinding} onPrepareFindingRepair={onPrepareFindingRepair}/>
+    <ConversationRunProgress onOpenCandidate={onOpenCandidate} onOpenCandidateBatch={onOpenCandidateBatch} onOpenTeamCandidate={onOpenTeamCandidate} onOpenTeamFinding={onOpenTeamFinding} onPrepareFindingRepair={onPrepareFindingRepair} context={owner.context} link={link} status={status} visible={visible} canRead={canRead}
       canRetryEffect={() => !!status && allowed() && statusCurrent(status) && owner.canRetryEffect(link.conversationId, status)}
       onRetryEffect={async (target, current) => {
         if (!status || !allowed() || !statusCurrent(status) || !owner.canRetryEffect(link.conversationId, status)) return false;

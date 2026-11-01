@@ -347,6 +347,10 @@ impl AdoptionHandler for TeamTranslationAdoptionHandler {
         action: &AdoptionAction,
         results: &[FixedResult],
     ) -> Result<PreparedMutation, ExecutionError> {
+        if results.len() == 1 && matches!(crate::ai::team::validate_output(input, &results[0])?.outcome,
+            crate::application::TeamWorkOutcome::Review { report:Some(_), .. }) {
+            return super::ai_semantic_review::prepare_review_adoption(input,action,results);
+        }
         prepare_ai(input, action, results, false)
     }
 }

@@ -7,7 +7,7 @@ import styles from "./ConversationPanel.module.css";
 
 export interface ConversationEntryReference {
   projectId: string; conversationId: string; attemptId: string;
-  unitId: string; locale: string; sourceSnapshotId: string; sourceRevisionId: string;
+  unitId: string; locale: string; sourceSnapshotId: string; sourceRevisionId: string; detailTab?: "detail" | "context";
 }
 export type OpenConversationEntryReference = (reference: ConversationEntryReference, current: () => boolean) => Promise<boolean>;
 

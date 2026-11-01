@@ -307,3 +307,59 @@ pub struct ConversationPlanningAttemptPage {
     pub rows: Vec<ConversationPlanningAttempt>,
     pub next_after: Option<crate::execution::Revision>,
 }
+
+/// A local navigation target in the immutable planning material, never permission.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+#[cfg_attr(feature = "wire-schema", derive(schemars::JsonSchema))]
+pub struct ConversationReferenceUnit {
+    pub unit_id: ExecutionId,
+    pub locale: String,
+    pub source_snapshot_id: ExecutionId,
+    pub source_revision_id: ExecutionId,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+#[cfg_attr(feature = "wire-schema", derive(schemars::JsonSchema))]
+pub struct ConversationTermReferenceValue {
+    pub term_id: String,
+    pub revision_id: ExecutionId,
+    pub source: String,
+    pub target: String,
+    pub protected: bool,
+    pub origin_kind: crate::TermOrigin,
+    pub removed: bool,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "kebab-case", rename_all_fields = "camelCase", deny_unknown_fields)]
+#[cfg_attr(feature = "wire-schema", derive(schemars::JsonSchema))]
+pub enum ConversationMaterialReference {
+    Term {
+        unit: ConversationReferenceUnit,
+        original: ConversationTermReferenceValue,
+        current: Option<ConversationTermReferenceValue>,
+    },
+    File {
+        unit: ConversationReferenceUnit,
+        artifact_id: ExecutionId,
+        logical_path: String,
+        role: String,
+    },
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+#[cfg_attr(feature = "wire-schema", derive(schemars::JsonSchema))]
+pub struct ConversationReferencePage {
+    pub project_id: ExecutionId,
+    pub conversation_id: ExecutionId,
+    pub attempt_id: ExecutionId,
+    pub input_digest: String,
+    pub current_snapshot_id: Option<ExecutionId>,
+    pub after: u32,
+    pub total: u32,
+    pub next_after: Option<u32>,
+    pub rows: Vec<ConversationMaterialReference>,
+}

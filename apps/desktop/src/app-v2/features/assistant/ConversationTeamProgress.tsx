@@ -14,12 +14,16 @@ import type { ConversationPlanLink } from "./conversationRun";
 import { conversationTeamCandidateTarget, readConversationTeamToolResults, readConversationTeamExecution, readConversationTeamHistory, readConversationTeamPost, type OpenConversationTeamCandidate } from "./conversationTeamReads";
 import styles from "./ConversationTeamProgress.module.css";
 import { ConversationText } from "./ConversationText";
+import { ConversationTeamFindings } from "./ConversationTeamFindings";
+import type { OpenConversationTeamFinding } from "./teamFindingReads";
 
 export interface ConversationTeamProgressProps {
   context: SessionRequest; link: ConversationPlanLink; status: WorkPlanStatusView;
   visible: boolean; canRead: () => boolean; onOpenCandidate?: OpenConversationTeamCandidate;
   actions?: (view: TeamExecutionView, current: () => boolean) => ReactNode;
   onReply?: (post: TeamDiscussionPost) => void;
+  onOpenFinding?: OpenConversationTeamFinding;
+  onPrepareFindingRepair?: OpenConversationTeamFinding;
 }
 type Work = TeamExecutionView["works"][number];
 type Cursor = { frame: string; value: string | null };
@@ -154,7 +158,7 @@ export function ConversationTeamProgress(props: ConversationTeamProgressProps) {
   </section>;
 }
 
-function TeamRecords({ context, link, status, visible, canRead, onOpenCandidate, actions, onReply }: ConversationTeamProgressProps) {
+function TeamRecords({ context, link, status, visible, canRead, onOpenCandidate, actions, onReply, onOpenFinding, onPrepareFindingRepair }: ConversationTeamProgressProps) {
   const { t } = useTranslation(undefined, { keyPrefix: "conversationTeam" }), { t: global } = useTranslation(), reads = useSessionReads();
   const frame = useMemo(() => JSON.stringify([context, link, status]), [context.projectId, context.sessionToken, link, status]);
   const live = useRef({ frame, visible, canRead, onOpenCandidate }), alive = useRef(true);
@@ -259,6 +263,8 @@ function TeamRecords({ context, link, status, visible, canRead, onOpenCandidate,
             </Disclosure>
             {outcome?.kind === "translation" ? <><p>{t(work.candidateRevisionId ? "candidate" : "suggestion")}</p><Disclosure title={<>{t("fullText")}</>}>{outcome.text === "" ? <p>{t("emptyTranslation")}</p> : <p className={styles.text}><TokenizedText text={outcome.text} tone="ai"/></p>}</Disclosure></> : null}
             {outcome?.kind === "review" ? <section className={styles.finding} aria-label={t("finding")}><h6>{t("finding")}</h6><p>{t(`verdict.${outcome.verdict}`)}</p><p>{t("target", { entry: entryName(work.target.unitId), locale: work.target.locale })}</p>{postButtons(outcome.postIds)}</section> : outcome?.kind === "waiting" ? <p>{t("waiting")}</p> : outcome?.kind === "awaiting-human" ? <p>{t("awaitingHuman")}</p> : outcome?.kind === "evidence" ? <p>{t("evidence")}</p> : null}
+            {outcome?.kind === "review" && outcome.report ? <ConversationTeamFindings context={context} link={link} page={page} work={work}
+              current={() => currentPage(page)} present={present} onOpenFinding={onOpenFinding} onPrepareFindingRepair={onPrepareFindingRepair}/> : null}
             <div className={styles.actions}>{postButtons([...(work.request?.postIds ?? human?.postIds ?? []), ...(outcome?.kind === "evidence" ? outcome.postIds : [])].filter(id => outcome?.kind !== "review" || !outcome.postIds.includes(id)))}
               {candidate && onOpenCandidate ? <Button size="sm" disabled={!fresh || busyWork !== null} onClick={() => void openCandidate(work)}>{t(busyWork === work.receipt.intentId ? "openingCandidate" : "openCandidate")}</Button> : null}
             </div>

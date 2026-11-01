@@ -1,9 +1,11 @@
+import { conversationReferencesEn, conversationReferencesZh } from "./conversationReferences";
 import { conversationRunResultsEn, conversationRunResultsZh } from "./conversationRunResults";
 import { conversationWorkPlansEn, conversationWorkPlansZh } from "./conversationWorkPlans";
 import { conversationRunsEn, conversationRunsZh } from "./conversationRuns";
 import { conversationKnowledgeEn, conversationKnowledgeZh } from "./conversationKnowledge";
 
 export const conversationEn = {
+  ...conversationReferencesEn,
   commandTranslate: "Plan translation",
   commandReview: "Plan review",
   commandExplain: "Explain selection",
@@ -118,6 +120,7 @@ export const conversationEn = {
 };
 
 export const conversationZh: typeof conversationEn = {
+  ...conversationReferencesZh,
   commandTranslate: "规划翻译",
   commandReview: "规划审校",
   commandExplain: "解释当前选择",

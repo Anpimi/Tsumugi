@@ -468,6 +468,17 @@ pub enum TeamReviewVerdict {
     Unresolved,
 }
 
+/// Content from a review of the translation captured in this work's fixed input.
+/// A report is advisory evidence; its findings acquire persistent identities only
+/// through the ordinary review adoption boundary.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+#[cfg_attr(feature = "wire-schema", derive(schemars::JsonSchema))]
+pub struct TeamReviewReport {
+    pub summary: String,
+    pub rules: Vec<crate::ai::semantic_review::AiSemanticReviewRuleResult>,
+}
+
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(
     tag = "kind",
@@ -486,6 +497,8 @@ pub enum TeamWorkOutcome {
         reviewed: TeamReviewBasis,
         post_ids: Vec<ExecutionId>,
         verdict: TeamReviewVerdict,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        report: Option<TeamReviewReport>,
     },
     Evidence {
         post_ids: Vec<ExecutionId>,
@@ -530,6 +543,8 @@ pub struct TeamWorkView {
     pub target: TeamDiscussionTarget,
     pub execution: ExecutionState,
     pub validation: ValidationState,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub result_id: Option<ExecutionId>,
     pub output: Option<TeamWorkOutput>,
     pub candidate_revision_id: Option<ExecutionId>,
 }

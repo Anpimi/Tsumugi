@@ -575,6 +575,7 @@ impl ProjectStore {
                 attempt,
                 binding,
                 Some(&derived),
+                coordination::capture_review(c, &plan, selected.member_id, work.target.unit_id, work.kind, &work.post_ids)?,
             )?;
             let preview = TeamRecoveryPreview {
                 project_id: request.project_id,
@@ -1052,6 +1053,7 @@ pub(super) fn validate_history_in(
         p.attempt_id,
         settings.binding,
         Some(&request),
+        settings.review.clone(),
     )?;
     if expected.envelope() != &capture.input
         || team::target(&expected, expected.envelope().items[0].item_id)? != p.work.target

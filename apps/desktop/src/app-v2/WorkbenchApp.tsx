@@ -1,3 +1,4 @@
+import type { OpenConversationTeamFinding } from "./features/assistant/teamFindingReads";
 import ProjectMetadataSheet from "./features/settings/ProjectMetadataSheet";
 import { createContext, lazy, Suspense, useCallback, useContext, useEffect, useId, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore, type ComponentProps, type Dispatch, type ReactNode, type SetStateAction } from "react";
 import { RouterProvider } from "@tanstack/react-router";
@@ -1162,6 +1163,59 @@ function WorkspaceShell() {
       if (entryReferenceFlight.current === flight) entryReferenceFlight.current = null;
     }
   };
+  const teamFindingFlight = useRef<{ dispose: () => void } | null>(null);
+  useLayoutEffect(() => () => { teamFindingFlight.current?.dispose(); teamFindingFlight.current = null; }, []);
+  async function navigateTeamFinding(target: Parameters<OpenConversationTeamFinding>[0], current: () => boolean, repair: boolean): Promise<boolean> {
+    const captured = structuredClone(target), reads = session.reads;
+    const from = currentId ? store.getState().views[currentId] : null, origin = document.activeElement;
+    const dialogId = narrow && drawer ? "workspace-dock" : undefined, inputVersion = drafts?.inputVersion();
+    const conversationInput = conversations?.getSnapshot().inputs.get(captured.conversationId);
+    if (teamFindingFlight.current || entryReferenceFlight.current || !from || disabled || reads.retired || !current()
+      || captured.projectId !== session.project.metadata.projectId || !session.project.metadata.targetLocales.includes(captured.locale)
+      || !gate.canDispatch({ viewId: currentId, source: "button", dialogId })) return false;
+    let changed = false, focusMoved = false;
+    const stop = reads.subscribeChanges(scopes => { if (scopes.some(scope => ["project", "source", "translation", "resources", "review", "execution"].includes(scope))) changed = true; });
+    const moved = (event: FocusEvent) => { if (event.target !== origin && event.target !== document.body) focusMoved = true; };
+    document.addEventListener("focusin", moved);
+    const flight = { dispose: () => { stop(); document.removeEventListener("focusin", moved); } };
+    teamFindingFlight.current = flight;
+    const present = () => {
+      const latest = lifecycle.getSnapshot(), state = store.getState();
+      return teamFindingFlight.current === flight && !changed && !focusMoved && !reads.retired && latest.phase === "idle" && !latest.pending
+        && latest.session?.project.sessionToken === session.project.sessionToken && state.activeViewId === currentId
+        && state.views[from.id] === from && drafts?.inputVersion() === inputVersion
+        && gate.canDispatch({ viewId: currentId, source: "button", dialogId });
+    };
+    const proof = () => present() && current();
+    try {
+      const { resolveConversationTeamFinding } = await import("./features/assistant/teamFindingReads");
+      if (!proof()) return false;
+      const resolved = await resolveConversationTeamFinding(executionContext(session.project), captured);
+      if (!proof()) return false;
+      const selection = { kind: "ids" as const, locale: captured.locale, sourceSnapshotId: captured.sourceSnapshotId, unitIds: [captured.unitId] };
+      if (repair) {
+        if (!conversations || !conversationInput || resolved.finding.decision?.request.disposition === "rejected") return false;
+        const body = t("conversationTeam.repairDraft", { locale: captured.locale, source: resolved.target.sourceText,
+          translation: resolved.target.translationText ?? "", detail: resolved.finding.finding.detail,
+          suggestion: resolved.suggestion ?? t("conversationTeam.repairNoSuggestion") });
+        if (!await conversations.prepareFindingRepair(conversationInput, selection, body)) return false;
+        // The local edit is now retained. Later presentation failure must not undo it.
+        if (!present()) return true;
+      }
+      document.removeEventListener("focusin", moved);
+      if (dialogId) closeDrawer();
+      const patch = { entryMode: "table" as const, locale: captured.locale, preset: "all", query: "", searchInput: "", focus: captured.unitId,
+        dock: repair ? "agent" as const : "details" as const, dockOpen: true, detailTab: "issues" as const, editing: false, focusMode: false,
+        selection: repair ? selection : null, queueActive: true, queueAnchor: captured.unitId, queueScopeId: null, cursor: null, afterOrdinal: 0,
+        decisionFinding: { runId: captured.runId, issueId: captured.issueId, offset: resolved.offset }, scroll: { top: 0, left: 0 } };
+      const accepted = from.kind === "entries" ? await runtime.navigation.update(from.id, patch) : await runtime.navigation.open({ kind: "entries", ...patch });
+      if (accepted && narrow) showDock();
+      if (repair && !accepted) setCommandFailed(true);
+      return repair || accepted;
+    } finally { flight.dispose(); if (teamFindingFlight.current === flight) teamFindingFlight.current = null; }
+  }
+  const openTeamFinding: OpenConversationTeamFinding = (target, current) => navigateTeamFinding(target, current, false);
+  const prepareTeamFindingRepair: OpenConversationTeamFinding = (target, current) => navigateTeamFinding(target, current, true);
   async function openEntryTermCapture(captureId: string): Promise<boolean> {
     const capture = knowledgeOwner?.current().previewCapture, dialogId = narrow && drawer ? "workspace-dock" : undefined;
     if (disabled || session.reads.retired || !capture || capture.captureId !== captureId
@@ -1380,7 +1434,7 @@ function WorkspaceShell() {
         {conversationMode ? <Button size="sm" disabled={disabled || !commandsReady} onClick={() => dispatch("workspace.conversation-mode")}>{message("returnToView")}</Button> : null}
       </div>
       <TabsContent value="agent" forceMount className={styles.dockContent}><FeatureBoundary fallback={conversationFallback(<ErrorState title={t("conversation.unavailable")}/>)}><Suspense fallback={conversationFallback(<LoadingState label={t("conversation.loading")}/>)}>
-        {conversations ? <ConversationPanel commands={commandsReady ? commands : undefined} showWorkPlans={view?.kind !== "runs" || view.runsMode === "strategy" || !!conversationTeamQuestion} onOpenCandidate={openRunCandidate} onOpenCandidateBatch={openRunCandidateBatch} onOpenTeamCandidate={openTeamCandidate} onOpenKnowledgeProposal={openKnowledgeProposal} owner={conversations} visible={(view?.dock ?? "agent") === "agent" && (!narrow || drawer)} disabled={disabled} gate={gate} viewId={currentId} parentDialogId={narrow && drawer ? "workspace-dock" : undefined}
+        {conversations ? <ConversationPanel commands={commandsReady ? commands : undefined} showWorkPlans={view?.kind !== "runs" || view.runsMode === "strategy" || !!conversationTeamQuestion} onOpenCandidate={openRunCandidate} onOpenCandidateBatch={openRunCandidateBatch} onOpenTeamCandidate={openTeamCandidate} onOpenTeamFinding={openTeamFinding} onPrepareFindingRepair={prepareTeamFindingRepair} onOpenKnowledgeProposal={openKnowledgeProposal} owner={conversations} visible={(view?.dock ?? "agent") === "agent" && (!narrow || drawer)} disabled={disabled} gate={gate} viewId={currentId} parentDialogId={narrow && drawer ? "workspace-dock" : undefined}
           selection={view?.kind === "entries" && !importVisible ? view.selection : null} targetLocale={activeLocale}
           contextFilter={view?.kind === "entries" && !importVisible ? entryQuery(view.preset, view.query) : null} onOpenEntryReference={openEntryReference}
           decisionTray={decisionTray()} projectBrief={projectBrief} maintenanceBrief={sourceBrief()} recoveryTarget={conversationRecovery} proposalTarget={conversationProposal} questionTarget={conversationTeamQuestion}/>
@@ -1523,7 +1577,7 @@ function WorkspaceShell() {
               <TabsContent className={appStyles.runsPanel} value="plans">{conversations ? <RunsView owner={conversations} disabled={disabled} gate={gate} viewId={view.id}
                 expandedPlans={view.runExpanded} onExpandedPlan={(planId, open) => store.getState().patch(view.id, { runExpanded: open ? [...new Set([...view.runExpanded, planId])] : view.runExpanded.filter(id => id !== planId) })}
                 scrollTop={view.scroll.top} onScroll={top => store.getState().patch(view.id, { scroll: { top, left: 0 } })}
-                showDetails={!conversationTeamQuestion} onAssistant={() => dispatch("workspace.agent")} onOpenCandidate={openRunCandidate} onOpenCandidateBatch={openRunCandidateBatch} onOpenTeamCandidate={openTeamCandidate}/>
+                showDetails={!conversationTeamQuestion} onAssistant={() => dispatch("workspace.agent")} onOpenCandidate={openRunCandidate} onOpenCandidateBatch={openRunCandidateBatch} onOpenTeamCandidate={openTeamCandidate} onOpenTeamFinding={openTeamFinding} onPrepareFindingRepair={prepareTeamFindingRepair}/>
                 : <LoadingState label={t("conversation.loading")}/>}</TabsContent>
               <TabsContent className={appStyles.runsPanel} value="strategy">{strategyLoadFailed ? <ErrorState title={message("strategyLoadFailed")} action={<Button onClick={retryStrategy}>{message("strategyRetry")}</Button>}/>
                 : strategyOwner ? <StrategyView project={session.project} owner={strategyOwner} commands={commandsReady ? commands : null} tasks={executionTasks} visible={view.runsMode === "strategy"} disabled={disabled} gate={gate} viewId={view.id} intent={strategyIntent} requestTarget={strategyRequestTarget}

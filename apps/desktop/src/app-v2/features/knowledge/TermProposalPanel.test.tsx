@@ -263,8 +263,10 @@ it("retains an edited action after a mismatched receipt and reconciles the same 
   invoke.mockImplementation((command, payload) => {
     if (command === "decide_resource_entry") {
       if (!validateRequestDecision(payload.request)) throw new Error("Expected typed edited decision");
-      submitted = payload.request.decision;
-      const receipt = editedReceipt(submitted);
+      const candidate = payload.request.decision;
+      if (!candidate) throw new Error("Expected original decision request");
+      submitted = candidate;
+      const receipt = editedReceipt(candidate);
       return Promise.resolve({ ...receipt, revision: { ...receipt.revision, target: "Mismatched acknowledgement" } });
     }
     if ((command === "observe_resource_decision_action" || command === "read_resource_decision_action") && submitted) {

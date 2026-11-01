@@ -618,6 +618,7 @@ export type TeamWorkOutcome =
   | {
       kind: "review";
       postIds: ExecutionId[];
+      report?: TeamReviewReport | null;
       reviewed: TeamReviewBasis;
       verdict: TeamReviewVerdict;
     }
@@ -633,6 +634,7 @@ export type TeamWorkOutcome =
       kind: "awaiting-human";
       questionPostIds: ExecutionId[];
     };
+export type AiSemanticReviewRule = "meaning" | "style";
 export type TeamReviewBasis =
   | {
       kind: "post";
@@ -2809,6 +2811,7 @@ export interface TeamWorkView {
   output: TeamWorkOutput | null;
   receipt: TeamWorkReceipt;
   request: RequestTeamWork | null;
+  resultId?: ExecutionId | null;
   sequence: Revision;
   target: TeamDiscussionTarget;
   validation: ValidationState;
@@ -2818,6 +2821,26 @@ export interface TeamWorkOutput {
   requests: number;
   usage: Usage | null;
   usageIncomplete: boolean;
+}
+/**
+ * Content from a review of the translation captured in this work's fixed input.
+ * A report is advisory evidence; its findings acquire persistent identities only
+ * through the ordinary review adoption boundary.
+ */
+export interface TeamReviewReport {
+  rules: AiSemanticReviewRuleResult[];
+  summary: string;
+}
+export interface AiSemanticReviewRuleResult {
+  findings: AiSemanticReviewFinding[];
+  rule: AiSemanticReviewRule;
+}
+export interface AiSemanticReviewFinding {
+  code: string;
+  detail: string;
+  location: TextReviewLocation | null;
+  severity: FindingSeverity;
+  suggestion: string | null;
 }
 export interface Usage {
   cacheReadTokens: UnsignedDecimal | null;

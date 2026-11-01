@@ -4878,6 +4878,70 @@
         ],
         "type": "object"
       },
+      "AiSemanticReviewFinding": {
+        "additionalProperties": false,
+        "properties": {
+          "code": {
+            "type": "string"
+          },
+          "detail": {
+            "type": "string"
+          },
+          "location": {
+            "anyOf": [
+              {
+                "$ref": "#/definitions/TextReviewLocation"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "severity": {
+            "$ref": "#/definitions/FindingSeverity"
+          },
+          "suggestion": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "code",
+          "detail",
+          "severity",
+          "location",
+          "suggestion"
+        ],
+        "type": "object"
+      },
+      "AiSemanticReviewRule": {
+        "enum": [
+          "meaning",
+          "style"
+        ],
+        "type": "string"
+      },
+      "AiSemanticReviewRuleResult": {
+        "additionalProperties": false,
+        "properties": {
+          "findings": {
+            "items": {
+              "$ref": "#/definitions/AiSemanticReviewFinding"
+            },
+            "type": "array"
+          },
+          "rule": {
+            "$ref": "#/definitions/AiSemanticReviewRule"
+          }
+        },
+        "required": [
+          "rule",
+          "findings"
+        ],
+        "type": "object"
+      },
       "AiStartReceipt": {
         "additionalProperties": false,
         "description": "Immutable acknowledgement of the original direct translation request.",
@@ -11690,6 +11754,26 @@
           }
         ]
       },
+      "TeamReviewReport": {
+        "additionalProperties": false,
+        "description": "Content from a review of the translation captured in this work's fixed input.\nA report is advisory evidence; its findings acquire persistent identities only\nthrough the ordinary review adoption boundary.",
+        "properties": {
+          "rules": {
+            "items": {
+              "$ref": "#/definitions/AiSemanticReviewRuleResult"
+            },
+            "type": "array"
+          },
+          "summary": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "summary",
+          "rules"
+        ],
+        "type": "object"
+      },
       "TeamReviewVerdict": {
         "enum": [
           "accept",
@@ -11810,6 +11894,16 @@
                   "$ref": "#/definitions/ExecutionId"
                 },
                 "type": "array"
+              },
+              "report": {
+                "anyOf": [
+                  {
+                    "$ref": "#/definitions/TeamReviewReport"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
               },
               "reviewed": {
                 "$ref": "#/definitions/TeamReviewBasis"
@@ -12119,6 +12213,16 @@
             "anyOf": [
               {
                 "$ref": "#/definitions/RequestTeamWork"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "resultId": {
+            "anyOf": [
+              {
+                "$ref": "#/definitions/ExecutionId"
               },
               {
                 "type": "null"

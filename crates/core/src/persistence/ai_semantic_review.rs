@@ -29,7 +29,7 @@ pub(super) fn verify_input_records(
     c: &Connection,
     input: &FixedInput,
 ) -> Result<(), ExecutionError> {
-    let preview = preview_from_input(input)?;
+    let preview = evidence_preview(input)?;
     let project = input.envelope().project_id.to_string();
     for item in &preview.items {
         let source = &item.source;
@@ -37,11 +37,64 @@ pub(super) fn verify_input_records(
             params![source.source_snapshot_id.to_string(),source.unit_id.to_string(),source.source_revision_id.to_string(),source.native_key,source.source_text,source.source_locale,project],|r|r.get(0)).map_err(super::ledger::sql_error)?;
         let selection_exists:bool=c.query_row("SELECT EXISTS(SELECT 1 FROM translation_selections s JOIN translation_revisions r ON r.revision_id=s.revision_id WHERE s.event_id=?1 AND s.revision_id=?2 AND s.project_id=?3 AND r.project_id=?3 AND s.unit_id=?4 AND r.unit_id=?4 AND s.locale=?5 AND r.locale=?5 AND r.text=?6)",
             params![item.selection_id.to_string(),item.translation_revision_id.to_string(),project,source.unit_id.to_string(),source.target_locale,item.translation_text],|r|r.get(0)).map_err(super::ledger::sql_error)?;
-        if !source_exists || !selection_exists {
+        if !source_exists || !selection_exists || item.review_basis.digest()? != item.basis
+            || item.review_basis.source_snapshot_id != source.source_snapshot_id
+            || item.review_basis.source_revision_id != source.source_revision_id
+            || item.review_basis.selection_id != Some(item.selection_id)
+            || item.review_basis.revision_id != Some(item.translation_revision_id) {
             return Err(corrupt());
         }
     }
     Ok(())
+}
+
+/// Capture the current selected translation only when it shares this work's
+/// already fixed source and resources. Missing or drifted evidence stays absent.
+pub(in crate::persistence) fn capture_team_review(c: &Connection, config: &AiConfig,
+    source: &crate::ai::AiItem,
+) -> Result<Option<AiSemanticReviewItem>, ExecutionError> {
+    let project = ExecutionId::parse(&super::read_metadata_from(c).map_err(|_|corrupt())?.project_id().to_string())?;
+    let target = review::target_in(c, project, source.unit_id, &source.target_locale)?;
+    if target.source_snapshot_id != source.source_snapshot_id || target.source_revision_id != source.source_revision_id {
+        return Ok(None);
+    }
+    let (Some(selection_id), Some(translation_revision_id), Some(translation_text)) =
+        (target.selection_id, target.revision_id, target.translation_text) else { return Ok(None); };
+    let item = AiSemanticReviewItem { source:source.clone(),selection_id,translation_revision_id,translation_text,
+        review_basis:target.basis_evidence,basis:target.basis };
+    Ok(current_item(c, config, &item)?.then_some(item))
+}
+
+/// Both semantic producers retain their original fixed inputs and results. This
+/// adapter does not turn ordinary team verdicts or discussion text into findings.
+pub fn evidence_preview(input: &FixedInput) -> Result<AiSemanticReviewPreview, ExecutionError> {
+    if input.envelope().operation != crate::ai::team::OPERATION { return preview_from_input(input); }
+    let settings = crate::ai::team::settings(input)?;
+    let item = settings.review.ok_or_else(||fail(ErrorCode::InvalidInput,"team-review-capture"))?;
+    let source = crate::ai::item_payload(input, input.envelope().items[0].item_id)?;
+    if settings.kind != crate::application::TeamWorkKind::Review || item.source != source {
+        return Err(fail(ErrorCode::InvalidInput,"team-review-capture"));
+    }
+    Ok(AiSemanticReviewPreview { config:settings.config,recipe:"team-review-1".into(),
+        rules:vec![AiSemanticReviewRule::Meaning,AiSemanticReviewRule::Style],items:vec![item],digest:input.digest().into() })
+}
+
+fn evidence_item(input: &FixedInput, item: ExecutionId) -> Result<AiSemanticReviewItem,ExecutionError> {
+    if !input.envelope().items.iter().any(|value|value.item_id == item) { return Err(corrupt()); }
+    if input.envelope().operation == crate::ai::team::OPERATION {
+        evidence_preview(input)?.items.into_iter().next().ok_or_else(corrupt)
+    } else { item_payload(input,item) }
+}
+
+fn evidence_output(input: &FixedInput, result: &FixedResult) -> Result<AiSemanticReviewOutput,ExecutionError> {
+    if input.envelope().operation != crate::ai::team::OPERATION { return validate_output(input,result); }
+    let output = crate::ai::team::validate_output(input,result)?;
+    let crate::application::TeamWorkOutcome::Review { report:Some(report), .. } = output.outcome else {
+        return Err(fail(ErrorCode::OutputInvalid,"team-review-report"));
+    };
+    let item=evidence_item(input,result.envelope().item_id)?;
+    Ok(AiSemanticReviewOutput {unit_id:item.source.unit_id,target_locale:item.source.target_locale,rules:report.rules,
+        usage:output.usage,requests:output.requests,usage_incomplete:output.usage_incomplete})
 }
 
 fn fail(code: ErrorCode, stage: &str) -> ExecutionError {
@@ -337,6 +390,9 @@ impl ProjectStore {
         }
         Ok(())
     }
+    pub fn read_ai_semantic_review_preview(&self, attempt: ExecutionId) -> Result<AiSemanticReviewPreview,ExecutionError> {
+        evidence_preview(&self.execution_input(attempt)?)
+    }
     /// Historical reading neither initializes a runtime nor reissues consent.
     pub fn read_ai_semantic_review_item(
         &self,
@@ -348,8 +404,8 @@ impl ProjectStore {
             .map_err(|_| fail(ErrorCode::StorageFailed, "ai-review-read"))?;
         review::read_snapshot(c, |c| {
             let input = super::ledger::load_input(c, attempt)?;
-            let preview = preview_from_input(&input)?;
-            let item = item_payload(&input, item_id)?;
+            let preview = evidence_preview(&input)?;
+            let item = evidence_item(&input, item_id)?;
             let result = self
                 .execution_current_result(attempt, item_id)?
                 .map(|id| super::ledger::load_result(c, &input, id))
@@ -357,7 +413,7 @@ impl ProjectStore {
             let output = result
                 .as_ref()
                 .filter(|r| r.envelope().outcome == ExecutionState::Succeeded)
-                .map(|r| validate_output(&input, r))
+                .map(|r| evidence_output(&input, r))
                 .transpose()?;
             let run = result
                 .as_ref()
@@ -402,9 +458,9 @@ fn projection(
     ),
     ExecutionError,
 > {
-    let preview = preview_from_input(input)?;
-    let item = item_payload(input, result.envelope().item_id)?;
-    let output = validate_output(input, result)?;
+    let preview = evidence_preview(input)?;
+    let item = evidence_item(input, result.envelope().item_id)?;
+    let output = evidence_output(input, result)?;
     let semantic_input_digest = semantic_digest(&preview.config, &preview.rules, &item)?;
     let scope_digest = digest(&(item.target(), &item.basis))?;
     let mut diagnostics = Vec::new();
@@ -460,7 +516,7 @@ fn projection(
     let evidence = AiSemanticReviewEvidence {
         endpoint: preview.config.endpoint,
         model: preview.config.model,
-        recipe: RECIPE.into(),
+        recipe: preview.recipe,
         attempt_id: input.envelope().attempt_id,
         item_id: result.envelope().item_id,
         input_digest: input.digest().into(),
@@ -482,6 +538,13 @@ impl AdoptionHandler for AiSemanticReviewAdoptionHandler {
         action: &AdoptionAction,
         results: &[FixedResult],
     ) -> Result<PreparedMutation, ExecutionError> {
+        prepare_review_adoption(input,action,results)
+    }
+}
+
+pub(in crate::persistence) fn prepare_review_adoption(input: &FixedInput, action: &AdoptionAction,
+    results: &[FixedResult],
+) -> Result<PreparedMutation,ExecutionError> {
         if results.len() != 1 {
             return Err(fail(ErrorCode::ResultMismatch, "ai-review-adoption"));
         }
@@ -490,7 +553,7 @@ impl AdoptionHandler for AiSemanticReviewAdoptionHandler {
             return Err(fail(ErrorCode::InvalidInput, "ai-review-adoption"));
         }
         let (item, rules, diagnostics, evidence) = projection(input, &results[0])?;
-        let preview = preview_from_input(input)?;
+        let preview = evidence_preview(input)?;
         let request_digest = action.request_digest(input)?;
         let action = action.clone();
         Ok(Box::new(move |tx| {
@@ -507,14 +570,13 @@ impl AdoptionHandler for AiSemanticReviewAdoptionHandler {
             let id = ExecutionId::new();
             tx.execute("INSERT INTO review_checks (run_id,action_id,project_id,unit_id,locale,basis,basis_json,validator_version,rules_json,qa_basis,evidence_json,request_digest,purpose) VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,NULL,?10,?11,'ai-semantic')",
                 params![id.to_string(),action.action_id.to_string(),action.project_id.to_string(),item.source.unit_id.to_string(),item.source.target_locale,
-                    item.basis,encode(&item.review_basis)?,RECIPE,encode(&rules)?,encode(&SavedEvidence { origin:evidence,diagnostics })?,request_digest])?;
+                    item.basis,encode(&item.review_basis)?,preview.recipe,encode(&rules)?,encode(&SavedEvidence { origin:evidence,diagnostics })?,request_digest])?;
             Ok(vec![ChangeReference {
                 kind: "review".into(),
                 id: id.to_string(),
                 revision: Revision::new(1)?,
             }])
         }))
-    }
 }
 
 pub(super) fn by_action(
@@ -551,7 +613,7 @@ pub(super) fn by_action(
             let stored_rules: Vec<CheckRuleResult> =
                 serde_json::from_str(&rules_json).map_err(|_| corrupt())?;
             if qa_basis.is_some()
-                || version != RECIPE
+                || version != evidence.recipe
                 || saved != evidence
                 || diagnostics != actual_diagnostics
                 || stored_rules != rules
@@ -660,8 +722,8 @@ pub(super) fn current_run(
         return Ok(None);
     };
     let input = super::ledger::load_input(c, run.evidence.attempt_id)?;
-    let preview = preview_from_input(&input)?;
-    let item = item_payload(&input, run.evidence.item_id)?;
+    let preview = evidence_preview(&input)?;
+    let item = evidence_item(&input, run.evidence.item_id)?;
     Ok(current_item(c, &preview.config, &item)?.then_some(run))
 }
 pub(super) fn validate(c: &Connection) -> Result<(), ExecutionError> {

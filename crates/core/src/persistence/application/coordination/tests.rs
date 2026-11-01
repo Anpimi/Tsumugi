@@ -4,6 +4,7 @@ use crate::persistence::application::tests::{config, consent, fixture};
 mod human_guidance;
 mod work_budget;
 mod questions;
+mod findings;
 
 fn setup(
     no_progress: u32,
@@ -554,6 +555,7 @@ fn team_coordination_invalid_output_and_exhausted_budget_preserve_history() {
             },
             post_ids: vec![ExecutionId::new()],
             verdict: TeamReviewVerdict::Revise,
+            report: None,
         },
     );
     let mut envelope = invalid.envelope().clone();

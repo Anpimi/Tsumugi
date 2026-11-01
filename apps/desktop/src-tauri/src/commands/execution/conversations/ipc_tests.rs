@@ -949,6 +949,26 @@ fn conversation_planning_ipc_requires_explicit_permission_and_reopens_as_history
     assert_eq!(view["budget"]["limit"], 1);
     assert_eq!(view["budget"]["dispatched"], 1);
     assert_eq!(provider.count(), 1);
+    let reference_request = in_session(&project, json!({"conversationId":thread["conversationId"],"attemptId":action,"after":0,"limit":8}));
+    let reference_clock = planning_clock(&app, &project);
+    let references = call(&window, "read_conversation_references", reference_request.clone());
+    assert_eq!(references["projectId"], project["metadata"]["projectId"]);
+    assert_eq!(references["conversationId"], thread["conversationId"]);
+    assert_eq!(references["attemptId"], action);
+    assert_eq!(references["inputDigest"], receipt["inputDigest"]);
+    assert_eq!(references["rows"], json!([]));
+    assert_eq!(references["total"], 0);
+    assert_eq!(references["nextAfter"], Value::Null);
+    for field in ["projectId", "conversationId"] {
+        let mut wrong = reference_request.clone(); wrong[field] = json!(identity());
+        assert!(!reject(&window, "read_conversation_references", wrong).is_null());
+    }
+    for limit in [0, 17] {
+        let mut wrong = reference_request.clone(); wrong["limit"] = json!(limit);
+        assert!(!reject(&window, "read_conversation_references", wrong).is_null());
+    }
+    assert_eq!(planning_clock(&app, &project), reference_clock);
+    assert_eq!(provider.count(), 1, "Reference inspection never dispatches work");
     let discovered = call(
         &window,
         "read_conversation_planning_attempts",

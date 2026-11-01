@@ -346,7 +346,7 @@ pub async fn read_ai_semantic_review(
                     CommandStage::ExecutionRead,
                 )?;
                 let (host, store) = active.execution_parts()?;
-                let Some(input) = store
+                let Some(_input) = store
                     .execution_input_if_present(request.attempt_id)
                     .map_err(map_read)?
                 else {
@@ -355,7 +355,7 @@ pub async fn read_ai_semantic_review(
                         view: None,
                     });
                 };
-                let preview = core_review::preview_from_input(&input).map_err(map_read)?;
+                let preview = store.read_ai_semantic_review_preview(request.attempt_id).map_err(map_read)?;
                 let detail = attempt_detail(host, store, request.attempt_id, 0, 100)?;
                 if detail.items.len() != preview.items.len() {
                     return Err(map_read(ExecutionError::new(

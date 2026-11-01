@@ -77,3 +77,12 @@ it("does not admit late current source reads after the caller proof was revoked"
   await vi.waitFor(() => expect(invoke).toHaveBeenCalledWith("read_review_target", { request: { ...context, unitId: h.reference.unitId, locale: "zh-CN" } }));
   current = false; pending.resolve(h.target); await rejected;
 });
+
+it("opens material references on the context tab after validating the same exact source evidence", async () => {
+  const h = fixture();
+  h.reference.detailTab = "context";
+  const patch = await resolveConversationEntryReference(context, h.reference, () => true);
+  expect(patch).toMatchObject({ focus: h.reference.unitId, dock: "details", detailTab: "context", editing: false });
+  h.setSnapshot(id(994));
+  await expect(resolveConversationEntryReference(context, h.reference, () => true)).rejects.toThrow();
+});

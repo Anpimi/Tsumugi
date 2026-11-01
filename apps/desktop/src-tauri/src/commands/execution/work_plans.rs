@@ -1900,6 +1900,7 @@ mod tests {
     mod proposal_preparation;
     mod recovery_lifecycle;
     mod semantic_review;
+    mod team_findings;
     mod settings;
     mod tool_result_reads;
     mod team_history;

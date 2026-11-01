@@ -31,7 +31,7 @@ function canonicalPending(value: Input["pending"]) {
     } } };
     case "term": return { ...value, request: { ...value.request, termId: value.request.termId ?? null,
       scopeUnitId: value.request.scopeUnitId ?? null, expectedRevisionId: value.request.expectedRevisionId ?? null } };
-    case "context":
+    case "context": return { ...value, request: { ...value.request, expectedRevisionId: value.request.expectedRevisionId ?? null } };
     case "decision": {
       const { editedTarget, ...request } = value.request;
       return { ...value, request: { ...request, expectedRevisionId: request.expectedRevisionId ?? null,

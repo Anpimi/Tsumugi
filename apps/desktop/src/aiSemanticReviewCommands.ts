@@ -15,8 +15,8 @@ export type AiSemanticReviewTarget = Requests["semanticPrepare"]["targets"][numb
 export type AiSemanticReviewRule = Requests["semanticPrepare"]["rules"][number];
 
 const pair = (unitId: string, locale: string) => JSON.stringify([unitId, locale]);
-function validPreview(preview: AiSemanticReviewPreview) {
-  return preview.recipe === "semantic-review-1" && preview.items.length > 0
+function validPreview(preview: AiSemanticReviewPreview, team = false) {
+  return preview.recipe === (team ? "team-review-1" : "semantic-review-1") && preview.items.length > 0
     && preview.items.length <= preview.config.maxItems
     && preview.rules.length > 0 && new Set(preview.rules).size === preview.rules.length
     && new Set(preview.items.map(item => pair(item.source.unitId, item.source.targetLocale))).size === preview.items.length
@@ -29,7 +29,9 @@ function validPreview(preview: AiSemanticReviewPreview) {
 /** Shape validation and response correlation share the original IPC boundary. */
 export function validAiSemanticReviewView(view: AiSemanticReviewView, attemptId: string) {
   const { preview, detail, rows } = view;
-  if (!validPreview(preview) || detail.attemptId !== attemptId || detail.recovery.attemptId !== attemptId || detail.operation !== "ai-semantic-review"
+  const team = detail.operation === "ai-team-work" && preview.recipe === "team-review-1";
+  if (!validPreview(preview, team) || detail.attemptId !== attemptId || detail.recovery.attemptId !== attemptId || detail.operation !== (team ? "ai-team-work" : "ai-semantic-review")
+    || team && (preview.items.length !== 1 || !sameExecutionIds(preview.rules, ["meaning", "style"]))
     || detail.nextOffset !== null || detail.items.length !== preview.items.length || rows.length !== preview.items.length
     || !sameExecutionIds(rows.map(row => row.itemId), detail.items.map(item => item.status.itemId))) return false;
   const items = new Map(preview.items.map(item => [pair(item.source.unitId, item.source.targetLocale), item]));
@@ -37,7 +39,7 @@ export function validAiSemanticReviewView(view: AiSemanticReviewView, attemptId:
   return rows.every(row => {
     const frozen = items.get(pair(row.item.source.unitId, row.item.source.targetLocale));
     const ledger = detail.items.find(item => item.status.itemId === row.itemId);
-    if (!frozen || !ledger || ledger.scope.kind !== "review-unit" || ledger.scope.id !== frozen.source.unitId
+    if (!frozen || !ledger || ledger.scope.kind !== (team ? "translation-unit" : "review-unit") || ledger.scope.id !== frozen.source.unitId
       || ledger.scope.locale !== frozen.source.targetLocale || row.item.basis !== frozen.basis
       || row.item.translationText !== frozen.translationText || row.item.source.sourceText !== frozen.source.sourceText
       || !sameReviewBasis(row.item.reviewBasis, frozen.reviewBasis)) return false;

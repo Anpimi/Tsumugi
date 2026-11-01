@@ -2049,6 +2049,44 @@
         ],
         "type": "object"
       },
+      "ReadConversationReferencesRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "after": {
+            "format": "uint32",
+            "maximum": 4294967295,
+            "minimum": 0,
+            "type": "integer"
+          },
+          "attemptId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "conversationId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "limit": {
+            "format": "uint32",
+            "maximum": 16,
+            "minimum": 1,
+            "type": "integer"
+          },
+          "projectId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "sessionToken": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "sessionToken",
+          "projectId",
+          "conversationId",
+          "attemptId",
+          "after",
+          "limit"
+        ],
+        "type": "object"
+      },
       "ReadProjectConversationMessagesRequest": {
         "additionalProperties": false,
         "properties": {
@@ -2893,6 +2931,9 @@
       "recoverProposalWorkPlan": {
         "$ref": "#/definitions/AuthorizeConversationProposalWorkPlanRequest"
       },
+      "references": {
+        "$ref": "#/definitions/ReadConversationReferencesRequest"
+      },
       "reviseProposal": {
         "$ref": "#/definitions/ReviseConversationProposalRequest"
       },
@@ -2920,6 +2961,7 @@
       "recoverPlanning",
       "readPlanning",
       "planningAttempts",
+      "references",
       "captureProposal",
       "reviseProposal",
       "readProposal",
@@ -5214,6 +5256,71 @@
         ],
         "type": "object"
       },
+      "ConversationMaterialReference": {
+        "oneOf": [
+          {
+            "additionalProperties": false,
+            "properties": {
+              "current": {
+                "anyOf": [
+                  {
+                    "$ref": "#/definitions/ConversationTermReferenceValue"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "kind": {
+                "const": "term",
+                "type": "string"
+              },
+              "original": {
+                "$ref": "#/definitions/ConversationTermReferenceValue"
+              },
+              "unit": {
+                "$ref": "#/definitions/ConversationReferenceUnit"
+              }
+            },
+            "required": [
+              "kind",
+              "unit",
+              "original",
+              "current"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "properties": {
+              "artifactId": {
+                "$ref": "#/definitions/ExecutionId"
+              },
+              "kind": {
+                "const": "file",
+                "type": "string"
+              },
+              "logicalPath": {
+                "type": "string"
+              },
+              "role": {
+                "type": "string"
+              },
+              "unit": {
+                "$ref": "#/definitions/ConversationReferenceUnit"
+              }
+            },
+            "required": [
+              "kind",
+              "unit",
+              "artifactId",
+              "logicalPath",
+              "role"
+            ],
+            "type": "object"
+          }
+        ]
+      },
       "ConversationPlanningAttempt": {
         "additionalProperties": false,
         "description": "A small locator for an original submitted attempt, including attempts whose\noutput was never captured as a proposal. Details remain in the execution ledger.",
@@ -6075,6 +6182,133 @@
         "required": [
           "proposal",
           "plan"
+        ],
+        "type": "object"
+      },
+      "ConversationReferencePage": {
+        "additionalProperties": false,
+        "properties": {
+          "after": {
+            "format": "uint32",
+            "maximum": 4294967295,
+            "minimum": 0,
+            "type": "integer"
+          },
+          "attemptId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "conversationId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "currentSnapshotId": {
+            "anyOf": [
+              {
+                "$ref": "#/definitions/ExecutionId"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "inputDigest": {
+            "type": "string"
+          },
+          "nextAfter": {
+            "format": "uint32",
+            "maximum": 4294967295,
+            "minimum": 0,
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "projectId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "rows": {
+            "items": {
+              "$ref": "#/definitions/ConversationMaterialReference"
+            },
+            "type": "array"
+          },
+          "total": {
+            "format": "uint32",
+            "maximum": 4294967295,
+            "minimum": 0,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "projectId",
+          "conversationId",
+          "attemptId",
+          "inputDigest",
+          "currentSnapshotId",
+          "after",
+          "total",
+          "nextAfter",
+          "rows"
+        ],
+        "type": "object"
+      },
+      "ConversationReferenceUnit": {
+        "additionalProperties": false,
+        "description": "A local navigation target in the immutable planning material, never permission.",
+        "properties": {
+          "locale": {
+            "type": "string"
+          },
+          "sourceRevisionId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "sourceSnapshotId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "unitId": {
+            "$ref": "#/definitions/ExecutionId"
+          }
+        },
+        "required": [
+          "unitId",
+          "locale",
+          "sourceSnapshotId",
+          "sourceRevisionId"
+        ],
+        "type": "object"
+      },
+      "ConversationTermReferenceValue": {
+        "additionalProperties": false,
+        "properties": {
+          "originKind": {
+            "$ref": "#/definitions/TermOrigin"
+          },
+          "protected": {
+            "type": "boolean"
+          },
+          "removed": {
+            "type": "boolean"
+          },
+          "revisionId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "source": {
+            "type": "string"
+          },
+          "target": {
+            "type": "string"
+          },
+          "termId": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "termId",
+          "revisionId",
+          "source",
+          "target",
+          "protected",
+          "originKind",
+          "removed"
         ],
         "type": "object"
       },
@@ -8854,6 +9088,13 @@
         ],
         "type": "string"
       },
+      "TermOrigin": {
+        "enum": [
+          "manual",
+          "external"
+        ],
+        "type": "string"
+      },
       "TextEncoding": {
         "enum": [
           "utf8-byte",
@@ -9684,6 +9925,16 @@
       },
       "proposalWorkPlanRecovery": {
         "$ref": "#/definitions/ConversationProposalWorkPlanRecovery"
+      },
+      "references": {
+        "anyOf": [
+          {
+            "$ref": "#/definitions/ConversationReferencePage"
+          },
+          {
+            "type": "null"
+          }
+        ]
       }
     },
     "required": [
@@ -9698,6 +9949,7 @@
       "planningRecovery",
       "planningRun",
       "planningAttemptPage",
+      "references",
       "proposal",
       "proposalPage",
       "proposalCaptureRecovery",

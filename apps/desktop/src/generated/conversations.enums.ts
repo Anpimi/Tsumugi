@@ -26,6 +26,7 @@ export const SourceContextFactKindValues = ["speaker","role","scene","time","loc
 export const SourceContextOmissionReasonValues = ["not-selected","byte-budget","item-limit"] as const;
 export const StageModeValues = ["manual","assisted","skipped"] as const;
 export const TeamWorkKindValues = ["translation","review","evidence"] as const;
+export const TermOriginValues = ["manual","external"] as const;
 export const TextEncodingValues = ["utf8-byte","utf16","grapheme"] as const;
 export const TextReviewDispositionValues = ["advisory"] as const;
 export const ValidationStateValues = ["absent","pending","valid","invalid"] as const;

@@ -114,6 +114,37 @@ pub(super) fn scope_for(
         }),
     }
 }
+pub(super) fn capture_review(c: &Connection, plan: &WorkPlan, member_id: ExecutionId,
+    unit: ExecutionId, kind: TeamWorkKind, post_ids: &[ExecutionId],
+) -> Result<Option<ai::semantic_review::AiSemanticReviewItem>, ExecutionError> {
+    if kind != TeamWorkKind::Review || !matches!(plan.options.team_discussions,Some(TeamDiscussionPolicy::CurrentPlanV2 {})) { return Ok(None); }
+    let selected=member(plan,member_id)?;
+    let source=plan.team_inputs.iter().find(|value|value.member_id==member_id)
+        .and_then(|value|value.items.iter().find(|item|item.unit_id==unit)).ok_or_else(denied)?;
+    let capture=super::super::ai_semantic_review::capture_team_review(c,&selected.config,source)?;
+    let Some(capture)=capture else {return Ok(None);};
+    // New work may share only the translation explicitly cited by its original
+    // discussion inputs, never an unrelated current selection discovered later.
+    for id in post_ids {
+        let post=team::post(c,*id)?.ok_or_else(denied)?;
+        if post.plan_id==plan.plan_id && post.publication.target.unit_id==unit && post.publication.target.locale==source.target_locale {
+            for (index,reference) in post.publication.references.iter().enumerate() {
+                if !matches!(reference,TeamArtifactReference::TranslationRevision {revision_id} if *revision_id==capture.translation_revision_id) {continue;}
+                let artifact=team::artifact_in(c,plan,&post.publication.target,reference,&source.native_key)?;
+                if !matches!(&artifact,TeamArtifactBody::TranslationRevision {text,..} if text==&capture.translation_text) {return Err(corrupt());}
+                let read=TeamArtifactRead {kind:TeamArtifactReadKind::UntrustedTeamArtifact,post_id:*id,reference_index:index as u32,
+                    target:post.publication.target.clone(),artifact};
+                match codec::encode(&read,TeamDiscussionLimits::for_policy(TeamDiscussionPolicy::CurrentPlanV2 {}).max_artifact_bytes as usize) {
+                    Ok(_) => return Ok(Some(capture)),
+                    Err(error) if error.code==ErrorCode::LimitExceeded => return Ok(None),
+                    Err(error) => return Err(error),
+                }
+            }
+        }
+    }
+    Ok(None)
+}
+
 pub(super) fn derive(
     plan: &WorkPlan,
     template: &FixedInput,
@@ -124,6 +155,7 @@ pub(super) fn derive(
     attempt: ExecutionId,
     binding: TeamWorkBinding,
     request: Option<&RequestTeamWork>,
+    review: Option<ai::semantic_review::AiSemanticReviewItem>,
 ) -> Result<FixedInput, ExecutionError> {
     let selected = member(plan, member_id)?;
     let item = plan
@@ -154,6 +186,7 @@ pub(super) fn derive(
         post_ids: request.map_or_else(Vec::new, |r| r.post_ids.clone()),
         cause_message_id: request.and_then(|r| r.cause_message_id),
         team_questions: plan.options.team_questions,
+        review,
     })
     .map_err(|_| corrupt())?;
     FixedInput::capture(e)
@@ -185,15 +218,25 @@ pub(super) fn root_input(
         root.attempt_id,
         binding,
         None,
+        None,
     )
 }
 fn validate_input_basis(c: &Connection, input: &FixedInput) -> Result<WorkPlan, ExecutionError> {
     let s = ai::team::settings(input)?;
+    if s.review.is_some() { super::super::ai_semantic_review::verify_input_records(c,input)?; }
     let plan = recovery::plan_in(
         c,
         s.binding.scope().lease.plan_id,
         s.binding.scope().lease.generation,
     )?;
+    if let Some(capture)=&s.review {
+        if !matches!(plan.options.team_discussions,Some(TeamDiscussionPolicy::CurrentPlanV2 {})) {return Err(corrupt());}
+        let cited=s.post_ids.iter().map(|id|team::post(c,*id)).collect::<Result<Vec<_>,_>>()?
+            .into_iter().flatten().any(|post|post.plan_id==plan.plan_id
+                &&post.publication.target.unit_id==capture.source.unit_id&&post.publication.target.locale==capture.source.target_locale
+                &&post.publication.references.iter().any(|reference|matches!(reference,TeamArtifactReference::TranslationRevision {revision_id} if *revision_id==capture.translation_revision_id)));
+        if !cited {return Err(corrupt());}
+    }
     let selected = member(&plan, s.binding.member_id())?;
     let root = plan.execution_input()?;
     let template = control::load(c, plan.plan_id)?.plan.fixed_input()?;
@@ -263,6 +306,7 @@ fn validate_input_basis(c: &Connection, input: &FixedInput) -> Result<WorkPlan, 
         input.envelope().attempt_id,
         s.binding.clone(),
         saved.as_ref(),
+        s.review.clone(),
     )?;
     if expected.bytes() != input.bytes() {
         return Err(corrupt());
@@ -293,6 +337,7 @@ pub(super) fn validate_root_receipt(
         input.envelope().task_id,
         input.envelope().attempt_id,
         s.binding.clone(),
+        None,
         None,
     )?;
     if expected.bytes() != input.bytes() {
@@ -600,6 +645,7 @@ impl ProjectStore {
                 attempt,
                 binding,
                 Some(request),
+                capture_review(c, &plan, request.recipient_member_id, request.target.unit_id, request.kind, &request.post_ids)?,
             )?;
             Ok(PreparedTeamWork {
                 scope: Some(author.scope.clone()),
@@ -1574,13 +1620,14 @@ impl ProjectStore {
                 let validation: ValidationState =
                     serde_json::from_value(serde_json::Value::String(validation))
                         .map_err(|_| corrupt())?;
+                let result_id = result.map(|id|ExecutionId::parse(&id)).transpose()?;
                 let output = if execution == ExecutionState::Succeeded
                     && validation == ValidationState::Valid
                 {
                     let result = super::super::ledger::load_result(
                         c,
                         &input,
-                        ExecutionId::parse(&result.ok_or_else(corrupt)?)?,
+                        result_id.ok_or_else(corrupt)?,
                     )?;
                     Some(ai::team::validate_output(&input, &result)?)
                 } else {
@@ -1623,6 +1670,7 @@ impl ProjectStore {
                     request: record.request,
                     execution,
                     validation,
+                    result_id,
                     output,
                 });
             }

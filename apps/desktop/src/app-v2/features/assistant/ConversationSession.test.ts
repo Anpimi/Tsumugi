@@ -849,6 +849,58 @@ describe("ConversationSession", () => {
     h.ports.preparePlanning.mockResolvedValue(prepared);
     return { ...h, conversationId, messageId, prepared };
   }
+  it("prepares a finding repair as a durable local draft after B and clears old planning permission without sending", async () => {
+    const h = await readyToPlan(), selection: Extract<WorkspaceSelection, { kind: "ids" }> = {
+      kind: "ids", locale: "zh-CN", sourceSnapshotId: h.ports.identity(), unitIds: [h.ports.identity()] };
+    h.owner.edit(h.conversationId, "Existing B\n保留我的输入"); await h.owner.flush();
+    await h.owner.preparePlanning(h.conversationId); h.owner.setPlanningConsent(h.conversationId, true);
+    const captured = h.current(), before = captured.planning.sequence;
+    expect(captured.planning.prepared).not.toBeNull(); expect(captured.planning.consent).toBe(true);
+    expect(await h.owner.prepareFindingRepair(captured, selection, "Repair this exact saved finding.")).toBe(true);
+    expect(h.current().value.text).toBe("Existing B\n保留我的输入\n\nRepair this exact saved finding.");
+    expect(h.current().planning).toMatchObject({ open: true, sequence: before + 1, selection, prepared: null, consent: false, purpose: null, messageIds: [], config: { maxItems: 1 } });
+    expect(h.heads.get(h.conversationId)?.value?.text).toBe(h.current().value.text);
+    expect(h.ports.append).not.toHaveBeenCalled(); expect(h.ports.preparePlanning).toHaveBeenCalledOnce(); expect(h.ports.startPlanning).not.toHaveBeenCalled();
+    const reopened = h.make(); h.owner.retire(); await reopened.initialize(); await reopened.open(h.conversationId);
+    expect(reopened.getSnapshot().inputs.get(h.conversationId)?.value.text).toBe(h.heads.get(h.conversationId)?.value?.text);
+    expect(reopened.getSnapshot().inputs.get(h.conversationId)?.planning.consent).toBe(false); reopened.retire();
+  });
+  it("rejects a finding repair after changed input or a widened selection without touching newer B", async () => {
+    const h = await readyToPlan(), selection: Extract<WorkspaceSelection, { kind: "ids" }> = {
+      kind: "ids", locale: "zh-CN", sourceSnapshotId: h.ports.identity(), unitIds: [h.ports.identity()] };
+    const captured = h.current(); h.owner.edit(h.conversationId, "Newer B"); await h.owner.flush();
+    expect(await h.owner.prepareFindingRepair(captured, selection, "A stale repair")).toBe(false);
+    const newer = h.current();
+    expect(await h.owner.prepareFindingRepair(newer, { ...selection, unitIds: [...selection.unitIds, h.ports.identity()] }, "A wider repair")).toBe(false);
+    expect(await h.owner.prepareFindingRepair(newer, selection, "")).toBe(false);
+    expect(h.current()).toBe(newer); expect(h.current().value.text).toBe("Newer B");
+    expect(h.ports.append).not.toHaveBeenCalled(); expect(h.ports.preparePlanning).not.toHaveBeenCalled(); h.owner.retire();
+  });
+  it("keeps later C while the finding repair journal is awaiting its original acknowledgement and blocks duplicate preparation", async () => {
+    const h = await readyToPlan(), selection: Extract<WorkspaceSelection, { kind: "ids" }> = {
+      kind: "ids", locale: "zh-CN", sourceSnapshotId: h.ports.identity(), unitIds: [h.ports.identity()] };
+    h.owner.edit(h.conversationId, "B"); await h.owner.flush();
+    const hold = deferred<void>(); h.journal.acknowledge.mockImplementationOnce(async () => hold.promise);
+    const preparing = h.owner.prepareFindingRepair(h.current(), selection, "Repair A");
+    await vi.waitFor(() => expect(h.current().journalBusy).toBe(true));
+    expect(await h.owner.prepareFindingRepair(h.current(), selection, "Duplicate repair")).toBe(false);
+    h.owner.edit(h.conversationId, "Later C remains 👩🏽‍💻"); hold.resolve(); expect(await preparing).toBe(true); await h.owner.flush();
+    expect(h.current().value.text).toBe("Later C remains 👩🏽‍💻");
+    expect(h.heads.get(h.conversationId)?.value?.text).toBe("Later C remains 👩🏽‍💻"); expect(h.ports.append).not.toHaveBeenCalled(); h.owner.retire();
+  });
+  it("preserves unknown requests and journal failures when a finding repair cannot be prepared", async () => {
+    const h = await readyToPlan(), selection: Extract<WorkspaceSelection, { kind: "ids" }> = {
+      kind: "ids", locale: "zh-CN", sourceSnapshotId: h.ports.identity(), unitIds: [h.ports.identity()] };
+    h.owner.edit(h.conversationId, "Submitted A"); await h.owner.flush(); h.ports.append.mockRejectedValueOnce(new Error("No receipt"));
+    await h.owner.append(h.conversationId); const unknown = h.current(), pending = unknown.value.pending;
+    expect(pending).not.toBeNull(); expect(await h.owner.prepareFindingRepair(unknown, selection, "Repair A")).toBe(false);
+    expect(h.current()).toBe(unknown); expect(h.current().value.pending).toBe(pending); h.owner.retire();
+    const failed = await readyToPlan(); failed.ports.write.mockRejectedValueOnce(new Error("Journal unavailable"));
+    failed.owner.edit(failed.conversationId, "Unacknowledged B"); expect(await failed.owner.flush()).toBe(false);
+    const before = failed.current(); expect(before.failure?.kind).toBe("journal");
+    expect(await failed.owner.prepareFindingRepair(before, selection, "Repair B")).toBe(false); expect(failed.current()).toBe(before);
+    expect(failed.ports.append).not.toHaveBeenCalled(); failed.owner.retire();
+  });
   async function readyWithUnits() {
     const h = await readyToPlan(), id = h.ports.identity;
     const scope: Extract<WorkspaceSelection, { kind: "scope" }> = { kind: "scope", query: { text: "fixed query", selection: "all", status: "all" }, selection: {

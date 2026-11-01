@@ -367,3 +367,35 @@ it("retains the submitted confirmation when its caller changes input during the 
   await expect(pending).resolves.toEqual(proposalPlanReceipt);
   expect(invoke.mock.calls[0][1]).toEqual({ request: proposalPlanApprove });
 });
+
+function referencePage() {
+  const unit = { unitId: fixtureIdentity(18500), locale: "zh-CN", sourceSnapshotId: fixtureIdentity(18501), sourceRevisionId: fixtureIdentity(18502) };
+  return { projectId: context.projectId, conversationId: create.conversationId, attemptId: planningConsent.attemptId,
+    inputDigest: "c".repeat(64), currentSnapshotId: unit.sourceSnapshotId, after: 0, total: 2, nextAfter: 1,
+    rows: [{ kind: "term" as const, unit, original: { termId: "term-one", revisionId: fixtureIdentity(18503), source: "Harbor", target: "Port",
+      protected: false, originKind: "manual" as const, removed: false }, current: null }] };
+}
+
+it("reads an absent reference set or an exact bounded page without writes", async () => {
+  const request = { ...context, conversationId: create.conversationId, attemptId: planningConsent.attemptId, after: 0, limit: 1 }, page = referencePage();
+  invoke.mockResolvedValueOnce(null).mockResolvedValueOnce(page);
+  await expect(conversationCommands.references(request)).resolves.toBeNull();
+  await expect(conversationCommands.references(request)).resolves.toEqual(page);
+  expect(invoke.mock.calls).toEqual([["read_conversation_references", { request }], ["read_conversation_references", { request }]]);
+});
+
+it("rejects foreign identities, inconsistent pagination and duplicate original references", async () => {
+  const request = { ...context, conversationId: create.conversationId, attemptId: planningConsent.attemptId, after: 0, limit: 1 }, page = referencePage();
+  const invalid = [
+    { ...page, projectId: fixtureIdentity(18900) }, { ...page, conversationId: fixtureIdentity(18900) },
+    { ...page, attemptId: fixtureIdentity(18900) }, { ...page, after: 1 }, { ...page, nextAfter: null },
+    { ...page, total: 0 }, { ...page, rows: [] },
+  ];
+  for (const value of invalid) {
+    invoke.mockResolvedValueOnce(value);
+    await expect(conversationCommands.references(request)).rejects.toThrow("Invalid IPC response");
+  }
+  invoke.mockResolvedValueOnce({ ...page, nextAfter: null, rows: [page.rows[0], structuredClone(page.rows[0])] });
+  await expect(conversationCommands.references({ ...request, limit: 2 })).rejects.toThrow("Invalid IPC response");
+  expect(invoke.mock.calls.every(([command]) => command === "read_conversation_references")).toBe(true);
+});

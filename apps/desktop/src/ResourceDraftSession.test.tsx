@@ -6,7 +6,7 @@ import wire from "../test/fixtures/resourceDraftCommands.contract.json";
 import resources from "../test/fixtures/resourceCommands.contract.json";
 import { i18n } from "./i18n";
 import { executionCommands } from "./executionCommands";
-import { resourceCommands, type SaveTerm, type TermRevision, type ResourceDecision } from "./resourceCommands";
+import { resourceCommands, type SaveTerm, type TermRevision, type ResourceDecision, type ResourceDecisionResult } from "./resourceCommands";
 import { canonicalResourceDraft, resourceDraftCommands } from "./resourceDraftCommands";
 import { validateRequestResourceWrite } from "./generated/draft.validators";
 import { initialResourceDraftState, useResourceDraftSession } from "./ResourceDraftSession";
@@ -110,9 +110,9 @@ it("keeps pending and B after a journal resolve failure and retries its exact lo
 
 it("reopens an edited adoption with newer input and reconciles only the exact original receipt", async () => {
   installResourceDraftFixture();
-  const request: ResourceDecision = { projectId: project.metadata.projectId, actionId: resources.requests.term.term.actionId,
+  const request = { projectId: project.metadata.projectId, actionId: resources.requests.term.term.actionId,
     captureId: resources.responses.preview.capture.captureId, entryId: resources.responses.preview.rows[0].entry.id,
-    expectedRevisionId: null, decision: "adopt", editedTarget: "Submitted A" };
+    expectedRevisionId: null, decision: "adopt", editedTarget: "Submitted A" } satisfies ResourceDecision;
   const state = initialResourceDraftState("zh-CN");
   state.previewCaptureId = request.captureId;
   state.proposalEditDraft = { captureId: request.captureId, entryId: request.entryId, locale: "zh-CN", expectedRevisionId: null,
@@ -122,7 +122,7 @@ it("reopens an edited adoption with newer input and reconciles only the exact or
   await resourceDraftCommands.write({ sessionToken: project.sessionToken, write: { key: { projectId: project.metadata.projectId },
     expectedRevision: "0", writerId: resources.requests.term.term.actionId, value: resourceDraftValue(state, "100") } });
   const receipt = { request, actionId: request.actionId, decision: request.decision, revision: { ...resources.responses.term,
-    target: request.editedTarget ?? "", captureId: request.captureId, previousRevisionId: null } };
+    originKind: "external", externalEntryId: request.entryId, target: request.editedTarget, captureId: request.captureId, previousRevisionId: null } } satisfies ResourceDecisionResult;
   const observed = vi.spyOn(resourceCommands, "observeDecisionAction"), write = vi.spyOn(resourceCommands, "decide");
   const read = vi.spyOn(resourceCommands, "decisionAction").mockResolvedValue({ request, receipt });
   await open({ ...project, sessionToken: "reopened-edited-session", metadata: { ...project.metadata, targetLocales: [] } });

@@ -6,6 +6,7 @@ use crate::{
 };
 use std::collections::BTreeSet;
 pub(in crate::persistence) mod history;
+mod references;
 use std::{
     sync::{Arc, atomic::AtomicBool},
     time::{Duration, Instant},

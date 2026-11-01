@@ -49,7 +49,7 @@ impl AiSemanticReviewRule {
     }
 }
 
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct AiSemanticReviewItem {
     pub source: AiItem,
@@ -380,7 +380,7 @@ pub(crate) fn request_body(
     }
     Ok(body)
 }
-fn validate_model(
+pub(crate) fn validate_model(
     model: &AiSemanticReviewModelOutput,
     item: &AiSemanticReviewItem,
     rules: &[AiSemanticReviewRule],
