@@ -14,8 +14,6 @@
 .activityItem[data-active]::before { content: ""; position: absolute; inset-block: 0; inset-inline-start: 0; width: 2px; background: var(--color-accent-solid); }
 .activityCount { position: absolute; inset-inline-end: var(--space-1); inset-block-end: 0; font-size: var(--text-xs); line-height: var(--line-xs); font-variant-numeric: tabular-nums; background: var(--color-bg-canvas); border-radius: var(--radius-sm); pointer-events: none; }
 .activityBottom { margin-block-start: auto; display: flex; flex-direction: column; gap: var(--space-4); }
-.workspaceSplit { flex: 1; min-width: 0; }
-.mainPanel { display: flex; }
 .main { display: flex; flex-direction: column; min-width: 0; min-height: 0; flex: 1; container-type: inline-size; }
 .main:focus-visible { outline: var(--focus-width) solid var(--color-accent-solid); outline-offset: calc(-1 * var(--focus-width)); }
 .viewTabs { display: flex; align-items: center; min-height: var(--size-tab-bar); flex-shrink: 0; gap: var(--space-1); padding-inline: var(--space-4); overflow-x: auto; border-block-end: 1px solid var(--color-border-subtle); }
@@ -23,7 +21,9 @@
 .viewTabs > :not([data-active]) { color: var(--color-text-secondary); }
 .viewTabs > * { white-space: nowrap; flex-shrink: 0; }
 .frame[data-focus-mode] .activity, .frame[data-focus-mode] .viewTabs, .frame[data-focus-mode] .toolbar { display: none; }
-.dock { display: flex; width: 100%; height: 100%; }
+.dockHeader { display: flex; align-items: center; justify-content: space-between; gap: var(--space-3); flex-shrink: 0; }
+.dockHeader > [role="tablist"] { min-width: 0; }
+.dockHeader > button { margin-inline-end: var(--space-3); flex-shrink: 0; }
 .dockTabs { display: flex; flex-direction: column; min-height: 0; width: 100%; block-size: 100%; flex: 1; }
 .dockContent { min-height: 0; overflow: auto; flex: 1; }
 .dockContent[data-state="inactive"] { display: none; }
@@ -106,7 +106,7 @@
 .statusbar > span { display: flex; align-items: center; gap: var(--space-3); white-space: nowrap; }
 .statusbar > span > svg { width: var(--space-4); height: var(--space-4); }
 .statusbar .statusEnd { margin-inline-start: auto; gap: var(--space-2) var(--space-6); flex-wrap: wrap; }
-@media (max-width: 1100px) { .dock { display: none; } .dockToggle { display: inline-flex; } .previewLabel { display: none; } }
+@media (max-width: 1100px) { .dockToggle { display: inline-flex; } .previewLabel { display: none; } .frame[data-conversation-mode] .dockToggle { display: none; } }
 @media (max-width: 760px) { .titlebar .breadcrumb, .titlebar .commandSearch, .count, .statusbar > .statusEnd { display: none; } .dockToggle { margin-inline-start: auto; } .document { padding: var(--space-6); } }
 @container (max-width: 760px) {
   .tableHeader { display: none; }

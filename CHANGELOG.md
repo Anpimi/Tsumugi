@@ -12,6 +12,14 @@ Current workspace version metadata: **`0.2.0-alpha.1`**. Because the published `
 
 ### Added
 
+- Conversation mode (⌘⇧L on Mac or Ctrl+Shift+L on Windows) places the assistant in the main area, with a readable width up to 760 px and the current view beside it. Returning preserves unfinished input and the previous position. Narrow windows keep a direct return action, and moving between the drawer and inline dock retains the same conversation.
+
+- The desktop assistant shows removable entry, language and filter context, shares its five planning commands with the command palette, and can open guidance for a recorded team member. Enter saves a message and Shift+Enter adds a line; composition input and execution consent remain separate. Completed replies support six-line folding, full-text copying and checked links to their original entries. Team discussion and recorded run states use compact summaries.
+
+- Saved run results offer a fixed candidate-batch comparison with source, current translation and the original candidate. Both viewing and bulk adoption open that preview first; a separate confirmation adds only eligible candidates to drafts, preserving existing input, human selections and protected entries.
+
+- Entries expose an accessible key-copy action with success and failure feedback. Shared decisions can open an exact term proposal in its existing review panel and route an execution record to its matching recovery owner; unmatched records remain available for reading.
+
 - Entry details in the desktop workspace can edit context notes, capture saved context and adopted terms as fixed input, and inspect original source facts. Human fact corrections, rejection of inferred facts and restoration retain their history. Draft actions are distinguished from saved decisions, and recovery names the original entry without an internal ID. A saved manual translation correction can explicitly become a unit-scoped term candidate for review. Unfinished input and original uncertain requests use the existing local recovery workflow; these actions do not call a model.
 
 - Appearance settings in the desktop workspace can set source and translation text to 14–20 px while keeping other controls at their existing size. The choice stays on the current device, and changing it preserves unfinished input.
@@ -139,6 +147,8 @@ Current workspace version metadata: **`0.2.0-alpha.1`**. Because the published `
 - **Non-blocking project operations and shared session state**: Desktop project commands, full-text search, QA checks, and exports run on a dedicated project thread without blocking window events. Task, AI, Arena, and import progress share a coalesced session cache that reconciles missed notifications and pauses background polling in hidden views.
 
 ### Fixed
+
+- Failed automatic processing in a saved run can explicitly retry its original checks and authorized effects after verifying the original generation, item, result and current permission. It does not generate a new translation. Uncertain protection changes can independently check the complete original request and receipt, even after a newer change, without resubmitting or replacing newer input.
 
 - Loading review controls in the desktop workspace no longer interrupts an in-progress action to open candidate details. Review drafts and unfinished actions still protect project exit.
 

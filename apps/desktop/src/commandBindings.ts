@@ -11,6 +11,7 @@ export const workspaceCommandCatalog = [
   { id: "workspace.close-view", nameKey: "workbenchV2.close", binding: "Mod+W" },
   { id: "workspace.pin-view", nameKey: "workbenchV2.pinView", binding: null },
   { id: "workspace.agent", nameKey: "workbenchV2.agent", binding: "Mod+L" },
+  { id: "workspace.conversation-mode", nameKey: "workbenchV2.conversationMode", binding: "Mod+Shift+L" },
   { id: "conversation.new-thread", nameKey: "conversation.newThread", binding: "Mod+N" },
   ...assistantComposerCommands,
   { id: "workspace.details", nameKey: "workbenchV2.detail", binding: "Mod+I" },
@@ -86,7 +87,7 @@ export class CommandBindings {
   resolve(id: WorkbenchCommandId, fallback: string | null): string | null {
     if (Object.hasOwn(this.overrides, id)) return this.overrides[id];
     // The new default must not invalidate an existing custom shortcut.
-    if (id === "conversation.new-thread" && fallback !== null && Object.values(this.overrides).includes(fallback)) return null;
+    if ((id === "conversation.new-thread" || id === "workspace.conversation-mode") && fallback !== null && Object.values(this.overrides).includes(fallback)) return null;
     return fallback;
   }
   set(id: WorkbenchCommandId, input: string): BindingResult {

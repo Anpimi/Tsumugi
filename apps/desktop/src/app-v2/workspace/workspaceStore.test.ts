@@ -5,6 +5,19 @@ const projectId = "project-a";
 const selected = (id: string, locale = "zh-CN") => ({ kind: "ids" as const, locale, sourceSnapshotId: "snapshot", unitIds: [id] });
 
 describe("workspace view state", () => {
+  it("retains conversation layout per view without changing its query, selection or return position", () => {
+    const store = createWorkspaceStore({ initialLocale: "zh-CN", initialViews: [{ id: "one", kind: "entries", locale: "zh-CN", query: "harvest", searchInput: "harvest festival",
+      focus: "unit-a", selection: selected("unit-a"), scroll: { top: 640, left: 12 }, afterOrdinal: 80, cursor: "original-cursor", dockSize: 380 }] });
+    const original = store.getState().views.one;
+    store.getState().patch("one", { conversationMode: true, conversationViewSize: 360 });
+    store.getState().open({ id: "two", kind: "entries", locale: "ja" });
+    expect(store.getState().views.two).toMatchObject({ conversationMode: false, conversationViewSize: null });
+    store.getState().activate("one");
+    expect(store.getState().views.one).toEqual({ ...original, conversationMode: true, conversationViewSize: 360 });
+    store.getState().patch("one", { conversationMode: false });
+    expect(store.getState().views.one).toEqual({ ...original, conversationViewSize: 360 });
+    expect(workspaceViewHref(store.getState().views.one, projectId)).not.toMatch(/conversationMode|conversationViewSize/);
+  });
   it("retains run expansion, return identity and scroll as presentation without sharing caller objects", () => {
     const expanded = ["plan-a"], origin = { viewId: "runs", conversationId: "conversation-a", planId: "plan-a" };
     const store = createWorkspaceStore({ initialLocale: "zh-CN", initialViews: [{ id: "runs", kind: "runs", locale: "zh-CN", runExpanded: expanded }] });

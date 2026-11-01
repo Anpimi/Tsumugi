@@ -46,6 +46,18 @@ describe("application command bindings", () => {
     expect(new CommandBindings(workspaceCommandCatalog).resolve("conversation.new-thread", "Mod+N")).toBe("Mod+Alt+N");
   });
 
+  it("keeps a saved custom shortcut when the new conversation-layout default would otherwise conflict", () => {
+    const previous = new CommandBindings(workspaceCommandCatalog.filter(command => command.id !== "workspace.conversation-mode"));
+    expect(previous.set("workspace.open-project", "Mod+Shift+L")).toEqual({ kind: "saved" });
+    const stored = localStorage.getItem(COMMAND_BINDINGS_STORAGE_KEY), reopened = new CommandBindings(workspaceCommandCatalog);
+    expect(reopened.getSnapshot().problem).toBeNull();
+    expect(reopened.resolve("workspace.open-project", "Mod+O")).toBe("Mod+Shift+L");
+    expect(reopened.resolve("workspace.conversation-mode", "Mod+Shift+L")).toBeNull();
+    expect(localStorage.getItem(COMMAND_BINDINGS_STORAGE_KEY)).toBe(stored);
+    expect(reopened.set("workspace.conversation-mode", "Mod+Alt+L")).toEqual({ kind: "saved" });
+    expect(new CommandBindings(workspaceCommandCatalog).resolve("workspace.conversation-mode", "Mod+Shift+L")).toBe("Mod+Alt+L");
+  });
+
   it.each(["Mod+A", "mod+c", "Mod+X", "Mod+V", "Shift+Mod+V", "Mod+Z", "Mod+Shift+Z", "Mod+Y", "Mod+Q", "Alt+F4"])("keeps the editing or system shortcut %s reserved", input => {
     const bindings = new CommandBindings(workspaceCommandCatalog);
     expect(bindings.set("workspace.open-project", input)).toEqual({ kind: "reserved" });
