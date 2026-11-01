@@ -213,3 +213,145 @@ fn registered_delivery_record_reads_exact_redacted_history_without_destination_a
     assert_eq!(call(&view, "read_delivery_action", reopened_lookup).unwrap_err()["code"], "session-invalid");
     app.state::<AppState>().sessions.with(|sessions| assert!(sessions.active.as_ref().unwrap().execution.is_none()));
 }
+
+#[test]
+fn registered_export_rechecks_damaged_saved_artifacts_before_any_delivery_effect() {
+    for missing in [false, true] {
+        let temp = tempfile::tempdir().unwrap();
+        let project_path = temp.path().join("project");
+        let app = crate::commands::register_commands(tauri::test::mock_builder())
+            .build(tauri::test::mock_context(tauri::test::noop_assets())).unwrap();
+        let view = tauri::WebviewWindowBuilder::new(&app, "main", tauri::WebviewUrl::App("index.html".into())).build().unwrap();
+        let project = call(&view, "create_project", json!({"destination":project_path,
+            "displayName":"Artifact export boundary","sourceLocale":"en","targetLocales":["zh-CN"]})).unwrap();
+        let release = app.state::<AppState>().sessions.with(|sessions| {
+            seed(&mut sessions.active.as_mut().unwrap().store).1
+        });
+        let destination = temp.path().join("destination");
+        fs::create_dir(&destination).unwrap();
+        let sentinel = destination.join("untouched.txt");
+        fs::write(&sentinel, b"Keep the original destination").unwrap();
+        let authority = Arc::new(source::capture::Selection::authorize(destination.clone()).unwrap());
+        let selection = ExecutionId::new();
+        app.state::<AppState>().sessions.with(move |sessions| {
+            sessions.active.as_mut().unwrap().execution_parts().unwrap().0.release.selection = Some((selection, authority));
+        });
+        let request = json!({"sessionToken":project["sessionToken"],"projectId":project["metadata"]["projectId"],
+            "releaseId":release,"selectionId":selection});
+        let preview = call(&view, "preview_delivery", request.clone()).unwrap();
+        assert_eq!(preview["files"].as_array().unwrap().len(), 1);
+        assert_eq!(preview["files"][0]["state"], "absent");
+        let observer = rusqlite::Connection::open(project_path.join("project.sqlite3")).unwrap();
+        let changed = if missing {
+            observer.execute("DELETE FROM release_artifacts WHERE release_id=?1", [release.to_string()]).unwrap()
+        } else {
+            observer.execute("UPDATE release_artifacts SET bytes=?2 WHERE release_id=?1",
+                rusqlite::params![release.to_string(), b"Damaged after preview".as_slice()]).unwrap()
+        };
+        assert_eq!(changed, 1, "the saved artifact must actually be damaged");
+        let version = observer.pragma_query_value::<i64, _>(None, "data_version", |row| row.get(0)).unwrap();
+        let action = ExecutionId::new();
+        let mut export = request.clone();
+        export["actionId"] = json!(action);
+        export["previewId"] = preview["previewId"].clone();
+        export["overwriteConflicts"] = json!(false);
+        let error = call(&view, "export_release", export).unwrap_err();
+        assert_eq!(error["code"], "corrupt-project");
+        assert_eq!(error["stage"], "execution-adopt");
+        assert_eq!(error["reason"], "release-artifacts");
+        assert_eq!(error["recoveryRequired"], false);
+        assert_eq!(call(&view, "read_delivery_action", json!({"sessionToken":project["sessionToken"],
+            "projectId":project["metadata"]["projectId"],"actionId":action,"selectionId":selection})).unwrap(), Value::Null);
+        assert_eq!(observer.query_row("SELECT COUNT(*) FROM release_deliveries", [], |row| row.get::<_, i64>(0)).unwrap(), 0);
+        assert_eq!(observer.pragma_query_value::<i64, _>(None, "data_version", |row| row.get(0)).unwrap(), version,
+            "rejection cannot create a delivery, repair the artifact or start another build");
+        assert_eq!(fs::read(&sentinel).unwrap(), b"Keep the original destination");
+        assert_eq!(fs::read_dir(&destination).unwrap().count(), 1);
+        assert!(!destination.join("i18n").exists());
+        app.state::<AppState>().sessions.with(|sessions| {
+            let active = sessions.active.as_ref().unwrap();
+            assert!(!active.store.is_reconciling());
+            assert!(active.execution.as_ref().unwrap().release.delivery.is_none());
+        });
+    }
+}
+
+#[test]
+fn reconcile_dropped_caller_recovers_through_registered_reads_without_rewriting_files() {
+    use std::{future::Future, task::{Context, Poll, Waker}};
+    let temp = tempfile::tempdir().unwrap();
+    let project_path = temp.path().join("project");
+    let app = crate::commands::register_commands(tauri::test::mock_builder())
+        .build(tauri::test::mock_context(tauri::test::noop_assets())).unwrap();
+    let view = tauri::WebviewWindowBuilder::new(&app, "main", tauri::WebviewUrl::App("index.html".into())).build().unwrap();
+    let project = call(&view, "create_project", json!({"destination":project_path,
+        "displayName":"Reconcile continuation","sourceLocale":"en","targetLocales":["zh-CN"]})).unwrap();
+    let destination = temp.path().join("destination");
+    fs::create_dir(&destination).unwrap();
+    let authority = Arc::new(source::capture::Selection::authorize(destination.clone()).unwrap());
+    let root = authority.destination_root().unwrap().to_string_lossy().into_owned();
+    let selection = ExecutionId::new();
+    let action = ExecutionId::new();
+    let (pending, artifact, bytes) = app.state::<AppState>().sessions.with(move |sessions| {
+        let active = sessions.active.as_mut().unwrap();
+        let (_, release, _) = seed(&mut active.store);
+        let (artifact, bytes) = active.store.release_artifact(release, "zh-CN").unwrap();
+        let pending = active.store.begin_delivery(action, release, &root, false).unwrap();
+        active.execution_parts().unwrap().0.release.selection = Some((selection, authority));
+        (pending, artifact, bytes)
+    });
+    // Model an external write whose completion was not recorded in the pending action.
+    let target = destination.join(&artifact.file_name);
+    fs::create_dir_all(target.parent().unwrap()).unwrap();
+    fs::write(&target, &bytes).unwrap();
+    let modified = fs::metadata(&target).unwrap().modified().unwrap();
+    let request = json!({"sessionToken":project["sessionToken"],"projectId":project["metadata"]["projectId"],
+        "actionId":action,"selectionId":selection});
+    let observer = rusqlite::Connection::open(project_path.join("project.sqlite3")).unwrap();
+    let counts = || observer.query_row("SELECT (SELECT COUNT(*) FROM release_records),
+        (SELECT COUNT(*) FROM release_deliveries),(SELECT COUNT(*) FROM execution_attempts)", [],
+        |row| Ok((row.get::<_, i64>(0)?, row.get::<_, i64>(1)?, row.get::<_, i64>(2)?))).unwrap();
+    let original_counts = counts();
+    assert_eq!(original_counts.1, 1);
+    // Pause the owner before polling the real Host future directly. Its queued
+    // submission is accepted, but capture and file observation cannot start yet.
+    // Only the subsequent reads and terminal reconcile use registered IPC.
+    let held = app.state::<AppState>().sessions.pause();
+    let mut waiting = Box::pin(reconcile_delivery(app.state(), serde_json::from_value(request.clone()).unwrap()));
+    assert!(matches!(waiting.as_mut().poll(&mut Context::from_waker(Waker::noop())), Poll::Pending));
+    drop(waiting);
+    drop(held);
+    let deadline = Instant::now() + Duration::from_secs(10);
+    let completed = loop {
+        let value = call(&view, "read_delivery_action", request.clone()).unwrap();
+        if value["state"] == "succeeded" { break value; }
+        assert_eq!(value["state"], "pending");
+        assert!(Instant::now() < deadline, "accepted reconciliation lost its continuation: {value}");
+        std::thread::sleep(Duration::from_millis(5));
+    };
+    let mut expected = pending;
+    expected.state = DeliveryState::Succeeded;
+    for file in &mut expected.files {
+        file.state = DeliveryFileState::Succeeded;
+        file.actual_sha256 = Some(file.expected_sha256.clone());
+    }
+    assert_eq!(completed, serde_json::to_value(&expected).unwrap());
+    assert_eq!(fs::read(&target).unwrap(), bytes);
+    assert_eq!(fs::metadata(&target).unwrap().modified().unwrap(), modified);
+    assert_eq!(counts(), original_counts, "recovery cannot create another delivery, release or build");
+    let version = observer.pragma_query_value::<i64, _>(None, "data_version", |row| row.get(0)).unwrap();
+    assert_eq!(call(&view, "reconcile_delivery", request.clone()).unwrap(), completed);
+    assert_eq!(call(&view, "read_delivery_action", request).unwrap(), completed);
+    assert_eq!(observer.pragma_query_value::<i64, _>(None, "data_version", |row| row.get(0)).unwrap(), version,
+        "a terminal reconciliation returns its original receipt without another mutation");
+    assert_eq!(fs::read(&target).unwrap(), bytes);
+    assert_eq!(fs::metadata(&target).unwrap().modified().unwrap(), modified);
+    let history = call(&view, "list_deliveries", json!({"sessionToken":project["sessionToken"],
+        "projectId":project["metadata"]["projectId"],"releaseId":expected.release_id})).unwrap();
+    assert_eq!(history, json!([completed]));
+    app.state::<AppState>().sessions.with(|sessions| {
+        let active = sessions.active.as_ref().unwrap();
+        assert!(!active.store.is_reconciling());
+        assert!(active.execution.as_ref().unwrap().release.delivery.is_none());
+    });
+}

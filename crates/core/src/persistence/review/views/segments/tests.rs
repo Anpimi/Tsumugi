@@ -487,6 +487,51 @@ fn segment_queue_windows_reject_untrusted_membership_and_invalid_requests() {
 }
 
 #[test]
+fn segment_scope_page_capture_and_queue_reject_a_removed_target_locale() {
+    let (directory, mut store, project, units) = fixture();
+    let query = query("", SegmentSelectionFilter::All);
+    let page = store
+        .read_segment_page(project, "zh-CN", &query, None, None, 1)
+        .unwrap();
+    let cursor = page.next_cursor.expect("fixture spans two pages");
+    let capture = store
+        .capture_segment_scope(project, "zh-CN", page.scope_id,
+            &page.query_fingerprint, &page.read_version, &[])
+        .unwrap();
+    assert_eq!(capture.capture.units.len(), units.len());
+    assert_eq!(store.read_segment_queue_window(project, "zh-CN", page.scope_id, None, 100)
+        .unwrap().rows.len(), units.len());
+
+    let revision = store.metadata().unwrap().metadata_revision();
+    store.set_target_locales(revision, &["fr-FR".into()]).unwrap();
+    let observer = Connection::open(directory.path().join("project/project.sqlite3")).unwrap();
+    let data_version = || observer.pragma_query_value::<i64, _>(None, "data_version", |row| row.get(0)).unwrap();
+    let before = data_version();
+    for error in [
+        store.read_segment_page(project, "zh-CN", &query, Some(page.scope_id), Some(cursor), 1).unwrap_err(),
+        store.capture_segment_scope(project, "zh-CN", page.scope_id,
+            &page.query_fingerprint, &page.read_version, &[]).unwrap_err(),
+        store.read_segment_queue_window(project, "zh-CN", page.scope_id, None, 100).unwrap_err(),
+    ] {
+        assert_eq!(error.code, ErrorCode::DependencyConflict);
+        assert_eq!(error.stage, "review-locale");
+    }
+    // A fixed queue can read new facts only while its original locale is valid.
+    // The remaining locale requires a new scope, not a relabelled old capture.
+    assert_eq!(store.read_segment_queue_window(project, "fr-FR", page.scope_id, None, 100)
+        .unwrap_err().code, ErrorCode::Unauthorized);
+    let fresh = store.read_segment_page(project, "fr-FR", &query, None, None, 1).unwrap();
+    assert_ne!(fresh.scope_id, page.scope_id);
+    assert_eq!(fresh.total, units.len() as u32);
+    let capture = store.capture_segment_scope(project, "fr-FR", fresh.scope_id,
+        &fresh.query_fingerprint, &fresh.read_version, &[]).unwrap();
+    assert_eq!(capture.capture.units.iter().map(|unit| unit.unit_id).collect::<Vec<_>>(), units);
+    assert_eq!(store.read_segment_queue_window(project, "fr-FR", fresh.scope_id, None, 100)
+        .unwrap().rows.len(), units.len());
+    assert_eq!(data_version(), before, "scope reads cannot persist new business facts");
+}
+
+#[test]
 fn segment_queue_windows_define_empty_results_without_inventing_an_anchor() {
     let (_directory, store, project, _) = fixture();
     let query = query("no matching source", SegmentSelectionFilter::All);
