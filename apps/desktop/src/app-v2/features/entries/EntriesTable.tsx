@@ -113,14 +113,32 @@ const EntryContent = memo(function EntryContent({ summary, active, focused, proj
   comparison: SourceVersionComparison | undefined; renderCandidate: EntriesTableProps["renderCandidate"]; onDetails: EntriesTableProps["onDetails"];
   diagnosticFocus?: EntryDiagnosticFocus | null; diagnosticCurrent?: () => boolean; onDiagnosticFocus?: (id: string, applied: boolean) => void;
 }) {
-  const { t } = useTranslation(undefined, { keyPrefix: "workbenchV2" });
+  const { t, i18n } = useTranslation(undefined, { keyPrefix: "workbenchV2" });
   const row = summary.content;
+  const [copyResult, setCopyResult] = useState<{ key: string; result: "copied" | "failed" } | null>(null);
+  const copySequence = useRef(0);
+  useEffect(() => () => { copySequence.current++; }, [row.nativeKey]);
+  async function copyKey() {
+    if (disabled || !gate.canDispatch({ viewId, source: "button" })) return;
+    const key = row.nativeKey, ticket = ++copySequence.current;
+    setCopyResult(null);
+    try {
+      if (!navigator.clipboard?.writeText) throw new Error("Clipboard unavailable");
+      await navigator.clipboard.writeText(key);
+      if (copySequence.current === ticket) setCopyResult({ key, result: "copied" });
+    } catch {
+      if (copySequence.current === ticket) setCopyResult({ key, result: "failed" });
+    }
+  }
   return <>
     <div className={styles.source} lang={sourceLocale}><EntrySource summary={summary} active={active} drafts={drafts} projectId={projectId} locale={locale} comparison={comparison}
       diagnosticFocus={active && focused ? diagnosticFocus : null} diagnosticCurrent={diagnosticCurrent} onDiagnosticFocus={onDiagnosticFocus} gate={gate} viewId={viewId} disabled={disabled}/>
-      <div className={styles.sourceActions}>{focused ? <span className={styles.key}>{row.nativeKey}</span> : null}
+      <div className={styles.sourceActions}>{focused ? <Button size="xs" className={styles.key} disabled={disabled}
+        aria-label={t("copyEntryKey", { key: row.nativeKey })} title={t("copyEntryKey", { key: row.nativeKey })} lang={i18n.resolvedLanguage}
+        onClick={() => { void copyKey(); }}><span lang={sourceLocale}>{row.nativeKey}</span></Button> : null}
         <IconButton size="xs" label={t("showEntryDetails", { key: row.nativeKey })} onClick={() => onDetails(row.unitId)}><MoreHorizontal /></IconButton>
       </div>
+      {focused && copyResult?.key === row.nativeKey ? <p className={styles.copyResult} role="status" lang={i18n.resolvedLanguage}>{t(copyResult.result === "copied" ? "entryKeyCopied" : "entryKeyCopyFailed")}</p> : null}
     </div>
     <div className={styles.target} lang={locale}>{active && drafts
       ? <SegmentEditor ref={editorRef} drafts={drafts} draftKey={{ projectId, unitId: row.unitId, locale }} viewId={viewId} gate={gate} disabled={disabled} nativeKey={row.nativeKey} dispatch={dispatch}
