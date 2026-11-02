@@ -120,6 +120,70 @@ fn assert_saved_same(before: &Value, after: &Value, unit: ExecutionId) {
     }
 }
 
+const COMPONENT_SETUP_TIMEOUT: Duration = Duration::from_secs(60);
+
+fn component_stage(observer: &std::path::Path) -> Option<String> {
+    match std::fs::read_to_string(observer) {
+        Ok(stage) => Some(stage),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => None,
+        Err(error) => panic!("could not read owned component observer: {error}"),
+    }
+}
+
+fn await_component_call(observer: &std::path::Path, phase: usize) {
+    let deadline = Instant::now() + COMPONENT_SETUP_TIMEOUT;
+    loop {
+        let stage = component_stage(observer);
+        if stage.as_deref() == Some("calling") {
+            return;
+        }
+        assert!(Instant::now() < deadline,
+            "component phase {phase} never reached its actual service call; observed {stage:?}");
+        std::thread::sleep(Duration::from_millis(5));
+    }
+}
+
+fn start_component_at_dispatch_gate(
+    fixture: &Fixture,
+    component: Value,
+    grant: &Value,
+    units: &[ExecutionId],
+    phase: usize,
+    arm: &mpsc::Sender<usize>,
+    observed: &mpsc::Receiver<usize>,
+) -> ComponentAction {
+    wait_idle(fixture);
+    let observer = fixture.directory.path().join("component-observer.txt");
+    let previous = component_stage(&observer);
+    assert_ne!(previous.as_deref(), Some("calling"),
+        "previous component phase has not returned before phase {phase}");
+    match std::fs::remove_file(&observer) {
+        Ok(()) => {},
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {},
+        Err(error) => panic!("could not clear owned component observer for phase {phase}: {error}"),
+    }
+    // Arming does not start the HTTP clock: the server must observe the new
+    // installed handler's calling marker and acknowledge that exact phase.
+    arm.send(phase).unwrap();
+    let action = start_component_for_units(fixture, component, grant, units);
+    let deadline = Instant::now() + COMPONENT_SETUP_TIMEOUT;
+    loop {
+        match observed.try_recv() {
+            Ok(actual) => { assert_eq!(actual, phase); return action; },
+            Err(mpsc::TryRecvError::Disconnected) => panic!(
+                "provider stopped before observing component phase {phase}; observed {:?}", component_stage(&observer)),
+            Err(mpsc::TryRecvError::Empty) => {},
+        }
+        fixture.app.state::<AppState>().sessions.with(|sessions| {
+            let (host, store) = sessions.active.as_mut().unwrap().execution_parts().unwrap();
+            host.tick(store).unwrap();
+        });
+        assert!(Instant::now() < deadline,
+            "provider did not observe component phase {phase}; observed {:?}", component_stage(&observer));
+        std::thread::sleep(Duration::from_millis(5));
+    }
+}
+
 #[test]
 fn generation_component_two_items_preserves_partial_unknown_and_original_budget_on_reopen() {
     for partial in [false, true] {
@@ -128,13 +192,20 @@ fn generation_component_two_items_preserves_partial_unknown_and_original_budget_
         assert_eq!(units.len(), 2);
         let uncertain = units[1];
         let successful = units[0];
+        // Runtime capture and installation are setup, outside the HTTP accept
+        // window. They read the full independently approved runtime tree.
+        let (component, _installed, _approval) = install_generation(&fixture);
+        let (setup, waiting) = mpsc::channel();
+        let (arm, phases) = mpsc::channel();
+        let (called, observed) = mpsc::channel();
+        let observer = fixture.directory.path().join("component-observer.txt");
         let requests: Arc<std::sync::Mutex<Vec<Value>>> = Arc::default();
         let recorded = requests.clone();
-        let (mut config, provider) = local_provider_responses_at_request(
+        let (mut config, provider) = local_provider_outputs_after_dispatch_setup(
             if partial { 5 } else { 4 },
             move |ordinal, item| {
                 recorded.lock().unwrap().push(item.clone());
-                if ordinal < 2 {
+                let text = if ordinal < 2 {
                     Some("original root candidate")
                 } else if partial && ordinal < 4 && item["unitId"] == json!(uncertain) {
                     None
@@ -142,24 +213,46 @@ fn generation_component_two_items_preserves_partial_unknown_and_original_budget_
                     Some("explicit new candidate")
                 } else {
                     Some("component child candidate")
-                }
+                };
+                text.map(|text| json!({"unitId":item["unitId"],"targetLocale":item["targetLocale"],"text":text}))
             },
             None,
-            None,
+            Some(waiting),
             Duration::from_secs(30),
             Duration::from_secs(3),
+            move |ordinal| {
+                if ordinal == 2 || ordinal == 4 {
+                    let phase = phases.recv_timeout(COMPONENT_SETUP_TIMEOUT).unwrap_or_else(|error| panic!(
+                        "component phase {ordinal} was not armed: {error}; observed {:?}", component_stage(&observer)));
+                    assert_eq!(phase, ordinal);
+                    await_component_call(&observer, phase);
+                    called.send(phase).unwrap();
+                }
+            },
         );
         config.max_requests = 5;
         assert_eq!(config.concurrency, 1);
         assert_eq!(config.max_retries, 0);
-        let (component, _installed, _approval) = install_generation(&fixture);
-        let (plan, grant) = fixture.start_candidates_in_units(config, &units);
+        let plan = fixture.call("prepare_work_plan", json!({
+            "config":config,"locale":"zh-CN","unitIds":units,"options":PlanOptions::default(),
+            "advisoryChecks":[],"toolSelection":null,
+        })).unwrap();
+        let grant = fixture.call("authorize_work_plan", json!({
+            "planId":plan["planId"],"digest":plan["digest"],"actionId":ExecutionId::new(),
+            "confirmed":true,"checkerExecutions":checker_keys(&plan),"toolExecution":false,
+            "applicationToolExecutions":[],"effects":["save-candidate"],"expiresAt":expiry(),
+        })).unwrap();
+        assert!(fixture.call("open_work_plan_agent_scope", json!({"lease":grant["lease"]})).is_err());
+        setup.send(()).unwrap();
+        assert_eq!(fixture.call("start_work_plan", json!({
+            "planId":plan["planId"],"actionId":grant["actionId"],"expectedGeneration":grant["lease"]["generation"],
+        })).unwrap(), plan["attemptId"]);
         let root = wait_rows(&fixture, &plan["attemptId"], 2);
         for unit in &units {
             assert!(row(&root, *unit)["savedRevisionId"].is_string());
         }
         assert_budget(&root, 2, 0, 2);
-        let action = start_component_for_units(&fixture, component.clone(), &grant, &units);
+        let action = start_component_at_dispatch_gate(&fixture, component.clone(), &grant, &units, 2, &arm, &observed);
         assert_eq!(action.preflight["parentTask"], action.scope["parentTask"]);
         assert_eq!(action.preflight["scope"], plan["scope"]);
         let child = wait_rows(&fixture, &action.generation["attemptId"], 2);
@@ -260,7 +353,7 @@ fn generation_component_two_items_preserves_partial_unknown_and_original_budget_
             }
             // This is a separate, explicit human choice with fresh identities,
             // not a replay or automatic retry of the uncertain model request.
-            let next = start_component_for_units(&fixture, component.clone(), &grant, &[uncertain]);
+            let next = start_component_at_dispatch_gate(&fixture, component.clone(), &grant, &[uncertain], 4, &arm, &observed);
             assert_ne!(next.outer, action.outer);
             assert_ne!(next.starting["grantId"], action.starting["grantId"]);
             assert_ne!(next.generation["taskId"], action.generation["taskId"]);

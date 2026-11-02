@@ -2463,11 +2463,26 @@ mod tests {
 
     fn local_provider_outputs_at_request(
         request_count: usize,
+        response_output: impl FnMut(usize, &Value) -> Option<Value> + Send + 'static,
+        gate: Option<(usize, (mpsc::Sender<()>, mpsc::Receiver<()>))>,
+        setup: Option<mpsc::Receiver<()>>,
+        accept_timeout: Duration,
+        gate_timeout: Duration,
+    ) -> (AiConfig, JoinHandle<Value>) {
+        local_provider_outputs_after_dispatch_setup(request_count, response_output, gate, setup,
+            accept_timeout, gate_timeout, |_| {})
+    }
+
+    /// An installed component may perform local runtime setup between model
+    /// batches. Its observed dispatch boundary starts the unchanged HTTP wait.
+    fn local_provider_outputs_after_dispatch_setup(
+        request_count: usize,
         mut response_output: impl FnMut(usize, &Value) -> Option<Value> + Send + 'static,
         mut gate: Option<(usize, (mpsc::Sender<()>, mpsc::Receiver<()>))>,
         setup: Option<mpsc::Receiver<()>>,
         accept_timeout: Duration,
         gate_timeout: Duration,
+        mut before_accept: impl FnMut(usize) + Send + 'static,
     ) -> (AiConfig, JoinHandle<Value>) {
         use std::io::{Read, Write};
         let listener = TcpListener::bind("127.0.0.1:0").unwrap();
@@ -2491,6 +2506,7 @@ mod tests {
             }
             let mut last = Value::Null;
             for ordinal in 0..request_count {
+                before_accept(ordinal);
                 let deadline = Instant::now() + accept_timeout;
                 let mut stream = loop {
                     match listener.accept() {
