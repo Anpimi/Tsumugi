@@ -172,26 +172,4 @@ impl Notifications {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-    #[test]
-    fn change_wire_fixture_preserves_decimal_versions_and_scopes() {
-        let fixture: serde_json::Value = serde_json::from_str(include_str!(
-            "../../../test/fixtures/projectChanges.contract.json"
-        ))
-        .unwrap();
-        let request: ChangesRequest = serde_json::from_value(fixture["request"].clone()).unwrap();
-        assert_eq!(request.after_sequence.get(), 9_007_199_254_740_992);
-        let snapshot: ProjectChanges = serde_json::from_value(fixture["snapshot"].clone()).unwrap();
-        assert_eq!(serde_json::to_value(snapshot).unwrap(), fixture["snapshot"]);
-        let event: ChangeNotification =
-            serde_json::from_value(fixture["notification"].clone()).unwrap();
-        assert_eq!(
-            serde_json::to_value(event).unwrap(),
-            fixture["notification"]
-        );
-        let mut invalid = fixture["request"].clone();
-        invalid["afterSequence"] = serde_json::json!(9_007_199_254_740_992_u64);
-        assert!(serde_json::from_value::<ChangesRequest>(invalid).is_err());
-    }
-}
+mod tests;

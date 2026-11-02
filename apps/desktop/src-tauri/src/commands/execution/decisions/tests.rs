@@ -45,7 +45,14 @@ fn registered_decision_inbox_pages_original_facts_and_rechecks_after_owner_decis
     assert_eq!(first, repeated, "reading does not advance a source or resolve a request");
     assert_eq!(first["total"], Value::Null, "unconnected sources are not global zero");
     assert_eq!(first["coverage"].as_array().unwrap().len(), 10);
-    assert_eq!(first["coverage"].as_array().unwrap().iter().filter(|source| source["state"] == "unavailable").count(), 2);
+    // Core owns all nine project sources; only this fixture's unconfigured
+    // local journal is unavailable, and it must still prevent a global total.
+    let unavailable = first["coverage"].as_array().unwrap().iter()
+        .filter(|source| source["state"] == "unavailable").collect::<Vec<_>>();
+    assert_eq!(unavailable.len(), 1);
+    assert_eq!(unavailable[0]["source"], "local-action-recovery");
+    assert_eq!(unavailable[0]["reason"], "source-unavailable");
+    assert_eq!(unavailable[0]["errorCode"], "storage-failed");
     let mut ids = Vec::new();
     let mut page = first.clone();
     loop {
@@ -85,6 +92,142 @@ fn registered_decision_inbox_pages_original_facts_and_rechecks_after_owner_decis
     after_reopen["sessionToken"] = reopened["sessionToken"].clone();
     after_reopen["query"] = json!({"locale": "zh-CN", "sources": ["translation-candidate"]});
     assert_eq!(call(&window, "read_decision_page", after_reopen).unwrap()["total"], 0);
+}
+
+#[test]
+fn registered_concurrent_decisions_converge_without_resolving_unrelated_pending_input() {
+    use crate::commands::drafts::{DraftStore, DraftWrite};
+    use std::sync::{Arc, Barrier, mpsc};
+    use std::time::Duration;
+    use tsumugi_core::execution::Revision;
+
+    let (directory, mut core, rows) = fixture::source_fixture();
+    let project = ExecutionId::parse(&core.metadata().unwrap().project_id().to_string()).unwrap();
+    let unit = rows[0].unit_id.unwrap();
+    let candidate = automatic::candidate_request(&mut core, unit, "Concurrent candidate",
+        tsumugi_core::application::SelectionPolicy::CandidatesOnly);
+    core.save_translation_revision(&tsumugi_core::SaveTranslationRevision {
+        reuse_origin: None, project_id: project, action_id: ExecutionId::new(), unit_id: unit,
+        locale: "zh-CN".into(), source_revision_id: rows[0].source_revision_id.unwrap(),
+        expected_selection_id: None, text: "Current manual translation".into(),
+    }).unwrap();
+    let targets = rows.iter().map(|row| core.review_target(project, row.unit_id.unwrap(), "zh-CN").unwrap())
+        .collect::<Vec<_>>();
+    core.close().unwrap();
+
+    let profile = tempfile::tempdir().unwrap();
+    let journal = DraftStore::at(profile.path().join("drafts")).unwrap();
+    let writes = targets.iter().map(|target| serde_json::from_value::<DraftWrite>(json!({
+        "key":{"projectId":project,"unitId":target.unit_id,"locale":"zh-CN"},
+        "expectedRevision":"0","writerId":ExecutionId::new(),"value":{
+            "basis":{"sourceRevisionId":target.source_revision_id,"selectionId":target.selection_id,
+                "revisionId":target.revision_id,"text":target.translation_text},
+            "text":"Newer unsaved B 🙂","editSeq":"2","pending":{"kind":"save","submittedSeq":"1",
+                "request":{"reuseOrigin":null,"projectId":project,"actionId":ExecutionId::new(),
+                    "unitId":target.unit_id,"locale":"zh-CN","sourceRevisionId":target.source_revision_id,
+                    "expectedSelectionId":target.selection_id,"text":"Frozen original A"}}
+        }})).unwrap()).collect::<Vec<_>>();
+    let before = writes.iter().map(|write| journal.write(write).unwrap()).collect::<Vec<_>>();
+    let state = AppState::default();
+    state.local_drafts.set(journal.clone()).ok().unwrap();
+    let app = tauri::test::mock_builder().manage(state).invoke_handler(super::super::handler())
+        .build(tauri::test::mock_context(tauri::test::noop_assets())).unwrap();
+    let window = tauri::WebviewWindowBuilder::new(&app, "main", tauri::WebviewUrl::App("index.html".into())).build().unwrap();
+    let opened = call(&window, "open_project", json!({"locator":directory.path().join("project")})).unwrap();
+    let page_request = json!({"sessionToken":opened["sessionToken"],"projectId":project,
+        "query":{"locale":"zh-CN","sources":["translation-candidate","local-action-recovery"]},
+        "cursor":null,"limit":1,"activity":[]});
+    let first = call(&window, "read_decision_page", page_request.clone()).unwrap();
+    assert_eq!(first["total"], 3);
+    assert_eq!(first["knownCount"], 3);
+    assert!(!first["next"].is_null());
+    assert_eq!(first["coverage"].as_array().unwrap().len(), 2);
+    assert!(first["coverage"].as_array().unwrap().iter().all(|source| source["state"] == "complete"));
+    let observer = rusqlite::Connection::open(directory.path().join("project/project.sqlite3")).unwrap();
+    let counts = || observer.query_row("SELECT (SELECT COUNT(*) FROM translation_revisions),
+        (SELECT COUNT(*) FROM translation_selections),(SELECT COUNT(*) FROM execution_attempts)", [],
+        |row| Ok((row.get::<_, i64>(0)?, row.get::<_, i64>(1)?, row.get::<_, i64>(2)?))).unwrap();
+    let original_counts = counts();
+
+    // Three independent callers submit their captured basis together. The real
+    // command owner serializes them; only the original CAS winner may commit.
+    let requests = (0..3).map(|_| json!({"sessionToken":opened["sessionToken"],"projectId":project,
+        "decision":{"projectId":project,"actionId":ExecutionId::new(),"unitId":unit,"locale":"zh-CN",
+            "revisionId":candidate.revision_id,"sourceRevisionId":targets[0].source_revision_id,
+            "expectedSelectionId":targets[0].selection_id,"expectedDecisionId":null,
+            "disposition":"rejected","actor":"Synthetic reviewer","reason":"Keep the manual translation"}}))
+        .collect::<Vec<_>>();
+    let results = std::thread::scope(|scope| {
+        let start = Arc::new(Barrier::new(requests.len() + 1));
+        let (sender, receiver) = mpsc::channel();
+        for request in &requests {
+            let start = start.clone(); let sender = sender.clone(); let window = &window;
+            scope.spawn(move || {
+                start.wait();
+                sender.send((request.clone(), call(window, "decide_translation_candidate", request.clone()))).unwrap();
+            });
+        }
+        drop(sender);
+        start.wait();
+        (0..requests.len()).map(|_| receiver.recv_timeout(Duration::from_secs(10)).unwrap()).collect::<Vec<_>>()
+    });
+    let winners = results.iter().filter(|(_, result)| result.is_ok()).collect::<Vec<_>>();
+    assert_eq!(winners.len(), 1);
+    for (_, result) in results.iter().filter(|(_, result)| result.is_err()) {
+        assert_eq!(result.as_ref().unwrap_err()["code"], "dependency-conflict");
+    }
+    assert_eq!(observer.query_row("SELECT COUNT(*) FROM translation_candidate_decisions WHERE revision_id=?1",
+        [candidate.revision_id.to_string()], |row| row.get::<_, i64>(0)).unwrap(), 1);
+    assert_eq!(counts(), original_counts, "a decision cannot create a translation or start another execution");
+    let mut old_page = page_request.clone(); old_page["cursor"] = first["next"].clone();
+    assert_eq!(call(&window, "read_decision_page", old_page).unwrap_err()["code"], "dependency-conflict");
+
+    let after = call(&window, "read_decision_page", page_request.clone()).unwrap();
+    assert_eq!(after["total"], 2);
+    assert_eq!(after["localActions"]["observations"], first["localActions"]["observations"]);
+    assert!(after["localActions"]["observations"].as_array().unwrap().iter()
+        .all(|row| row["outcome"] == "receipt-absent"));
+    assert_eq!(call(&window, "read_decision_page", page_request.clone()).unwrap(), after);
+    assert_eq!(call(&window, "read_decision_page", page_request.clone()).unwrap(), after);
+    for (write, expected) in writes.iter().zip(&before) {
+        assert_eq!(journal.read(&write.key).unwrap(), *expected);
+    }
+    let version = observer.pragma_query_value::<i64, _>(None, "data_version", |row| row.get(0)).unwrap();
+    assert_eq!(call(&window, "decide_translation_candidate", winners[0].0.clone()).unwrap(),
+        winners[0].1.as_ref().unwrap().clone());
+    assert_eq!(observer.pragma_query_value::<i64, _>(None, "data_version", |row| row.get(0)).unwrap(), version);
+
+    // A journal-only update changes the cross-owner basis without a Core write.
+    // Keep both original pending requests; newer input must not clear an unknown.
+    let mut newer = writes[0].clone();
+    newer.expected_revision = before[0].revision;
+    newer.value.edit_seq = Revision::new(3).unwrap();
+    newer.value.text = "Newest B after the shared decision 🙂".into();
+    let latest = journal.write(&newer).unwrap();
+    let mut old_page = page_request.clone(); old_page["cursor"] = after["next"].clone();
+    assert!(!old_page["cursor"].is_null());
+    assert_eq!(call(&window, "read_decision_page", old_page).unwrap_err()["code"], "dependency-conflict");
+    let current = call(&window, "read_decision_page", page_request.clone()).unwrap();
+    assert_ne!(current["basis"], after["basis"]);
+    assert_eq!(current["total"], 2);
+    let mut ids = Vec::new(); let mut page = current.clone();
+    loop {
+        for item in page["items"].as_array().unwrap() {
+            assert_eq!(item["source"], "local-action-recovery");
+            ids.push(item["decisionId"].as_str().unwrap().to_owned());
+        }
+        if page["next"].is_null() { break; }
+        let mut next = page_request.clone(); next["cursor"] = page["next"].clone();
+        page = call(&window, "read_decision_page", next).unwrap();
+        assert_eq!(page["basis"], current["basis"]);
+    }
+    assert_eq!(ids.len(), 2);
+    assert_ne!(ids[0], ids[1]);
+    assert_eq!(journal.read(&newer.key).unwrap(), latest);
+    assert_eq!(journal.read(&writes[1].key).unwrap(), before[1]);
+    assert_eq!(counts(), original_counts);
+    assert_eq!(observer.pragma_query_value::<i64, _>(None, "data_version", |row| row.get(0)).unwrap(), version,
+        "aggregate reads and a local journal write cannot mutate the project ledger");
 }
 
 #[test]

@@ -761,6 +761,17 @@ impl SessionManager {
 }
 
 impl ActiveSession {
+    #[cfg(test)]
+    pub(in crate::commands) fn submit_observation_fixture(
+        &mut self,
+        input: &FixedInput,
+        runner: Arc<dyn Runner>,
+    ) -> Result<(), CommandError> {
+        let (host, store) = self.execution_parts()?;
+        host.runtime.register_read_only(runner).map_err(map_read)?;
+        host.runtime.submit(store, input).map_err(map_read)
+    }
+
     pub(super) fn execution_status_view(&mut self) -> Result<RuntimeStatus, CommandError> {
         let (host, store) = self.execution_parts()?;
         Ok(RuntimeStatus {
