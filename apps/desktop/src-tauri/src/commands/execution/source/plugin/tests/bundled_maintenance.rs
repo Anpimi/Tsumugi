@@ -441,7 +441,7 @@ fn included_webvtt_maintenance_builds_checks_and_exports_two_traceable_releases(
         &window,
         "create_project",
         json!({"destination":project_path,"displayName":"Caption maintenance",
-        "sourceLocale":"en-US","targetLocales":[LOCALE]}),
+        "sourceLocale":"en-US","targetLocales":[LOCALE,"ja"]}),
     )
     .unwrap();
     let context = json!({"sessionToken":project["sessionToken"],"projectId":project["metadata"]["projectId"]});
@@ -667,6 +667,9 @@ fn included_webvtt_maintenance_builds_checks_and_exports_two_traceable_releases(
         )["rows"],
         first_page["rows"]
     );
+    let context = knowledge_consumers_preserve_history_after_source_disable(
+        &window, &context, &source, &second_page, &second, &project_path,
+    );
     call(
         &window,
         "close_project",
@@ -677,4 +680,188 @@ fn included_webvtt_maintenance_builds_checks_and_exports_two_traceable_releases(
     drop(state);
     drop(app);
     removable(temporary.path());
+}
+
+
+fn knowledge_consumers_preserve_history_after_source_disable(
+    window: &TestWindow,
+    context: &Value,
+    source: &PluginSourceRequest,
+    page: &Value,
+    rows: &BTreeMap<String, Value>,
+    project_path: &Path,
+) -> Value {
+    let row = &rows["word"];
+    let before = target(window, context, row);
+    let history = translation_history(window, context, row);
+    let source_basis = ipc(window, context, "read_content_scope", json!({}));
+    let scope = |row: &Value, locale: &str| json!({"projectId":context["projectId"],
+        "sourceSnapshotId":page["snapshotId"],"unitId":row["unitId"],"sourceRevisionId":row["sourceRevisionId"],"locale":locale});
+    let config = tsumugi_core::ai::AiConfig { endpoint:"http://127.0.0.1:9/v1/chat/completions".into(),
+        model:"local-preview-only".into(), credential_env:String::new(), share_terms:true, share_context:true, max_requests:1, ..Default::default() };
+    let prepare = json!({"config":config,"locale":LOCALE,"unitIds":[row["unitId"]],
+        "options":tsumugi_core::application::PlanOptions::default(),"advisoryChecks":[],"toolSelection":null,"maintenance":null});
+    let old_plan = ipc(window, context, "prepare_work_plan", prepare.clone());
+    let file = page["coverage"].as_array().unwrap().iter()
+        .find(|file| file["artifactId"] == row["occurrence"]["artifactId"]).unwrap();
+    let mut saved = Vec::new();
+    for kind in ["character", "style", "background"] {
+        let original = json!({"projectId":context["projectId"],"actionId":ExecutionId::new(),"kind":kind,
+            "sourceBasis":source_basis,"locale":LOCALE,"scope":{"kind":"project"},
+            "name":format!("Reviewed {kind}"),"text":format!("Project {kind}"),"actor":"Synthetic maintainer","reason":"Reviewed source materials"});
+        let base = ipc(window, context, "save_context_resource", json!({"resource":original}));
+        assert_eq!(ipc(window, context, "save_context_resource", json!({"resource":original})), base);
+        let mut group = original.clone();
+        group["actionId"] = json!(ExecutionId::new());
+        group["subjectId"] = base["subjectId"].clone();
+        group["scope"] = json!({"kind":"file-group","namespace":row["occurrence"]["namespace"],"logicalPaths":[file["logicalPath"]]});
+        group["text"] = json!(format!("File {kind}"));
+        let grouped = ipc(window, context, "save_context_resource", json!({"resource":group}));
+        let mut narrow = original.clone();
+        narrow["actionId"] = json!(ExecutionId::new());
+        narrow["subjectId"] = base["subjectId"].clone();
+        narrow["scope"] = json!({"kind":"unit","unitId":row["unitId"]});
+        narrow["text"] = json!(format!("Unit {kind}"));
+        let selected = ipc(window, context, "save_context_resource", json!({"resource":narrow}));
+        let resolved = ipc(window, context, "resolve_context_resources", json!({"scope":scope(row,LOCALE)}));
+        assert!(resolved["entries"].as_array().unwrap().iter().any(|entry| entry["revision"]["contextId"]==selected["contextId"] && entry["status"]=="selected"));
+        assert!(resolved["entries"].as_array().unwrap().iter().any(|entry| entry["revision"]["contextId"]==grouped["contextId"] && entry["status"]=="shadowed"));
+        let other = ipc(window, context, "resolve_context_resources", json!({"scope":scope(&rows["keep"],LOCALE)}));
+        assert!(other["entries"].as_array().unwrap().iter().any(|entry| entry["revision"]["contextId"]==grouped["contextId"] && entry["status"]=="selected"));
+        assert!(other["entries"].as_array().unwrap().iter().any(|entry| entry["revision"]["contextId"]==selected["contextId"] && entry["status"]=="outside-scope"));
+        let mut edit = narrow;
+        edit["actionId"] = json!(ExecutionId::new());
+        edit["contextId"] = selected["contextId"].clone();
+        edit["expectedRevisionId"] = selected["revisionId"].clone();
+        edit["text"] = json!(format!("Human corrected {kind}"));
+        let corrected = ipc(window, context, "save_context_resource", json!({"resource":edit}));
+        let mut late = edit.clone(); late["actionId"] = json!(ExecutionId::new()); late["text"] = json!("Late stale value");
+        assert!(call(window, "save_context_resource", scoped(context,json!({"resource":late}))).is_err());
+        assert_eq!(ipc(window, context, "save_context_resource", json!({"resource":edit})), corrected);
+        saved.push(corrected);
+    }
+    assert_eq!(ipc(window, context, "resolve_context_resources", json!({"scope":scope(row,"ja")}))["entries"],json!([]));
+    let impacts = ipc(window, context, "resource_impacts", json!({"locale":LOCALE,"offset":0,"limit":100}));
+    assert_eq!(impacts["items"].as_array().unwrap().len(),6);
+    assert!(impacts["items"].as_array().unwrap().iter().all(|item| item["reasons"].as_array().unwrap().iter()
+        .any(|reason| reason["kind"]=="context-resource" && reason["confidence"]=="scope-possible")));
+    assert!(ipc(window, context, "resource_impacts", json!({"locale":"ja","offset":0,"limit":100}))["items"].as_array().unwrap().is_empty());
+    let after = target(window, context, row);
+    assert_eq!(after["selectionId"],before["selectionId"]);
+    assert_eq!(after["currentDecision"],before["currentDecision"]);
+    assert_eq!(after["currentCheck"],before["currentCheck"],"typed context impact does not invent a new format-check result");
+    assert_eq!(translation_history(window, context, row),history);
+    let segments = ipc(window, context, "read_segment_page", json!({"locale":LOCALE,"query":{"text":"","selection":"all","status":"all"},"scopeId":null,"cursor":null,"limit":50}));
+    let segment_rows = segments["rows"].as_array().unwrap();
+    assert_eq!(segment_rows.len(),rows.len());
+    for row in segment_rows {
+        // Recorded scope-possible changes remain visible without replacing the
+        // separate current selection, human approval or format-check evidence.
+        let applicability = &row["applicability"];
+        assert!(row["content"]["selectionId"].is_string());
+        assert_eq!(row["content"]["currentDecision"]["kind"],"approve");
+        assert_eq!(row["qa"]["current"],true);
+        assert_eq!(applicability["capturedBasisCurrent"],false);
+        assert_eq!(applicability["resourceReviewRequired"],false);
+        assert!(applicability["resourceImpact"]["reasonCount"].as_u64().unwrap()>0);
+        assert!(applicability["resourceImpact"]["changes"].as_array().unwrap().iter()
+            .any(|change| change["kind"]=="context-resource" && change["confidence"]=="scope-possible"));
+        assert!(!row["qualification"]["blockers"].as_array().unwrap().iter()
+            .any(|reason| reason["code"]=="resource-impact-unresolved"));
+    }
+    let expires = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_secs()+600;
+    let authorization = json!({"planId":old_plan["planId"],"digest":old_plan["digest"],"actionId":ExecutionId::new(),
+        "confirmed":true,"effects":["save-candidate"],"checkerExecutions":[],"toolExecution":false,"applicationToolExecutions":[],"expiresAt":expires.to_string()});
+    let rejected = call(window,"authorize_work_plan",scoped(context,authorization)).unwrap_err();
+    assert_eq!(rejected["code"],"dependency-conflict");
+    assert!(matches!(rejected["reason"].as_str(),Some("work-plan-evidence"|"work-plan-preview")),"{rejected}");
+    let fresh = ipc(window, context, "prepare_work_plan", prepare.clone());
+    let captured = &fresh["preview"]["items"][0]["contextResources"]["entries"];
+    assert_eq!(captured.as_array().unwrap().len(),3);
+    for resource in &saved {
+        assert!(captured.as_array().unwrap().iter().any(|entry| entry["revision"]["revisionId"]==resource["revisionId"]));
+    }
+    let inventory = call(window,"read_plugin_inventory",json!({})).unwrap();
+    call(window,"set_plugin_enabled",json!({"package":source.package,"enabled":false,
+        "expectedRevision":inventory["settingsRevision"],"actionId":ExecutionId::new()})).unwrap();
+    let missing = call(window,"read_plugin_source",json!(source)).unwrap_err();
+    assert_eq!(missing["reason"],"plugin-disabled");
+    assert_eq!(target(window, context, row)["currentCheck"],after["currentCheck"]);
+    assert_eq!(translation_history(window, context, row),history);
+    for resource in &saved {
+        assert_eq!(ipc(window,context,"read_context_resource_current",json!({"contextId":resource["contextId"]})),*resource);
+    }
+    let surviving = ipc(window, context, "prepare_work_plan", prepare.clone());
+    assert_eq!(surviving["preview"]["items"][0]["contextResources"],fresh["preview"]["items"][0]["contextResources"]);
+    assert_eq!(ipc(window,context,"resolve_context_resources",json!({"scope":scope(row,LOCALE)}))["entries"].as_array().unwrap().iter()
+        .filter(|entry| entry["status"]=="selected").count(),3);
+    // Knowledge and manual translation still use their original authorities
+    // when the source package is disabled; no historical approval is renewed.
+    let review_history_before = review_history(window, context, row);
+    let term_request = json!({"projectId":context["projectId"],"actionId":ExecutionId::new(),"termId":null,
+        "locale":LOCALE,"source":row["occurrence"]["text"],"aliases":[],"target":"初译","protected":false,
+        "scopeUnitId":row["unitId"],"expectedRevisionId":null,"reason":"Human scoped terminology"});
+    let initial_term = ipc(window,context,"save_term",json!({"term":term_request}));
+    let mut edit = term_request;
+    edit["actionId"] = json!(ExecutionId::new());
+    edit["termId"] = initial_term["termId"].clone();
+    edit["expectedRevisionId"] = initial_term["revisionId"].clone();
+    edit["target"] = json!("新");
+    let term = ipc(window,context,"save_term",json!({"term":edit}));
+    assert_eq!(ipc(window,context,"save_term",json!({"term":edit})),term);
+    let mut stale = edit.clone(); stale["actionId"] = json!(ExecutionId::new());
+    stale["target"] = json!("Stale terminology must not replace the human edit");
+    assert!(call(window,"save_term",scoped(context,json!({"term":stale}))).is_err());
+    let terms = ipc(window,context,"resolve_terms",json!({"unitId":row["unitId"],"locale":LOCALE}));
+    assert!(terms["entries"].as_array().unwrap().iter().any(|entry| entry["selected"]["revisionId"]==term["revisionId"]));
+    assert!(ipc(window,context,"resolve_terms",json!({"unitId":rows["keep"]["unitId"],"locale":LOCALE}))["entries"].as_array().unwrap().is_empty());
+    assert!(ipc(window,context,"resolve_terms",json!({"unitId":row["unitId"],"locale":"ja"}))["entries"].as_array().unwrap().is_empty());
+    let term_target = target(window,context,row);
+    assert_eq!(term_target["selectionId"],before["selectionId"]);
+    assert!(term_target["currentCheck"].is_null() && term_target["currentDecision"].is_null());
+    assert_eq!(review_history(window,context,row),review_history_before);
+    assert_eq!(translation_history(window,context,row),history);
+
+    let donor_target = target(window,context,&rows["renamed"]);
+    let donor_request = json!({"unitId":rows["renamed"]["unitId"],"locale":LOCALE,"revisionId":donor_target["revisionId"]});
+    let donor = ipc(window,context,"read_translation_memory_entry",donor_request.clone());
+    let filter = json!({"sourceLocale":"en-US","targetLocale":LOCALE,"sourceText":null,"translationText":null,"origin":null,"selection":"all"});
+    let memory = ipc(window,context,"list_translation_memory",json!({"filter":filter,"cursor":null,"limit":100}));
+    assert!(memory["rows"].as_array().unwrap().iter().any(|entry| entry["revision"]["revisionId"]==donor["revision"]["revisionId"]));
+    let reuse = json!({"projectId":context["projectId"],"unitId":row["unitId"],"locale":LOCALE,
+        "sourceRevisionId":row["sourceRevisionId"],"expectedSelectionId":term_target["selectionId"],
+        "donorUnitId":rows["renamed"]["unitId"],"donorRevisionId":donor["revision"]["revisionId"],"donorBasis":donor["basis"]});
+    let staged = ipc(window,context,"prepare_translation_memory_reuse",json!({"reuse":reuse}));
+    assert_eq!(staged["donor"],donor);
+    assert_eq!(translation_history(window,context,row),history,"TM comparison and staging do not save a translation");
+    let manual = json!({"actionId":ExecutionId::new(),"unitId":row["unitId"],"locale":LOCALE,
+        "sourceRevisionId":row["sourceRevisionId"],"expectedSelectionId":term_target["selectionId"],
+        "text":"新","reuseOrigin":staged["reuseOrigin"]});
+    let reused = ipc(window,context,"save_translation_revision",manual.clone());
+    assert_eq!(ipc(window,context,"save_translation_revision",manual),reused);
+    assert_eq!(reused["revision"]["originKind"],"manual");
+    assert_eq!(reused["revision"]["reuseOrigin"],staged["reuseOrigin"]);
+    assert_eq!(translation_history(window,context,row)["rows"].as_array().unwrap().len(),history["rows"].as_array().unwrap().len()+1);
+    let current = target(window,context,row);
+    assert_eq!(current["translationText"],"新");
+    assert!(current["currentDecision"].is_null() && current["currentCheck"].is_null(),"TM reuse never imports approval or QA");
+    let plan = ipc(window,context,"prepare_work_plan",prepare.clone());
+    assert!(plan["preview"]["items"][0]["terms"].as_array().unwrap().iter().any(|entry| entry["revisionId"]==term["revisionId"] && entry["target"]=="新"));
+    assert_eq!(plan["preview"]["items"][0]["contextResources"],fresh["preview"]["items"][0]["contextResources"]);
+
+    call(window,"close_project",json!({"sessionToken":context["sessionToken"]})).unwrap();
+    let reopened = call(window,"open_project",json!({"locator":project_path})).unwrap();
+    let context = json!({"sessionToken":reopened["sessionToken"],"projectId":context["projectId"]});
+    for resource in &saved {
+        assert_eq!(ipc(window,&context,"read_context_resource_current",json!({"contextId":resource["contextId"]})),*resource);
+    }
+    assert_eq!(ipc(window,&context,"read_term_current",json!({"termId":term["termId"]})),term);
+    assert_eq!(ipc(window,&context,"read_term_history",json!({"termId":term["termId"],"offset":0,"limit":50})).as_array().unwrap().len(),2);
+    assert_eq!(ipc(window,&context,"read_translation_memory_entry",donor_request),donor);
+    assert_eq!(ipc(window,&context,"read_translation_memory_entry",json!({"unitId":row["unitId"],"locale":LOCALE,"revisionId":reused["revision"]["revisionId"]}))["revision"],reused["revision"]);
+    assert_eq!(review_history(window,&context,row),review_history_before);
+    assert_eq!(target(window,&context,row),current);
+    assert_eq!(ipc(window,&context,"prepare_work_plan",prepare)["preview"]["items"],plan["preview"]["items"]);
+    eprintln!("Scoped character/style/background, terminology and TM retain their exact history and consumer basis after source disable and project reopen; no model was called.");
+    context
 }

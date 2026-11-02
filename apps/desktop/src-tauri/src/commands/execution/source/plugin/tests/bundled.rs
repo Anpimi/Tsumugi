@@ -155,9 +155,6 @@ fn journey(material: Materials) {
         source_view["declaration"]["reviewResource"],
         "review-profile"
     );
-    let project_path = temporary.path().join("project");
-    let project = call(&window, "create_project", json!({"destination":project_path,"displayName":"Included package acceptance","sourceLocale":"en-US","targetLocales":["zh-CN","ja"]})).unwrap();
-    let context = json!({"sessionToken":project["sessionToken"],"projectId":project["metadata"]["projectId"]});
     let directory = temporary.path().join("materials");
     fs::create_dir(&directory).unwrap();
     for (path, bytes) in material.files {
@@ -165,24 +162,52 @@ fn journey(material: Materials) {
         fs::create_dir_all(path.parent().unwrap()).unwrap();
         fs::write(path, bytes).unwrap();
     }
-    // This supplies only the picker result. Capture and all mutations use their
-    // registered production IPC, current package and independent grants.
-    let selection = ExecutionId::new();
-    let fixed_choice = source_choice.clone();
-    state.sessions.with(move |sessions| {
-        let host = sessions
-            .active
-            .as_mut()
-            .unwrap()
-            .execution_parts()
-            .unwrap()
-            .0;
-        host.source.selection = Some((
-            selection,
-            Arc::new(capture::Selection::authorize(directory).unwrap()),
-        ));
-        host.source.plugin.choice = Some((selection, fixed_choice));
+    // Only the OS drop event is supplied. Ticket consumption, read-only
+    // inspection, project creation and source handoff use production owners.
+    use tauri::Listener;
+    let (sender, receiver) = std::sync::mpsc::channel();
+    let listener = window.listen("startup-native-drop", move |event| {
+        sender.send(serde_json::from_str::<Value>(event.payload()).unwrap()).unwrap();
     });
+    crate::commands::startup::on_window_event(
+        &window.as_ref().window(),
+        &tauri::WindowEvent::DragDrop(tauri::DragDropEvent::Drop {
+            paths: vec![directory.clone()],
+            position: tauri::PhysicalPosition::new(0.0, 0.0),
+        }),
+    );
+    let drop_event = receiver.recv_timeout(std::time::Duration::from_secs(5)).unwrap();
+    window.unlisten(listener);
+    assert_eq!(drop_event["kind"], "ready");
+    let selected = call(&window, "select_dropped_startup_source_directory", json!({"dropTicket":drop_event["dropTicket"]})).unwrap();
+    assert!(call(&window, "select_dropped_startup_source_directory", json!({"dropTicket":drop_event["dropTicket"]})).is_err());
+    let selection = selected["selectionId"].clone();
+    let read = json!({"selectionId":selection,"source":source_choice});
+    let mut missing_plugin = read.clone();
+    missing_plugin["source"]["resourceId"] = json!("missing-source-profile");
+    assert!(call(&window, "read_startup_source_preflight", missing_plugin).is_err());
+    let first_material = directory.join(material.files[0].0);
+    let retained_material = fs::read(&first_material).unwrap();
+    fs::remove_file(&first_material).unwrap();
+    assert_eq!(call(&window, "read_startup_source_preflight", read.clone()).unwrap()["complete"], false);
+    fs::write(&first_material, &retained_material).unwrap();
+    let inspected = call(&window, "read_startup_source_preflight", read.clone()).unwrap();
+    assert_eq!(inspected["complete"], true);
+    assert!(state.sessions.with(|sessions| sessions.active.is_none()));
+    assert_eq!(call(&window, "read_plugin_inventory", json!({})).unwrap()["settingsRevision"], installed["settingsRevision"]);
+    for (path, bytes) in material.files {
+        assert_eq!(fs::read(directory.join(path)).unwrap(), bytes.as_bytes());
+    }
+    let project_path = temporary.path().join("project");
+    let project = call(&window, "create_project", json!({"destination":project_path,"displayName":"Prepared package acceptance","sourceLocale":"en-US","targetLocales":["zh-CN","ja"]})).unwrap();
+    let context = json!({"sessionToken":project["sessionToken"],"projectId":project["metadata"]["projectId"]});
+    assert_eq!(project["metadata"]["displayName"], "Prepared package acceptance");
+    assert!(state.sessions.with(|sessions| sessions.active.as_ref().unwrap().execution.is_none()));
+    assert!(call(&window, "read_startup_source_preflight", read).is_err());
+    let claim = scoped(&context, json!({"selectionId":selection,"source":source_choice}));
+    let claimed = call(&window, "claim_startup_source_directory", claim.clone()).unwrap();
+    assert_eq!(claimed["selectionId"], selection);
+    assert_eq!(call(&window, "claim_startup_source_directory", claim).unwrap(), claimed);
     let preflight = call(&window, "preflight_plugin_source", scoped(&context, json!({"selectionId":selection,"sourceLanguage":"en-US","attemptId":ExecutionId::new()}))).unwrap();
     let start = source_consent(&context, &preflight);
     let mut denied = start.clone();
