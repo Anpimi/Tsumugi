@@ -727,6 +727,10 @@ impl PlanningProvider {
         )
     }
     fn with_content(content: Value) -> Self {
+        Self::with_contents(vec![content])
+    }
+    fn with_contents(contents: Vec<Value>) -> Self {
+        assert!(!contents.is_empty());
         use std::{
             io::{Read, Write},
             net::TcpListener,
@@ -795,11 +799,12 @@ impl PlanningProvider {
                     assert!(bytes.len() <= 96 * 1024);
                 }
                 let value = serde_json::from_slice(&bytes[header..header + length]).unwrap();
-                {
+                let content = {
                     let mut all = records.lock().unwrap();
-                    assert!(all.is_empty(), "unexpected repeated planning request");
+                    let content = contents.get(all.len()).expect("unexpected repeated planning request").clone();
                     all.push(value);
-                }
+                    content
+                };
                 let response=json!({"choices":[{"finish_reason":"stop","message":{"role":"assistant","content":content.to_string()}}],"usage":{"prompt_tokens":7,"completion_tokens":3}}).to_string();
                 write!(stream,"HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",response.len(),response).unwrap();
             }
@@ -1326,8 +1331,11 @@ fn conversation_proposal_ipc_versions_authorization_and_candidate_history_use_or
         reject(&window, "read_conversation_proposal", read)["code"],
         "session-invalid"
     );
-    let current = proposal_work_plan_flow(&app, &window, &reopened, &latest, unit, &destination);
+    let (current, translation_provider, original_plan) = proposal_work_plan_flow(&app, &window, &reopened, &latest, unit, &destination);
     let current = team_journal_flow(&app, &window, &current, &latest, unit, &destination);
+    let current = human_correction_and_finite_continuation_flow(
+        &app, &window, &current, &latest, unit, &destination, &translation_provider, &original_plan,
+    );
     call(
         &window,
         "close_project",
@@ -1342,10 +1350,11 @@ fn proposal_work_plan_flow(
     revision: &Value,
     unit: ExecutionId,
     destination: &std::path::Path,
-) -> Value {
-    let provider = PlanningProvider::with_content(
+) -> (Value, PlanningProvider, Value) {
+    let provider = PlanningProvider::with_contents(vec![
         json!({"unitId":unit,"targetLocale":"zh-CN","text":"保留 {{name}} 的候选译文。"}),
-    );
+        json!({"unitId":unit,"targetLocale":"zh-CN","text":"有限继续产生的第二份 {{name}} 候选。"}),
+    ]);
     let config = tsumugi_core::ai::AiConfig {
         endpoint: provider.endpoint.clone(),
         model: "synthetic-translation".into(),
@@ -1603,7 +1612,7 @@ fn proposal_work_plan_flow(
     assert!(!reject(window, "authorize_work_plan", generic).is_null());
     assert!(runtime_absent(app, &reopened));
     assert_eq!(provider.count(), 1);
-    reopened
+    (reopened, provider, authorization)
 }
 
 /// Compose the real proposal link, original team authority and local journal.
@@ -1737,5 +1746,134 @@ fn team_journal_flow(
         assert!(runtime_absent(app, &reopened), "checking the original team receipt cannot create a Host");
     }
     assert_eq!(call(window, "read_local_conversation_draft", json!({"sessionToken":reopened["sessionToken"],"key":key})), retained);
+    reopened
+}
+
+
+/// Exercise human correction only after the original proposal and team journal
+/// consumers finish. Each new action keeps its own current, bounded authority.
+fn human_correction_and_finite_continuation_flow(
+    app: &tauri::App<tauri::test::MockRuntime>,
+    window: &tauri::WebviewWindow<tauri::test::MockRuntime>,
+    project: &Value,
+    proposal: &Value,
+    unit: ExecutionId,
+    destination: &std::path::Path,
+    provider: &PlanningProvider,
+    original_plan: &Value,
+) -> Value {
+    let head = call(window, "read_conversation_proposal", in_session(project,
+        json!({"conversationId":proposal["conversationId"],"proposalId":proposal["proposalId"],"revisionId":null})));
+    let reference = json!({"projectId":project["metadata"]["projectId"],"conversationId":head["conversationId"],
+        "proposalId":head["proposalId"],"revisionId":head["revisionId"]});
+    assert_eq!(call(window, "validate_conversation_proposal", in_session(project,
+        json!({"conversationId":head["conversationId"],"proposalId":head["proposalId"],"revisionId":head["revisionId"]}))), head);
+    let receipt = call(window, "read_work_plan_action", in_session(project,
+        json!({"actionId":original_plan["actionId"]})));
+    assert_eq!(provider.count(), 1);
+    let config = tsumugi_core::ai::AiConfig {
+        endpoint:provider.endpoint.clone(), model:"synthetic-translation".into(),
+        credential_env:String::new(), max_requests:1, ..Default::default()
+    };
+    let expiry = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_secs() + 60;
+    let human_target = call(window, "read_review_target", in_session(project,
+        json!({"unitId":unit,"locale":"zh-CN"})));
+    let human_save = call(window, "save_translation_revision", in_session(project,
+        json!({"actionId":identity(),"unitId":unit,"locale":"zh-CN",
+            "sourceRevisionId":human_target["sourceRevisionId"],"expectedSelectionId":human_target["selectionId"],
+            "text":"人工修订 {{name}}，保留此选用。"})));
+    let human_protection = call(window, "read_work_protection", in_session(project,
+        json!({"unitId":unit,"locale":"zh-CN"})));
+    assert_eq!(human_protection["protected"], true);
+    let status = call(window, "read_work_plan_status", in_session(project,
+        json!({"planId":original_plan["planId"]})));
+    let continuing = in_session(project,
+        json!({"planId":original_plan["planId"],"actionId":identity(),"expectedGeneration":status["lease"]["generation"],
+            "command":"continue","confirmed":true,"checkerExecutions":[],"toolExecution":false,"applicationToolExecutions":[],"expiresAt":expiry.to_string()}));
+    let old_plan_refused = reject(window, "control_work_plan", continuing);
+    assert_eq!(old_plan_refused["code"], "dependency-conflict");
+    assert_eq!(old_plan_refused["reason"], "work-plan-selection",
+        "an explicit continuation reaches the original owner and refuses the changed human basis");
+    let stale = reject(window, "prepare_conversation_proposal_work_plan", in_session(project,
+        json!({"proposal":reference,"config":config,"advisoryChecks":[],"toolSelection":null})));
+    assert_eq!(stale["code"], "dependency-conflict");
+    assert_eq!(stale["reason"], "conversation-planning-current");
+    assert_eq!(provider.count(), 1);
+    // Human intent now uses the current same entry, without treating the stale
+    // conversation capture as permission or expanding its source scope.
+    let fresh = call(window, "prepare_work_plan", in_session(project,
+        json!({"config":config,"locale":"zh-CN","unitIds":[unit],"options":tsumugi_core::application::PlanOptions::default(),
+            "advisoryChecks":[],"toolSelection":null,"maintenance":null})));
+    assert_ne!(fresh["planId"], original_plan["planId"]);
+    assert_eq!(fresh["scope"].as_array().unwrap().len(), 1);
+    assert_eq!(fresh["scope"][0]["unitId"], json!(unit));
+    assert_eq!(fresh["scope"][0]["sourceRevisionId"], human_target["sourceRevisionId"]);
+    assert_eq!(fresh["scope"][0]["selectionId"], human_save["selection"]["eventId"]);
+    let authorization = in_session(project,
+        json!({"actionId":identity(),"planId":fresh["planId"],"digest":fresh["digest"],"confirmed":true,
+            "effects":["save-candidate"],"expiresAt":expiry.to_string(),"checkerExecutions":[],"toolExecution":false,"applicationToolExecutions":[]}));
+    let accepted = call(window, "authorize_work_plan", authorization.clone());
+    assert_eq!(call(window, "authorize_work_plan", authorization), accepted);
+    let paused = call(window, "control_work_plan", in_session(project,
+        json!({"planId":fresh["planId"],"actionId":identity(),"expectedGeneration":accepted["lease"]["generation"],
+            "command":"pause","confirmed":false,"checkerExecutions":[],"toolExecution":false,"applicationToolExecutions":[],"expiresAt":null})));
+    let continuing = in_session(project,
+        json!({"planId":fresh["planId"],"actionId":identity(),"expectedGeneration":paused["lease"]["generation"],
+            "command":"continue","confirmed":true,"checkerExecutions":[],"toolExecution":false,"applicationToolExecutions":[],"expiresAt":expiry.to_string()}));
+    let resumed = call(window, "control_work_plan", continuing.clone());
+    assert_eq!(call(window, "control_work_plan", continuing), resumed);
+    assert_eq!(resumed["state"], "active");
+    assert_eq!(provider.count(), 1);
+    let start = in_session(project,
+        json!({"planId":fresh["planId"],"actionId":resumed["actionId"],"expectedGeneration":resumed["lease"]["generation"]}));
+    assert_eq!(call(window, "start_work_plan", start.clone()), resumed["attemptId"]);
+    assert_eq!(call(window, "start_work_plan", start), resumed["attemptId"]);
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(8);
+    loop {
+        let current = call(window, "read_ai_translation", in_session(project,
+            json!({"attemptId":resumed["attemptId"]})));
+        if current["rows"][0]["savedRevisionId"].is_string() {
+            assert_eq!(current["budget"]["limit"], 1);
+            assert_eq!(current["budget"]["dispatched"], 1);
+            assert_eq!(current["rows"][0]["output"]["text"], "有限继续产生的第二份 {{name}} 候选。");
+            break;
+        }
+        assert!(std::time::Instant::now() < deadline, "continued candidate did not settle: {current}");
+        std::thread::sleep(std::time::Duration::from_millis(10));
+    }
+    let after = call(window, "read_review_target", in_session(project,
+        json!({"unitId":unit,"locale":"zh-CN"})));
+    assert_eq!(after["selectionId"], human_save["selection"]["eventId"]);
+    assert_eq!(after["translationText"], "人工修订 {{name}}，保留此选用。");
+    assert_eq!(call(window, "read_work_protection", in_session(project,
+        json!({"unitId":unit,"locale":"zh-CN"}))), human_protection);
+    assert_eq!(provider.count(), 2);
+    let project_id = ExecutionId::parse(project["metadata"]["projectId"].as_str().unwrap()).unwrap();
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(8);
+    loop {
+        let token = project["sessionToken"].as_str().unwrap().to_owned();
+        let idle = tauri::async_runtime::block_on(app.state::<AppState>().sessions.run(
+            "corrected-plan-drain", CommandStage::ExecutionRead, move |sessions| {
+                let active = authorized(sessions, &token, project_id, CommandStage::ExecutionRead)?;
+                active.execution.as_ref().map_or(Ok(true), |host| host.active(&active.store).map(|active| !active))
+            },
+        )).unwrap();
+        if idle { break; }
+        assert!(std::time::Instant::now() < deadline);
+        std::thread::sleep(std::time::Duration::from_millis(10));
+    }
+    call(window, "close_project", json!({"sessionToken":project["sessionToken"]}));
+    let reopened = call(window, "open_project", json!({"locator":destination}));
+    assert!(runtime_absent(app, &reopened));
+    assert_eq!(call(window, "read_work_plan_action", in_session(&reopened,
+        json!({"actionId":original_plan["actionId"]}))), receipt);
+    assert_eq!(call(window, "read_conversation_proposal", in_session(&reopened,
+        json!({"conversationId":head["conversationId"],"proposalId":head["proposalId"],"revisionId":head["revisionId"]}))), head);
+    assert_eq!(call(window, "read_review_target", in_session(&reopened,
+        json!({"unitId":unit,"locale":"zh-CN"})))["selectionId"], human_save["selection"]["eventId"]);
+    assert_eq!(call(window, "read_work_protection", in_session(&reopened,
+        json!({"unitId":unit,"locale":"zh-CN"}))), human_protection);
+    assert!(runtime_absent(app, &reopened));
+    assert_eq!(provider.count(), 2);
     reopened
 }

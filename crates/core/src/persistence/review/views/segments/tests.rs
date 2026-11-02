@@ -22,6 +22,27 @@ fn segment_status_presets_capture_complete_batched_membership_and_keep_independe
         .collect::<BTreeMap<_, _>>();
     adopt_source(&mut store, &serde_json::to_vec(&source).unwrap());
     let all = store.read_segment_page(project, "zh-CN", &status_query(SegmentStatusFilter::All), None, None, 1).unwrap();
+    for limit in [50, 100] {
+        STATEMENTS.with(|statements| statements.borrow_mut().clear());
+        SQL_NANOS.with(|elapsed| *elapsed.borrow_mut() = 0);
+        store.connection().unwrap().trace_v2(
+            TraceEventCodes::SQLITE_TRACE_STMT | TraceEventCodes::SQLITE_TRACE_PROFILE,
+            Some(traced),
+        );
+        let started = std::time::Instant::now();
+        let page = store.read_segment_page(project, "zh-CN", &status_query(SegmentStatusFilter::All), None, None, limit).unwrap();
+        let elapsed = started.elapsed().as_micros();
+        store.connection().unwrap().trace_v2(TraceEventCodes::empty(), None);
+        let statements = STATEMENTS.with(|statements| std::mem::take(&mut *statements.borrow_mut()));
+        let sql_ns = SQL_NANOS.with(|elapsed| *elapsed.borrow());
+        let old_started = std::time::Instant::now();
+        let old = store.review_summary_page(project, "zh-CN", 0, limit, "same", None).unwrap();
+        let old_elapsed = old_started.elapsed().as_micros();
+        assert_eq!(page.total, old.total);
+        assert_eq!(page.rows.iter().map(|row| &row.content).collect::<Vec<_>>(), old.rows.iter().collect::<Vec<_>>());
+        println!("segment measured dataset=205 translated=0 query=same selection=all status=all limit={limit} layer=core rows={} bytes={} wall_us={elapsed} sql_statements={} sql_profile_ns={sql_ns} old_owner_bytes={} old_owner_wall_us={old_elapsed}",
+            page.rows.len(), serde_json::to_vec(&page).unwrap().len(), statements.len(), serde_json::to_vec(&old).unwrap().len());
+    }
     let captured = store.capture_segment_scope(project, "zh-CN", all.scope_id,
         &all.query_fingerprint, &all.read_version, &[]).unwrap();
     let units = captured.capture.units.iter().map(|unit| unit.unit_id).collect::<Vec<_>>();
@@ -113,11 +134,18 @@ fn segment_status_queue_keeps_original_membership_after_the_status_stops_matchin
 
 thread_local! {
     static STATEMENTS: RefCell<Vec<String>> = const { RefCell::new(Vec::new()) };
+    static SQL_NANOS: RefCell<u128> = const { RefCell::new(0) };
 }
 
 fn traced(event: TraceEvent<'_>) {
-    if let TraceEvent::Stmt(_, statement) = event {
-        STATEMENTS.with(|statements| statements.borrow_mut().push(statement.to_owned()));
+    match event {
+        TraceEvent::Stmt(_, statement) => {
+            STATEMENTS.with(|statements| statements.borrow_mut().push(statement.to_owned()));
+        }
+        TraceEvent::Profile(_, duration) => {
+            SQL_NANOS.with(|elapsed| *elapsed.borrow_mut() += duration.as_nanos());
+        }
+        _ => {}
     }
 }
 

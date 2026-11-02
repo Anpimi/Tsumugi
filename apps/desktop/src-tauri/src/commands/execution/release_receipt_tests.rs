@@ -355,3 +355,118 @@ fn reconcile_dropped_caller_recovers_through_registered_reads_without_rewriting_
         assert!(active.execution.as_ref().unwrap().release.delivery.is_none());
     });
 }
+
+#[test]
+#[ignore = "invoked by the delivery ACK-loss parent in a separate process"]
+fn delivery_reply_interruption_child() {
+    use tauri::ipc::InvokeResponse;
+    let root = std::path::PathBuf::from(std::env::var_os("TSUMUGI_DELIVERY_REPLY_TEST_ROOT").unwrap());
+    let app = crate::commands::register_commands(tauri::test::mock_builder())
+        .build(tauri::test::mock_context(tauri::test::noop_assets())).unwrap();
+    let view = tauri::WebviewWindowBuilder::new(&app, "main", tauri::WebviewUrl::App("index.html".into())).build().unwrap();
+    let project = call(&view, "create_project", json!({"destination":root.join("project"),
+        "displayName":"Interrupted delivery reply","sourceLocale":"en","targetLocales":["zh-CN"]})).unwrap();
+    let destination = root.join("destination");
+    fs::create_dir(&destination).unwrap();
+    let selection = ExecutionId::new();
+    let release = app.state::<AppState>().sessions.with(move |sessions| {
+        let active = sessions.active.as_mut().unwrap();
+        let release = seed(&mut active.store).1;
+        active.execution_parts().unwrap().0.release.selection = Some((selection,
+            Arc::new(source::capture::Selection::authorize(destination).unwrap())));
+        release
+    });
+    let scope = json!({"sessionToken":project["sessionToken"],"projectId":project["metadata"]["projectId"],
+        "releaseId":release,"selectionId":selection});
+    let preview = call(&view, "preview_delivery", scope.clone()).unwrap();
+    let mut request = scope;
+    request["actionId"] = json!(ExecutionId::new());
+    request["previewId"] = preview["previewId"].clone();
+    request["overwriteConflicts"] = json!(false);
+    fs::write(root.join("original-request.json"), serde_json::to_vec(&request).unwrap()).unwrap();
+    // Interrupt the actual registered command's responder after its durable
+    // result, before a waiting IPC caller could receive an acknowledgement.
+    // The mock transport is not a native WebView transport test.
+    view.as_ref().clone().on_message(InvokeRequest {
+        cmd: "export_release".into(), callback: CallbackFn(0), error: CallbackFn(1),
+        url: crate::ipc_test_url().parse().unwrap(), body: InvokeBody::Json(json!({"request":request})),
+        headers: Default::default(), invoke_key: tauri::test::INVOKE_KEY.into(),
+    }, Box::new(move |_, _, response, _, _| {
+        let InvokeResponse::Ok(body) = response else { panic!("export did not reach a successful reply"); };
+        let receipt: Value = body.deserialize().unwrap();
+        assert_eq!(receipt["state"], "succeeded");
+        fs::write(root.join("intercepted-reply.json"), serde_json::to_vec(&receipt).unwrap()).unwrap();
+        std::process::exit(91);
+    }));
+    std::thread::park_timeout(Duration::from_secs(20));
+    panic!("registered export responder did not reach the interruption point");
+}
+
+#[test]
+fn process_exit_before_delivery_ack_reopens_the_original_receipt_without_reexporting() {
+    use std::process::{Command, Stdio};
+    let temporary = tempfile::tempdir().unwrap();
+    // Rust test names omit the crate prefix present in module_path!().
+    let module = module_path!().split_once("::").unwrap().1;
+    let helper = format!("{module}::delivery_reply_interruption_child");
+    let mut child = Command::new(std::env::current_exe().unwrap())
+        .args(["--exact", &helper,
+            "--ignored", "--test-threads=1", "--nocapture"])
+        .env("TSUMUGI_DELIVERY_REPLY_TEST_ROOT", temporary.path())
+        .stdout(Stdio::piped()).stderr(Stdio::piped()).spawn().unwrap();
+    let deadline = Instant::now() + Duration::from_secs(30);
+    loop {
+        if child.try_wait().unwrap().is_some() { break; }
+        if Instant::now() >= deadline {
+            child.kill().unwrap();
+            let output = child.wait_with_output().unwrap();
+            panic!("delivery child timed out: {}", String::from_utf8_lossy(&output.stderr));
+        }
+        std::thread::sleep(Duration::from_millis(5));
+    }
+    let output = child.wait_with_output().unwrap();
+    assert_eq!(output.status.code(), Some(91), "stdout: {}\nstderr: {}",
+        String::from_utf8_lossy(&output.stdout), String::from_utf8_lossy(&output.stderr));
+    eprintln!("delivery responder child exited 91 before acknowledgement; reopening the persisted action");
+    let original: Value = serde_json::from_slice(&fs::read(temporary.path().join("original-request.json")).unwrap()).unwrap();
+    let expected: Value = serde_json::from_slice(&fs::read(temporary.path().join("intercepted-reply.json")).unwrap()).unwrap();
+    let target = temporary.path().join("destination/i18n/zh.json");
+    let bytes = fs::read(&target).unwrap();
+    assert_eq!(serde_json::from_slice::<Value>(&bytes).unwrap(), json!({"hello":"你好"}));
+    let modified = fs::metadata(&target).unwrap().modified().unwrap();
+    let project_path = temporary.path().join("project");
+    let app = crate::commands::register_commands(tauri::test::mock_builder())
+        .build(tauri::test::mock_context(tauri::test::noop_assets())).unwrap();
+    let view = tauri::WebviewWindowBuilder::new(&app, "main", tauri::WebviewUrl::App("index.html".into())).build().unwrap();
+    let project = call(&view, "open_project", json!({"locator":project_path})).unwrap();
+    let observer = rusqlite::Connection::open(project_path.join("project.sqlite3")).unwrap();
+    let version = || observer.pragma_query_value::<i64, _>(None, "data_version", |row| row.get(0)).unwrap();
+    let counts = || observer.query_row("SELECT (SELECT COUNT(*) FROM release_records),
+        (SELECT COUNT(*) FROM release_deliveries),(SELECT COUNT(*) FROM execution_attempts)", [],
+        |row| Ok((row.get::<_, i64>(0)?, row.get::<_, i64>(1)?, row.get::<_, i64>(2)?))).unwrap();
+    let before = (version(), counts());
+    let record_request = json!({"sessionToken":project["sessionToken"],"projectId":original["projectId"],
+        "releaseId":original["releaseId"],"deliveryId":expected["deliveryId"],"actionId":original["actionId"]});
+    let record = call(&view, "read_delivery_record", record_request.clone()).unwrap();
+    assert_eq!(record["deliveryId"], expected["deliveryId"]);
+    assert_eq!(record["state"], "succeeded");
+    assert_eq!(record["files"], expected["files"]);
+    assert_eq!(call(&view, "read_delivery_record", record_request).unwrap(), record);
+    app.state::<AppState>().sessions.with(|sessions| {
+        assert!(sessions.active.as_ref().unwrap().execution.is_none());
+    });
+    assert_eq!((version(), counts()), before, "history reads must not create a runtime or mutate the project");
+    let destination = temporary.path().join("destination");
+    let selection = ExecutionId::new();
+    app.state::<AppState>().sessions.with(move |sessions| {
+        sessions.active.as_mut().unwrap().execution_parts().unwrap().0.release.selection = Some((selection,
+            Arc::new(source::capture::Selection::authorize(destination).unwrap())));
+    });
+    let lookup = json!({"sessionToken":project["sessionToken"],"projectId":original["projectId"],
+        "actionId":original["actionId"],"selectionId":selection});
+    assert_eq!(call(&view, "read_delivery_action", lookup.clone()).unwrap(), expected);
+    assert_eq!(call(&view, "reconcile_delivery", lookup).unwrap(), expected);
+    assert_eq!((version(), counts()), before, "terminal reconciliation cannot make another release, delivery or attempt");
+    assert_eq!(fs::read(&target).unwrap(), bytes);
+    assert_eq!(fs::metadata(&target).unwrap().modified().unwrap(), modified);
+}

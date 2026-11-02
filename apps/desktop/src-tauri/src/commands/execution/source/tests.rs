@@ -1378,3 +1378,112 @@ fn translation_ipc_imports_candidates_edits_and_reopens() {
     assert_eq!(saved["current"]["revisionId"], restored["revisionId"]);
     assert_eq!(saved["rows"][0]["originKind"], "import");
 }
+
+#[allow(dead_code)]
+#[path = "../../../../../../../crates/core/tests/support/mod.rs"]
+mod segment_fixture;
+
+#[test]
+fn registered_segment_scope_keeps_cross_page_review_members_and_measures_the_same_read() {
+    let (directory, store, rows) = segment_fixture::source_fixture_with_scope(205, &["zh-CN", "ja"]);
+    let project = ExecutionId::parse(&store.metadata().unwrap().project_id().to_string()).unwrap();
+    let query = tsumugi_core::SegmentQuery { text: "same".into(),
+        selection: tsumugi_core::SegmentSelectionFilter::All,
+        status: tsumugi_core::SegmentStatusFilter::All };
+    let mut expected = Vec::new();
+    for limit in [50, 100] {
+        let started = Instant::now();
+        let page = store.read_segment_page(project, "zh-CN", &query, None, None, limit).unwrap();
+        let elapsed = started.elapsed().as_micros();
+        let old_started = Instant::now();
+        let old = store.review_summary_page(project, "zh-CN", 0, limit, "same", None).unwrap();
+        let old_elapsed = old_started.elapsed().as_micros();
+        assert_eq!(page.total, 205);
+        assert_eq!(page.rows.iter().map(|row| &row.content).collect::<Vec<_>>(), old.rows.iter().collect::<Vec<_>>());
+        println!("segment measured dataset=205 translated=0 query=same selection=all status=all limit={limit} layer=core rows={} bytes={} wall_us={elapsed} old_owner_bytes={} old_owner_wall_us={old_elapsed}",
+            page.rows.len(), serde_json::to_vec(&page).unwrap().len(), serde_json::to_vec(&old).unwrap().len());
+        expected.push(page.rows.into_iter().map(|row| row.content).collect::<Vec<_>>());
+    }
+    store.close().unwrap();
+    let app = crate::commands::register_commands(tauri::test::mock_builder())
+        .build(tauri::test::mock_context(tauri::test::noop_assets())).unwrap();
+    let window = tauri::WebviewWindowBuilder::new(&app, "main", tauri::WebviewUrl::App("index.html".into())).build().unwrap();
+    let opened = call(&window, "open_project", json!({"locator":directory.path().join("project")})).unwrap();
+    let mut context = json!({"sessionToken":opened["sessionToken"],"projectId":project});
+    let request = |context: &Value, fields: Value| {
+        let mut value = context.clone();
+        value.as_object_mut().unwrap().extend(fields.as_object().unwrap().clone());
+        value
+    };
+    for (index, limit) in [50, 100].into_iter().enumerate() {
+        let started = Instant::now();
+        let page = call(&window, "read_segment_page", request(&context,
+            json!({"locale":"zh-CN","query":query,"scopeId":null,"cursor":null,"limit":limit}))).unwrap();
+        let elapsed = started.elapsed().as_micros();
+        let typed: tsumugi_core::SegmentPage = serde_json::from_value(page.clone()).unwrap();
+        assert_eq!(typed.rows.into_iter().map(|row| row.content).collect::<Vec<_>>(), expected[index]);
+        println!("segment measured dataset=205 translated=0 query=same selection=all status=all limit={limit} layer=registered-ipc rows={} bytes={} wall_us={elapsed}",
+            page["rows"].as_array().unwrap().len(), serde_json::to_vec(&page).unwrap().len());
+    }
+    let save = |context: &Value, index: usize| {
+        call(&window, "save_translation_revision", request(context, json!({"actionId":ExecutionId::new(),
+            "unitId":rows[index].unit_id,"locale":"zh-CN","sourceRevisionId":rows[index].source_revision_id,
+            "expectedSelectionId":null,"text":format!("Reviewed translation {index}")}))).unwrap()
+    };
+    save(&context, 0);
+    save(&context, 204);
+    let page_request = request(&context, json!({"locale":"zh-CN","query":query,"scopeId":null,"cursor":null,"limit":50}));
+    let first = call(&window, "read_segment_page", page_request.clone()).unwrap();
+    let excluded = rows[1..204].iter().map(|row| row.unit_id.unwrap()).collect::<Vec<_>>();
+    let frozen = call(&window, "capture_segment_scope", request(&context,
+        json!({"locale":"zh-CN","scopeId":first["scopeId"],"queryFingerprint":first["queryFingerprint"],
+            "readVersion":first["readVersion"],"excluded":excluded}))).unwrap();
+    let captured: tsumugi_core::SegmentScopeCapture = serde_json::from_value(frozen).unwrap();
+    assert_eq!(captured.capture.units.iter().map(|unit| unit.unit_id).collect::<Vec<_>>(),
+        vec![rows[0].unit_id.unwrap(), rows[204].unit_id.unwrap()], "the second member was never loaded in the first page");
+    let verified = call(&window, "capture_review_scope", request(&context,
+        json!({"locale":"zh-CN","scopeId":captured.capture.scope_id,"excluded":excluded}))).unwrap();
+    assert_eq!(verified["units"], serde_json::to_value(&captured.capture.units).unwrap());
+    // The batch has its exact original targets before another row changes.
+    // Refresh can reveal that row, but cannot broaden this prepared batch.
+    save(&context, 1);
+    let mut refresh = page_request.clone();
+    refresh["query"]["selection"] = json!("selected");
+    assert_eq!(call(&window, "read_segment_page", refresh).unwrap()["total"], 3);
+    assert!(call(&window, "capture_review_scope", request(&context,
+        json!({"locale":"zh-CN","scopeId":captured.capture.scope_id,"excluded":excluded}))).is_err(),
+        "a changed segment basis requires a fresh preparation");
+    let mut decisions = Vec::new();
+    for unit in &captured.capture.units {
+        let original = request(&context, json!({"decision":{"projectId":project,"actionId":ExecutionId::new(),
+            "unitId":unit.unit_id,"locale":"zh-CN","expectedBasis":unit.expected_basis,
+            "expectedDecisionId":unit.expected_decision_id,"actor":"Synthetic batch reviewer","kind":"approve","reason":"Reviewed the fixed selection"}}));
+        let receipt = call(&window, "write_review_decision", original.clone()).unwrap();
+        assert_eq!(call(&window, "write_review_decision", original.clone()).unwrap(), receipt);
+        decisions.push((original, receipt));
+    }
+    assert!(call(&window, "capture_segment_scope", request(&context,
+        json!({"locale":"zh-CN","scopeId":first["scopeId"],"queryFingerprint":first["queryFingerprint"],
+            "readVersion":first["readVersion"],"excluded":[]}))).is_err());
+    let mut review = page_request;
+    review["query"]["status"] = json!("needs-review");
+    let remaining = call(&window, "read_segment_page", review.clone()).unwrap();
+    assert_eq!(remaining["total"], 1);
+    assert_eq!(remaining["rows"][0]["content"]["unitId"], json!(rows[1].unit_id));
+    call(&window, "close_project", context.clone()).unwrap();
+    let reopened = call(&window, "open_project", json!({"locator":directory.path().join("project")})).unwrap();
+    context["sessionToken"] = reopened["sessionToken"].clone();
+    review["sessionToken"] = reopened["sessionToken"].clone();
+    assert_eq!(call(&window, "read_segment_page", review).unwrap()["total"], 1);
+    for (mut original, receipt) in decisions {
+        original["sessionToken"] = reopened["sessionToken"].clone();
+        assert_eq!(call(&window, "write_review_decision", original).unwrap(), receipt);
+    }
+    for index in [0, 1, 204] {
+        let target = call(&window, "read_review_target", request(&context,
+            json!({"unitId":rows[index].unit_id,"locale":"ja"}))).unwrap();
+        assert!(target["selectionId"].is_null());
+        assert!(target["currentDecision"].is_null());
+    }
+    call(&window, "close_project", context).unwrap();
+}
