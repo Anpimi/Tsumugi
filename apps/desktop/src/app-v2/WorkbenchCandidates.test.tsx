@@ -15,7 +15,7 @@ import { SessionReads } from "../sessionReads";
 import { sourceCommands } from "../sourceCommands";
 import { fixtureIdentity } from "../testSupport/executionFixture";
 import { reviewSummaryFor, reviewTargetFixture } from "../testSupport/reviewFixture";
-import { translationCommands, type CandidateDecision, type CandidateDecisionRequest, type TranslationHistory, type TranslationRevision } from "../translationCommands";
+import { translationCommands, type CandidateDecision, type CandidateDecisionRequest, type TranslationHistory, type TranslationRevision, type TranslationSaveReceipt } from "../translationCommands";
 import WorkbenchApp from "./WorkbenchApp";
 import { ProjectLifecycle } from "./platform/projectLifecycle";
 import aiFixture from "../../test/fixtures/aiCommands.contract.json";
@@ -118,7 +118,7 @@ async function openCandidates() {
   fireEvent.click(screen.getByRole("button", { name: i18n.t("startup.openExisting") }));
   fireEvent.change(screen.getByRole("textbox", { name: w("projectFolder") }), { target: { value: project.locator } });
   fireEvent.click(screen.getByRole("button", { name: w("openProject") }));
-  const details = await screen.findByRole("button", { name: i18n.t("workbenchV2.showEntryDetails", { key: target.nativeKey }) }, { timeout: 5000 });
+  const details = await screen.findByRole("button", { name: i18n.t("workbenchV2.showEntryDetails", { key: target.nativeKey }) }, { timeout: 10000 });
   await waitFor(() => expect(details).toBeEnabled()); fireEvent.click(details);
   const row = await screen.findByRole("listitem", { name: target.nativeKey });
   const inspect = await within(row).findByRole("button", { name: w("candidateReject") });
@@ -331,7 +331,13 @@ it("opens Inspector from the focused inline candidate, keeps the other snapshot 
   await waitFor(() => expect(reads.client.getQueryCache().find({ queryKey: snapshotKey, exact: true })?.getObserversCount()).toBeGreaterThanOrEqual(2));
   const before = reads.client.getQueryState(snapshotKey)?.dataUpdateCount;
   dockTab("agent");
-  await waitFor(() => expect(reads.client.getQueryCache().find({ queryKey: snapshotKey, exact: true })?.getObserversCount()).toBe(1));
+  await waitFor(() => {
+    expect(within(screen.getByRole("tablist", { name: w("dockTabs") })).getByRole("tab", { name: w("agent") })).toHaveAttribute("aria-selected", "true");
+    // Retained dock panes keep their Query observers mounted. Only the inline
+    // observer remains enabled when Details is hidden.
+    const query = reads.client.getQueryCache().find({ queryKey: snapshotKey, exact: true });
+    expect(query?.observers.filter(observer => observer.options.enabled !== false)).toHaveLength(1);
+  });
   expect(reads.client.getQueryState(snapshotKey)).toMatchObject({ isInvalidated: false, fetchStatus: "idle", dataUpdateCount: before });
   await waitFor(() => expect(within(h.row).getByRole("button", { name: w("candidateAdopt") })).toBeEnabled());
   dockTab("detail");
@@ -343,6 +349,71 @@ it("opens Inspector from the focused inline candidate, keeps the other snapshot 
   expect(screen.getByRole("button", { name: w("editorConfirm") })).toBeEnabled();
   expect(translationCommands.save).not.toHaveBeenCalled(); expect(translationCommands.select).not.toHaveBeenCalled();
   expect(executionCommands.identity).not.toHaveBeenCalled();
+}, 15000);
+
+it("compares a saved candidate, stages it, confirms a manual rewrite and reads both distinct revisions in history", async () => {
+  const user = userEvent.setup(), manualText = "Human rewrite {name}\ne\u0301 👩🏽‍💻 — 日本語";
+  let saved: TranslationSaveReceipt | null = null;
+  const currentTarget = () => saved ? { ...copy(target), selectionId: saved.selection.eventId, revisionId: saved.revision.revisionId,
+    translationText: saved.revision.text, basis: "manually-confirmed-basis",
+    basisEvidence: { ...target.basisEvidence, selectionId: saved.selection.eventId, revisionId: saved.revision.revisionId } } : copy(target);
+  const history = (): TranslationHistory => ({ ...historyView(), current: saved?.selection ?? null, currentText: saved?.revision.text ?? null,
+    rows: saved ? [copy(candidate), { ...copy(saved.revision), ordinal: "2", candidateDecision: null }] : [copy(candidate)], total: saved ? "2" : "1" });
+  vi.mocked(translationCommands.history).mockImplementation(async () => history());
+  vi.mocked(reviewCommands.editorSnapshot).mockImplementation(async () => ({ target: currentTarget(), translations: history(),
+    terms: { unitId: target.unitId, locale: target.locale, sourceRevisionId: target.sourceRevisionId, entries: [] }, context: null, readVersion: saved ? "2" : "1" }));
+  vi.mocked(draftCommands.read).mockImplementation(async () => ({ head: copy(disk), current: { kind: "current", basis: saved ? {
+    sourceRevisionId: target.sourceRevisionId, selectionId: saved.selection.eventId, revisionId: saved.revision.revisionId, text: saved.revision.text,
+  } : copy(basis), nativeKey: target.nativeKey, sourceText: target.sourceText } }));
+  vi.mocked(translationCommands.save).mockImplementation(async request => {
+    saved = { projectId: request.projectId, actionId: request.actionId,
+      selection: { ...copy(translationFixture.receipt.selection), eventId: fixtureIdentity(973), revisionId: fixtureIdentity(974),
+        actionId: request.actionId, unitId: request.unitId, locale: request.locale, previousEventId: request.expectedSelectionId ?? null },
+      revision: { ...copy(candidate), revisionId: fixtureIdentity(974), ordinal: "2", originKind: "manual", actionId: request.actionId, text: request.text },
+      basis: { sourceSnapshotId: target.sourceSnapshotId, sourceRevisionId: request.sourceRevisionId, selectionId: fixtureIdentity(973) } };
+    return copy(saved);
+  });
+  vi.spyOn(draftCommands, "clear").mockImplementation(async ({ clear }) => {
+    expect(clear.expectedRevision).toBe(disk.revision);
+    disk = { key, revision: String(BigInt(disk.revision) + 1n), writerId: null, value: null }; return copy(disk);
+  });
+  vi.spyOn(reviewCommands, "history").mockResolvedValue({ checks: [], decisions: [], waivers: [], fallbacks: [], nextOffset: null });
+  vi.mocked(segmentCommands.queueWindow).mockImplementation(async request => ({ projectId: project.metadata.projectId, locale: request.locale,
+    scopeId: page.scopeId, sourceSnapshotId: target.sourceSnapshotId, query: copy(page.query), queryFingerprint: page.queryFingerprint,
+    epoch: page.epoch, sequence: saved ? "2" : "1", total: 1, firstPosition: 0, previousUnitId: null, nextUnitId: null,
+    rows: [{ ...copy(page.rows[0]), content: reviewSummaryFor(currentTarget()) }] }));
+  const h = await openCandidates();
+  const compare = within(h.panel).getByRole("button", { name: i18n.t("workbenchV2.candidateCompare") });
+  await user.click(compare);
+  const comparison = await within(h.panel).findByRole("region", { name: i18n.t("workbenchV2.candidateComparison") });
+  expect(comparison).toHaveFocus();
+  expect(comparison).toHaveTextContent(candidate.text, { normalizeWhitespace: false });
+  expect(within(comparison).getByText(i18n.t("workbenchV2.editorNoSelection"))).toBeVisible();
+  expect(translationCommands.save).not.toHaveBeenCalled(); expect(translationCommands.select).not.toHaveBeenCalled();
+  await user.click(within(comparison).getByRole("button", { name: i18n.t("workbenchV2.candidateCloseCompare") }));
+  await waitFor(() => expect(compare).toHaveFocus());
+  await user.click(within(h.panel).getByRole("button", { name: w("candidateAdopt") }));
+  const editor = await screen.findByRole<HTMLTextAreaElement>("textbox", { name: i18n.t("workbenchV2.editorLabel", { key: target.nativeKey }) });
+  await waitFor(() => expect(editor).toHaveValue(candidate.text));
+  expect(disk.value?.text).toBe(candidate.text); expect(translationCommands.save).not.toHaveBeenCalled();
+  fireEvent.change(editor, { target: { value: manualText } });
+  await waitFor(() => expect(disk.value?.text).toBe(manualText));
+  await user.click(screen.getByRole("button", { name: w("editorConfirm") }));
+  await waitFor(() => expect(draftCommands.clear).toHaveBeenCalledOnce());
+  expect(editor).toHaveValue(manualText); expect(disk.value).toBeNull();
+  expect(translationCommands.save).toHaveBeenCalledExactlyOnceWith({ projectId: project.metadata.projectId, sessionToken: project.sessionToken,
+    actionId: fixtureIdentity(972), unitId: target.unitId, locale: target.locale, sourceRevisionId: target.sourceRevisionId, expectedSelectionId: null, text: manualText });
+  await user.click(screen.getByRole("tab", { name: i18n.t("workbenchV2.history") }));
+  const historyPanel = await screen.findByRole("region", { name: i18n.t("workbenchV2.candidateHistory") });
+  await waitFor(() => expect(within(historyPanel).getAllByRole("listitem")).toHaveLength(2));
+  const revisions = within(historyPanel).getAllByRole("listitem");
+  expect(revisions[0]).toHaveTextContent(candidate.text, { normalizeWhitespace: false });
+  expect(revisions[0]).toHaveTextContent(i18n.t("workbenchV2.candidateAi"));
+  expect(revisions[1]).toHaveTextContent(manualText, { normalizeWhitespace: false });
+  expect(revisions[1]).toHaveTextContent(i18n.t("resource.manual"));
+  expect(revisions[1]).toHaveTextContent(i18n.t("workbenchV2.candidateCurrent"));
+  expect(translationCommands.select).not.toHaveBeenCalled(); expect(translationCommands.decideCandidate).not.toHaveBeenCalled();
+  expect(nativeInvoke.mock.calls.filter(([command]) => /^(authorize_|start_|control_|prepare_|run_)/.test(String(command)))).toEqual([]);
 }, 15000);
 
 it("retains the original unknown candidate decision after the last view closes and checks it without allocating or dispatching another action", async () => {

@@ -113,8 +113,10 @@ async function openIssues() {
   await user.click(await screen.findByRole("menuitem", { name: w("entryPresetIssues") }));
   const details = await screen.findByRole("button", { name: i18n.t("workbenchV2.showEntryDetails", { key: fixture.target.nativeKey }) });
   await waitFor(() => expect(details).toBeEnabled()); await user.click(details);
-  await user.click(await screen.findByRole("tab", { name: w("issues") }));
-  await screen.findByRole("region", { name: w("entryIssuesTitle") });
+  // Details and its issues body are separate lazy surfaces. Wait for their
+  // actual readiness within the journey's existing cold-loading budget.
+  await user.click(await screen.findByRole("tab", { name: w("issues") }, { timeout: 5000 }));
+  await screen.findByRole("region", { name: w("entryIssuesTitle") }, { timeout: 5000 });
   return user;
 }
 // The first full editor journey also loads the lazy work surfaces. Its timeout

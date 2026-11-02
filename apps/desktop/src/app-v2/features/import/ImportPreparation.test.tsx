@@ -1,8 +1,9 @@
-import { useLayoutEffect, type ReactNode } from "react";
+import { useLayoutEffect, useState, type ReactNode } from "react";
 import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { i18n } from "../../../i18n";
 import type { TranslationKey } from "../../../i18n/types";
+import type { workbenchEn } from "../../../i18n/workbench";
 import { SessionReadProvider } from "../../../SessionReadProvider";
 import { SessionReads } from "../../../sessionReads";
 import { TranslationImportProvider, useTranslationImportSession } from "../../../TranslationImportSession";
@@ -13,9 +14,17 @@ import type { ProjectView } from "../../../projectCommands";
 import { fixtureIdentity } from "../../../testSupport/executionFixture";
 import { translationInventory, translationPackage, translationView } from "../../../testSupport/pluginTranslationFixture";
 import { translationPreviewFixture, translationImportChoice, translationSelectionFixture, translationCaptureFixture,
-  translationCheckerFixture, translationProjectionFixture, translationStageAttempt, translationAttemptFixture } from "../../../testSupport/translationFixture";
+  translationCheckerFixture, translationProjectionFixture, translationStageAttempt, translationAttemptFixture, translationRowFixture,
+  translationActionFixture, translationReceiptFixture, translationRecoveryUnit } from "../../../testSupport/translationFixture";
+import type { TranslationAdoptRequest } from "../../../translationCommands";
+import { validateRequestAdopt } from "../../../generated/translation.validators";
+import { TranslationDrafts } from "../editor/translationDrafts";
+import { ProjectLifecycle } from "../../platform/projectLifecycle";
 import { InteractionGate } from "../../workspace/interactionGate";
 import ImportPreparation from "./ImportPreparation";
+import ImportOwnerHost from "./ImportOwnerHost";
+import type { ImportOwners } from "./importTypes";
+import TranslationImportPanel from "./TranslationImportPanel";
 
 const invoke = vi.hoisted(() => vi.fn());
 vi.mock("@tauri-apps/api/core", () => ({ invoke }));
@@ -23,6 +32,8 @@ const project: ProjectView = { locator: "/synthetic/import-preparation", session
   metadata: { projectId: fixtureIdentity(900), displayName: "Import fixture", metadataRevision: "1", sourceLocale: "en", targetLocales: ["zh-CN", "ja"] } };
 const context = executionContext(project), scope = { ...context, area: "translation" as const }, preview = translationPreviewFixture();
 const owners: SessionReads[] = [];
+const draftOwners: TranslationDrafts[] = [];
+const lifecycles: ProjectLifecycle[] = [];
 let identity: number, qualified: boolean;
 let attempts: Map<string, AttemptDetail>;
 let owner: ReturnType<typeof useTranslationImportSession>, tasks: ReturnType<typeof useExecutionTaskSession>;
@@ -125,7 +136,126 @@ beforeEach(async () => {
     throw new Error(`Unexpected synthetic request: ${command}`);
   });
 });
-afterEach(() => { cleanup(); owners.splice(0).forEach(reads => reads.retire()); });
+afterEach(() => { cleanup(); draftOwners.splice(0).forEach(drafts => drafts.retire()); owners.splice(0).forEach(reads => reads.retire()); lifecycles.splice(0).forEach(value => value.dispose()); });
+
+function FullImportPanel({ commands, gate, drafts, lifecycle }: {
+  commands: WorkbenchCommands; gate: InteractionGate; drafts: TranslationDrafts; lifecycle: ProjectLifecycle;
+}) {
+  const [owners, retain] = useState<ImportOwners | null>(null);
+  useLayoutEffect(() => { if (owners) { owner = owners.imports; tasks = owners.tasks; } });
+  return <><ImportOwnerHost project={project} drafts={drafts} lifecycle={lifecycle} onOwners={retain} onReveal={() => undefined}/>
+    {owners ? <TranslationImportPanel project={project} owners={owners} drafts={drafts} commands={commands} gate={gate}
+      viewId="entries" visible disabled={false} onBack={() => undefined} onOpenEntry={() => undefined} /> : null}</>;
+}
+
+async function fullPanelHarness() {
+  const reads = new SessionReads(context); owners.push(reads);
+  const drafts = new TranslationDrafts({ context, reads, ports: { writerId: () => "full-import-writer", list: async () => ({ items: [], next: null }) } });
+  draftOwners.push(drafts); expect(await drafts.initialize()).toBe(true);
+  const lifecycle = new ProjectLifecycle(); lifecycles.push(lifecycle);
+  const commands = new WorkbenchCommands(), gate = new InteractionGate(); gate.setVisibleOwner("entries");
+  render(<SessionReadProvider context={context} reads={reads} bridge={false}>
+    <ExecutionTaskProvider project={project} mutations={drafts}>
+      <FullImportPanel commands={commands} gate={gate} drafts={drafts} lifecycle={lifecycle} />
+    </ExecutionTaskProvider>
+  </SessionReadProvider>);
+  return { drafts };
+}
+
+it("takes file and language consent through matching, fixes a partial batch and reconciles only its original unknown action", async () => {
+  const rows = [translationRowFixture(0), translationRowFixture(1), translationRowFixture(2),
+    translationRowFixture(3, { status: "selected-conflict", currentText: "Keep the existing translation" }),
+    translationRowFixture(4, { status: "ambiguous", unitId: null }), translationRowFixture(5, { status: "unmatched", unitId: null })];
+  rows[0].entry.text = "Imported {name}\ne\u0301 👩🏽‍💻 日本語";
+  let projected = translationPreviewFixture(rows), lookupAvailable = false;
+  const originalInvoke = invoke.getMockImplementation()!, requests = new Map<string, TranslationAdoptRequest>();
+  const importedRow = (request: TranslationAdoptRequest) => {
+    const row = rows.find(value => value.itemId === request.itemId);
+    if (!row) throw new Error("The original adoption must reference one captured row");
+    return row;
+  };
+  invoke.mockImplementation(async (command: string, args: { request: Record<string, unknown> }) => {
+    const request = args.request;
+    if (command === "start_translation_projection") {
+      projected = { ...projected, attemptId: String(request.attemptId) };
+      attempts.set(projected.attemptId, translationAttemptFixture(projected)); return projected.attemptId;
+    }
+    if (command === "read_translation_preview") {
+      const rows = projected.rows.filter(row => row.entry.ordinal >= Number(request.after)).slice(0, 2), last = rows.at(-1)?.entry.ordinal;
+      return { ...projected, rows, nextOrdinal: last !== undefined && last + 1 < projected.total ? last + 1 : null };
+    }
+    if (command === "read_execution_attempt" && request.attemptId === projected.attemptId && attempts.has(projected.attemptId)) {
+      const offset = Number(request.offset), page = projected.rows.slice(offset, offset + 2);
+      return translationAttemptFixture(projected, page, offset + page.length < projected.total ? offset + page.length : null);
+    }
+    if (command === "prepare_translation_adoption") {
+      if (!validateRequestAdopt(request)) throw new Error("Invalid captured adoption request");
+      requests.set(request.actionId, request);
+      if (request.itemId === rows[1].itemId) throw { code: "dependency-conflict", outcome: "rejected", stage: "execution-adopt", recoveryRequired: false, reason: "translation-selection" };
+      return translationActionFixture(request, translationRecoveryUnit(importedRow(request)));
+    }
+    if (command === "adopt_execution") {
+      const original = requests.get(String(request.actionId));
+      if (!original) throw new Error("An original prepared adoption is required");
+      if (original.itemId === rows[2].itemId) throw new Error("Synthetic lost adoption acknowledgement");
+      return translationReceiptFixture(original, translationRecoveryUnit(importedRow(original)));
+    }
+    if (command === "read_translation_adoption_action") {
+      if (!lookupAvailable) throw new Error("Synthetic original receipt not yet available");
+      const original = request.adoption;
+      if (!validateRequestAdopt(original)) throw new Error("The original request must be retained for lookup");
+      const unit = translationRecoveryUnit(importedRow(original));
+      return { action: translationActionFixture(original, unit), receipt: translationReceiptFixture(original, unit) };
+    }
+    return originalInvoke(command, args);
+  });
+  const { drafts } = await fullPanelHarness();
+  await captureFile();
+  expect(calls("start_plugin_translation")).toHaveLength(0);
+  fireEvent.click(screen.getByRole("checkbox", { name: text("translationPlugin.producerConsent") })); click("translation.start");
+  await waitFor(() => expect(screen.getByRole("button", { name: text("translationPlugin.prepareCheck") })).toBeEnabled());
+  click("translationPlugin.prepareCheck");
+  await screen.findByRole("region", { name: text("translationPlugin.checkReview") });
+  expect(calls("start_translation_check")).toHaveLength(0);
+  fireEvent.click(screen.getByRole("checkbox", { name: text("translationPlugin.checkerConsent") })); click("translationPlugin.startCheck");
+  await waitFor(() => expect(screen.getByRole("button", { name: text("translationPlugin.recordCheck") })).toBeEnabled());
+  click("translationPlugin.recordCheck");
+  await waitFor(() => expect(screen.getByRole("button", { name: text("translationPlugin.preparePreview") })).toBeEnabled());
+  click("translationPlugin.preparePreview");
+  await waitFor(() => expect(screen.getByRole("button", { name: text("translationPlugin.openPreview") })).toBeEnabled());
+  click("translationPlugin.openPreview");
+  await screen.findByRole("rowheader", { name: "key-0" });
+  expect(screen.getByRole("rowheader", { name: "key-0" }).closest("tr")).toHaveTextContent(rows[0].entry.text, { normalizeWhitespace: false });
+  expect(calls("prepare_translation_adoption")).toHaveLength(0);
+  type WorkbenchTextKey = { [K in keyof typeof workbenchEn]: typeof workbenchEn[K] extends string ? K : never }[keyof typeof workbenchEn];
+  const w = (key: WorkbenchTextKey) => i18n.t(`workbenchV2.${key}`);
+  fireEvent.click(screen.getByRole("checkbox", { name: w("importSelectEmpty") }));
+  fireEvent.click(screen.getByRole("button", { name: w("importPrepareBatch") }));
+  await screen.findByRole("region", { name: w("importConfirmBatch") });
+  expect(owner.current().batchCapture?.eligible.map(row => row.itemId)).toEqual(rows.slice(0, 3).map(row => row.itemId));
+  expect(owner.current().batchCapture?.excluded).toBe(3);
+  expect(calls("prepare_translation_adoption")).toHaveLength(0);
+  fireEvent.click(screen.getByRole("button", { name: w("nextPage") })); await screen.findByRole("rowheader", { name: "key-2" });
+  fireEvent.click(screen.getByRole("button", { name: i18n.t("workbenchV2.importApplyBatch", { count: 3 }) }));
+  await waitFor(() => expect(owner.current().batchOutcome).toEqual({ applied: 1, conflicted: 1, failed: 0, unknown: 1 }));
+  expect(drafts.getSnapshot().mutationReserved).toBe(true);
+  expect(calls("prepare_translation_adoption").map(([, args]) => args.request.itemId)).toEqual(rows.slice(0, 3).map(row => row.itemId));
+  expect(calls("prepare_translation_adoption").every(([, args]) => args.request.confirmation.decision === "select-if-empty")).toBe(true);
+  const pending = owner.current().uncertain[0], writes = calls("prepare_translation_adoption").length + calls("adopt_execution").length,
+    identities = calls("create_execution_identity").length;
+  expect(screen.queryByRole("button", { name: w("importRetryOriginal") })).not.toBeInTheDocument();
+  lookupAvailable = true;
+  fireEvent.click(screen.getByRole("button", { name: w("importCheckResult") }));
+  await waitFor(() => expect(owner.current().uncertain).toHaveLength(0));
+  expect(calls("read_translation_adoption_action").at(-1)?.[1].request).toEqual({ adoption: pending.request, unitId: pending.recoveryUnitId });
+  expect(calls("prepare_translation_adoption").length + calls("adopt_execution").length).toBe(writes);
+  expect(calls("create_execution_identity")).toHaveLength(identities);
+  expect(owner.current().batchOutcome).toEqual({ applied: 2, conflicted: 1, failed: 0, unknown: 0 });
+  expect(drafts.getSnapshot().mutationReserved).toBe(false);
+  expect(screen.getByText(i18n.t("workbenchV2.importOutcome", { applied: "2", conflicted: "1", failed: "0", unknown: "0" }))).toBeVisible();
+  expect(calls("start_plugin_translation")).toHaveLength(1); expect(calls("start_translation_check")).toHaveLength(1);
+  expect(calls("start_translation_projection")).toHaveLength(1);
+}, 15000);
 
 it("takes explicit file, language, extraction and checker decisions before preparing the existing match preview", async () => {
   harness(); await captureFile();

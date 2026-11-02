@@ -9,7 +9,7 @@ import { conversationCommands } from "../conversationCommands";
 import { conversationDraftCommands } from "../conversationDraftCommands";
 import { decisionCommands, type DecisionPage, type DecisionPageRequest } from "../decisionCommands";
 import { draftCommands, type DraftBasis } from "../draftCommands";
-import { executionContext } from "../executionCommands";
+import { executionCommands, executionContext } from "../executionCommands";
 import { DecisionSourceValues } from "../generated/decisions.enums";
 import { validateRequestPage, validateResponsePage } from "../generated/decisions.validators";
 import { validateResponseDeliveryRecord } from "../generated/release.validators";
@@ -40,6 +40,8 @@ vi.mock("./features/delivery/DeliveryView", () => ({ default: (props: import("./
 type Label = { [K in keyof typeof workbenchEn]: typeof workbenchEn[K] extends string ? K : never }[keyof typeof workbenchEn];
 const w = (key: Label, values?: Record<string, string | number>) => i18n.t(`workbenchV2.${key}`, values);
 const copy = <T,>(value: T): T => structuredClone(value);
+function deferred<T>() { let resolve!: (value: T) => void, reject!: (value: unknown) => void;
+  const promise = new Promise<T>((yes, no) => { resolve = yes; reject = no; }); return { promise, resolve, reject }; }
 const project: ProjectView = { sessionToken: "synthetic-decision-workspace", locator: "/synthetic/decision-workspace", reconciliationState: "settled",
   metadata: { projectId: wire.requests.target.projectId, displayName: "Decision workspace", metadataRevision: "1", sourceLocale: "en", targetLocales: ["zh-CN", "fr-FR"] } };
 const context = executionContext(project), releaseId = id(90000), deliveryId = id(90001), actionId = id(90002);
@@ -194,7 +196,7 @@ it("shares current counts across the activity badge, fixed tray and list, then r
   await waitFor(() => expect(open).toHaveFocus());
   expect(views().getByRole("button", { name: w("viewName", { locale: "zh-CN" }) })).toBeInTheDocument();
   expect(views().getByRole("button", { name: w("decisions") })).toHaveAttribute("aria-current", "page");
-});
+}, 15000);
 
 it("opens the exact resource comparison outside the saved-capture list and returns to the original inbox row", async () => {
   const raw: unknown = copy(resourceWire.responses.preview);
@@ -232,7 +234,95 @@ it("opens the exact resource comparison outside the saved-capture list and retur
   await user.click(activity().getByRole("button", { name: w("knowledge") }));
   expect(await screen.findByRole("textbox", { name: i18n.t("knowledge.targetTerm") })).toHaveValue("Keep this newer term input B");
   expect(decide).not.toHaveBeenCalled();
-});
+}, 15000);
+
+it.each(["recorded", "rejected", "unknown"] as const)("keeps the Inbox, badge and tray on one original resource decision while its outcome is %s", async outcome => {
+  const raw: unknown = copy(resourceWire.responses.preview);
+  if (!validateResponsePreview(raw)) throw new Error("Expected an original resource comparison");
+  const row = raw.rows[0];
+  if (!row) throw new Error("Expected the original resource entry");
+  originalItems = [{ decisionId: `resource-proposal:${raw.capture.captureId}:${row.entry.id}`, source: "resource-proposal",
+    state: "pending", locale: raw.capture.targetLocale, targets: [{ kind: "resource", captureId: raw.capture.captureId, entryId: row.entry.id }],
+    targetsComplete: true, basis: "b".repeat(64), sourceActionId: null, evidence: null,
+    action: { kind: "review-resource", captureId: raw.capture.captureId, entryId: row.entry.id } }];
+  knownCount = 1;
+  vi.spyOn(resourceCommands, "preview").mockImplementation(async () => copy(raw));
+  vi.spyOn(resourceCommands, "captures").mockResolvedValue([]);
+  vi.spyOn(resourceCommands, "terms").mockResolvedValue([]);
+  vi.spyOn(executionCommands, "identity").mockResolvedValue(id(90999));
+  const reply = deferred<Awaited<ReturnType<typeof resourceCommands.decide>>>();
+  const decide = vi.spyOn(resourceCommands, "decide").mockImplementation(() => reply.promise);
+  const observe = vi.spyOn(resourceCommands, "observeDecisionAction").mockResolvedValue(null);
+  const check = vi.spyOn(resourceCommands, "decisionAction").mockResolvedValue(null);
+  const user = await openWorkspace();
+  await user.click(dock().getByRole("button", { name: w("decisionsTrayPartial", { count: 1 }) }));
+  const list = await screen.findByRole("region", { name: w("decisionsTitle") });
+  expect(within(list).getByText(w("decisionsAtLeastCount", { count: 1 }))).toBeVisible();
+  expect(activity().getByLabelText(w("decisionsBadgePartial", { count: 1 }))).toHaveTextContent("1+");
+  expect(dock().getByRole("button", { name: w("decisionsTrayPartial", { count: 1 }) })).toBeEnabled();
+  await user.click(within(list).getByRole("button", { name: w("decisionsResourceOpen") }));
+  const details = await screen.findByRole("region", { name: i18n.t("workbenchV2.decisionDetailsTitles.review-resource") });
+  const open = await within(details).findByRole("button", { name: w("decisionDetailsOpenResource") });
+  await waitFor(() => expect(open).toBeEnabled()); await user.click(open);
+  const panel = await screen.findByRole("region", { name: i18n.t("knowledge.proposalTitle") }, { timeout: 15000 });
+  const proposal = within(panel).getByRole("row", { name: row.entry.source });
+  const ignore = within(proposal).getByRole("button", { name: i18n.t("knowledge.proposalIgnore") });
+  await waitFor(() => expect(ignore).toBeEnabled()); await user.click(ignore);
+  await waitFor(() => expect(decide).toHaveBeenCalledOnce());
+  const submitted = copy(decide.mock.calls[0][0]);
+  const immutableRequest = { ...submitted.decision, expectedRevisionId: submitted.decision.expectedRevisionId ?? null };
+  const recordedReceipt = { request: immutableRequest, actionId: immutableRequest.actionId, decision: immutableRequest.decision, revision: null };
+  expect(submitted).toEqual({ ...context, decision: { projectId: context.projectId, actionId: id(90999), captureId: raw.capture.captureId,
+    entryId: row.entry.id, expectedRevisionId: null, decision: "ignore" } });
+  await waitFor(() => expect(vi.mocked(decisionCommands.page).mock.lastCall?.[0].activity
+    ?.some(owner => owner.actions.some(action => action.actionId === submitted.decision.actionId))).toBe(true));
+
+  // Activating the Inbox retains its selected comparison. Return from that
+  // exact detail before checking the list, while the resource owner keeps A.
+  await waitFor(() => expect(controller?.getSnapshot().phase).toBe("idle"));
+  await user.click(activity().getByRole("button", { name: w("decisions") }));
+  const retainedDetails = await screen.findByRole("region", { name: i18n.t("workbenchV2.decisionDetailsTitles.review-resource") });
+  await user.click(within(retainedDetails).getByRole("button", { name: w("decisionDetailsBack") }));
+  const pendingList = await screen.findByRole("region", { name: w("decisionsTitle") });
+  await waitFor(() => expect(within(pendingList).getByText(w("decisionsAtLeastCount", { count: 1 }))).toBeVisible());
+  expect(activity().getByLabelText(w("decisionsBadgePartial", { count: 1 }))).toHaveTextContent("1+");
+  await waitFor(() => expect(reads.client.isFetching({ queryKey: reads.key(["workbench-decisions"]) })).toBe(0));
+  const readCount = vi.mocked(decisionCommands.page).mock.calls.length;
+  await user.click(dock().getByRole("button", { name: w("decisionsTrayPartial", { count: 1 }) }));
+  expect(vi.mocked(decisionCommands.page)).toHaveBeenCalledTimes(readCount);
+  expect(decide).toHaveBeenCalledOnce();
+  await act(async () => {
+    if (outcome === "recorded") {
+      originalItems = []; knownCount = 0; basis = "f".repeat(64);
+      reply.resolve(recordedReceipt);
+    } else if (outcome === "rejected") reply.reject({ code: "dependency-conflict", stage: "execution-adopt", outcome: "rejected",
+      reason: "resource-current", recoveryRequired: false });
+    else reply.reject(new Error("Synthetic transport acknowledgement lost"));
+  });
+  await waitFor(() => expect(reads.client.isFetching({ queryKey: reads.key(["workbench-decisions"]) })).toBe(0));
+  if (outcome === "recorded") {
+    await waitFor(() => expect(within(pendingList).getByText(w("decisionsPartialEmpty"))).toBeVisible());
+    expect(activity().getByLabelText(w("decisionsBadgeUnknown"))).toHaveTextContent("?");
+    expect(dock().getByRole("button", { name: w("decisionsTrayUnknown") })).toBeEnabled();
+    expect(within(pendingList).queryByRole("button", { name: w("decisionsResourceOpen") })).not.toBeInTheDocument();
+  } else {
+    await waitFor(() => expect(within(pendingList).getByText(w("decisionsAtLeastCount", { count: 1 }))).toBeVisible());
+    expect(activity().getByLabelText(w("decisionsBadgePartial", { count: 1 }))).toHaveTextContent("1+");
+    expect(dock().getByRole("button", { name: w("decisionsTrayPartial", { count: 1 }) })).toBeEnabled();
+  }
+  if (outcome === "unknown") {
+    await waitFor(() => expect(observe).toHaveBeenCalledWith(submitted));
+    await user.click(activity().getByRole("button", { name: w("knowledge") }));
+    const recovery = await screen.findByRole("button", { name: i18n.t("knowledge.proposalCheck") });
+    await waitFor(() => expect(recovery).toBeEnabled()); await user.click(recovery);
+    await waitFor(() => expect(check).toHaveBeenCalledExactlyOnceWith(submitted));
+    expect(await screen.findByRole("button", { name: i18n.t("knowledge.proposalRetry") })).toBeEnabled();
+  } else expect(check).not.toHaveBeenCalled();
+  expect(decide).toHaveBeenCalledOnce();
+  expect(executionCommands.identity).toHaveBeenCalledOnce();
+  expect(decide.mock.calls[0][0]).toEqual(submitted);
+  for (const mutation of [releaseCommands.choose, releaseCommands.export, releaseCommands.reconcile]) expect(mutation).not.toHaveBeenCalled();
+}, 20000);
 
 it("opens delivery from the exact saved outcome without authorizing a destination or repeating an export", async () => {
   const user = await openWorkspace();

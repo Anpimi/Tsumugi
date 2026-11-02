@@ -40,7 +40,7 @@ function controlSettlement(request: Parameters<typeof workPlanCommands.controlSe
     lease: { planId: request.planId, generation }, state: outcome.kind === "recorded" && outcome.receipt.lease.generation === generation ? outcome.receipt.state : "active", outcome } };
   if (!validateResponseWorkPlanControlSettlement(value)) throw new Error("Invalid synthetic control settlement"); return value;
 }
-function harness() {
+function harness(session = context) {
   let sequence = 1;
   const heads = new Map<string, ConversationDraftHead>();
   const created = new Map<string, ProjectConversation>(), appended = new Map<string, ProjectConversationMessage>();
@@ -123,7 +123,7 @@ function harness() {
   const readStrategyDefault = vi.fn<typeof strategyCommands.default>(async () => null);
   const all = { ...ports, readStrategyDefault, write, resolve, create, append, recoverCreate, recoverMessage, preparePlanning, validatePlanning, startPlanning, recoverPlanning, recoverProposalCapture, recoverProposalRevision, recoverProposalWorkPlan, captureSelection,
     captureProposal, reviseProposal, validateProposal, readPlanning, prepareProposalWorkPlan, authorizeProposalWorkPlan, planStatus, readPlanRun, readAiResults, retryEffect, startPlan, readPlanStartSettlement, controlPlan, readPlanControlSettlement };
-  const make = () => new ConversationSession(context, recorded, reveal, all);
+  const make = () => new ConversationSession(session, recorded, reveal, all);
   const owner = make();
   return { owner, make, ports: all, heads, created, appended, recorded, reveal, journal, current: () => {
     const state = owner.getSnapshot(), input = state.activeId ? state.inputs.get(state.activeId) : undefined;
@@ -1123,6 +1123,53 @@ describe("ConversationSession", () => {
     expect(h.ports.create).toHaveBeenCalledOnce(); expect(h.ports.recoverCreate).not.toHaveBeenCalled();
     await reopened.check(id);
     expect(h.ports.create).toHaveBeenCalledOnce(); expect(reopened.getSnapshot().inputs.get(id)?.value).toMatchObject({ text: "还在写", pending: null });
+  });
+
+  it("keeps a reopened unknown message and another project's input independent of its late original recovery", async () => {
+    const h = harness(); await h.owner.initialize(); await h.owner.create();
+    const conversationId = h.current().key.conversationId;
+    h.owner.edit(conversationId, "Submitted A\n原文 👩🏽‍💻"); await h.owner.flush();
+    const finish = deferred<void>(), append = h.ports.append.getMockImplementation()!;
+    h.ports.append.mockImplementationOnce(async request => { await finish.promise; await append(request); throw new Error("Lost original message acknowledgement"); });
+    const sending = h.owner.append(conversationId);
+    await vi.waitFor(() => expect(h.ports.append).toHaveBeenCalledOnce());
+    const submitted = structuredClone(h.ports.append.mock.calls[0][0]);
+    h.owner.edit(conversationId, "Newer B e\u0301\nKeep both lines");
+    finish.resolve(); await sending;
+    await vi.waitFor(async () => expect(await h.owner.flush()).toBe(true));
+    const pending = structuredClone(h.current().value.pending);
+    expect(h.current().outcome).toBe("unknown");
+    expect(h.heads.get(conversationId)?.value?.text).toBe("Newer B e\u0301\nKeep both lines");
+    h.owner.retire();
+
+    const other = harness({ projectId: "10000000-0000-4000-8000-000000000099", sessionToken: "another-project-session" });
+    await other.owner.initialize(); await other.owner.create();
+    const otherId = other.current().key.conversationId;
+    other.owner.edit(otherId, "Another project's draft C"); await other.owner.flush();
+    const otherInput = structuredClone(other.current().value), otherRecorded = other.recorded.mock.calls.length;
+    const reopened = new ConversationSession({ ...context, sessionToken: "reopened-session" }, h.recorded, h.reveal, h.ports);
+    await reopened.initialize(); await reopened.open(conversationId);
+    expect(reopened.getSnapshot().inputs.get(conversationId)?.value).toMatchObject({ text: "Newer B e\u0301\nKeep both lines", pending });
+    expect(h.ports.recoverMessage).not.toHaveBeenCalled();
+    const recovery = deferred<void>(), recoverMessage = h.ports.recoverMessage.getMockImplementation()!;
+    h.ports.recoverMessage.mockImplementationOnce(async request => { await recovery.promise; return recoverMessage(request); });
+    const checking = reopened.check(conversationId);
+    await vi.waitFor(() => expect(h.ports.recoverMessage).toHaveBeenCalledOnce());
+    expect(h.ports.recoverMessage).toHaveBeenLastCalledWith({ ...submitted, sessionToken: "reopened-session" });
+    expect(h.ports.append).toHaveBeenCalledOnce();
+
+    reopened.retire(); recovery.resolve(); await checking;
+    expect(reopened.getSnapshot().inputs.get(conversationId)?.value.pending).toEqual(pending);
+    expect(other.current().value).toEqual(otherInput);
+    expect(other.recorded).toHaveBeenCalledTimes(otherRecorded);
+    expect(other.ports.recoverMessage).not.toHaveBeenCalled();
+    const final = new ConversationSession({ ...context, sessionToken: "final-session" }, h.recorded, h.reveal, h.ports);
+    await final.initialize(); await final.open(conversationId); await final.check(conversationId);
+    expect(final.getSnapshot().inputs.get(conversationId)?.value).toMatchObject({ text: "Newer B e\u0301\nKeep both lines", pending: null });
+    expect(h.ports.append).toHaveBeenCalledOnce(); expect(h.appended.size).toBe(1);
+    expect(h.appended.get(submitted.actionId)?.body).toBe(submitted.body);
+    expect(h.ports.startPlan).not.toHaveBeenCalled(); expect(h.ports.startPlanning).not.toHaveBeenCalled();
+    final.retire(); other.owner.retire();
   });
 
   it("retries the exact failed resolution and keeps text entered after the lost journal acknowledgement", async () => {
