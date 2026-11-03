@@ -1,4 +1,4 @@
-import { useEffect, useId, useLayoutEffect, useRef, useState } from "react";
+import { useEffect, useId, useLayoutEffect, useRef, useState, type RefObject } from "react";
 import { useTranslation } from "react-i18next";
 import { AiBudgetInputs, AiConnectionEditor } from "../../../AiConnectionFields";
 import { connectionConfigCurrent, useConnectionFacts } from "../../../ApplicationReadProvider";
@@ -20,8 +20,8 @@ function formattedInput(input: string) {
   try { return JSON.stringify(JSON.parse(input), null, 2); } catch { return input; }
 }
 
-export function ConversationPlanningPanel({ owner, input, visible, disabled, gate, viewId, parentDialogId, selection = null }: {
-  owner: ConversationSession; input: ConversationInput; visible: boolean; disabled: boolean;
+export function ConversationPlanningPanel({ owner, input, visible, disabled, gate, viewId, parentDialogId, selection = null, reviewRegion }: {
+  reviewRegion?: RefObject<HTMLElement | null>; owner: ConversationSession; input: ConversationInput; visible: boolean; disabled: boolean;
   gate: InteractionGate; viewId: string | null; parentDialogId?: string; selection?: WorkspaceSelection | null;
 }) {
   const { t } = useTranslation(undefined, { keyPrefix: "conversation" }), { t: global } = useTranslation();
@@ -52,7 +52,7 @@ export function ConversationPlanningPanel({ owner, input, visible, disabled, gat
       (ticket.preview && planning.prepared ? previewRegion.current : root.current)?.focus();
   }, [input.busy, input.journalBusy, planning.busy, planning.prepared, visible]);
   const prepared = planning.prepared;
-  return <section ref={root} tabIndex={-1} className={styles.planning} aria-label={t("askTitle")}
+  return <section ref={node => { root.current = node; if (reviewRegion) reviewRegion.current = node; }} tabIndex={-1} className={styles.planning} aria-label={t("askTitle")}
     onFocusCapture={() => gate.setInputOwner(viewId, inputOwner)}
     onBlurCapture={event => { if (!event.currentTarget.contains(event.relatedTarget)) gate.releaseOwner(inputOwner); }}
     onCompositionStartCapture={() => gate.setComposing(inputOwner, true)} onCompositionEndCapture={() => gate.setComposing(inputOwner, false)}>

@@ -173,7 +173,7 @@ it("shows saved messages and keeps composer input across presentation changes wi
   fireEvent.click(await screen.findByRole("menuitem", { name: "春季更新" }));
   const input = await screen.findByRole("textbox", { name: "消息" });
   fireEvent.focus(input); fireEvent.change(input, { target: { value: "  先看这几条 🙂\n" } });
-  await waitFor(() => expect(screen.getByRole("button", { name: "保存消息" })).toBeEnabled());
+  await waitFor(() => expect(screen.getByRole("button", { name: "仅保存消息" })).toBeEnabled());
   fireEvent.compositionStart(input); fireEvent.keyDown(input, { key: "Enter" });
   expect(messages).toHaveLength(0); fireEvent.compositionEnd(input);
   fireEvent.keyDown(input, { key: "Enter", keyCode: 229 });
@@ -192,7 +192,7 @@ it("shows saved messages and keeps composer input across presentation changes wi
     if (command === "append_project_conversation_message") throw new Error("Lost acknowledgement");
     return result;
   });
-  fireEvent.click(screen.getByRole("button", { name: "保存消息" }));
+  fireEvent.click(screen.getByRole("button", { name: "仅保存消息" }));
   await screen.findByRole("button", { name: "核对请求结果" });
   expect(screen.getAllByText("上一次请求还需要核对，当前输入已保留。")).toHaveLength(1);
   fireEvent.change(screen.getByRole("textbox", { name: "消息" }), { target: { value: "核对期间继续写 C" } });
@@ -203,7 +203,7 @@ it("shows saved messages and keeps composer input across presentation changes wi
   expect(messages).toHaveLength(2);
   invoke.mockImplementation(original);
   fireEvent.change(screen.getByRole("textbox", { name: "消息" }), { target: { value: "/解释 先核对这条，不要执行" } });
-  await waitFor(() => expect(screen.getByRole("button", { name: "保存消息" })).toBeEnabled());
+  await waitFor(() => expect(screen.getByRole("button", { name: "仅保存消息" })).toBeEnabled());
   fireEvent.focus(screen.getByRole("textbox", { name: "消息" }));
   fireEvent.keyDown(screen.getByRole("textbox", { name: "消息" }), { key: "Enter" });
   await screen.findByRole("region", { name: "询问助理" });
@@ -214,12 +214,11 @@ it("shows saved messages and keeps composer input across presentation changes wi
   }
   const selectedIds = messages.map(message => message.messageId);
   act(() => owner.setPlanningMessages(conversationId, selectedIds));
-  fireEvent.change(screen.getByRole("textbox", { name: "消息" }), { target: { value: "/翻译 保留已经选择的消息" } });
-  await waitFor(() => expect(screen.getByRole("button", { name: "保存消息" })).toBeEnabled());
-  fireEvent.click(screen.getByRole("button", { name: "保存消息" }));
-  await screen.findByText(i18n.t("conversation.composerMessageLimit"));
-  expect(messages).toHaveLength(17);
-  expect(owner.getSnapshot().inputs.get(conversationId)?.planning.messageIds).toEqual(selectedIds);
+  fireEvent.change(screen.getByRole("textbox", { name: "消息" }), { target: { value: "/翻译 只准备本次问题" } });
+  await waitFor(() => expect(screen.getByRole("button", { name: i18n.t("conversation.prepareMessage") })).toBeEnabled());
+  fireEvent.click(screen.getByRole("button", { name: i18n.t("conversation.prepareMessage") }));
+  await waitFor(() => expect(messages).toHaveLength(17));
+  expect(owner.getSnapshot().inputs.get(conversationId)?.planning.messageIds).toEqual([messages[16].messageId]);
   expect(owner.getSnapshot().inputs.get(conversationId)?.planning.prepared).toBeNull();
   expect(owner.getSnapshot().inputs.get(conversationId)?.planning.consent).toBe(false);
   expect(invoke.mock.calls.some(([command]) => command === "start_conversation_planning" || command === "create_project_conversation")).toBe(false);

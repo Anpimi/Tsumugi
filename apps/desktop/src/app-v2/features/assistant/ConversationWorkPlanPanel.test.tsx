@@ -25,17 +25,18 @@ beforeEach(async () => { invoke.mockReset(); await i18n.changeLanguage("zh-CN");
 afterEach(() => { cleanup(); disposals.splice(0).forEach(dispose => dispose()); });
 
 function calls(command: string) { return invoke.mock.calls.filter(([name]) => name === command); }
-function expectNoExecution() {
+function expectKnownWorkPlanCommands() {
   const allowed = ["list_project_conversations", "read_project_conversation_messages", "read_conversation_planning_attempts", "read_conversation_planning",
     "read_conversation_proposal_revisions", "read_conversation_proposal", "validate_conversation_proposal", "read_conversation_proposal_work_plans",
     "list_local_conversation_drafts", "read_local_conversation_draft", "write_local_conversation_draft", "resolve_local_conversation_draft",
-    "read_model_connections", "read_context_strategy_default", "prepare_conversation_proposal_work_plan", "authorize_conversation_proposal_work_plan", "recover_conversation_proposal_work_plan"];
+    "read_model_connections", "read_context_strategy_default", "prepare_conversation_proposal_work_plan", "authorize_conversation_proposal_work_plan", "recover_conversation_proposal_work_plan", "read_work_plan_status", "read_work_plan_action", "start_work_plan"];
   expect(invoke.mock.calls.map(([command]) => command).filter(command => !allowed.includes(command))).toEqual([]);
 }
 function harness({ questions = false, unknown = false } = {}) {
   const fixture = conversationWorkPlanFixture(key);
   if (fixture.revision.content.kind !== "proposal") throw new Error("Synthetic saved version must be a proposal");
   if (questions) fixture.revision.content.questions = ["清晨的时间是否需要再核对？"];
+  let preparedPlan = fixture.prepared.plan;
   const config = { ...fixture.config, connectionProfile: { storeId: id(35003), profileId: id(35004), revision: "1", digest: "a".repeat(64) } };
   const connections = connectionFixture([config]);
   const state: {
@@ -78,7 +79,20 @@ function harness({ questions = false, unknown = false } = {}) {
     }
     if (command === "read_model_connections") return structuredClone(connections);
     if (command === "read_context_strategy_default") return null;
-    if (command === "prepare_conversation_proposal_work_plan") return conversationWorkPlanFixture(key, request.config).prepared;
+    if (command === "prepare_conversation_proposal_work_plan") {
+      const prepared=conversationWorkPlanFixture(key,request.config).prepared;preparedPlan=prepared.plan;return prepared;
+    }
+    if (command === "read_work_plan_status") {
+      const authorization=state.authorizations[0];
+      return {plan:preparedPlan,lease:{planId:authorization.planId,generation:"1"},state:"active",expiresAt:authorization.expiresAt,effects:authorization.effects,toolInvocations:null};
+    }
+    if (command === "read_work_plan_action") {
+      return {actionId:request.actionId,lease:{planId:state.authorizations[0].planId,generation:"1"},state:"active",attemptId:preparedPlan.attemptId,parentTask:null};
+    }
+    if (command === "start_work_plan") {
+      expect(state.head.value?.pending).toMatchObject({kind:"work-plan-start",request:{projectId:context.projectId,planId:request.planId,actionId:request.actionId,expectedGeneration:request.expectedGeneration}});
+      return preparedPlan.attemptId;
+    }
     if (command === "authorize_conversation_proposal_work_plan") {
       expect(state.head.value?.pending).toMatchObject({ kind: "proposal-work-plan", request: request.authorization });
       expect(state.head.value?.pending?.request).toEqual(request.authorization);
@@ -139,7 +153,7 @@ async function prepare(panel: ReturnType<typeof within>) {
   return within(region);
 }
 
-it("reviews saved scope, material, budget and effects before recording exactly one confirmation without starting work", async () => {
+it("reviews saved scope, material, budget and effects before recording one confirmation and the same original start", async () => {
   const h = harness(), session = await h.open(), { panel, region } = await reviewSavedPlan();
   await chooseConnection(panel);
   const prepareButton = panel.getByRole("button", { name: i18n.t("conversation.planPrepare") });
@@ -159,7 +173,7 @@ it("reviews saved scope, material, budget and effects before recording exactly o
   expect(preview.getByText(/4.*73|73.*4/)).toBeInTheDocument();
   expect(preview.getByText(i18n.t("conversation.planResourcesManual"))).toBeInTheDocument();
   expect(preview.getByText(i18n.t("conversation.planDeliveryManual"))).toBeInTheDocument();
-  const confirm = panel.getByRole("button", { name: i18n.t("conversation.planConfirm") });
+  const confirm = panel.getByRole("button", { name: i18n.t("conversation.planConfirmAndStart") });
   expect(confirm).toBeDisabled(); fireEvent.click(confirm); expect(h.state.authorizations).toHaveLength(0);
   fireEvent.change(panel.getByRole("spinbutton", { name: i18n.t("conversation.planMinutes") }), { target: { value: "5" } });
   fireEvent.click(finalConsent(panel));
@@ -167,7 +181,8 @@ it("reviews saved scope, material, budget and effects before recording exactly o
   expect(h.state.authorizations).toHaveLength(0);
   const beforeConfirmation = Math.floor(Date.now() / 1000);
   fireEvent.click(confirm); fireEvent.click(confirm);
-  await screen.findByText(i18n.t("conversation.workPlanRecorded")); await session.flush();
+  await screen.findByText(i18n.t("conversation.runStarted")); await session.flush();
+  expect(calls("start_work_plan")).toHaveLength(1);expect(calls("start_work_plan")[0][1].request.actionId).toBe(h.state.authorizations[0].actionId);
   expect(h.state.authorizations).toHaveLength(1);
   expect(h.state.authorizations[0]).toMatchObject({ proposal: h.prepared.proposal, planId: h.prepared.plan.planId,
     planDigest: h.prepared.plan.digest, confirmed: true, effects: ["save-candidate"], checkerExecutions: [], toolExecution: false, applicationToolExecutions: [] });
@@ -176,7 +191,7 @@ it("reviews saved scope, material, budget and effects before recording exactly o
   expect(expires).toBeLessThanOrEqual(Math.floor(Date.now() / 1000) + 300);
   expect(h.state.head.value?.pending).toBeNull();
   expect(within(await screen.findByRole("region", { name: i18n.t("conversation.planHistory") })).getByText("根据第 1 版提议确认")).toBeInTheDocument();
-  expectNoExecution();
+  expectKnownWorkPlanCommands();
 });
 
 it("requires renewed consent after duration, configuration and source changes, and closes hidden preparation safely", async () => {
@@ -199,16 +214,16 @@ it("requires renewed consent after duration, configuration and source changes, a
   entry.focus(); fireEvent.click(entry);
   const currentPanel = within(await screen.findByRole("region", { name: i18n.t("conversation.planTitle") }));
   await prepare(currentPanel); fireEvent.click(finalConsent(currentPanel));
-  const oldConfirm = currentPanel.getByRole("button", { name: i18n.t("conversation.planConfirm") });
+  const oldConfirm = currentPanel.getByRole("button", { name: i18n.t("conversation.planConfirmAndStart") });
   session.visible(false); fireEvent.click(oldConfirm);
   expect(h.state.authorizations).toHaveLength(0);
   expect(session.owner.getSnapshot().inputs.get(conversationId)?.workPlan.prepared).toBeNull();
   session.visible(true);
   const reopened = within(await screen.findByRole("region", { name: i18n.t("conversation.planTitle") }));
-  expect(reopened.queryByRole("button", { name: i18n.t("conversation.planConfirm") })).not.toBeInTheDocument();
+  expect(reopened.queryByRole("button", { name: i18n.t("conversation.planConfirmAndStart") })).not.toBeInTheDocument();
   fireEvent.click(reopened.getByRole("button", { name: i18n.t("conversation.planClose") }));
   await waitFor(() => expect(screen.queryByRole("region", { name: i18n.t("conversation.planTitle") })).not.toBeInTheDocument());
-  expect(h.state.authorizations).toHaveLength(0); expectNoExecution();
+  expect(h.state.authorizations).toHaveLength(0); expectKnownWorkPlanCommands();
 });
 
 it("keeps unanswered questions and unsaved proposal edits visible and prevents preparation", async () => {
@@ -225,7 +240,7 @@ it("keeps unanswered questions and unsaved proposal edits visible and prevents p
     if (kind === "questions") expect(panel.getByText("清晨的时间是否需要再核对？")).toBeInTheDocument();
     const button = panel.getByRole("button", { name: i18n.t("conversation.planPrepare") }); expect(button).toBeDisabled(); fireEvent.click(button);
     expect(calls("prepare_conversation_proposal_work_plan")).toHaveLength(0);
-    expect(h.state.authorizations).toHaveLength(0); expectNoExecution();
+    expect(h.state.authorizations).toHaveLength(0); expectKnownWorkPlanCommands();
     session.view.unmount(); session.retire();
   }
 });
@@ -233,7 +248,7 @@ it("keeps unanswered questions and unsaved proposal edits visible and prevents p
 it("retains the complete unknown request for lookup only and reopens history without restoring permission", async () => {
   const h = harness({ unknown: true }), first = await h.open(), { panel } = await reviewSavedPlan();
   await chooseConnection(panel); await prepare(panel); fireEvent.click(finalConsent(panel));
-  fireEvent.click(panel.getByRole("button", { name: i18n.t("conversation.planConfirm") }));
+  fireEvent.click(panel.getByRole("button", { name: i18n.t("conversation.planConfirmAndStart") }));
   await screen.findByRole("button", { name: i18n.t("conversation.check") });
   const original = structuredClone(h.state.authorizations[0]); expect(original).toBeDefined();
   expect(h.state.head.value?.pending).toMatchObject({ kind: "proposal-work-plan", request: original });
@@ -254,6 +269,6 @@ it("retains the complete unknown request for lookup only and reopens history wit
   expect(h.state.head.value?.pending).toBeNull(); expect(h.state.authorizations).toEqual([original]);
   fireEvent.click(await screen.findByRole("button", { name: i18n.t("conversation.planReviewOpen") }));
   expect(screen.queryByRole("region", { name: i18n.t("conversation.planPreview") })).not.toBeInTheDocument();
-  expect(screen.queryByRole("button", { name: i18n.t("conversation.planConfirm") })).not.toBeInTheDocument();
-  expect(calls("recover_conversation_proposal_work_plan")).toHaveLength(2); expectNoExecution();
+  expect(screen.queryByRole("button", { name: i18n.t("conversation.planConfirmAndStart") })).not.toBeInTheDocument();
+  expect(calls("recover_conversation_proposal_work_plan")).toHaveLength(2); expectKnownWorkPlanCommands();
 });

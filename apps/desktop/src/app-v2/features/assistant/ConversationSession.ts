@@ -41,6 +41,7 @@ type ConversationRecoveryPending = Extract<ConversationDraftPending, { kind: "te
 type Ports = typeof conversationDraftCommands & Pick<typeof conversationCommands, "create" | "append" | "recoverCreate" | "recoverMessage" | "preparePlanning" | "validatePlanning" | "startPlanning" | "readPlanning" | "captureProposal" | "reviseProposal" | "validateProposal" | "prepareProposalWorkPlan" | "authorizeProposalWorkPlan" | "recoverPlanning" | "recoverProposalCapture" | "recoverProposalRevision" | "recoverProposalWorkPlan"> & {
   identity: () => string; now: () => number; captureSelection: typeof reviewCommands.captureScope;
   planStatus: typeof workPlanCommands.status; startPlan: typeof workPlanCommands.start; readPlanStartSettlement: typeof workPlanCommands.startSettlement;
+  readPlanReceipt: typeof workPlanCommands.action;
   readPlanRun: typeof workPlanCommands.run; readAiResults: typeof aiCommands.read; retryEffect: typeof aiCommands.retryEffect;
   controlPlan: typeof workPlanCommands.control; readPlanControlSettlement: typeof workPlanCommands.controlSettlement;
   readProposalWorkPlan: typeof conversationCommands.readProposalWorkPlan;
@@ -135,6 +136,7 @@ export class ConversationSession {
       reviseProposal: conversationCommands.reviseProposal, validateProposal: conversationCommands.validateProposal,
       prepareProposalWorkPlan: conversationCommands.prepareProposalWorkPlan, authorizeProposalWorkPlan: conversationCommands.authorizeProposalWorkPlan,
       planStatus: workPlanCommands.status, startPlan: workPlanCommands.start, readPlanStartSettlement: workPlanCommands.startSettlement,
+      readPlanReceipt: workPlanCommands.action,
       readPlanRun: workPlanCommands.run, readAiResults: aiCommands.read, retryEffect: aiCommands.retryEffect,
       controlPlan: workPlanCommands.control, readPlanControlSettlement: workPlanCommands.controlSettlement,
       readProposalWorkPlan: conversationCommands.readProposalWorkPlan, readTeamExecution: workPlanCommands.teamExecution,
@@ -249,6 +251,21 @@ export class ConversationSession {
       request: { ...record.input.key, actionId: this.ports.identity(), messageId: this.ports.identity(), body: text } };
     this.changed++; this.update(record, { value: { ...record.input.value, text, editSeq, messageEditSeq: editSeq, pending }, dirty: true, outcome: null, notice: null, failure: null });
     await this.submit(record);
+  }
+  /** Save one message through the original journal, then prepare only that
+   * acknowledged message. Preparation never grants permission or sends HTTP. */
+  async prepareComposer(conversationId: string, purpose: ConversationPlanningInput["purpose"] = null, current: () => boolean = () => true) {
+    const record = this.records.get(conversationId);
+    if (!record || !this.kernel.live || record.action || record.input.busy || record.input.value.pending || record.input.failure
+      || record.input.planning.busy || !current() || !isConversationMessageText(record.input.value.text)) return;
+    const saving = this.append(conversationId), pending = this.records.get(conversationId)?.input.value.pending;
+    if (pending?.kind !== "append") return;
+    this.editPlanning(record, { open: true, messageIds: [pending.request.messageId], purpose });
+    const sequence = record.input.planning.sequence;
+    await saving;
+    if (!this.kernel.live || record.input.value.pending || record.input.failure || record.input.notice !== "messageSaved"
+      || record.input.planning.sequence !== sequence || !record.input.planning.open || !current()) return;
+    await this.preparePlanning(conversationId, () => current() && record.input.planning.open);
   }
   beginProposalEdit(revision: ConversationProposalRevision) {
     const record = this.records.get(revision.conversationId);
@@ -489,7 +506,7 @@ export class ConversationSession {
       if (this.kernel.live) { this.update(record, { workPlan: { ...record.input.workPlan, busy: null } }); if (record.input.dirty && !record.input.failure && !record.job) void this.persist(record); }
     }
   }
-  async authorizeWorkPlan(conversationId: string, confirmation: ProposalWorkPlanConfirmation, current: () => boolean = () => true) {
+  async authorizeWorkPlan(conversationId: string, confirmation: ProposalWorkPlanConfirmation, current: () => boolean = () => true, notify = true) {
     const record = this.records.get(conversationId), before = record?.input.workPlan, prepared = before?.prepared;
     if (!record || !before || !prepared || !this.kernel.live || record.action || record.input.busy || record.input.value.pending || record.input.failure
       || [...this.records.values()].some(other => other.input.workPlan.busy)
@@ -514,8 +531,10 @@ export class ConversationSession {
       const confirmed = await this.ports.authorizeProposalWorkPlan({ ...this.context, authorization: pending.request });
       if (!this.kernel.live) return;
       if (revocationEpoch === (record.revocationEpoch.get(prepared.plan.planId) ?? 0)) this.rememberReadyRun(record, prepared.plan, confirmed.receipt);
-      this.onRecorded(); this.update(record, { busy: null, outcome: "recorded", workPlan: { ...record.input.workPlan, prepared: null, consent: false, executionConsent: emptyExecutionConsent() } });
+      if (notify) this.onRecorded();
+      this.update(record, { busy: null, outcome: "recorded", workPlan: { ...record.input.workPlan, prepared: null, consent: false, executionConsent: emptyExecutionConsent() } });
       await this.resolve(record, pending);
+      return confirmed;
     } catch (error) {
       if (!this.kernel.live) return;
       record.submitting = null;
@@ -530,6 +549,24 @@ export class ConversationSession {
     const readyRuns = new Map(record.input.readyRuns);
     readyRuns.set(plan.planId, { plan: structuredClone(plan), receipt: structuredClone(receipt) });
     this.update(record, { readyRuns });
+  }
+  /** One explicit user decision, retaining the two original durable actions. */
+  async confirmAndStart(conversationId: string, confirmation: ProposalWorkPlanConfirmation,
+    authorizationCurrent: () => boolean = () => true, startCurrent: () => boolean = authorizationCurrent) {
+    const record = this.records.get(conversationId), before = record?.input.workPlan;
+    if (!record || !before) return;
+    // Publish the batch after the start boundary, so our own confirmation
+    // invalidation cannot be mistaken for an intervening material edit.
+    const confirmed = await this.authorizeWorkPlan(conversationId, confirmation, authorizationCurrent, false);
+    const live = () => this.kernel.live && startCurrent() && this.state.activeId === conversationId
+      && record.input.workPlan.sequence === before.sequence;
+    if (!confirmed) return;
+    try {
+      if (!live() || !this.runAvailable(record, confirmed.link.planId)) return;
+      const status = await this.ports.planStatus({ ...this.context, planId: confirmed.link.planId });
+      if (live()) await this.startRun(confirmed.link, status, live);
+    } catch (error) { if (this.kernel.live) this.runFailed(record, confirmed.link.planId, error); }
+    finally { if (this.kernel.live) this.onRecorded(); }
   }
   private forgetReadyRun(record: RecordState, planId: string) {
     if (!record.input.readyRuns.has(planId)) return;
@@ -1450,11 +1487,40 @@ export class ConversationSession {
     } catch (error) { record.submitting = null; this.update(record, { busy: null, outcome: "unknown", failure: { kind: "action", cause: commandFailure(error) } });
     } finally { record.action = false; record.submitting = null; if (this.kernel.live) { this.publish(); if (record.input.dirty && !record.input.failure && !record.job) void this.persist(record); } }
   }
+  private async checkWorkPlanConfirmation(record: RecordState, pending: Extract<ConversationDraftPending, { kind: "proposal-work-plan" }>) {
+    const recovery = await this.ports.recoverProposalWorkPlan({ ...this.context, authorization: pending.request });
+    if (!this.kernel.live) return;
+    if (recovery.outcome.kind !== "recorded") {
+      this.update(record, { outcome: recovery.outcome.kind === "mismatch" ? "mismatch" : "blocked" }); return;
+    }
+    // The conversation link proves the original confirmation was committed.
+    // Read its original Core receipt as well; never synthesize a new grant.
+    this.update(record, { outcome: "recorded" });
+    try {
+      const request = pending.request;
+      const [authorization, status] = await Promise.all([
+        this.ports.readPlanReceipt({ ...this.context, actionId: request.actionId }),
+        this.ports.planStatus({ ...this.context, planId: request.planId }),
+      ]);
+      if (!this.kernel.live) return;
+      if (!authorization || authorization.actionId !== request.actionId || authorization.lease.planId !== request.planId
+        || authorization.lease.generation !== "1" || authorization.state !== "active" || authorization.parentTask !== null
+        || authorization.attemptId !== status.plan.attemptId || !runMatchesLink(status, recovery.outcome.receipt))
+        throw new Error("Original work-plan confirmation proof is unavailable");
+      const ready = { plan: status.plan, receipt: authorization };
+      if (runReadyCurrent(ready, status, this.ports.now()) && status.expiresAt === request.expiresAt && same(status.effects, request.effects))
+        this.rememberReadyRun(record, status.plan, authorization);
+      this.recordCaptureAcknowledgement(record, pending); this.onRecorded(); await this.resolve(record, pending);
+    } catch (error) {
+      if (this.kernel.live) this.update(record, { outcome: "recorded", failure: { kind: "action", cause: commandFailure(error) } });
+    }
+  }
   async check(conversationId: string) {
     const record = this.records.get(conversationId), pending = record?.input.value.pending;
     if (!record || !pending || !this.kernel.live || record.action || record.input.busy || record.job) return;
     record.action = true; this.update(record, { busy: "check", failure: null });
     try {
+      if (pending.kind === "proposal-work-plan") { await this.checkWorkPlanConfirmation(record, pending); return; }
       if (pending.kind === "team-recovery") {
         const recovery = await this.recoverTeamRecovery(pending);
         if (!this.kernel.live) return;

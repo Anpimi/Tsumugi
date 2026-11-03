@@ -858,6 +858,8 @@ fn conversation_planning_ipc_requires_explicit_permission_and_reopens_as_history
             json!({"actionId":identity(),"conversationId":identity(),"title":null}),
         ),
     );
+    let excluded = call(&window, "append_project_conversation_message", in_session(&project,
+        json!({"actionId":identity(),"conversationId":thread["conversationId"],"messageId":identity(),"body":"Earlier history must be explicitly selected"})));
     let message = call(
         &window,
         "append_project_conversation_message",
@@ -882,6 +884,8 @@ fn conversation_planning_ipc_requires_explicit_permission_and_reopens_as_history
         ),
     );
     assert_eq!(prepared["preview"]["version"], 2);
+    assert_eq!(prepared["preview"]["selectedMessages"], json!([message]));
+    assert!(!prepared["preview"]["input"].as_str().unwrap().contains(excluded["body"].as_str().unwrap()));
     assert!(runtime_absent(&app, &project));
     assert_eq!(provider.count(), 0);
     let discover = in_session(
@@ -1446,6 +1450,17 @@ fn proposal_work_plan_flow(
         ),
     );
     assert_eq!(page["rows"], json!([accepted["link"]]));
+    // A lost confirmation ACK is recovered from both original owners, without
+    // another authorization or a model request before the explicit start.
+    let original_link = call(window, "recover_conversation_proposal_work_plan", approve.clone());
+    assert_eq!(original_link["outcome"], json!({"kind":"recorded","receipt":accepted["link"]}));
+    assert!(!reject(window, "read_work_plan_authorization_action", generic.clone()).is_null(), "a generic request cannot replace the complete proposal confirmation");
+    let original_authorization = call(window, "read_work_plan_action", in_session(project, json!({"actionId":authorization["actionId"]})));
+    assert_eq!(original_authorization, accepted["receipt"]);
+    let status = call(window, "read_work_plan_status", in_session(project, json!({"planId":authorization["planId"]})));
+    assert_eq!(status["lease"], accepted["receipt"]["lease"]);
+    assert_eq!(status["state"], "active");
+    assert_eq!(provider.count(), 0);
     let start_original = json!({"projectId":project["metadata"]["projectId"],"planId":authorization["planId"],"actionId":authorization["actionId"],"expectedGeneration":accepted["receipt"]["lease"]["generation"]});
     let start_journal = journal_before_action(window, project, json!({"kind":"work-plan-start","conversationId":revision["conversationId"],"request":start_original,"expectedAttemptId":accepted["receipt"]["attemptId"]}));
     assert_eq!(reject(window, "resolve_local_conversation_draft", start_journal.clone())["code"], "outcome-unknown");
@@ -1458,6 +1473,12 @@ fn proposal_work_plan_flow(
         ),
     );
     assert_eq!(attempt, accepted["receipt"]["attemptId"]);
+    let mut start_recovery = start_original.clone();
+    start_recovery["expectedAttemptId"] = attempt.clone();
+    let original_start = call(window, "read_work_plan_start_settlement", in_session(project, start_recovery));
+    assert_eq!(original_start["settlement"]["outcome"]["kind"], "recorded");
+    assert_eq!(original_start["settlement"]["outcome"]["receipt"]["attemptId"], attempt);
+    assert_eq!(call(window, "start_work_plan", in_session(project, start_original.clone())), attempt);
     let mut wrong_attempt = start_journal.clone();
     wrong_attempt["resolve"]["target"]["pending"]["expectedAttemptId"] = json!(identity());
     assert_eq!(reject(window, "resolve_local_conversation_draft", wrong_attempt)["code"], "result-mismatch");

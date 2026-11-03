@@ -141,7 +141,7 @@ it.each(["/术语", "/terms"])("saves %s as an ordinary message and explicitly p
   act(() => { h.commands.dispatch("conversation.new-thread", h.scope); }); await h.settled();
   const field = screen.getByRole("textbox", { name: "Message" });
   fireEvent.change(field, { target: { value: `${command} Keep the greeting consistent.` } });
-  fireEvent.click(screen.getByRole("button", { name: i18n.t("conversation.saveMessage") }));
+  fireEvent.click(screen.getByRole("button", { name: i18n.t("conversation.prepareMessage") }));
   await waitFor(() => expect(h.append).toHaveBeenCalledOnce()); await h.settled();
   const input = h.owner.getSnapshot().inputs.get(h.owner.getSnapshot().activeId!);
   expect(input?.planning).toMatchObject({ open: true, purpose: "terminology", prepared: null, consent: false });

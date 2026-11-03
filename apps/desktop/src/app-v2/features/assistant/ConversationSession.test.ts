@@ -106,6 +106,7 @@ function harness(session = context) {
   const validateProposal = vi.fn<typeof conversationCommands.validateProposal>(), readPlanning = vi.fn<typeof conversationCommands.readPlanning>();
   const prepareProposalWorkPlan = vi.fn<typeof conversationCommands.prepareProposalWorkPlan>(), authorizeProposalWorkPlan = vi.fn<typeof conversationCommands.authorizeProposalWorkPlan>();
   const planStatus = vi.fn<typeof workPlanCommands.status>();
+  const readPlanReceipt = vi.fn<typeof workPlanCommands.action>();
   const readPlanRun = vi.fn<typeof workPlanCommands.run>(), readAiResults = vi.fn<typeof aiCommands.read>();
   const retryEffect = vi.fn<typeof aiCommands.retryEffect>(async () => true);
   const startPlan = vi.fn<typeof workPlanCommands.start>(async (_request, expectedAttemptId) => {
@@ -122,7 +123,7 @@ function harness(session = context) {
   const readPlanControlSettlement = vi.fn<typeof workPlanCommands.controlSettlement>(async request => controlSettlement(request, { kind: "pending" }));
   const readStrategyDefault = vi.fn<typeof strategyCommands.default>(async () => null);
   const all = { ...ports, readStrategyDefault, write, resolve, create, append, recoverCreate, recoverMessage, preparePlanning, validatePlanning, startPlanning, recoverPlanning, recoverProposalCapture, recoverProposalRevision, recoverProposalWorkPlan, captureSelection,
-    captureProposal, reviseProposal, validateProposal, readPlanning, prepareProposalWorkPlan, authorizeProposalWorkPlan, planStatus, readPlanRun, readAiResults, retryEffect, startPlan, readPlanStartSettlement, controlPlan, readPlanControlSettlement };
+    captureProposal, reviseProposal, validateProposal, readPlanning, prepareProposalWorkPlan, authorizeProposalWorkPlan, planStatus, readPlanReceipt, readPlanRun, readAiResults, retryEffect, startPlan, readPlanStartSettlement, controlPlan, readPlanControlSettlement };
   const make = () => new ConversationSession(session, recorded, reveal, all);
   const owner = make();
   return { owner, make, ports: all, heads, created, appended, recorded, reveal, journal, current: () => {
@@ -201,6 +202,16 @@ describe("ConversationSession", () => {
       if (!validateResponseProposalWorkPlanReceipt(value)) throw new Error("Invalid synthetic work-plan receipt"); return value;
     };
     h.ports.authorizeProposalWorkPlan.mockImplementation(async request => receipt(request));
+    h.ports.readPlanReceipt.mockImplementation(async request => {
+      const original = h.ports.authorizeProposalWorkPlan.mock.calls.find(([value]) => value.authorization.actionId === request.actionId)?.[0];
+      return original ? receipt(original).receipt : null;
+    });
+    h.ports.planStatus.mockImplementation(async () => {
+      const request = h.ports.authorizeProposalWorkPlan.mock.calls[0][0], saved = receipt(request);
+      return checkedStatus({ plan: fixture.prepared.plan, lease: saved.receipt.lease, state: saved.receipt.state,
+        expiresAt: request.authorization.expiresAt, effects: request.authorization.effects,
+        toolInvocations: fixture.prepared.plan.tools ? { limit: fixture.prepared.plan.tools.maxInvocations, reserved: 0 } : null });
+    });
     h.owner.beginWorkPlan(fixture.revision); h.owner.setWorkPlanConfig(conversationId, fixture.config);
     const reads = new SessionReads(context);
     await h.owner.loadWorkPlanStrategyDefault(conversationId, reads); reads.retire();
@@ -1196,4 +1207,81 @@ describe("ConversationSession", () => {
     expect(await participant.prepareLeave({ kind: "close-project" }, () => true, () => true)).toBe(false);
     expect(h.current().value.text).toBe("第三条");
   });
+  it("prepares the current saved question only and preserves B without sending a model request", async () => {
+    const h = await readyToPlan(), saved = deferred<ProjectConversationMessage>();
+    const append = h.ports.append.getMockImplementation()!;
+    h.ports.append.mockReturnValueOnce(saved.promise);
+    h.ports.preparePlanning.mockImplementation(async request => ({ ...h.prepared, preview: { ...h.prepared.preview,
+      config: request.config, selectedMessages: [...h.appended.values()].filter(message => request.selectedMessageIds.includes(message.messageId)) } }));
+    h.owner.edit(h.conversationId, "Question A"); await h.owner.flush();
+    const preparing = h.owner.prepareComposer(h.conversationId);
+    await vi.waitFor(() => expect(h.ports.append).toHaveBeenCalledOnce());
+    h.owner.edit(h.conversationId, "New B 👩🏽‍💻");
+    const original = h.ports.append.mock.calls[0][0]; saved.resolve(await append(original)); await preparing;
+    expect(h.current().planning.messageIds).toEqual([original.messageId]);
+    expect(h.current().planning.prepared?.preview.selectedMessages.map(message => message.body)).toEqual(["Question A"]);
+    expect(h.current().value.text).toBe("New B 👩🏽‍💻"); expect(h.ports.startPlanning).not.toHaveBeenCalled();
+  });
+  it("keeps an uncertain original message and never prepares or appends it again during checking",async()=>{
+    const h=await readyToPlan(), append=h.ports.append.getMockImplementation()!;
+    h.ports.append.mockImplementationOnce(async request=>{await append(request);throw new Error("Lost save acknowledgement");});
+    h.owner.edit(h.conversationId,"Original question");await h.owner.flush();await h.owner.prepareComposer(h.conversationId);
+    expect(h.current().value.pending?.kind).toBe("append");expect(h.ports.preparePlanning).not.toHaveBeenCalled();
+    h.owner.edit(h.conversationId,"B while checking");await h.owner.check(h.conversationId);
+    expect(h.current().value.text).toBe("B while checking");expect(h.current().value.pending).toBeNull();
+    expect(h.ports.append).toHaveBeenCalledOnce();expect(h.ports.preparePlanning).not.toHaveBeenCalled();expect(h.ports.startPlanning).not.toHaveBeenCalled();
+  });
+  it("closing review while its save is pending stops automatic preparation and retains the saved message",async()=>{
+    const h=await readyToPlan(), saved=deferred<ProjectConversationMessage>(), append=h.ports.append.getMockImplementation()!;
+    h.ports.append.mockReturnValueOnce(saved.promise);h.owner.edit(h.conversationId,"Question A");await h.owner.flush();
+    const preparing=h.owner.prepareComposer(h.conversationId);await vi.waitFor(()=>expect(h.ports.append).toHaveBeenCalledOnce());
+    h.owner.setPlanningOpen(h.conversationId,false);const request=h.ports.append.mock.calls[0][0];saved.resolve(await append(request));await preparing;
+    expect(h.current().planning.messageIds).toEqual([request.messageId]);expect(h.current().planning.open).toBe(false);
+    expect(h.appended.size).toBe(1);expect(h.ports.preparePlanning).not.toHaveBeenCalled();expect(h.ports.startPlanning).not.toHaveBeenCalled();
+  });
+  it("confirms and starts once using the original confirmation action and attempt",async()=>{
+    const h=await readyWorkPlan();h.owner.setWorkPlanConsent(h.conversationId,true);
+    await Promise.all([h.owner.confirmAndStart(h.conversationId,confirmation),h.owner.confirmAndStart(h.conversationId,confirmation)]);
+    expect(h.ports.authorizeProposalWorkPlan).toHaveBeenCalledOnce();expect(h.ports.startPlan).toHaveBeenCalledOnce();
+    const original=h.ports.authorizeProposalWorkPlan.mock.calls[0][0].authorization;
+    expect(h.ports.startPlan.mock.calls[0][0]).toMatchObject({planId:original.planId,actionId:original.actionId,expectedGeneration:"1"});
+    expect(h.current().value.pending).toBeNull();expect(h.current().notice).toBe("runStarted");
+    expect(h.ports.prepareProposalWorkPlan).toHaveBeenCalledOnce();
+  });
+  it("keeps a successful confirmation when status before start fails and permits only an explicit original start",async()=>{
+    const h=await readyWorkPlan();h.owner.setWorkPlanConsent(h.conversationId,true);
+    h.ports.planStatus.mockRejectedValueOnce(new Error("Status unavailable"));await h.owner.confirmAndStart(h.conversationId,confirmation);
+    expect(h.current().notice).toBe("workPlanRecorded");expect(h.ports.startPlan).not.toHaveBeenCalled();
+    const original=h.ports.authorizeProposalWorkPlan.mock.calls[0][0], link=h.receipt(original).link;
+    const status=await h.ports.planStatus({...context,planId:link.planId});await h.owner.startRun(link,status);
+    expect(h.ports.startPlan).toHaveBeenCalledOnce();expect(h.ports.authorizeProposalWorkPlan).toHaveBeenCalledOnce();
+  });
+  it("checks a lost confirmation acknowledgement without confirming again or automatically starting",async()=>{
+    const h=await readyWorkPlan();h.owner.setWorkPlanConsent(h.conversationId,true);
+    h.ports.authorizeProposalWorkPlan.mockRejectedValueOnce(new Error("Confirmation acknowledgement lost"));
+    await h.owner.confirmAndStart(h.conversationId,confirmation);const pending=h.current().value.pending;
+    if(pending?.kind!=="proposal-work-plan")throw new Error("Missing original confirmation");
+    const link=h.receipt({...context,authorization:pending.request}).link;
+    h.ports.recoverProposalWorkPlan.mockResolvedValueOnce({request:pending.request,outcome:{kind:"recorded",receipt:link}});
+    h.owner.edit(h.conversationId,"B survives confirmation check");await h.owner.check(h.conversationId);
+    expect(h.ports.startPlan).not.toHaveBeenCalled();expect(h.current().value.pending).toBeNull();expect(h.current().value.text).toBe("B survives confirmation check");
+    const status=await h.ports.planStatus({...context,planId:link.planId});expect(h.owner.canStartRun(h.conversationId,status)).toBe(true);
+    await h.owner.startRun(link,status);expect(h.ports.startPlan).toHaveBeenCalledOnce();expect(h.ports.authorizeProposalWorkPlan).toHaveBeenCalledOnce();
+    expect(h.ports.readPlanReceipt).toHaveBeenCalledOnce();
+  });
+  it("retains the same start after its acknowledgement is lost and checking never starts again",async()=>{
+    const h=await readyWorkPlan();h.owner.setWorkPlanConsent(h.conversationId,true);h.ports.startPlan.mockRejectedValueOnce(new Error("Start acknowledgement lost"));
+    await h.owner.confirmAndStart(h.conversationId,confirmation);const pending=h.current().value.pending;
+    if(pending?.kind!=="work-plan-start")throw new Error("Missing original start");
+    h.ports.readPlanStartSettlement.mockResolvedValueOnce(startSettlement({...context,...pending.request,expectedAttemptId:pending.expectedAttemptId},{kind:"recorded",receipt:{...pending.request,attemptId:pending.expectedAttemptId,taskId:h.ports.identity()}}));
+    h.owner.edit(h.conversationId,"Newer B after start");await h.owner.check(h.conversationId);
+    expect(h.current().value.pending).toBeNull();expect(h.current().value.text).toBe("Newer B after start");
+    expect(h.ports.startPlan).toHaveBeenCalledOnce();expect(h.ports.authorizeProposalWorkPlan).toHaveBeenCalledOnce();
+  });
+  it("never starts after the original confirmed lease expires",async()=>{
+    const h=await readyWorkPlan();h.owner.setWorkPlanConsent(h.conversationId,true);
+    const status=h.ports.planStatus.getMockImplementation()!;h.ports.planStatus.mockImplementationOnce(async request=>({...await status(request),expiresAt:"0"}));
+    await h.owner.confirmAndStart(h.conversationId,confirmation);expect(h.ports.startPlan).not.toHaveBeenCalled();expect(h.ports.authorizeProposalWorkPlan).toHaveBeenCalledOnce();
+  });
+
 });

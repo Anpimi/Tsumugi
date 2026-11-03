@@ -75,7 +75,7 @@ function PlanningResult({ owner, input, attemptId, visible, disabled, gate, view
   </section>;
 }
 
-function ThreadHistory({ showWorkPlans = true, owner, input, visible, disabled, gate, viewId, parentDialogId, selection, onOpenCandidate, onOpenCandidateBatch, onOpenTeamCandidate, onOpenTeamFinding, onPrepareFindingRepair, onOpenKnowledgeProposal, onOpenTermProposal, onOpenEntryReference, proposalTarget, questionTarget, proposalFocusTargets }: Omit<Props, "owner"> & { owner: ConversationSession; input: ConversationInput; proposalFocusTargets: RefObject<WeakSet<ConversationProposalTarget>> }) {
+function ThreadHistory({ showWorkPlans = true, owner, input, visible, disabled, gate, viewId, parentDialogId, selection, onOpenCandidate, onOpenCandidateBatch, onOpenTeamCandidate, onOpenTeamFinding, onPrepareFindingRepair, onOpenKnowledgeProposal, onOpenTermProposal, onOpenEntryReference, proposalTarget, questionTarget, proposalFocusTargets, planningRegion, onPlanningClosed }: Omit<Props, "owner"> & { owner: ConversationSession; input: ConversationInput; proposalFocusTargets: RefObject<WeakSet<ConversationProposalTarget>>; planningRegion: RefObject<HTMLElement | null>; onPlanningClosed: () => void }) {
   const context = owner.context, conversationId = input.key.conversationId, planning = input.planning;
   const { t } = useTranslation(undefined, { keyPrefix: "conversation" });
   const messages = useSessionInfiniteQuery({ key: ["conversation", conversationId, "messages"], scopes: ["project"], enabled: visible,
@@ -94,7 +94,9 @@ function ThreadHistory({ showWorkPlans = true, owner, input, visible, disabled, 
   const allowed = () => !blocked && gate.canDispatch({ viewId, source: "button", dialogId: parentDialogId });
   return <>
     <Button size="sm" disabled={disabled || !visible} aria-expanded={planning.open} onClick={() => {
-      if (gate.canDispatch({ viewId, source: "button", dialogId: parentDialogId })) owner.setPlanningOpen(conversationId, !planning.open);
+      if (!gate.canDispatch({ viewId, source: "button", dialogId: parentDialogId })) return;
+      owner.setPlanningOpen(conversationId, !planning.open);
+      if (planning.open) onPlanningClosed();
     }}>{t(planning.open ? "askClose" : "askTitle")}</Button>
     {messages.isPending ? <LoadingState label={t("readingMessages")}/> : messages.isError ? <ErrorState title={t("messagesReadFailed")}
       action={<Button onClick={() => void messages.refetch()}>{t("retryRead")}</Button>}/> : saved.length === 0 ? <p className={styles.meta}>{t("emptyThread")}</p>
@@ -104,7 +106,7 @@ function ThreadHistory({ showWorkPlans = true, owner, input, visible, disabled, 
           disabled={blocked || !planning.messageIds.includes(message.messageId) && planning.messageIds.length >= 16}
           onChange={event => { if (allowed()) owner.setPlanningMessages(conversationId, event.target.checked ? [...planning.messageIds, message.messageId] : planning.messageIds.filter(id => id !== message.messageId)); }}/><span>{t("askChooseMessage", { number: message.ordinal })}</span></label> : null}</div>)}</section>}
     {messages.hasNextPage ? <Button pending={messages.isFetchingNextPage} onClick={() => void messages.fetchNextPage()}>{t("moreMessages")}</Button> : null}
-    {planning.open ? <ConversationPlanningPanel owner={owner} input={input} visible={visible} disabled={disabled} gate={gate} viewId={viewId} parentDialogId={parentDialogId} selection={selection}/> : null}
+    {planning.open ? <ConversationPlanningPanel reviewRegion={planningRegion} owner={owner} input={input} visible={visible} disabled={disabled} gate={gate} viewId={viewId} parentDialogId={parentDialogId} selection={selection}/> : null}
     {attempts.isError ? <Banner tone="error" action={<Button size="sm" onClick={() => void attempts.refetch()}>{t("retryRead")}</Button>}>{t("repliesReadFailed")}</Banner> : null}
     {runs.length ? <section aria-label={t("savedReplies")} className={local.history}>{runs.map(run => <PlanningResult key={run.attemptId} owner={owner} input={input}
       attemptId={run.attemptId} visible={visible} disabled={disabled} gate={gate} viewId={viewId} parentDialogId={parentDialogId} savedResultIds={savedResultIds} onOpenEntryReference={onOpenEntryReference}/>)}</section> : null}
@@ -124,7 +126,8 @@ export default function ConversationPanel({ projectBrief, showWorkPlans = true, 
   const activeId = state.activeId, input = activeId ? state.inputs.get(activeId) : undefined;
   const composer = useRef<HTMLTextAreaElement>(null), composing = useRef(false);
   const [memberRoutes, setMemberRoutes] = useState<ReadonlyMap<string, readonly ConversationMemberRoute[]>>(() => new Map());
-  const [commandNotice, setCommandNotice] = useState<{ conversationId: string; messageId: string } | null>(null);
+  const planningRegion = useRef<HTMLElement>(null);
+  const planningOrigin = useRef<HTMLElement>(null);
   const memberRegistry = useMemo(() => ({ register: (key: string, routes: readonly ConversationMemberRoute[]) => {
     setMemberRoutes(before => new Map(before).set(key, routes));
     return () => setMemberRoutes(before => { if (before.get(key) !== routes) return before; const next = new Map(before); next.delete(key); return next; });
@@ -199,30 +202,31 @@ export default function ConversationPanel({ projectBrief, showWorkPlans = true, 
       }, handler: () => chooseCommand(command) }));
     return () => dispose.forEach(close => close());
   }, [commands, owner, gate, commandScope, viewId, parentDialogId]);
-  async function saveComposer() {
+  async function submitComposer(prepare: boolean) {
     const live = presentation.current, conversationId = live.activeId;
-    if (!conversationId || !live.visible || live.blocked || !gate.canDispatch({ viewId, source: "button", dialogId: parentDialogId })) return;
+    const current = () => {
+      const latest = presentation.current;
+      return latest.activeId === conversationId && latest.visible && !latest.blocked
+        && !owner.getSnapshot().retired && !reads.retired
+        && gate.canDispatch({ viewId, source: "button", dialogId: parentDialogId });
+    };
+    if (!conversationId || !current()) return;
     const before = owner.getSnapshot().inputs.get(conversationId);
     if (!before || before.planning.busy || before.value.pending || before.busy || before.failure) return;
     const command = composerCommand(before.value.text);
-    const member = composerMemberRoute(before.value.text, [...memberRoutes.values()].flat());
+    const member = prepare ? composerMemberRoute(before.value.text, [...memberRoutes.values()].flat()) : null;
     if (member) { member.route.open(member.body); return; }
-    const sending = owner.append(conversationId), pending = owner.getSnapshot().inputs.get(conversationId)?.value.pending;
-    await sending;
-    const after = owner.getSnapshot(), current = after.inputs.get(conversationId);
-    if (command && pending?.kind === "append" && current && !current.value.pending && after.activeId === conversationId
-      && presentation.current.visible && !presentation.current.blocked && current.notice === "messageSaved") {
-      const messageIds = [...new Set([...current.planning.messageIds, pending.request.messageId])];
-      if (messageIds.length <= 16) {
-        owner.setPlanningMessages(conversationId, messageIds);
-        owner.setPlanningPurpose(conversationId, command.id === "conversation.terms" ? "terminology" : null);
-        setCommandNotice(null);
-      } else {
-        owner.invalidatePlanning(conversationId);
-        setCommandNotice({ conversationId, messageId: pending.request.messageId });
-      }
-      owner.setPlanningOpen(conversationId, true);
+    const origin = document.activeElement;
+    if (prepare) {
+      planningOrigin.current = origin instanceof HTMLElement ? origin : null;
+      await owner.prepareComposer(conversationId, command?.id === "conversation.terms" ? "terminology" : null, current);
     }
+    else await owner.append(conversationId);
+    if (prepare) requestAnimationFrame(() => {
+      const value = owner.getSnapshot().inputs.get(conversationId)?.value;
+      if (current() && value?.text === "" && (value.messageEditSeq ?? value.editSeq) === value.editSeq
+        && (document.activeElement === origin || document.activeElement === document.body)) planningRegion.current?.focus();
+    });
   }
   const createDisabled = !canCreateThread({ visible, blocked, activeId, viewId, parentDialogId });
   const byteLength = new TextEncoder().encode(input?.value.text ?? "").length;
@@ -296,7 +300,12 @@ export default function ConversationPanel({ projectBrief, showWorkPlans = true, 
       {!activeId ? <EmptyState icon={<MessageSquare/>} title={t("welcome")} description={t("welcomeHelp")}
         action={<Button variant="secondary" disabled={createDisabled} onClick={dispatchNewThread}>{t("newThread")}</Button>}/>
         : !input ? state.inputFailure?.conversationId === activeId ? <ErrorState title={t("inputReadFailed")} description={<CommandFailureDetails failure={state.inputFailure.cause}/>} action={<Button onClick={() => void owner.open(activeId)}>{t("retryRead")}</Button>}/>
-          : <LoadingState label={t("readingInput")}/> : exists ? <ThreadHistory showWorkPlans={showWorkPlans} onOpenCandidate={onOpenCandidate} onOpenCandidateBatch={onOpenCandidateBatch} onOpenTeamCandidate={onOpenTeamCandidate} onOpenTeamFinding={onOpenTeamFinding} onPrepareFindingRepair={onPrepareFindingRepair} onOpenKnowledgeProposal={onOpenKnowledgeProposal} onOpenTermProposal={onOpenTermProposal} onOpenEntryReference={onOpenEntryReference} key={activeId} owner={owner} input={input} visible={visible} disabled={blocked} gate={gate} viewId={viewId} parentDialogId={parentDialogId} selection={selection} proposalTarget={proposalTarget} proposalFocusTargets={proposalFocusTargets} questionTarget={questionTarget?.conversationId === activeId ? questionTarget : null}/> : <p role="status">{t("creatingThread")}</p>}
+          : <LoadingState label={t("readingInput")}/> : exists ? <ThreadHistory showWorkPlans={showWorkPlans} onOpenCandidate={onOpenCandidate} onOpenCandidateBatch={onOpenCandidateBatch} onOpenTeamCandidate={onOpenTeamCandidate} onOpenTeamFinding={onOpenTeamFinding} onPrepareFindingRepair={onPrepareFindingRepair} onOpenKnowledgeProposal={onOpenKnowledgeProposal} onOpenTermProposal={onOpenTermProposal} onOpenEntryReference={onOpenEntryReference} key={activeId} owner={owner} input={input} visible={visible} disabled={blocked} gate={gate} viewId={viewId} parentDialogId={parentDialogId} selection={selection} proposalTarget={proposalTarget} proposalFocusTargets={proposalFocusTargets} planningRegion={planningRegion} onPlanningClosed={() => {
+            const live = presentation.current;
+            if (!live.visible || live.blocked || live.activeId !== activeId) return;
+            const origin = planningOrigin.current; planningOrigin.current = null;
+            if (origin?.isConnected && !origin.matches(":disabled")) origin.focus(); else composer.current?.focus();
+          }} questionTarget={questionTarget?.conversationId === activeId ? questionTarget : null}/> : <p role="status">{t("creatingThread")}</p>}
     </div>
     {decisionTray}
     {input ? <div className={styles.composer}>
@@ -316,7 +325,6 @@ export default function ConversationPanel({ projectBrief, showWorkPlans = true, 
               && (document.activeElement === origin || document.activeElement === document.body)) composer.current?.focus();
           }}/> : null}
         {input.notice ? <p role="status" className={local.notice}>{t(input.notice)}</p> : null}
-        {commandNotice?.conversationId === activeId && !input.planning.messageIds.includes(commandNotice.messageId) ? <p role="status" className={local.notice}>{t("composerMessageLimit")}</p> : null}
         {input.failure?.kind === "journal" ? <Banner tone="error"><p>{t("journalFailed")}</p><CommandFailureDetails failure={input.failure.cause}/>
           <Button size="sm" disabled={blocked || input.journalBusy} onClick={() => void owner.retryJournal(activeId!)}>{t("retryJournal")}</Button></Banner> : null}
         {pending ? <section ref={primaryRecovery ? recoveryRegion : undefined} tabIndex={primaryRecovery ? -1 : undefined}
@@ -372,13 +380,15 @@ export default function ConversationPanel({ projectBrief, showWorkPlans = true, 
             onChange={event => owner.edit(activeId!, event.target.value)} onKeyDown={event => {
               if (event.key !== "Enter" || event.altKey || event.shiftKey || event.metaKey || event.ctrlKey || event.nativeEvent.isComposing || composing.current || event.keyCode === 229) return;
               if (!gate.canDispatch({ viewId, source: "keyboard", inputOwner: "conversation-composer", dialogId: parentDialogId })) return;
-              event.preventDefault(); event.stopPropagation(); if (!blocked) void saveComposer();
+              event.preventDefault(); event.stopPropagation(); if (!blocked) void submitComposer(true);
             }}/>
         </Field>
       </div>
       <div className={styles.composerFooter}><span role="status">{t(input.failure?.kind === "journal" ? "inputUnsaved" : input.busy === "submit" ? runPending ? "runSending" : pending?.kind === "planning" ? "askStarting" : pending?.kind === "proposal-work-plan" ? "planConfirming" : pending?.kind === "proposal-capture" || pending?.kind === "proposal-revision" ? "proposalSaving" : "savingMessage" : input.busy === "check" ? input.runBusy ? "runChecking" : pending ? "checking" : "proposalChecking" : input.journalBusy || input.dirty ? "savingInput" : "inputSaved")}</span>
         <Button variant="secondary" size="sm" disabled={blocked || (!!input.busy || input.journalBusy) || !!input.planning.busy || !!pending || !!input.failure || !isConversationMessageText(input.value.text)}
-          onClick={() => void saveComposer()}>{t("saveMessage")}</Button></div>
+          onClick={() => void submitComposer(false)}>{t("saveMessage")}</Button>
+        <Button variant="primary" size="sm" disabled={blocked || (!!input.busy || input.journalBusy) || !!input.planning.busy || !!pending || !!input.failure || !isConversationMessageText(input.value.text)}
+          onClick={() => void submitComposer(true)}>{t("prepareMessage")}</Button></div>
     </div> : null}
   </div></ConversationMemberRoutes.Provider>;
 }

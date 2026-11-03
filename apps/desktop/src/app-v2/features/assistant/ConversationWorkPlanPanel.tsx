@@ -80,6 +80,7 @@ export function ConversationWorkPlanPanel({ owner, input, visible, disabled, gat
   const root = useRef<HTMLElement>(null), previewRegion = useRef<HTMLElement>(null), origin = useRef<HTMLElement | null>(null);
   const focus = useRef<{ origin: HTMLElement; preview: boolean } | null>(null), wasOpen = useRef(false);
   const proof = useRef<ToolProof | null>(null), live = useRef({ mounted: true, visible, disabled, open });
+  const confirming = useRef(false);
   useLayoutEffect(() => { live.current = { mounted: true, visible, disabled, open }; return () => { live.current.mounted = false; }; }, [visible, disabled, open]);
   const disposeProof = () => { proof.current?.dispose(); proof.current = null; };
   const invalidate = () => { disposeProof(); owner.invalidateWorkPlan(conversationId); };
@@ -132,7 +133,7 @@ export function ConversationWorkPlanPanel({ owner, input, visible, disabled, gat
   }, [open, conversationId, owner, reads, revision?.revisionId, workPlan.strategyDefault]);
   useEffect(() => {
     // Duration changes keep the same prepared material and its read witnesses.
-    if (!workPlan.prepared) disposeProof();
+    if (!workPlan.prepared && !confirming.current) disposeProof();
     setCaptureFailure(null);
   }, [conversationId, workPlan.sequence, workPlan.prepared]);
   useEffect(() => {
@@ -192,6 +193,21 @@ export function ConversationWorkPlanPanel({ owner, input, visible, disabled, gat
     } catch (error) { disposeProof(); setCaptureFailure(commandFailure(error)); return; }
     focus.current = { origin: button, preview: true };
     await owner.prepareWorkPlan(conversationId, selected, current);
+  }
+  async function confirmAndStart(button: HTMLElement) {
+    const captured = proof.current;
+    if (!allowed() || !current() || !review.current() || !captured?.current() || confirming.current) return;
+    confirming.current = true; focus.current = { origin: button, preview: false };
+    const startCurrent = () => canRead() && live.current.open && owner.getSnapshot().activeId === conversationId
+      && proof.current === captured && captured.current()
+      && connectionConfigCurrent(facts.current(), owner.getSnapshot().inputs.get(conversationId)?.workPlan.config ?? workPlan.config);
+    try {
+      await owner.confirmAndStart(conversationId, { checkerExecutions: review.checkerExecutions(), toolExecution: review.toolExecution,
+        applicationToolExecutions: review.applicationToolExecutions(), effects: workPlanEffects(plan) }, () => current() && review.current(), startCurrent);
+    } finally {
+      confirming.current = false;
+      if (!owner.getSnapshot().inputs.get(conversationId)?.workPlan.prepared) disposeProof();
+    }
   }
   const preview = plan?.preview, mcp = plan?.options.mcpTermQuery?.preview;
   const consentKey = plan?.options.teamExecution ? plan.options.teamDiscussions?.profile === "current-plan-2" ? "ai.team.artifactConsent" : "ai.team.consent"
@@ -286,15 +302,10 @@ export function ConversationWorkPlanPanel({ owner, input, visible, disabled, gat
             disabled={blocked || !connectionCurrent || !review.confirmed || !workPlanMinutesValid(workPlan.minutes) || unsavedProposal}
             onChange={event => { if (allowed()) owner.setWorkPlanConsent(conversationId, event.target.checked); }}/>
             <span>{global(consentKey)} {mcp ? t("planMcpServiceSharing") : null}</span></label>
-          <p>{t("planNoAutomaticStart")}</p>
+          <p>{t("planConfirmAndStartHelp")}</p>
           <div className={styles.actions}><Button variant="primary" size="sm" pending={workPlan.busy === "authorize"}
             disabled={blocked || !connectionCurrent || !workPlan.consent || !review.confirmed || !workPlanMinutesValid(workPlan.minutes) || unsavedProposal}
-            onClick={event => {
-              if (!allowed() || !current() || !review.current()) return;
-              focus.current = { origin: event.currentTarget, preview: false };
-              void owner.authorizeWorkPlan(conversationId, { checkerExecutions: review.checkerExecutions(), toolExecution: review.toolExecution,
-                applicationToolExecutions: review.applicationToolExecutions(), effects: workPlanEffects(plan) }, () => current() && review.current());
-            }}>{t("planConfirm")}</Button></div>
+            onClick={event => void confirmAndStart(event.currentTarget)}>{t("planConfirmAndStart")}</Button></div>
         </fieldset>
       </section> : null}
     </section> : null}
