@@ -538,6 +538,7 @@ fn pi_member_reads_published_artifact_indices_without_expanding_shared_source_sc
     const ORIGINAL: &str = "Original cited wording: \"quoted\"\r\nA distinct version 🧵";
     const LATEST: &str = "Newer human selection, which is not the cited revision";
     const UNSHARED: &str = "OTHER_UNIT_SENTINEL_MUST_STAY_LOCAL";
+    let long_original = format!("{ORIGINAL}{}", "\"\\\n".repeat(3500));
     let _runtime;
     let fixture = Fixture::create_with_source(
         br#"{"first":"Authorized source wording","second":"OTHER_UNIT_SENTINEL_MUST_STAY_LOCAL"}"#,
@@ -551,7 +552,7 @@ fn pi_member_reads_published_artifact_indices_without_expanding_shared_source_sc
             "save_translation_revision",
             json!({"actionId":ExecutionId::new(),
         "unitId":fixture.unit,"locale":"zh-CN","sourceRevisionId":fixture.source_revision,
-        "expectedSelectionId":null,"text":ORIGINAL}),
+        "expectedSelectionId":null,"text":long_original}),
         )
         .unwrap();
     let original_revision = original["revision"]["revisionId"].clone();
@@ -641,7 +642,7 @@ fn pi_member_reads_published_artifact_indices_without_expanding_shared_source_sc
     first.tool(
         "read-cited-translation",
         "read_team_artifact",
-        json!({"postId":post_id,"referenceIndex":0}),
+        json!({"postId":post_id,"referenceIndex":0,"byteOffset":0}),
     );
     let second = peer.accept();
     let (second_utf8, second_view) = shared_view(&second.body);
@@ -650,9 +651,24 @@ fn pi_member_reads_published_artifact_indices_without_expanding_shared_source_sc
         translation,
         json!({"kind":"untrusted-team-artifact","postId":post_id,
         "referenceIndex":0,"target":target,
-        "artifact":{"kind":"translation-revision","revisionId":original_revision,"text":ORIGINAL}})
+         "artifact":{"kind":"translation-revision","revisionId":original_revision,"text":&long_original[..1024]},
+        "excerpt":{"startByte":0,"totalBytes":long_original.len(),"nextByteOffset":1024}})
     );
     assert_ne!(translation["artifact"]["text"], selected["currentText"]);
+    let mut with_full_artifact = second.body.clone();
+    let messages = with_full_artifact["messages"].as_array_mut().unwrap();
+    let tool_message = messages.iter_mut().find(|message| {
+        message["role"] == "tool" && message["tool_call_id"] == "read-cited-translation"
+    }).unwrap();
+    let mut full_read = translation.clone();
+    full_read["artifact"]["text"] = json!(long_original);
+    full_read.as_object_mut().unwrap().remove("excerpt");
+    tool_message["content"] = json!(full_read.to_string());
+    let limit = tsumugi_core::ai::provider::ProviderProfile::compatible(&peer.config)
+        .unwrap().max_prompt_bytes;
+    assert!(second.raw.len() <= limit);
+    assert!(with_full_artifact.to_string().len() > limit);
+
     assert_eq!(own_users(&second.body, &second_utf8), own_input);
     assert_capture(&fixture, &reader, 1, &second, &second_view);
     second.tool(
@@ -689,7 +705,7 @@ fn pi_member_reads_published_artifact_indices_without_expanding_shared_source_sc
             .iter()
             .find(|row| row["revisionId"] == original_revision)
             .unwrap()["text"],
-        ORIGINAL
+        long_original
     );
     assert_eq!(protection(&fixture), protected);
 }

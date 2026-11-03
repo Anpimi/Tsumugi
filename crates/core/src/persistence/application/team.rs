@@ -1036,7 +1036,7 @@ impl ProjectStore {
         &self,
         author: &CapturedTeamAuthor,
         request: &ReadTeamArtifact,
-    ) -> Result<TeamArtifactRead, ExecutionError> {
+    ) -> Result<TeamArtifactToolRead, ExecutionError> {
         let c = self
             .connection()
             .map_err(|_| sql(rusqlite::Error::InvalidQuery))?;
@@ -1061,13 +1061,39 @@ impl ProjectStore {
                 .ok_or_else(|| fail(ErrorCode::InvalidInput, "team-reference-index"))?;
             let input = super::super::ledger::load_input(c, author.author.attempt_id)?;
             let item = crate::ai::item_payload(&input, author.author.item_id)?;
-            let artifact = artifact_in(c, &plan, &author.target, reference, &item.native_key)?;
-            let read = TeamArtifactRead {
-                kind: TeamArtifactReadKind::UntrustedTeamArtifact,
-                post_id: request.post_id,
-                reference_index: request.reference_index,
-                target: author.target.clone(),
-                artifact,
+            let mut artifact = artifact_in(c, &plan, &author.target, reference, &item.native_key)?;
+            let excerpt = if let Some(offset) = request.byte_offset {
+                let text = match &mut artifact {
+                    TeamArtifactBody::TranslationRevision { text, .. }
+                    | TeamArtifactBody::SourceResult { text, .. } => text,
+                };
+                let start_byte = offset as usize;
+                if !text.is_char_boundary(start_byte) {
+                    return Err(fail(ErrorCode::InvalidInput, "team-artifact-byte-offset"));
+                }
+                let total_bytes = text.len();
+                let mut end = (start_byte + TEAM_ARTIFACT_EXCERPT_BYTES).min(total_bytes);
+                while !text.is_char_boundary(end) {
+                    end -= 1;
+                }
+                *text = text[start_byte..end].to_owned();
+                Some(TeamArtifactExcerpt {
+                    start_byte,
+                    total_bytes,
+                    next_byte_offset: (end < total_bytes).then_some(end),
+                })
+            } else {
+                None
+            };
+            let read = TeamArtifactToolRead {
+                read: TeamArtifactRead {
+                    kind: TeamArtifactReadKind::UntrustedTeamArtifact,
+                    post_id: request.post_id,
+                    reference_index: request.reference_index,
+                    target: author.target.clone(),
+                    artifact,
+                },
+                excerpt,
             };
             codec::encode(
                 &read,
@@ -2185,12 +2211,13 @@ mod tests {
                 &ReadTeamArtifact {
                     post_id: write.post_id,
                     reference_index: 0,
+                    byte_offset: None,
                 },
             )
             .unwrap();
-        assert_eq!(translated.kind, TeamArtifactReadKind::UntrustedTeamArtifact);
+        assert_eq!(translated.read.kind, TeamArtifactReadKind::UntrustedTeamArtifact);
         assert_eq!(
-            translated.artifact,
+            translated.read.artifact,
             TeamArtifactBody::TranslationRevision {
                 revision_id: old.revision_id,
                 text: old_text.into()
@@ -2202,6 +2229,7 @@ mod tests {
                 &ReadTeamArtifact {
                     post_id: write.post_id,
                     reference_index: 1,
+                    byte_offset: None,
                 },
             )
             .unwrap();
@@ -2211,7 +2239,7 @@ mod tests {
             .find(|row| row.unit_id == Some(author.target.unit_id))
             .unwrap();
         assert_eq!(
-            source_read.artifact,
+            source_read.read.artifact,
             TeamArtifactBody::SourceResult {
                 snapshot_id: author.target.source_snapshot_id,
                 attempt_id: source.attempt_id,
@@ -2229,7 +2257,7 @@ mod tests {
         .unwrap();
         assert_eq!(
             codec::decode::<TeamArtifactRead>(&bytes, 32768).unwrap(),
-            source_read
+            source_read.read
         );
         let json = serde_json::to_value(&source_read).unwrap();
         assert_eq!(json["artifact"].as_object().unwrap().len(), 7);
@@ -2246,7 +2274,8 @@ mod tests {
                     &author,
                     &ReadTeamArtifact {
                         post_id: other_post.post_id,
-                        reference_index: 0
+                        reference_index: 0,
+                        byte_offset: None,
                     }
                 )
                 .unwrap_err()
@@ -2259,7 +2288,8 @@ mod tests {
                     &author,
                     &ReadTeamArtifact {
                         post_id: write.post_id,
-                        reference_index: 2
+                        reference_index: 2,
+                        byte_offset: None,
                     }
                 )
                 .unwrap_err()
@@ -2272,7 +2302,8 @@ mod tests {
                     &author,
                     &ReadTeamArtifact {
                         post_id: ExecutionId::new(),
-                        reference_index: 0
+                        reference_index: 0,
+                        byte_offset: None,
                     }
                 )
                 .is_err()
@@ -2323,7 +2354,8 @@ mod tests {
                     &old_author,
                     &ReadTeamArtifact {
                         post_id: old_post.post_id,
-                        reference_index: 0
+                        reference_index: 0,
+                        byte_offset: None,
                     }
                 )
                 .unwrap_err()
@@ -2410,6 +2442,7 @@ mod tests {
         let short_read = ReadTeamArtifact {
             post_id: short_post.post_id,
             reference_index: 0,
+            byte_offset: None,
         };
         old_store
             .read_team_artifact(&short_author, &short_read)
@@ -2428,7 +2461,7 @@ mod tests {
         let author = store
             .capture_team_execution_author(&scope, &request)
             .unwrap();
-        let oversized_text = "\u{0001}".repeat(6000);
+        let oversized_text = format!("é{}", "\u{0001}".repeat(6000));
         let revision = save_text(&mut store, &plan, author.target(), &oversized_text);
         let mut write = publication(
             &author,
@@ -2441,6 +2474,7 @@ mod tests {
         let read = ReadTeamArtifact {
             post_id: write.post_id,
             reference_index: 0,
+            byte_offset: None,
         };
         let before = std::fs::read(
             store
@@ -2462,6 +2496,17 @@ mod tests {
             .unwrap(),
             before
         );
+        let mut excerpt_request = ReadTeamArtifact { byte_offset: Some(0), ..read.clone() };
+        let first = store.read_team_artifact(&author, &excerpt_request).unwrap();
+        let range = first.excerpt.unwrap();
+        assert_eq!(range.total_bytes, oversized_text.len());
+        let end = range.next_byte_offset.unwrap();
+        assert_eq!(end, TEAM_ARTIFACT_EXCERPT_BYTES);
+        assert!(matches!(&first.read.artifact, TeamArtifactBody::TranslationRevision { text, .. }
+            if text == &oversized_text[..end]));
+        excerpt_request.byte_offset = Some(1);
+        assert_eq!(store.read_team_artifact(&author, &excerpt_request).unwrap_err().stage,
+            "team-artifact-byte-offset");
         // Inject an unavailable original reference without changing the body's typed shape.
         let mut missing = saved.clone();
         missing.publication.references = vec![TeamArtifactReference::TranslationRevision {
