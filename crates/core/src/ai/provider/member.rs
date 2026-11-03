@@ -21,6 +21,7 @@ pub struct ProviderRequestCapture {
 impl ProviderRequestCapture {
     pub(crate) fn validate(&self, config: &AiConfig) -> Result<(), ExecutionError> {
         let profile = ProviderProfile::compatible(config)?;
+        profile.check_request_size(self.body.len())?;
         let value: serde_json::Value =
             codec::decode(self.body.as_bytes(), profile.max_prompt_bytes)?;
         let messages = if config.is_chatgpt_subscription() {

@@ -54,6 +54,38 @@ impl ProviderProfile {
             outcome_query: false,
         })
     }
+    pub(crate) fn check_request_size(&self, bytes: usize) -> Result<(), ExecutionError> {
+        if bytes > self.max_prompt_bytes {
+            return Err(error(
+                ErrorCode::LimitExceeded,
+                &format!("provider-request-bytes:{bytes}:{}", self.max_prompt_bytes),
+            ));
+        }
+        Ok(())
+    }
+
+    pub(crate) fn check_json_request(&self, body: &serde_json::Value) -> Result<(), ExecutionError> {
+        match codec::encode(body, self.max_prompt_bytes) {
+            Ok(_) => Ok(()),
+            Err(failure) if failure.stage == "limit-exceeded" => {
+                // Count the rejected body without allocating another copy.
+                struct ByteCount(usize);
+                impl std::io::Write for ByteCount {
+                    fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
+                        self.0 += bytes.len();
+                        Ok(bytes.len())
+                    }
+                    fn flush(&mut self) -> std::io::Result<()> {
+                        Ok(())
+                    }
+                }
+                let mut count = ByteCount(0);
+                serde_json::to_writer(&mut count, body).map_err(|_| failure)?;
+                self.check_request_size(count.0)
+            }
+            Err(failure) => Err(failure),
+        }
+    }
 }
 
 #[derive(Clone, Debug)]

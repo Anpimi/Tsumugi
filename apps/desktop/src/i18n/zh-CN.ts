@@ -929,6 +929,7 @@ plugins: {
   contributions: { capability: "能力", resource: "资源", skill: "技能", ui: "用户界面" },
 },
 commandError: {
+  providerRequestBytes: "完整模型请求为 {{actual}} 字节，上限为 {{limit}} 字节。请减少选中的消息或条目，或缩小分享材料的范围，然后重新准备。",
   diagnosticId: "诊断编号：", classification: "{{code}} · {{stage}} · {{outcome}}",
   currentRevision: "当前项目修订版本：{{revision}}", expected: "提交时的预期状态：", current: "被拒绝时的实际状态：", none: "无",
   taskRecovery: "继续操作前，请在“任务”中结合当前任务状态核对以下恢复建议。",

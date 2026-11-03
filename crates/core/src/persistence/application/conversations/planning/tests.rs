@@ -456,6 +456,43 @@ fn message_count_and_aggregate_prompt_limit_reject_whole_requests_without_trunca
 }
 
 #[test]
+fn preview_admits_exact_compatible_request_limit_and_rejects_one_more_byte() {
+    let (_temp, store, project, units) = fixture();
+    let mut req = request(&store, project, &units[..1]);
+    let limit = crate::ai::provider::ProviderProfile::compatible(&req.config)
+        .unwrap()
+        .max_prompt_bytes;
+    let material = "保留 e\u{301} 👩🏽‍💻 \"\\\n".repeat(180);
+    let push = |req: &mut PrepareConversationPlanning, body: &str| {
+        req.selected_message_ids.push(append(&store, project, req.conversation_id, body));
+    };
+    for _ in 0..4 {
+        push(&mut req, &material);
+    }
+    push(&mut req, "x");
+    let initial = store.prepare_conversation_planning(&req).unwrap();
+    let preview = initial.preview();
+    let baseline = conversation_planning::completion_body(&req.config, &preview.system, &preview.input)
+        .unwrap()
+        .to_string()
+        .len();
+    let at_limit = "x".repeat(1 + limit - baseline);
+    req.selected_message_ids.pop();
+    push(&mut req, &at_limit);
+    let accepted = store.prepare_conversation_planning(&req).unwrap();
+    let preview = accepted.preview();
+    assert_eq!(conversation_planning::completion_body(&req.config, &preview.system, &preview.input)
+        .unwrap().to_string().len(), limit);
+    req.selected_message_ids.pop();
+    push(&mut req, &(at_limit + "x"));
+    readonly(&store, || {
+        let error = store.prepare_conversation_planning(&req).unwrap_err();
+        assert_eq!(error.code, ErrorCode::LimitExceeded);
+        assert_eq!(error.stage, format!("provider-request-bytes:{}:{limit}", limit + 1));
+    });
+}
+
+#[test]
 fn original_capture_survives_unrelated_edits_and_unselected_new_messages() {
     let (_temp, mut store, project, units) = fixture();
     let req = request(&store, project, &units[..1]);

@@ -355,13 +355,7 @@ pub(crate) fn request_body(input: &FixedInput, item: ExecutionId) -> Result<Valu
         ));
     }
     let preview = payload(input)?;
-    let profile = ProviderProfile::compatible(&settings.config)?;
-    let mut body = json!({"model":settings.config.model,"stream":false,"messages":[{"role":"system","content":preview.system},{"role":"user","content":preview.input}]});
-    if !settings.config.is_chatgpt_subscription() {
-        body[&profile.output_token_field] = settings.config.max_output_tokens.into();
-    }
-    codec::encode(&body, profile.max_prompt_bytes)?;
-    Ok(body)
+    super::completion_body(&settings.config, &preview.system, &preview.input)
 }
 
 pub(crate) fn validate_model(

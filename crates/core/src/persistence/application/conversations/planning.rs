@@ -135,6 +135,10 @@ fn preview_in(
         .map_or(&[][..], |preview| preview.items.as_slice());
     let (input, byte_length, brief) =
         conversation_planning::prompt_for(request.purpose,&request.config, &request.scope, &messages, items, &units)?;
+    let system = conversation_planning::profile(request.purpose).2;
+    if !request.config.is_chatgpt_subscription() {
+        conversation_planning::completion_body(&request.config, system, &input)?;
+    }
     let preview = ConversationPlanningPreview {
             purpose: request.purpose,
         version: conversation_planning::profile(request.purpose).3,
@@ -144,7 +148,7 @@ fn preview_in(
         scope: request.scope.clone(),
         selected_messages: messages,
         units,
-        system: conversation_planning::profile(request.purpose).2.into(),
+        system: system.into(),
         input,
         byte_length,
         brief,

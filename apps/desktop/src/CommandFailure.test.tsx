@@ -72,3 +72,17 @@ it.each(["en-US", "zh-CN"])("retains the original reason or field without interp
   expect(screen.getByText("input.payload")).toBeVisible();
   expect(screen.queryByText(reason)).not.toBeInTheDocument();
 });
+
+it.each(["en-US", "zh-CN"])("shows the request size and limit before diagnostics in %s", async locale => {
+  await i18n.changeLanguage(locale);
+  const failure = commandFailure({
+    ...fixture.errors[0],
+    code: "limit-exceeded",
+    reason: "provider-request-bytes:32769:32768",
+  });
+  render(<CommandFailureDetails failure={failure} />);
+  expect(screen.getByText(i18n.t("commandError.providerRequestBytes", {
+    actual: "32769",
+    limit: "32768",
+  }))).toBeVisible();
+});

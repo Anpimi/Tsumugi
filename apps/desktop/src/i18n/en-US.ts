@@ -939,6 +939,7 @@ plugins: {
   contributions: { capability: "Capability", resource: "Resource", skill: "Skill", ui: "User interface" },
 },
 commandError: {
+  providerRequestBytes: "The complete model request is {{actual}} bytes. The limit is {{limit}} bytes. Select fewer messages or entries, or narrow the shared material, then prepare again.",
   diagnosticId: "Diagnostic ID:", classification: "{{code}} · {{stage}} · {{outcome}}",
   currentRevision: "Current project revision: {{revision}}", expected: "Expected state:", current: "Actual state when rejected:", none: "None",
   taskRecovery: "Check these recovery actions against the current task status in Tasks before continuing.",
