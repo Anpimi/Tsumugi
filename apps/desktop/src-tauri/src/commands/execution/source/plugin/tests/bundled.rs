@@ -209,12 +209,19 @@ fn journey(material: Materials) {
     assert_eq!(claimed["selectionId"], selection);
     assert_eq!(call(&window, "claim_startup_source_directory", claim).unwrap(), claimed);
     let preflight = call(&window, "preflight_plugin_source", scoped(&context, json!({"selectionId":selection,"sourceLanguage":"en-US","attemptId":ExecutionId::new()}))).unwrap();
+    // The producer must use the captured bytes even if the original file is replaced.
+    fs::write(&first_material, b"replacement outside the captured source").unwrap();
     let start = source_consent(&context, &preflight);
+    let mut expired = start.clone();
+    expired["expiresAtMs"] = json!("1");
+    assert!(call(&window, "start_plugin_source", expired).is_err());
     let mut denied = start.clone();
     denied["unsandboxedExecution"] = json!(false);
     assert!(call(&window, "start_plugin_source", denied).is_err());
     let started = call(&window, "start_plugin_source", start.clone()).unwrap();
+    assert_eq!(call(&window, "start_plugin_source", start.clone()).unwrap(), started);
     let produced = completed(&window, &context, &started);
+    assert_eq!(fs::read(&first_material).unwrap(), b"replacement outside the captured source");
     let source_result = &produced["items"][0]["resultId"];
     let preview = call(
         &window,
@@ -234,7 +241,10 @@ fn journey(material: Materials) {
         &context,
         json!({"attemptId":started,"resultId":source_result,"actionId":ExecutionId::new(),"confirmation":preview["confirmation"]}),
     );
-    call(&window, "prepare_source_adoption", adoption.clone()).unwrap();
+    let prepared_adoption = call(&window, "prepare_source_adoption", adoption.clone()).unwrap();
+    let original_adoption = json!({"adoption":adoption,"unitId":prepared_adoption["unitId"]});
+    assert_eq!(call(&window, "read_source_adoption_action", original_adoption.clone()).unwrap(),
+        json!({"action":prepared_adoption,"receipt":null}));
     let action = scoped(&context, json!({"actionId":adoption["actionId"]}));
     assert!(call(&window, "adopt_execution", action.clone()).is_err());
     let check = call(&window, "prepare_source_check", scoped(&context, json!({"sourceAttemptId":started,"sourceResultId":source_result,"attemptId":ExecutionId::new(),"source":source_choice}))).unwrap();
@@ -253,7 +263,9 @@ fn journey(material: Materials) {
         ),
     )
     .unwrap();
-    call(&window, "adopt_execution", action).unwrap();
+    let adopted = call(&window, "adopt_execution", action.clone()).unwrap();
+    assert_eq!(call(&window, "read_source_adoption_action", original_adoption.clone()).unwrap()["receipt"], adopted);
+    assert_eq!(call(&window, "adopt_execution", action).unwrap(), adopted);
     for (locale, text, _) in material.translations {
         let page = call(
             &window,
@@ -439,6 +451,9 @@ fn journey(material: Materials) {
     let reopened = call(&window, "open_project", json!({"locator":project_path})).unwrap();
     let reopened_context =
         json!({"sessionToken":reopened["sessionToken"],"projectId":context["projectId"]});
+    let mut reopened_adoption = original_adoption;
+    reopened_adoption["adoption"]["sessionToken"] = reopened_context["sessionToken"].clone();
+    assert_eq!(call(&window, "read_source_adoption_action", reopened_adoption).unwrap()["receipt"], adopted);
     assert_eq!(
         call(&window, "list_releases", reopened_context.clone()).unwrap(),
         releases
