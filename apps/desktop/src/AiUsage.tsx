@@ -25,8 +25,12 @@ export function AiOutputUsage({ usage, incomplete }: { usage: AiUsageView | Usag
   </>;
 }
 
-function BudgetTokenValue({ value }: { value: ReportedTokenTotal }) {
+function BudgetTokenValue({ value, reservedRequests }: { value: ReportedTokenTotal; reservedRequests: number }) {
   const { t } = useTranslation();
+  if (reservedRequests === 0) return t("ai.usageDetails.notReported");
+  if (value.unknownRequests === reservedRequests) {
+    return t("ai.usageDetails.unreportedRequests", { requests: String(reservedRequests) });
+  }
   return value.unknownRequests > 0 ? t("ai.usageDetails.partial", { tokens: value.tokens, requests: String(value.unknownRequests) })
     : t("ai.usageDetails.reported", { tokens: value.tokens });
 }
@@ -34,12 +38,17 @@ function BudgetTokenValue({ value }: { value: ReportedTokenTotal }) {
 /** The original provider ledger owns totals, holds and per-dimension missing reports. */
 export function AiProviderBudget({ budget }: { budget: ProviderBudget }) {
   const { t } = useTranslation();
+  const remaining = Math.max(0, budget.limit - budget.dispatched - budget.legacyHeld);
+  const hasReportedUsage = budget.dispatched > budget.usageUnknown;
   return <>
     <p>{t("ai.budgetSummary", { ...budget, defaultValue: enUS.ai.budgetSummary })}</p>
-    <p>{t("ai.budgetUsage", { ...budget, defaultValue: enUS.ai.budgetUsage })}</p>
+    <p>{t("ai.budgetRemaining", { remaining: String(remaining) })}</p>
+    <p>{hasReportedUsage
+      ? t("ai.budgetUsage", { ...budget, defaultValue: enUS.ai.budgetUsage })
+      : t("ai.budgetUsageUnreported")}</p>
     {budget.legacyHeld > 0 ? <p>{t("ai.legacyBudget", { count: budget.legacyHeld, defaultValue: enUS.ai.legacyBudget })}</p> : null}
     <details><summary>{t("ai.usageDetails.title")}</summary><p>{t("ai.usageDetails.subsets")}</p>
-      <dl>{details.map(([, field, label]) => <div key={field}><dt>{t(label)}</dt><dd><BudgetTokenValue value={budget[field]}/></dd></div>)}</dl>
+      <dl>{details.map(([, field, label]) => <div key={field}><dt>{t(label)}</dt><dd><BudgetTokenValue value={budget[field]} reservedRequests={budget.dispatched}/></dd></div>)}</dl>
     </details>
     <p>{t("ai.usageDetails.billingUnknown")}</p>
   </>;

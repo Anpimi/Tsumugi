@@ -434,7 +434,7 @@ it("keeps the earlier started work and cumulative unknown usage after confirming
   expect(usage.getByText(i18n.t("ai.budgetSummary", { limit: String(budget.limit), dispatched: String(budget.dispatched), unresolved: String(budget.unresolved), usageUnknown: String(budget.usageUnknown) }))).toBeVisible();
   expect(usage.getByText(i18n.t("ai.budgetUsage", { ...budget }))).toBeVisible();
   fireEvent.click(usage.getByText(i18n.t("ai.usageDetails.title")));
-  expect(usage.getAllByText(i18n.t("ai.usageDetails.partial", { tokens: "0", requests: "3" }))).toHaveLength(3);
+  expect(usage.getAllByText(i18n.t("ai.usageDetails.unreportedRequests", { requests: "3" }))).toHaveLength(3);
   expect(usage.queryByText(i18n.t("ai.usageDetails.reported", { tokens: "0" }))).not.toBeInTheDocument();
   expect(usage.getByText(i18n.t("ai.usageDetails.billingUnknown"))).toBeVisible();
   fireEvent.click(screen.getByRole("button", { name: i18n.t("conversation.runReviewContinue") }));

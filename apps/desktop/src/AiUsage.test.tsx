@@ -38,18 +38,25 @@ it.each(["en-US", "zh-CN"])("shows exact ledger portions and independent missing
   const view = render(<AiProviderBudget budget={budget}/>);
   expect(screen.getByText(i18n.t("ai.budgetSummary", { ...budget, defaultValue: enUS.ai.budgetSummary }))).toBeVisible();
   expect(screen.getByText(i18n.t("ai.budgetUsage", { ...budget, defaultValue: enUS.ai.budgetUsage }))).toBeVisible();
+  expect(screen.getByText(i18n.t("ai.budgetRemaining", { remaining: "16" }))).toBeVisible();
   expect(screen.getByText(i18n.t("ai.legacyBudget", { count: 1, defaultValue: enUS.ai.legacyBudget }))).toBeVisible();
   await userEvent.setup().click(screen.getByText(i18n.t("ai.usageDetails.title")));
   expect(detail("cacheRead").getByText(i18n.t("ai.usageDetails.reported", { tokens: "0" }))).toBeVisible();
-  expect(detail("cacheWrite").getByText(i18n.t("ai.usageDetails.partial", { tokens: "0", requests: "3" }))).toBeVisible();
+  expect(detail("cacheWrite").getByText(i18n.t("ai.usageDetails.unreportedRequests", { requests: "3" }))).toBeVisible();
   expect(detail("reasoning").getByText(i18n.t("ai.usageDetails.partial", { tokens: "18446744073709551615", requests: "1" }))).toBeVisible();
   expect(screen.queryByText(i18n.t("ai.usageDetails.partialTotals"))).not.toBeInTheDocument();
   expect(screen.getByText(i18n.t("ai.usageDetails.billingUnknown"))).toBeVisible();
-  const unavailable: ProviderBudget = { ...budget, usageUnknown: 3, promptTokens: "0", completionTokens: "0", ...unreportedTokenTotalsFixture(3) };
+  const unavailable: ProviderBudget = { ...budget, limit: 4, usageUnknown: 3, promptTokens: "0", completionTokens: "0", ...unreportedTokenTotalsFixture(3) };
   view.rerender(<AiProviderBudget budget={unavailable}/>);
   expect(screen.getByText(i18n.t("ai.budgetSummary", { ...unavailable, defaultValue: enUS.ai.budgetSummary }))).toBeVisible();
-  expect(screen.getAllByText(i18n.t("ai.usageDetails.partial", { tokens: "0", requests: "3" }))).toHaveLength(3);
+  expect(screen.getByText(i18n.t("ai.budgetRemaining", { remaining: "0" }))).toBeVisible();
+  expect(screen.getByText(i18n.t("ai.budgetUsageUnreported"))).toBeVisible();
+  expect(screen.queryByText(i18n.t("ai.budgetUsage", { ...unavailable }))).not.toBeInTheDocument();
+  expect(screen.getAllByText(i18n.t("ai.usageDetails.unreportedRequests", { requests: "3" }))).toHaveLength(3);
   expect(screen.queryByText(i18n.t("ai.usageDetails.reported", { tokens: "0" }))).not.toBeInTheDocument();
+  const reportedZero = { ...unavailable, usageUnknown: 2 };
+  view.rerender(<AiProviderBudget budget={reportedZero}/>);
+  expect(screen.getByText(i18n.t("ai.budgetUsage", { ...reportedZero }))).toBeVisible();
 });
 
 it.each(["en-US", "zh-CN"])("keeps missing details separate from partial or wholly unavailable request totals in %s", async locale => {
