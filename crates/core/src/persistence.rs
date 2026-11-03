@@ -37,7 +37,7 @@ mod release;
 mod resources;
 mod review;
 mod translation;
-pub use ai::{AiAdoptionHandler, ArenaAdoptionHandler, TeamTranslationAdoptionHandler, SavedAiCandidateEffect};
+pub use ai::{AiAdoptionHandler, ArenaAdoptionHandler, TeamTranslationAdoptionHandler, SelectedRevisionAdoptionHandler, SavedAiCandidateEffect};
 pub use application::{
     CapturedAutomaticSelection, ComputedAutomaticSelection, PreparedAutomaticSelection,
     PreparedWorkPlanServiceGeneration, PreparedWorkPlanServiceTool, WorkPlanServiceCall,

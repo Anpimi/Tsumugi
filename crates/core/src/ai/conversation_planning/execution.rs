@@ -1,7 +1,7 @@
 //! Typed planning uses the original provider, request budget and result ledger.
 use super::*;
 use crate::{
-    ai::{Usage, provider::ProviderProfile},
+    ai::{AiOutput, Usage, provider::ProviderProfile},
     application::PlanOptions,
     execution::*,
 };
@@ -603,6 +603,33 @@ fn validate_usage(
         ));
     }
     Ok(())
+}
+
+pub(crate) fn selected_revision_candidate(
+    input: &FixedInput,
+    result: &FixedResult,
+) -> Result<(AiItem, AiOutput), ExecutionError> {
+    let preview = preview_from_input(input)?;
+    if !matches!(preview.scope, ConversationPlanningScope::SelectedRevision { .. }) {
+        return Err(error(ErrorCode::Unauthorized, "conversation-planning-adoption"));
+    }
+    let output = validate_output(input, result)?;
+    let ConversationPlanningModelOutput::Revision { text, .. } = output.model else {
+        return Err(error(ErrorCode::OutputInvalid, "selected-revision-candidate"));
+    };
+    let mut material = settings(input)?.material
+        .ok_or_else(|| error(ErrorCode::CorruptLedger, "selected-revision-material"))?;
+    let item = material.items.pop()
+        .ok_or_else(|| error(ErrorCode::CorruptLedger, "selected-revision-material"))?;
+    let candidate = AiOutput {
+        unit_id: item.unit_id,
+        target_locale: item.target_locale.clone(),
+        text,
+        usage: output.usage,
+        requests: output.requests,
+        usage_incomplete: output.usage_incomplete,
+    };
+    Ok((item, candidate))
 }
 
 pub struct ConversationPlanningRunner {

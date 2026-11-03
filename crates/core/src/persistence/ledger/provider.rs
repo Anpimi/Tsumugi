@@ -654,7 +654,14 @@ impl ProjectStore {
                 &tx, request, id, view,
             )?;
         }
-        commit(tx)
+        commit(tx)?;
+        if let Some(permit) = self.conversation_planning_permits.get_mut(&e.attempt_id) {
+            permit.selected_revision_reserved = matches!(
+                permit.capture.preview().scope,
+                crate::application::ConversationPlanningScope::SelectedRevision { .. }
+            );
+        }
+        Ok(())
     }
     pub(crate) fn settle_provider_request(
         &mut self,

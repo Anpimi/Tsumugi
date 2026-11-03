@@ -25,8 +25,8 @@ pub struct SavedAiCandidateEffect {
 }
 
 impl ProjectStore {
-    /// Resolve one immutable AI revision, including legacy, Arena and team translation
-    /// producers. Historical authority is checked for association, never resumed.
+    /// Resolve one immutable AI revision, including selected revisions, Arena and team
+    /// translation producers. Historical authority is checked for association, never resumed.
     pub fn saved_ai_candidate_effect(
         &self,
         project: ExecutionId,
@@ -62,6 +62,8 @@ impl ProjectStore {
                     crate::ai::item_payload(&input, item_id)?,
                     super::team_translation_output(&input, &result)?,
                 )
+            } else if input.envelope().operation == crate::ai::conversation_planning::OPERATION {
+                crate::ai::conversation_planning::selected_revision_candidate(&input, &result)?
             } else {
                 (
                     crate::ai::item_payload(&input, item_id)?,

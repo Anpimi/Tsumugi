@@ -122,6 +122,30 @@ pub(in crate::persistence) fn selectable(
     if rejected(c, revision)? {
         return Err(error(ErrorCode::DependencyConflict, "candidate-rejected"));
     }
+    let origin: Option<String> = c.query_row(
+        "SELECT r.attempt_id FROM translation_revisions r
+         JOIN execution_attempts a ON a.attempt_id=r.attempt_id
+         JOIN execution_tasks t ON t.task_id=a.task_id
+         WHERE r.revision_id=?1 AND r.origin_kind='ai' AND t.operation=?2",
+        params![revision.to_string(), crate::ai::conversation_planning::OPERATION],
+        |row| row.get(0),
+    ).optional().map_err(super::super::ledger::sql_error)?;
+    if let Some(attempt) = origin {
+        let input = super::super::ledger::load_input_cached(c, id(attempt)?)?;
+        let preview = crate::ai::conversation_planning::preview_from_input(&input)?;
+        let crate::application::ConversationPlanningScope::SelectedRevision { basis } = preview.scope else {
+            return Err(error(ErrorCode::CorruptLedger, "selected-revision-candidate"));
+        };
+        let (snapshot, source) = source_basis(c, preview.project_id, basis.unit_id)?;
+        if snapshot != basis.source_snapshot_id || source != basis.source_revision_id {
+            return Err(error(ErrorCode::DependencyConflict, "selected-revision-source"));
+        }
+        let selection = current_selection(c, basis.unit_id, &basis.locale)?;
+        check_expected(&selection, Some(basis.selection_id))?;
+        if selection.as_ref().map(|value| value.revision_id) != Some(basis.translation_revision_id) {
+            return Err(error(ErrorCode::DependencyConflict, "selected-revision-basis"));
+        }
+    }
     Ok(())
 }
 pub(in crate::persistence) fn rejected(c: &Connection, revision: ExecutionId) -> Result<bool, ExecutionError> {

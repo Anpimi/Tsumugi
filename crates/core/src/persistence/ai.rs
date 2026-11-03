@@ -396,6 +396,27 @@ impl AdoptionHandler for AiAdoptionHandler {
         prepare_ai(input, action, results, false)
     }
 }
+/// Saves a selected-revision result as an unselected translation candidate.
+pub struct SelectedRevisionAdoptionHandler;
+impl AdoptionHandler for SelectedRevisionAdoptionHandler {
+    fn operation(&self) -> &str {
+        conversation_planning::OPERATION
+    }
+
+    fn prepare(
+        &self,
+        input: &FixedInput,
+        action: &AdoptionAction,
+        results: &[FixedResult],
+    ) -> Result<PreparedMutation, ExecutionError> {
+        let [result] = results else {
+            return Err(error(ErrorCode::ResultMismatch, "selected-revision-candidate"));
+        };
+        let (item, output) = conversation_planning::selected_revision_candidate(input, result)?;
+        prepare_candidate(input, action, result, item, output.text, false, true)
+    }
+}
+
 fn prepare_ai(
     input: &FixedInput,
     action: &AdoptionAction,
@@ -422,6 +443,18 @@ fn prepare_ai(
             item_payload(input, result.envelope().item_id)?,
         )
     };
+    prepare_candidate(input, action, result, item, out.text, arena, false)
+}
+
+fn prepare_candidate(
+    input: &FixedInput,
+    action: &AdoptionAction,
+    result: &FixedResult,
+    item: AiItem,
+    text: String,
+    check_arena_cancellation: bool,
+    historical_source: bool,
+) -> Result<PreparedMutation, ExecutionError> {
     let input = input.clone();
     let action = action.clone();
     let result = result.clone();
@@ -429,7 +462,7 @@ fn prepare_ai(
         let input = &input;
         let action = &action;
         let result = &result;
-        if arena {
+        if check_arena_cancellation {
             let cancelled: bool = tx.query_row("SELECT EXISTS(SELECT 1 FROM execution_attempts a JOIN execution_cancellations c USING(task_id) WHERE a.attempt_id=?1 AND c.revision>a.cancellation_revision)", [action.attempt_id.to_string()], |r| r.get(0))?;
             if cancelled {
                 return Err(error(ErrorCode::Cancelled, "ai-cancelled"));
@@ -445,13 +478,25 @@ fn prepare_ai(
         if project != action.project_id.to_string() || !targets.contains(&item.target_locale) {
             return Err(error(ErrorCode::DependencyConflict, "ai-locale"));
         }
-        let valid:bool=tx.query_row("SELECT EXISTS(SELECT 1 FROM source_effective_occurrences o JOIN content_scope c ON c.current_snapshot=o.snapshot_id WHERE o.unit_id=?1 AND o.revision_id=?2)",params![item.unit_id.to_string(),item.source_revision_id.to_string()],|r|r.get(0))?;
+        let valid: bool = if historical_source {
+            tx.query_row(
+                "SELECT EXISTS(SELECT 1 FROM source_binding_history WHERE snapshot_id=?1 AND unit_id=?2 AND revision_id=?3)",
+                params![item.source_snapshot_id.to_string(), item.unit_id.to_string(), item.source_revision_id.to_string()],
+                |r| r.get(0),
+            )?
+        } else {
+            tx.query_row(
+                "SELECT EXISTS(SELECT 1 FROM source_effective_occurrences o JOIN content_scope c ON c.current_snapshot=o.snapshot_id WHERE o.unit_id=?1 AND o.revision_id=?2)",
+                params![item.unit_id.to_string(), item.source_revision_id.to_string()],
+                |r| r.get(0),
+            )?
+        };
         if !valid {
             return Err(error(ErrorCode::DependencyConflict, "ai-source"));
         }
         let ordinal:i64=tx.query_row("SELECT COALESCE(MAX(ordinal),0)+1 FROM translation_revisions WHERE unit_id=?1 AND locale=?2",params![item.unit_id.to_string(),item.target_locale],|r|r.get(0))?;
         let id = ExecutionId::new();
-        tx.execute("INSERT INTO translation_revisions (revision_id,project_id,unit_id,locale,ordinal,text,source_snapshot_id,source_revision_id,origin_kind,action_id,request_digest,attempt_id,result_id,item_id) VALUES (?1,?2,?3,?4,?5,?6,?7,?8,'ai',?9,?10,?11,?12,?13)",params![id.to_string(),project,item.unit_id.to_string(),item.target_locale,ordinal,out.text,item.source_snapshot_id.to_string(),item.source_revision_id.to_string(),action.action_id.to_string(),action.request_digest(input)?,action.attempt_id.to_string(),result.envelope().result_id.to_string(),result.envelope().item_id.to_string()])?;
+        tx.execute("INSERT INTO translation_revisions (revision_id,project_id,unit_id,locale,ordinal,text,source_snapshot_id,source_revision_id,origin_kind,action_id,request_digest,attempt_id,result_id,item_id) VALUES (?1,?2,?3,?4,?5,?6,?7,?8,'ai',?9,?10,?11,?12,?13)",params![id.to_string(),project,item.unit_id.to_string(),item.target_locale,ordinal,text,item.source_snapshot_id.to_string(),item.source_revision_id.to_string(),action.action_id.to_string(),action.request_digest(input)?,action.attempt_id.to_string(),result.envelope().result_id.to_string(),result.envelope().item_id.to_string()])?;
         tx.execute(
             "INSERT INTO translation_resource_baselines VALUES (?1,?2)",
             params![id.to_string(), item.resource_baseline as i64],

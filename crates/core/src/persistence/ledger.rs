@@ -113,6 +113,33 @@ fn is_conversation_planning(input: &FixedInput) -> bool {
         || input.envelope().capability_id == crate::ai::conversation_planning::CAPABILITY
 }
 
+fn check_planning_candidate_action(
+    input: &FixedInput,
+    parameters: &serde_json::Value,
+) -> Result<(), ExecutionError> {
+    if is_conversation_planning(input)
+        && (!parameters.is_null()
+            || input.envelope().capability_version != "4"
+            || !matches!(
+                crate::ai::conversation_planning::preview_from_input(input)?.scope,
+                crate::application::ConversationPlanningScope::SelectedRevision { .. }
+            ))
+    {
+        return Err(error(ErrorCode::Unauthorized, "conversation-planning-adoption"));
+    }
+    Ok(())
+}
+
+fn check_planning_candidate_result(input: &FixedInput, results: &[FixedResult]) -> Result<(), ExecutionError> {
+    if is_conversation_planning(input) {
+        let [result] = results else {
+            return Err(error(ErrorCode::ResultMismatch, "selected-revision-candidate"));
+        };
+        crate::ai::conversation_planning::selected_revision_candidate(input, result)?;
+    }
+    Ok(())
+}
+
 fn validate_attempt_input(
     connection: &Connection,
     input: &FixedInput,
@@ -4070,9 +4097,7 @@ impl ProjectStore {
             return Err(error(ErrorCode::ResultMismatch, "action-identity"));
         }
         let input = load_input_cached(&tx, attempt)?;
-        if is_conversation_planning(&input) {
-            return Err(error(ErrorCode::Unauthorized, "conversation-planning-adoption"));
-        }
+        check_planning_candidate_action(&input, &parameters)?;
         result_ids.sort();
         let existing: Option<Vec<u8>> = tx
             .query_row(
@@ -4108,6 +4133,7 @@ impl ProjectStore {
             .iter()
             .map(|id| load_result(&tx, &input, *id))
             .collect::<Result<Vec<_>, _>>()?;
+        check_planning_candidate_result(&input, &results)?;
         let digest = action.digest(&input, &results)?;
         tx.execute(
             "INSERT INTO execution_actions VALUES (?1,?2,?3,?4,?5)",
@@ -4343,9 +4369,7 @@ fn capture_adoption_in(
     authority: &crate::execution::plugin_authority::PluginAuthority,
 ) -> Result<AdoptionCapture, ExecutionError> {
     let input = load_input_cached(connection, action.attempt_id)?;
-    if is_conversation_planning(&input) {
-        return Err(error(ErrorCode::Unauthorized, "conversation-planning-adoption"));
-    }
+    check_planning_candidate_action(&input, &action.parameters)?;
     let digest = action.request_digest(&input)?;
     let persisted: (Vec<u8>, String) = connection
             .query_row(
@@ -4389,6 +4413,7 @@ fn capture_adoption_in(
         .map(|id| load_result(connection, &input, *id))
         .collect::<Result<Vec<_>, _>>()?;
     action.validate(&input, &results)?;
+    check_planning_candidate_result(&input, &results)?;
     for result in &results {
         let original = result_input(connection, &input, result.envelope().result_id)?;
         let result_permit = if original.envelope().attempt_id == input.envelope().attempt_id {

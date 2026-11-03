@@ -223,6 +223,7 @@ impl ProjectStore {
             input: input.clone(),
             deadline,
             expires_at_ms: consent.expires_at_ms.get(),
+            selected_revision_reserved: false,
             active: Arc::new(AtomicBool::new(true)),
             store_live: self.mcp_query_liveness.clone(),
             store_unknown: self.execution_unknown.clone(),
@@ -306,9 +307,15 @@ impl ProjectStore {
             .conversation_planning_permits
             .get(&input.envelope().attempt_id)
             .ok_or_else(|| fail(ErrorCode::Unauthorized, "conversation-planning-permit"))?;
-        let checked = permit
-            .check_dispatch(input)
-            .and_then(|_| self.validate_conversation_planning(&permit.capture));
+        let checked = permit.check_dispatch(input).and_then(|_| {
+            // The single reservation freezes selected-revision material for
+            // the in-flight response. Live authority is still checked above.
+            if permit.selected_revision_reserved {
+                Ok(())
+            } else {
+                self.validate_conversation_planning(&permit.capture)
+            }
+        });
         if checked.is_err() {
             permit.revoke();
         }

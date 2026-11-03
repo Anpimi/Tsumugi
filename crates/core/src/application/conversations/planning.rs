@@ -198,6 +198,7 @@ pub struct ConversationPlanningPermit {
     pub(crate) input: FixedInput,
     pub(crate) deadline: Instant,
     pub(crate) expires_at_ms: u64,
+    pub(crate) selected_revision_reserved: bool,
     pub(crate) active: Arc<AtomicBool>,
     pub(crate) store_live: Arc<AtomicBool>,
     pub(crate) store_unknown: Arc<AtomicBool>,

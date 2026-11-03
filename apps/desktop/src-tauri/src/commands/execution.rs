@@ -404,6 +404,10 @@ impl ExecutionHost {
             tsumugi_core::ai::team::OPERATION.into(),
             Arc::new(tsumugi_core::TeamTranslationAdoptionHandler),
         );
+        host.handlers.insert(
+            tsumugi_core::ai::conversation_planning::OPERATION.into(),
+            Arc::new(tsumugi_core::SelectedRevisionAdoptionHandler),
+        );
         host.runtime.register_with_policy(
             Arc::new(tsumugi_core::ai::conversation_planning::ConversationPlanningRunner::with_service(provider_service.clone())),
             tsumugi_core::execution::RecoveryPolicy::ExternalUnknown,

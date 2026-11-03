@@ -1180,7 +1180,7 @@ fn planning_authority_generic_recovery_and_adoption_remain_read_only() {
 
 #[test]
 fn planning_authority_loopback_dispatch_preserves_exact_prompt_budget_and_receipt() {
-    planning_loopback(false);
+    planning_loopback(false, false);
 }
 
 fn bind_selected_revision(
@@ -1220,10 +1220,15 @@ fn selected_revision_preview_rejects_stale_and_oversized_material() {
 
 #[test]
 fn selected_revision_loopback_uses_original_consent_and_records_a_typed_result() {
-    planning_loopback(true);
+    planning_loopback(true, false);
 }
 
-fn planning_loopback(revision: bool) {
+#[test]
+fn selected_revision_preserves_candidate_when_selection_changes_during_http() {
+    planning_loopback(true, true);
+}
+
+fn planning_loopback(revision: bool, advance_selection: bool) {
     use crate::{
         ai::conversation_planning::{ConversationPlanningModelOutput, ConversationPlanningRunner},
         execution::{ExecutionRuntime, FixedInput, ValidationState},
@@ -1258,6 +1263,8 @@ fn planning_loopback(revision: bool) {
     let calls = count.clone();
     let stop = Arc::new(AtomicBool::new(false));
     let stopping = stop.clone();
+    let release_reply = Arc::new(AtomicBool::new(!advance_selection));
+    let reply_ready = release_reply.clone();
     let server = thread::spawn(move || -> Result<serde_json::Value, String> {
         let deadline = Instant::now() + Duration::from_secs(8);
         let mut captured = None;
@@ -1337,6 +1344,12 @@ fn planning_loopback(revision: bool) {
                 serde_json::from_slice(&bytes[header_end..header_end + content_length])
                     .map_err(|error| error.to_string())?,
             );
+            while !reply_ready.load(Ordering::Acquire) {
+                if stopping.load(Ordering::Acquire) || Instant::now() >= deadline {
+                    return Err("revision reply was not released".into());
+                }
+                thread::sleep(Duration::from_millis(2));
+            }
             let response = serde_json::json!({
                 "choices":[{"finish_reason":"stop","message":{"role":"assistant",
                      "content":if revision { serde_json::json!({"kind":"revision","summary":"Clearer wording","text":"更新译文 {{name}}","questions":[]}) }
@@ -1390,6 +1403,16 @@ fn planning_loopback(revision: bool) {
     let receipt = runtime
         .submit_conversation_planning(&mut store, &prepared)
         .unwrap();
+    if advance_selection {
+        let deadline = Instant::now() + Duration::from_secs(5);
+        while count.load(Ordering::Acquire) == 0 {
+            runtime.tick(&mut store).unwrap();
+            assert!(Instant::now() < deadline, "revision request did not reach loopback");
+            thread::sleep(Duration::from_millis(2));
+        }
+        translate(&mut store, project, units[0], "zh-CN", "较新的人工译文 {{name}}");
+        release_reply.store(true, Ordering::Release);
+    }
     let deadline = Instant::now() + Duration::from_secs(5);
     while runtime.has_active_work(&store).unwrap() {
         runtime.tick(&mut store).unwrap();
@@ -1433,7 +1456,7 @@ fn planning_loopback(revision: bool) {
         assert_eq!(input["selectedTranslation"], "已选译文 {{name}}");
         assert_eq!(input["request"], capture.preview().selected_messages[0].body);
         assert_eq!(store.review_target(project, units[0], "zh-CN").unwrap().translation_text.as_deref(),
-            Some("已选译文 {{name}}"));
+            Some(if advance_selection { "较新的人工译文 {{name}}" } else { "已选译文 {{name}}" }));
     } else {
         assert!(matches!(output.model, ConversationPlanningModelOutput::Reply { ref summary, ref questions }
             if summary == "A bounded explanation" && questions.is_empty()));
@@ -1473,6 +1496,39 @@ fn planning_loopback(revision: bool) {
             .unwrap(),
         budget
     );
+    if revision {
+        let result_id = result.envelope().result_id;
+        let action = store.prepare_adoption(
+            receipt.consent.attempt_id, receipt.consent.action_id, vec![result_id], serde_json::Value::Null,
+        ).unwrap();
+        let handler = crate::SelectedRevisionAdoptionHandler;
+        let saved = store.adopt_execution(&action, &handler).unwrap();
+        assert_eq!(store.adopt_execution(&action, &handler).unwrap(), saved);
+        let candidate = ExecutionId::parse(&saved.changes[0].id).unwrap();
+        let current = store.review_target(project, units[0], "zh-CN").unwrap();
+        let entry = store.translation_revision(project, units[0], "zh-CN", candidate).unwrap();
+        assert_eq!(entry.text, "更新译文 {{name}}");
+        assert_eq!(entry.attempt_id, Some(receipt.consent.attempt_id));
+        assert_eq!(entry.result_id, Some(result_id));
+        let effect = store.saved_ai_candidate_effect(project, units[0], "zh-CN", candidate).unwrap();
+        assert_eq!(effect.attempt_id, receipt.consent.attempt_id);
+        assert_eq!(effect.result_id, result_id);
+        assert!(effect.current_result);
+        assert!(effect.lease.is_none());
+        assert_ne!(current.revision_id, Some(candidate));
+        let selection = store.select_translation_revision(&crate::SelectTranslationRevision {
+            project_id: project, action_id: ExecutionId::new(), unit_id: units[0], locale: "zh-CN".into(),
+            source_revision_id: current.source_revision_id, expected_selection_id: current.selection_id,
+            revision_id: candidate,
+        });
+        if advance_selection {
+            assert_eq!(selection.unwrap_err().code, ErrorCode::DependencyConflict);
+            assert_eq!(store.review_target(project, units[0], "zh-CN").unwrap().revision_id, current.revision_id);
+        } else {
+            assert_eq!(selection.unwrap().revision_id, candidate);
+        }
+        assert_eq!(store.provider_budget(receipt.consent.task_id).unwrap().unwrap(), budget);
+    }
     loopback.stop.store(true, Ordering::Release);
     let wire = loopback
         .thread

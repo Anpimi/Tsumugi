@@ -140,6 +140,7 @@ fn brief_for(payload: &Value) -> ConversationPlanningBrief {
 }
 
 mod execution;
+pub(crate) use execution::selected_revision_candidate;
 pub use execution::{
     ConversationPlanningModelOutput, ConversationPlanningOutput, ConversationPlanningRunner,
     consent_from_input, preview_from_input, validate_output, validate_proposal_draft_content,
