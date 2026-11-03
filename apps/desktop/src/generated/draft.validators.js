@@ -3837,7 +3837,7 @@ return errors === 0;
 }
 
 const schema115 = {"additionalProperties":false,"properties":{"actionId":{"$ref":"#/definitions/ExecutionId"},"content":{"$ref":"#/definitions/ConversationPlanningModelOutput"},"conversationId":{"$ref":"#/definitions/ExecutionId"},"expectedRevisionId":{"$ref":"#/definitions/ExecutionId"},"projectId":{"$ref":"#/definitions/ExecutionId"},"proposalId":{"$ref":"#/definitions/ExecutionId"},"revisionId":{"$ref":"#/definitions/ExecutionId"}},"required":["projectId","actionId","conversationId","proposalId","revisionId","expectedRevisionId","content"],"type":"object"};
-const schema117 = {"oneOf":[{"additionalProperties":false,"properties":{"kind":{"const":"reply","type":"string"},"questions":{"items":{"type":"string"},"type":"array"},"summary":{"type":"string"}},"required":["kind","summary","questions"],"type":"object"},{"additionalProperties":false,"properties":{"kind":{"const":"proposal","type":"string"},"options":{"$ref":"#/definitions/PlanOptions"},"questions":{"items":{"type":"string"},"type":"array"},"summary":{"type":"string"},"unitIds":{"items":{"$ref":"#/definitions/ExecutionId"},"type":"array"}},"required":["kind","summary","unitIds","options","questions"],"type":"object"},{"additionalProperties":false,"properties":{"entries":{"items":{"$ref":"#/definitions/ConversationKnowledgeEntry"},"type":"array"},"kind":{"const":"knowledge-proposal","type":"string"},"questions":{"items":{"type":"string"},"type":"array"},"summary":{"type":"string"}},"required":["kind","summary","entries","questions"],"type":"object"},{"additionalProperties":false,"properties":{"entries":{"items":{"$ref":"#/definitions/ConversationTermEntry"},"type":"array"},"kind":{"const":"term-proposal","type":"string"},"questions":{"items":{"type":"string"},"type":"array"},"summary":{"type":"string"}},"required":["kind","summary","entries","questions"],"type":"object"}]};
+const schema117 = {"oneOf":[{"additionalProperties":false,"properties":{"kind":{"const":"reply","type":"string"},"questions":{"items":{"type":"string"},"type":"array"},"summary":{"type":"string"}},"required":["kind","summary","questions"],"type":"object"},{"additionalProperties":false,"properties":{"kind":{"const":"proposal","type":"string"},"options":{"$ref":"#/definitions/PlanOptions"},"questions":{"items":{"type":"string"},"type":"array"},"summary":{"type":"string"},"unitIds":{"items":{"$ref":"#/definitions/ExecutionId"},"type":"array"}},"required":["kind","summary","unitIds","options","questions"],"type":"object"},{"additionalProperties":false,"properties":{"entries":{"items":{"$ref":"#/definitions/ConversationKnowledgeEntry"},"type":"array"},"kind":{"const":"knowledge-proposal","type":"string"},"questions":{"items":{"type":"string"},"type":"array"},"summary":{"type":"string"}},"required":["kind","summary","entries","questions"],"type":"object"},{"additionalProperties":false,"properties":{"entries":{"items":{"$ref":"#/definitions/ConversationTermEntry"},"type":"array"},"kind":{"const":"term-proposal","type":"string"},"questions":{"items":{"type":"string"},"type":"array"},"summary":{"type":"string"}},"required":["kind","summary","entries","questions"],"type":"object"},{"additionalProperties":false,"properties":{"kind":{"const":"revision","type":"string"},"questions":{"items":{"type":"string"},"type":"array"},"summary":{"type":"string"},"text":{"type":"string"}},"required":["kind","summary","text","questions"],"type":"object"}]};
 const schema118 = {"additionalProperties":false,"properties":{"adoptResources":{"type":"boolean"},"advisoryChecks":{"items":{"$ref":"#/definitions/AdvisoryReviewCheck"},"type":"array"},"deliver":{"type":"boolean"},"mcpTermQuery":{"anyOf":[{"$ref":"#/definitions/McpTermQueryPolicy"},{"type":"null"}],"description":"Absent keeps the original MCP preparation exclusively human-controlled."},"selectionPolicy":{"$ref":"#/definitions/SelectionPolicy"},"stages":{"items":{"$ref":"#/definitions/StageChoice"},"type":"array"},"teamDiscussions":{"anyOf":[{"$ref":"#/definitions/TeamDiscussionPolicy"},{"type":"null"}],"description":"Explicit consent for bounded, same-plan published discussions."},"teamExecution":{"anyOf":[{"$ref":"#/definitions/TeamExecutionPolicy"},{"type":"null"}]},"teamQuestions":{"anyOf":[{"$ref":"#/definitions/TeamQuestionPolicy"},{"type":"null"}],"description":"Explicit questions and later human answers under the captured sharing boundary."},"toolGuidance":{"anyOf":[{"$ref":"#/definitions/ToolGuidancePolicy"},{"type":"null"}],"description":"Absent means that tool guidance is available only to the human reader."}},"required":["stages","selectionPolicy","advisoryChecks","adoptResources","deliver"],"type":"object"};
 const schema177 = {"enum":["candidates-only","missing-only","replace-captured-selection"],"type":"string"};
 const schema181 = {"oneOf":[{"additionalProperties":false,"properties":{"profile":{"const":"current-plan-1","type":"string"}},"required":["profile"],"type":"object"},{"additionalProperties":false,"properties":{"profile":{"const":"current-plan-2","type":"string"}},"required":["profile"],"type":"object"}]};
@@ -11606,16 +11606,180 @@ if(_valid0){
 valid0 = true;
 passing0 = 3;
 }
-}
-}
-}
-if(!valid0){
-const err36 = {instancePath,schemaPath:"#/oneOf",keyword:"oneOf",params:{passingSchemas: passing0},message:"must match exactly one schema in oneOf"};
+const _errs57 = errors;
+if(errors === _errs57){
+if(data && typeof data == "object" && !Array.isArray(data)){
+let missing4;
+if(((((data.kind === undefined) && (missing4 = "kind")) || ((data.summary === undefined) && (missing4 = "summary"))) || ((data.text === undefined) && (missing4 = "text"))) || ((data.questions === undefined) && (missing4 = "questions"))){
+const err36 = {instancePath,schemaPath:"#/oneOf/4/required",keyword:"required",params:{missingProperty: missing4},message:"must have required property '"+missing4+"'"};
 if(vErrors === null){
 vErrors = [err36];
 }
 else {
 vErrors.push(err36);
+}
+errors++;
+}
+else {
+const _errs59 = errors;
+for(const key4 in data){
+if(!((((key4 === "kind") || (key4 === "questions")) || (key4 === "summary")) || (key4 === "text"))){
+const err37 = {instancePath,schemaPath:"#/oneOf/4/additionalProperties",keyword:"additionalProperties",params:{additionalProperty: key4},message:"must NOT have additional properties"};
+if(vErrors === null){
+vErrors = [err37];
+}
+else {
+vErrors.push(err37);
+}
+errors++;
+break;
+}
+}
+if(_errs59 === errors){
+if(data.kind !== undefined){
+let data23 = data.kind;
+const _errs60 = errors;
+if(typeof data23 !== "string"){
+const err38 = {instancePath:instancePath+"/kind",schemaPath:"#/oneOf/4/properties/kind/type",keyword:"type",params:{type: "string"},message:"must be string"};
+if(vErrors === null){
+vErrors = [err38];
+}
+else {
+vErrors.push(err38);
+}
+errors++;
+}
+if("revision" !== data23){
+const err39 = {instancePath:instancePath+"/kind",schemaPath:"#/oneOf/4/properties/kind/const",keyword:"const",params:{allowedValue: "revision"},message:"must be equal to constant"};
+if(vErrors === null){
+vErrors = [err39];
+}
+else {
+vErrors.push(err39);
+}
+errors++;
+}
+var valid13 = _errs60 === errors;
+}
+else {
+var valid13 = true;
+}
+if(valid13){
+if(data.questions !== undefined){
+let data24 = data.questions;
+const _errs62 = errors;
+if(errors === _errs62){
+if(Array.isArray(data24)){
+var valid14 = true;
+const len7 = data24.length;
+for(let i7=0; i7<len7; i7++){
+const _errs64 = errors;
+if(typeof data24[i7] !== "string"){
+const err40 = {instancePath:instancePath+"/questions/" + i7,schemaPath:"#/oneOf/4/properties/questions/items/type",keyword:"type",params:{type: "string"},message:"must be string"};
+if(vErrors === null){
+vErrors = [err40];
+}
+else {
+vErrors.push(err40);
+}
+errors++;
+}
+var valid14 = _errs64 === errors;
+if(!valid14){
+break;
+}
+}
+}
+else {
+const err41 = {instancePath:instancePath+"/questions",schemaPath:"#/oneOf/4/properties/questions/type",keyword:"type",params:{type: "array"},message:"must be array"};
+if(vErrors === null){
+vErrors = [err41];
+}
+else {
+vErrors.push(err41);
+}
+errors++;
+}
+}
+var valid13 = _errs62 === errors;
+}
+else {
+var valid13 = true;
+}
+if(valid13){
+if(data.summary !== undefined){
+const _errs66 = errors;
+if(typeof data.summary !== "string"){
+const err42 = {instancePath:instancePath+"/summary",schemaPath:"#/oneOf/4/properties/summary/type",keyword:"type",params:{type: "string"},message:"must be string"};
+if(vErrors === null){
+vErrors = [err42];
+}
+else {
+vErrors.push(err42);
+}
+errors++;
+}
+var valid13 = _errs66 === errors;
+}
+else {
+var valid13 = true;
+}
+if(valid13){
+if(data.text !== undefined){
+const _errs68 = errors;
+if(typeof data.text !== "string"){
+const err43 = {instancePath:instancePath+"/text",schemaPath:"#/oneOf/4/properties/text/type",keyword:"type",params:{type: "string"},message:"must be string"};
+if(vErrors === null){
+vErrors = [err43];
+}
+else {
+vErrors.push(err43);
+}
+errors++;
+}
+var valid13 = _errs68 === errors;
+}
+else {
+var valid13 = true;
+}
+}
+}
+}
+}
+}
+}
+else {
+const err44 = {instancePath,schemaPath:"#/oneOf/4/type",keyword:"type",params:{type: "object"},message:"must be object"};
+if(vErrors === null){
+vErrors = [err44];
+}
+else {
+vErrors.push(err44);
+}
+errors++;
+}
+}
+var _valid0 = _errs57 === errors;
+if(_valid0 && valid0){
+valid0 = false;
+passing0 = [passing0, 4];
+}
+else {
+if(_valid0){
+valid0 = true;
+passing0 = 4;
+}
+}
+}
+}
+}
+if(!valid0){
+const err45 = {instancePath,schemaPath:"#/oneOf",keyword:"oneOf",params:{passingSchemas: passing0},message:"must match exactly one schema in oneOf"};
+if(vErrors === null){
+vErrors = [err45];
+}
+else {
+vErrors.push(err45);
 }
 errors++;
 validate76.errors = vErrors;
@@ -56428,7 +56592,7 @@ return errors === 0;
 }
 
 const schema1077 = {"additionalProperties":false,"properties":{"actionId":{"$ref":"#/definitions/ExecutionId"},"content":{"$ref":"#/definitions/ConversationPlanningModelOutput"},"conversationId":{"$ref":"#/definitions/ExecutionId"},"expectedRevisionId":{"$ref":"#/definitions/ExecutionId"},"projectId":{"$ref":"#/definitions/ExecutionId"},"proposalId":{"$ref":"#/definitions/ExecutionId"},"revisionId":{"$ref":"#/definitions/ExecutionId"}},"required":["projectId","actionId","conversationId","proposalId","revisionId","expectedRevisionId","content"],"type":"object"};
-const schema1079 = {"oneOf":[{"additionalProperties":false,"properties":{"kind":{"const":"reply","type":"string"},"questions":{"items":{"type":"string"},"type":"array"},"summary":{"type":"string"}},"required":["kind","summary","questions"],"type":"object"},{"additionalProperties":false,"properties":{"kind":{"const":"proposal","type":"string"},"options":{"$ref":"#/definitions/PlanOptions"},"questions":{"items":{"type":"string"},"type":"array"},"summary":{"type":"string"},"unitIds":{"items":{"$ref":"#/definitions/ExecutionId"},"type":"array"}},"required":["kind","summary","unitIds","options","questions"],"type":"object"},{"additionalProperties":false,"properties":{"entries":{"items":{"$ref":"#/definitions/ConversationKnowledgeEntry"},"type":"array"},"kind":{"const":"knowledge-proposal","type":"string"},"questions":{"items":{"type":"string"},"type":"array"},"summary":{"type":"string"}},"required":["kind","summary","entries","questions"],"type":"object"},{"additionalProperties":false,"properties":{"entries":{"items":{"$ref":"#/definitions/ConversationTermEntry"},"type":"array"},"kind":{"const":"term-proposal","type":"string"},"questions":{"items":{"type":"string"},"type":"array"},"summary":{"type":"string"}},"required":["kind","summary","entries","questions"],"type":"object"}]};
+const schema1079 = {"oneOf":[{"additionalProperties":false,"properties":{"kind":{"const":"reply","type":"string"},"questions":{"items":{"type":"string"},"type":"array"},"summary":{"type":"string"}},"required":["kind","summary","questions"],"type":"object"},{"additionalProperties":false,"properties":{"kind":{"const":"proposal","type":"string"},"options":{"$ref":"#/definitions/PlanOptions"},"questions":{"items":{"type":"string"},"type":"array"},"summary":{"type":"string"},"unitIds":{"items":{"$ref":"#/definitions/ExecutionId"},"type":"array"}},"required":["kind","summary","unitIds","options","questions"],"type":"object"},{"additionalProperties":false,"properties":{"entries":{"items":{"$ref":"#/definitions/ConversationKnowledgeEntry"},"type":"array"},"kind":{"const":"knowledge-proposal","type":"string"},"questions":{"items":{"type":"string"},"type":"array"},"summary":{"type":"string"}},"required":["kind","summary","entries","questions"],"type":"object"},{"additionalProperties":false,"properties":{"entries":{"items":{"$ref":"#/definitions/ConversationTermEntry"},"type":"array"},"kind":{"const":"term-proposal","type":"string"},"questions":{"items":{"type":"string"},"type":"array"},"summary":{"type":"string"}},"required":["kind","summary","entries","questions"],"type":"object"},{"additionalProperties":false,"properties":{"kind":{"const":"revision","type":"string"},"questions":{"items":{"type":"string"},"type":"array"},"summary":{"type":"string"},"text":{"type":"string"}},"required":["kind","summary","text","questions"],"type":"object"}]};
 const schema1080 = {"additionalProperties":false,"properties":{"adoptResources":{"type":"boolean"},"advisoryChecks":{"items":{"$ref":"#/definitions/AdvisoryReviewCheck"},"type":"array"},"deliver":{"type":"boolean"},"mcpTermQuery":{"anyOf":[{"$ref":"#/definitions/McpTermQueryPolicy"},{"type":"null"}],"description":"Absent keeps the original MCP preparation exclusively human-controlled."},"selectionPolicy":{"$ref":"#/definitions/SelectionPolicy"},"stages":{"items":{"$ref":"#/definitions/StageChoice"},"type":"array"},"teamDiscussions":{"anyOf":[{"$ref":"#/definitions/TeamDiscussionPolicy"},{"type":"null"}],"description":"Explicit consent for bounded, same-plan published discussions."},"teamExecution":{"anyOf":[{"$ref":"#/definitions/TeamExecutionPolicy"},{"type":"null"}]},"teamQuestions":{"anyOf":[{"$ref":"#/definitions/TeamQuestionPolicy"},{"type":"null"}],"description":"Explicit questions and later human answers under the captured sharing boundary."},"toolGuidance":{"anyOf":[{"$ref":"#/definitions/ToolGuidancePolicy"},{"type":"null"}],"description":"Absent means that tool guidance is available only to the human reader."}},"required":["stages","selectionPolicy","advisoryChecks","adoptResources","deliver"],"type":"object"};
 const schema1139 = {"enum":["candidates-only","missing-only","replace-captured-selection"],"type":"string"};
 const schema1143 = {"oneOf":[{"additionalProperties":false,"properties":{"profile":{"const":"current-plan-1","type":"string"}},"required":["profile"],"type":"object"},{"additionalProperties":false,"properties":{"profile":{"const":"current-plan-2","type":"string"}},"required":["profile"],"type":"object"}]};
@@ -64477,16 +64641,180 @@ if(_valid0){
 valid0 = true;
 passing0 = 3;
 }
-}
-}
-}
-if(!valid0){
-const err37 = {instancePath,schemaPath:"#/oneOf",keyword:"oneOf",params:{passingSchemas: passing0},message:"must match exactly one schema in oneOf"};
+const _errs57 = errors;
+if(errors === _errs57){
+if(data && typeof data == "object" && !Array.isArray(data)){
+let missing4;
+if(((((data.kind === undefined) && (missing4 = "kind")) || ((data.summary === undefined) && (missing4 = "summary"))) || ((data.text === undefined) && (missing4 = "text"))) || ((data.questions === undefined) && (missing4 = "questions"))){
+const err37 = {instancePath,schemaPath:"#/oneOf/4/required",keyword:"required",params:{missingProperty: missing4},message:"must have required property '"+missing4+"'"};
 if(vErrors === null){
 vErrors = [err37];
 }
 else {
 vErrors.push(err37);
+}
+errors++;
+}
+else {
+const _errs59 = errors;
+for(const key4 in data){
+if(!((((key4 === "kind") || (key4 === "questions")) || (key4 === "summary")) || (key4 === "text"))){
+const err38 = {instancePath,schemaPath:"#/oneOf/4/additionalProperties",keyword:"additionalProperties",params:{additionalProperty: key4},message:"must NOT have additional properties"};
+if(vErrors === null){
+vErrors = [err38];
+}
+else {
+vErrors.push(err38);
+}
+errors++;
+break;
+}
+}
+if(_errs59 === errors){
+if(data.kind !== undefined){
+let data23 = data.kind;
+const _errs60 = errors;
+if(typeof data23 !== "string"){
+const err39 = {instancePath:instancePath+"/kind",schemaPath:"#/oneOf/4/properties/kind/type",keyword:"type",params:{type: "string"},message:"must be string"};
+if(vErrors === null){
+vErrors = [err39];
+}
+else {
+vErrors.push(err39);
+}
+errors++;
+}
+if("revision" !== data23){
+const err40 = {instancePath:instancePath+"/kind",schemaPath:"#/oneOf/4/properties/kind/const",keyword:"const",params:{allowedValue: "revision"},message:"must be equal to constant"};
+if(vErrors === null){
+vErrors = [err40];
+}
+else {
+vErrors.push(err40);
+}
+errors++;
+}
+var valid13 = _errs60 === errors;
+}
+else {
+var valid13 = true;
+}
+if(valid13){
+if(data.questions !== undefined){
+let data24 = data.questions;
+const _errs62 = errors;
+if(errors === _errs62){
+if(Array.isArray(data24)){
+var valid14 = true;
+const len7 = data24.length;
+for(let i7=0; i7<len7; i7++){
+const _errs64 = errors;
+if(typeof data24[i7] !== "string"){
+const err41 = {instancePath:instancePath+"/questions/" + i7,schemaPath:"#/oneOf/4/properties/questions/items/type",keyword:"type",params:{type: "string"},message:"must be string"};
+if(vErrors === null){
+vErrors = [err41];
+}
+else {
+vErrors.push(err41);
+}
+errors++;
+}
+var valid14 = _errs64 === errors;
+if(!valid14){
+break;
+}
+}
+}
+else {
+const err42 = {instancePath:instancePath+"/questions",schemaPath:"#/oneOf/4/properties/questions/type",keyword:"type",params:{type: "array"},message:"must be array"};
+if(vErrors === null){
+vErrors = [err42];
+}
+else {
+vErrors.push(err42);
+}
+errors++;
+}
+}
+var valid13 = _errs62 === errors;
+}
+else {
+var valid13 = true;
+}
+if(valid13){
+if(data.summary !== undefined){
+const _errs66 = errors;
+if(typeof data.summary !== "string"){
+const err43 = {instancePath:instancePath+"/summary",schemaPath:"#/oneOf/4/properties/summary/type",keyword:"type",params:{type: "string"},message:"must be string"};
+if(vErrors === null){
+vErrors = [err43];
+}
+else {
+vErrors.push(err43);
+}
+errors++;
+}
+var valid13 = _errs66 === errors;
+}
+else {
+var valid13 = true;
+}
+if(valid13){
+if(data.text !== undefined){
+const _errs68 = errors;
+if(typeof data.text !== "string"){
+const err44 = {instancePath:instancePath+"/text",schemaPath:"#/oneOf/4/properties/text/type",keyword:"type",params:{type: "string"},message:"must be string"};
+if(vErrors === null){
+vErrors = [err44];
+}
+else {
+vErrors.push(err44);
+}
+errors++;
+}
+var valid13 = _errs68 === errors;
+}
+else {
+var valid13 = true;
+}
+}
+}
+}
+}
+}
+}
+else {
+const err45 = {instancePath,schemaPath:"#/oneOf/4/type",keyword:"type",params:{type: "object"},message:"must be object"};
+if(vErrors === null){
+vErrors = [err45];
+}
+else {
+vErrors.push(err45);
+}
+errors++;
+}
+}
+var _valid0 = _errs57 === errors;
+if(_valid0 && valid0){
+valid0 = false;
+passing0 = [passing0, 4];
+}
+else {
+if(_valid0){
+valid0 = true;
+passing0 = 4;
+}
+}
+}
+}
+}
+if(!valid0){
+const err46 = {instancePath,schemaPath:"#/oneOf",keyword:"oneOf",params:{passingSchemas: passing0},message:"must match exactly one schema in oneOf"};
+if(vErrors === null){
+vErrors = [err46];
+}
+else {
+vErrors.push(err46);
 }
 errors++;
 validate810.errors = vErrors;

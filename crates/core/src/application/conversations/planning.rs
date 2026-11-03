@@ -38,6 +38,19 @@ pub enum ConversationPlanningScope {
         locale: String,
         unit_ids: Vec<ExecutionId>,
     },
+    SelectedRevision {
+        basis: crate::ai::selected_revision::SelectedRevisionBasis,
+    },
+}
+
+impl ConversationPlanningScope {
+    pub fn units(&self) -> Option<(&str, &[ExecutionId])> {
+        match self {
+            Self::ConversationOnly {} => None,
+            Self::Units { locale, unit_ids } => Some((locale, unit_ids)),
+            Self::SelectedRevision { basis } => Some((&basis.locale, std::slice::from_ref(&basis.unit_id))),
+        }
+    }
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]

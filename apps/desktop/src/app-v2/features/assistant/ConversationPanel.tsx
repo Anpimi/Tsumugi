@@ -56,14 +56,14 @@ function PlanningResult({ owner, input, attemptId, visible, disabled, gate, view
   const unavailable = run.detail.progress.cancelled ? "replyStopped" : run.detail.items.some(item => item.status.validation === "invalid") ? "replyInvalid"
     : run.detail.progress.failed || run.detail.progress.unknown ? "replyUnfinished" : "replyPending";
   return <section className={styles.agentCard} aria-label={t("reply")}>
-    <h3><Sparkles className={styles.ai}/>{t(output?.kind === "term-proposal" ? "termProposal" : output?.kind === "knowledge-proposal" ? "knowledgeProposal" : output?.kind === "proposal" ? "proposal" : "reply")}</h3>
-    {output ? <><ConversationText text={output.summary}/><ConversationEntryReferences run={run} onOpen={onOpenEntryReference} current={() => visible && !disabled && !query.isFetching && !query.isError && owner.getSnapshot().activeId === conversationId && gate.canDispatch({ viewId, source: "button", dialogId: parentDialogId })}/>
+    <h3><Sparkles className={styles.ai}/>{t(output?.kind === "term-proposal" ? "termProposal" : output?.kind === "knowledge-proposal" ? "knowledgeProposal" : output?.kind === "proposal" ? "proposal" : output?.kind === "revision" ? "revisionSuggestion" : "reply")}</h3>
+    {output ? <><ConversationText text={output.summary}/>{output.kind === "revision" ? <ConversationText text={output.text}/> : null}<ConversationEntryReferences run={run} onOpen={onOpenEntryReference} current={() => visible && !disabled && !query.isFetching && !query.isError && owner.getSnapshot().activeId === conversationId && gate.canDispatch({ viewId, source: "button", dialogId: parentDialogId })}/>
       <ConversationMaterialReferences context={context} run={run} visible={visible} disabled={disabled} gate={gate} viewId={viewId} parentDialogId={parentDialogId} onOpenEntry={onOpenEntryReference}/>
       {output.kind === "proposal" ? <p className={styles.meta}>{t("proposalScope", { count: output.unitIds.length })}</p> : null}
       {output.kind === "knowledge-proposal" ? <ConversationKnowledgeEntries entries={output.entries}/> : null}
       {output.kind === "term-proposal" ? <ConversationTermEntries entries={output.entries} locale={run.preview.scope.kind === "units" ? run.preview.scope.locale : undefined} labels={planningUnitLabels(run.preview.input)}/> : null}
       {output.questions.length ? <ul>{output.questions.map((question, index) => <li key={index}>{question}</li>)}</ul> : null}
-      {output.kind !== "reply" ? run.resultId && (savedResultIds.has(run.resultId) || input.capturedResultIds.includes(run.resultId)) ? <p>{t("proposalAlreadySaved")}</p>
+      {output.kind !== "reply" && output.kind !== "revision" ? run.resultId && (savedResultIds.has(run.resultId) || input.capturedResultIds.includes(run.resultId)) ? <p>{t("proposalAlreadySaved")}</p>
         : <Button size="sm" disabled={disabled || !visible || (!!input.busy || input.journalBusy) || !!input.value.pending || !!input.failure} onClick={() => {
           if (gate.canDispatch({ viewId, source: "button", dialogId: parentDialogId })) void owner.captureProposal(run);
         }}>{t("proposalCapture")}</Button> : null}

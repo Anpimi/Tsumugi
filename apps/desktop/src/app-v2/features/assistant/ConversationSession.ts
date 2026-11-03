@@ -1342,7 +1342,7 @@ export class ConversationSession {
       }
       const actionId = this.ports.identity(), editSeq = nextEditSeq(record.input.value.editSeq);
       const consent = { actionId, attemptId: actionId, taskId: this.ports.identity(), previewDigest: prepared.previewDigest,
-        expiresAtMs: String(this.ports.now() + Math.min(prepared.preview.config.timeoutSeconds, 120) * 1000), shareMessages: true, shareUnits: prepared.preview.scope.kind === "units" };
+        expiresAtMs: String(this.ports.now() + Math.min(prepared.preview.config.timeoutSeconds, 120) * 1000), shareMessages: true, shareUnits: prepared.preview.scope.kind !== "conversation-only" };
       const pending: ConversationDraftPending = { kind: "planning", preparationId: prepared.preparationId, submittedSeq: editSeq,
         request: { ...record.input.key, consent } };
       record.submitting = pending;

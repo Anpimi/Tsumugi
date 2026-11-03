@@ -65,9 +65,19 @@ fn preview_in(
         messages.push(value);
     }
     messages.sort_by_key(|message| message.ordinal);
-    let (units, ai_preview) = match &request.scope {
-        ConversationPlanningScope::ConversationOnly {} => (Vec::new(), None),
-        ConversationPlanningScope::Units { locale, unit_ids } => {
+    let selected = match &request.scope {
+        ConversationPlanningScope::SelectedRevision { basis } => {
+            if request.purpose.is_some() || messages.len() != 1 {
+                return Err(fail(ErrorCode::InvalidInput, "selected-revision-material"));
+            }
+            Some(basis)
+        }
+        _ => None,
+    };
+    let mut selected_text = None;
+    let (units, ai_preview) = match request.scope.units() {
+        None => (Vec::new(), None),
+        Some((locale, unit_ids)) => {
             let parsed = crate::Locale::parse(locale)
                 .map_err(|_| fail(ErrorCode::InvalidInput, "conversation-planning-locale"))?;
             let metadata = read_metadata_from(c).map_err(|_| corrupt())?;
@@ -85,6 +95,18 @@ fn preview_in(
             }
             let targets =
                 crate::persistence::review::targets_in(c, request.project_id, unit_ids, locale)?;
+            if let Some(basis) = selected {
+                let target = targets.first().ok_or_else(corrupt)?;
+                if target.unit_id != basis.unit_id
+                    || target.source_snapshot_id != basis.source_snapshot_id
+                    || target.source_revision_id != basis.source_revision_id
+                    || target.selection_id != Some(basis.selection_id)
+                    || target.revision_id != Some(basis.translation_revision_id)
+                {
+                    return Err(fail(ErrorCode::DependencyConflict, "selected-revision-basis"));
+                }
+                selected_text = Some(target.translation_text.clone().ok_or_else(corrupt)?);
+            }
             let protections =
                 super::super::protection_summaries(c, request.project_id, unit_ids, locale)?;
             // preview_ai joins this outer read transaction rather than taking a
@@ -133,13 +155,19 @@ fn preview_in(
     let items = ai_preview
         .as_ref()
         .map_or(&[][..], |preview| preview.items.as_slice());
-    let (input, byte_length, brief) =
-        conversation_planning::prompt_for(request.purpose,&request.config, &request.scope, &messages, items, &units)?;
-    let system = conversation_planning::profile(request.purpose).2;
-    crate::ai::provider::completion_body(&request.config, system, &input)?;
+    let (_, _, system, version) = conversation_planning::profile_for_scope(request.purpose, &request.scope);
+    let (input, byte_length, brief) = if let Some(text) = selected_text {
+        conversation_planning::revision_material(&request.config, &items[0], &text, &messages[0].body)?
+    } else {
+        let material = conversation_planning::prompt_for(
+            request.purpose, &request.config, &request.scope, &messages, items, &units,
+        )?;
+        crate::ai::provider::completion_body(&request.config, system, &material.0)?;
+        material
+    };
     let preview = ConversationPlanningPreview {
             purpose: request.purpose,
-        version: conversation_planning::profile(request.purpose).3,
+        version,
         project_id: request.project_id,
         conversation_id: request.conversation_id,
         config: request.config.clone(),
@@ -167,10 +195,7 @@ impl ProjectStore {
         if consent.action_id != consent.attempt_id
             || !consent.share_messages
             || consent.share_units
-                != matches!(
-                    &capture.preview.scope,
-                    ConversationPlanningScope::Units { .. }
-                )
+                != capture.preview.scope.units().is_some()
             || consent.preview_digest != capture.preview_digest()?
         {
             return Err(fail(

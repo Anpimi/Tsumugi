@@ -178,6 +178,12 @@ export type ConversationPlanningModelOutput =
       kind: "term-proposal";
       questions: string[];
       summary: string;
+    }
+  | {
+      kind: "revision";
+      questions: string[];
+      summary: string;
+      text: string;
     };
 /**
  * Read-only concerns project state; proposals are not already-adopted changes.

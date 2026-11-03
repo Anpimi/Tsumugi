@@ -2,7 +2,6 @@ use super::ProjectStore;
 use crate::{ai::*, execution::*};
 use rusqlite::{OptionalExtension, params};
 mod candidate_effect;
-mod selected_revision;
 pub use candidate_effect::SavedAiCandidateEffect;
 
 impl ProjectStore {

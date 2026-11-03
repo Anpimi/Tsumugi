@@ -856,6 +856,34 @@
               "questions"
             ],
             "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "properties": {
+              "kind": {
+                "const": "revision",
+                "type": "string"
+              },
+              "questions": {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              "summary": {
+                "type": "string"
+              },
+              "text": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "kind",
+              "summary",
+              "text",
+              "questions"
+            ],
+            "type": "object"
           }
         ]
       },
@@ -903,6 +931,23 @@
               "kind",
               "locale",
               "unitIds"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "properties": {
+              "basis": {
+                "$ref": "#/definitions/SelectedRevisionBasis"
+              },
+              "kind": {
+                "const": "selected-revision",
+                "type": "string"
+              }
+            },
+            "required": [
+              "kind",
+              "basis"
             ],
             "type": "object"
           }
@@ -2404,6 +2449,38 @@
         "required": [
           "operatingSystem",
           "architecture"
+        ],
+        "type": "object"
+      },
+      "SelectedRevisionBasis": {
+        "additionalProperties": false,
+        "properties": {
+          "locale": {
+            "type": "string"
+          },
+          "selectionId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "sourceRevisionId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "sourceSnapshotId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "translationRevisionId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "unitId": {
+            "$ref": "#/definitions/ExecutionId"
+          }
+        },
+        "required": [
+          "unitId",
+          "locale",
+          "sourceSnapshotId",
+          "sourceRevisionId",
+          "selectionId",
+          "translationRevisionId"
         ],
         "type": "object"
       },
@@ -5687,6 +5764,34 @@
               "questions"
             ],
             "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "properties": {
+              "kind": {
+                "const": "revision",
+                "type": "string"
+              },
+              "questions": {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              "summary": {
+                "type": "string"
+              },
+              "text": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "kind",
+              "summary",
+              "text",
+              "questions"
+            ],
+            "type": "object"
           }
         ]
       },
@@ -5883,6 +5988,23 @@
               "kind",
               "locale",
               "unitIds"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "properties": {
+              "basis": {
+                "$ref": "#/definitions/SelectedRevisionBasis"
+              },
+              "kind": {
+                "const": "selected-revision",
+                "type": "string"
+              }
+            },
+            "required": [
+              "kind",
+              "basis"
             ],
             "type": "object"
           }
@@ -8344,6 +8466,38 @@
           "kind",
           "id",
           "locale"
+        ],
+        "type": "object"
+      },
+      "SelectedRevisionBasis": {
+        "additionalProperties": false,
+        "properties": {
+          "locale": {
+            "type": "string"
+          },
+          "selectionId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "sourceRevisionId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "sourceSnapshotId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "translationRevisionId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "unitId": {
+            "$ref": "#/definitions/ExecutionId"
+          }
+        },
+        "required": [
+          "unitId",
+          "locale",
+          "sourceSnapshotId",
+          "sourceRevisionId",
+          "selectionId",
+          "translationRevisionId"
         ],
         "type": "object"
       },

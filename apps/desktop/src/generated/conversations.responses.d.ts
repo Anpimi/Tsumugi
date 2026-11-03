@@ -176,6 +176,10 @@ export type ConversationPlanningScope =
       kind: "units";
       locale: string;
       unitIds: ExecutionId[];
+    }
+  | {
+      basis: SelectedRevisionBasis;
+      kind: "selected-revision";
     };
 export type ContextResourceStatus =
   "selected" | "withdrawn" | "conflict" | "ambiguous" | "missing-files" | "shadowed" | "outside-scope";
@@ -218,6 +222,12 @@ export type ConversationPlanningModelOutput =
       kind: "term-proposal";
       questions: string[];
       summary: string;
+    }
+  | {
+      kind: "revision";
+      questions: string[];
+      summary: string;
+      text: string;
     };
 /**
  * Read-only concerns project state; proposals are not already-adopted changes.
@@ -797,6 +807,14 @@ export interface SourceContextSelection {
   maxBytes: number;
   maxItems: number;
   neighbors: boolean;
+}
+export interface SelectedRevisionBasis {
+  locale: string;
+  selectionId: ExecutionId;
+  sourceRevisionId: ExecutionId;
+  sourceSnapshotId: ExecutionId;
+  translationRevisionId: ExecutionId;
+  unitId: ExecutionId;
 }
 /**
  * Local current facts needed before a later proposal can become actionable.

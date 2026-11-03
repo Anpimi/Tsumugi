@@ -55,6 +55,7 @@ impl ProjectStore {
             let locale = match &preview.scope {
                 ConversationPlanningScope::ConversationOnly {} => None,
                 ConversationPlanningScope::Units { locale, .. } => Some(locale),
+                ConversationPlanningScope::SelectedRevision { basis } => Some(&basis.locale),
             };
             let mut locators = Vec::new();
             for basis in &preview.units {

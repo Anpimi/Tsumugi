@@ -526,7 +526,7 @@ it("saves typed terminology, resolves questions in a new version, preserves B an
   await i18n.changeLanguage("en-US");
   const h = harness(false, "terminology"), onOpen = vi.fn<OpenKnowledgeProposal>(async () => true);
   h.revision.content.questions = ["Which greeting is intended?"];
-  if (!h.run.output) throw new Error("A model result is required");
+  if (h.run.output?.model.kind !== "term-proposal") throw new Error("A terminology result is required");
   h.run.output.model.questions = [...h.revision.content.questions];
   const first = await h.open(null, { onOpenTermProposal: onOpen });
   const reply = within(await screen.findByRole("region", { name: i18n.t("conversation.reply") }));

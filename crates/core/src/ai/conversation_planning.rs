@@ -27,6 +27,39 @@ pub(crate) fn profile(
         }
     }
 }
+pub(crate) fn profile_for_scope(
+    purpose: Option<ConversationPlanningPurpose>,
+    scope: &ConversationPlanningScope,
+) -> (&'static str, &'static str, &'static str, u32) {
+    match scope {
+        ConversationPlanningScope::SelectedRevision { .. } => (
+            "4", "conversation-selected-revision-1", super::selected_revision::SYSTEM, 5,
+        ),
+        _ => profile(purpose),
+    }
+}
+
+pub(crate) fn revision_material(
+    config: &AiConfig,
+    item: &AiItem,
+    translation: &str,
+    request: &str,
+) -> Result<(String, u32, ConversationPlanningBrief), ExecutionError> {
+    let input = super::selected_revision::project_input(config, item, translation, request)?;
+    // Measure the full provider body first so that a large capture returns the
+    // shared request-capacity diagnostic, including transport framing.
+    super::provider::completion_body(config, super::selected_revision::SYSTEM, &input)?;
+    let length = codec::encode(
+        &json!({"system":super::selected_revision::SYSTEM,"input":input}),
+        crate::execution::MAX_INPUT_BYTES,
+    )?.len();
+    let material: Value = serde_json::from_str(&input)
+        .map_err(|_| error(ErrorCode::InvalidInput, "selected-revision-material"))?;
+    let mut brief = brief_for(&json!({"units":[material["unit"]]}));
+    brief.messages = 1;
+    Ok((input, length as u32, brief))
+}
+
 fn purpose_name(purpose: Option<ConversationPlanningPurpose>) -> &'static str {
     match purpose {
         None => "conversation-planning",
@@ -67,6 +100,9 @@ pub(crate) fn prompt_for(
         ConversationPlanningScope::ConversationOnly {} => json!({"kind":"conversation-only"}),
         ConversationPlanningScope::Units { locale, .. } => {
             json!({"kind":"units","targetLocale":locale})
+        }
+        ConversationPlanningScope::SelectedRevision { .. } => {
+            return Err(error(ErrorCode::InvalidInput, "selected-revision-material"));
         }
     };
     let payload = json!({"purpose":purpose_name(purpose),"scope":scope,

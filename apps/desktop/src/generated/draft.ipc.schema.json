@@ -2276,6 +2276,34 @@
               "questions"
             ],
             "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "properties": {
+              "kind": {
+                "const": "revision",
+                "type": "string"
+              },
+              "questions": {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              "summary": {
+                "type": "string"
+              },
+              "text": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "kind",
+              "summary",
+              "text",
+              "questions"
+            ],
+            "type": "object"
           }
         ]
       },
@@ -13541,6 +13569,34 @@
               "kind",
               "summary",
               "entries",
+              "questions"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "properties": {
+              "kind": {
+                "const": "revision",
+                "type": "string"
+              },
+              "questions": {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              "summary": {
+                "type": "string"
+              },
+              "text": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "kind",
+              "summary",
+              "text",
               "questions"
             ],
             "type": "object"

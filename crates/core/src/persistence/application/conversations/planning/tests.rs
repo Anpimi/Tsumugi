@@ -41,10 +41,7 @@ fn planning_consent(capture: &CapturedConversationPlanning) -> ConversationPlann
         expires_at_ms: (crate::execution::plugin_authority::plugin_now_ms().unwrap() + 30_000)
             .into(),
         share_messages: true,
-        share_units: matches!(
-            capture.preview().scope,
-            ConversationPlanningScope::Units { .. }
-        ),
+        share_units: capture.preview().scope.units().is_some(),
     }
 }
 fn planning_action(prepared: &PreparedConversationPlanning) -> ReadConversationPlanningAction {
@@ -1183,6 +1180,50 @@ fn planning_authority_generic_recovery_and_adoption_remain_read_only() {
 
 #[test]
 fn planning_authority_loopback_dispatch_preserves_exact_prompt_budget_and_receipt() {
+    planning_loopback(false);
+}
+
+fn bind_selected_revision(
+    store: &ProjectStore,
+    request: &mut PrepareConversationPlanning,
+    unit: ExecutionId,
+) {
+    let target = store.review_target(request.project_id, unit, "zh-CN").unwrap();
+    request.scope = ConversationPlanningScope::SelectedRevision {
+        basis: crate::ai::selected_revision::SelectedRevisionBasis {
+            unit_id: unit,
+            locale: target.locale,
+            source_snapshot_id: target.source_snapshot_id,
+            source_revision_id: target.source_revision_id,
+            selection_id: target.selection_id.unwrap(),
+            translation_revision_id: target.revision_id.unwrap(),
+        },
+    };
+}
+
+#[test]
+fn selected_revision_preview_rejects_stale_and_oversized_material() {
+    let (_temp, mut store, project, units) = fixture();
+    let unit = units[0];
+    translate(&mut store, project, unit, "zh-CN", "Old translation");
+    let mut req = request(&store, project, &units[..1]);
+    bind_selected_revision(&store, &mut req, unit);
+    let original = store.prepare_conversation_planning(&req).unwrap();
+    translate(&mut store, project, unit, "zh-CN", &"\"\\\n".repeat(3500));
+    assert_eq!(store.validate_conversation_planning(&original).unwrap_err().code,
+        ErrorCode::DependencyConflict);
+    bind_selected_revision(&store, &mut req, unit);
+    let error = store.prepare_conversation_planning(&req).unwrap_err();
+    assert_eq!(error.code, ErrorCode::LimitExceeded);
+    assert!(error.stage.starts_with("provider-request-bytes:"));
+}
+
+#[test]
+fn selected_revision_loopback_uses_original_consent_and_records_a_typed_result() {
+    planning_loopback(true);
+}
+
+fn planning_loopback(revision: bool) {
     use crate::{
         ai::conversation_planning::{ConversationPlanningModelOutput, ConversationPlanningRunner},
         execution::{ExecutionRuntime, FixedInput, ValidationState},
@@ -1298,7 +1339,8 @@ fn planning_authority_loopback_dispatch_preserves_exact_prompt_budget_and_receip
             );
             let response = serde_json::json!({
                 "choices":[{"finish_reason":"stop","message":{"role":"assistant",
-                    "content":serde_json::json!({"kind":"reply","summary":"A bounded explanation","questions":[]}).to_string()}}],
+                     "content":if revision { serde_json::json!({"kind":"revision","summary":"Clearer wording","text":"更新译文 {{name}}","questions":[]}) }
+                        else { serde_json::json!({"kind":"reply","summary":"A bounded explanation","questions":[]}) }.to_string()}}],
                 "usage":{"prompt_tokens":7,"completion_tokens":3,
                     "prompt_tokens_details":{"cached_tokens":2},
                     "completion_tokens_details":{"reasoning_tokens":1}}
@@ -1316,13 +1358,16 @@ fn planning_authority_loopback_dispatch_preserves_exact_prompt_budget_and_receip
     let mut req = request(&store, project, &units[..1]);
     req.config.endpoint = endpoint;
     req.config.credential_env.clear();
+    if revision {
+        translate(&mut store, project, units[0], "zh-CN", "已选译文 {{name}}");
+        bind_selected_revision(&store, &mut req, units[0]);
+    }
     let capture = store.prepare_conversation_planning(&req).unwrap();
     let mut runtime = ExecutionRuntime::new(&store).unwrap();
-    runtime
-        .register(Arc::new(ConversationPlanningRunner::with_service(
-            Arc::new(provider::ProviderService::default()),
-        )))
-        .unwrap();
+    let service = Arc::new(provider::ProviderService::default());
+    let runner = if revision { ConversationPlanningRunner::with_selected_revision_service(service) }
+        else { ConversationPlanningRunner::with_service(service) };
+    runtime.register(Arc::new(runner)).unwrap();
     runtime.tick(&mut store).unwrap();
     assert_eq!(count.load(Ordering::Acquire), 0);
     let prepared = store
@@ -1380,10 +1425,19 @@ fn planning_authority_loopback_dispatch_preserves_exact_prompt_budget_and_receip
         .unwrap();
     let output =
         crate::ai::conversation_planning::validate_output(prepared.input(), &result).unwrap();
-    assert!(
-        matches!(output.model, ConversationPlanningModelOutput::Reply { ref summary, ref questions }
-        if summary == "A bounded explanation" && questions.is_empty())
-    );
+    if revision {
+        assert_eq!(output.model, ConversationPlanningModelOutput::Revision {
+            summary: "Clearer wording".into(), text: "更新译文 {{name}}".into(), questions: vec![],
+        });
+        let input: serde_json::Value = serde_json::from_str(&capture.preview().input).unwrap();
+        assert_eq!(input["selectedTranslation"], "已选译文 {{name}}");
+        assert_eq!(input["request"], capture.preview().selected_messages[0].body);
+        assert_eq!(store.review_target(project, units[0], "zh-CN").unwrap().translation_text.as_deref(),
+            Some("已选译文 {{name}}"));
+    } else {
+        assert!(matches!(output.model, ConversationPlanningModelOutput::Reply { ref summary, ref questions }
+            if summary == "A bounded explanation" && questions.is_empty()));
+    }
     assert_eq!(output.requests, 1);
     assert!(!output.usage_incomplete);
     assert_eq!(output.usage.as_ref().unwrap().prompt_tokens, 7);

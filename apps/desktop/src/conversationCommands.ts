@@ -54,8 +54,33 @@ function page<T extends { ordinal: string }>(value: { rows: T[]; nextAfter: stri
     && (value.nextAfter === null || value.rows.length > 0 && value.nextAfter === value.rows.at(-1)?.ordinal) && bounded(value);
 }
 
+function planningLocale(scope: Requests["preparePlanning"]["scope"]): string | null {
+  return scope.kind === "units" ? scope.locale : scope.kind === "selected-revision" ? scope.basis.locale : null;
+}
+function planningUnitsMatch(preview: Responses["planning"]["preview"], scope: Requests["preparePlanning"]["scope"]) {
+  if (scope.kind === "conversation-only") return preview.units.length === 0;
+  if (scope.kind === "units") {
+    return preview.units.length === scope.unitIds.length
+      && preview.units.every((unit, index) => unit.unitId === scope.unitIds[index]
+        && unit.protection.unitId === unit.unitId && unit.protection.locale === scope.locale);
+  }
+  const basis = scope.basis, unit = preview.units[0];
+  if (preview.units.length !== 1 || !unit || preview.selectedMessages.length !== 1
+    || unit.unitId !== basis.unitId || unit.protection.unitId !== basis.unitId || unit.protection.locale !== basis.locale
+    || unit.sourceSnapshotId !== basis.sourceSnapshotId || unit.sourceRevisionId !== basis.sourceRevisionId
+    || unit.selectionId !== basis.selectionId || unit.translationRevisionId !== basis.translationRevisionId) return false;
+  try {
+    const material = JSON.parse(preview.input);
+    return typeof material?.selectedTranslation === "string" && material.request === preview.selectedMessages[0].body
+      && material.unit?.unitId === basis.unitId && material.unit?.targetLocale === basis.locale;
+  } catch {
+    return false;
+  }
+}
+
 function planningPreview(preview: Responses["planning"]["preview"], request: Requests["preparePlanning"]) {
-  return (request.purpose === "terminology" ? preview.version === 4 && preview.purpose === "terminology" && request.scope.kind === "units"
+  return (request.scope.kind === "selected-revision" ? preview.version === 5 && preview.purpose == null && request.purpose == null
+    : request.purpose === "terminology" ? preview.version === 4 && preview.purpose === "terminology" && request.scope.kind === "units"
     : request.purpose === "knowledge" ? preview.version === 3 && preview.purpose === "knowledge" && request.scope.kind === "units"
     : preview.version === 2 && preview.purpose == null) && preview.projectId === request.projectId && preview.conversationId === request.conversationId
     && sameAiConfig(preview.config, request.config) && jsonIdentity(preview.scope) === jsonIdentity(request.scope)
@@ -63,9 +88,7 @@ function planningPreview(preview: Responses["planning"]["preview"], request: Req
     && sameExecutionIds(preview.selectedMessages.map(item => item.messageId), request.selectedMessageIds)
     && preview.selectedMessages.every((item, index) => message(item, request.projectId, request.conversationId)
       && (index === 0 || BigInt(item.ordinal) > BigInt(preview.selectedMessages[index - 1].ordinal)))
-    && (request.scope.kind === "conversation-only" ? preview.units.length === 0 : preview.units.length === request.scope.unitIds.length
-      && preview.units.every((unit, index) => unit.unitId === (request.scope.kind === "units" ? request.scope.unitIds[index] : undefined)
-        && unit.protection.unitId === unit.unitId && unit.protection.locale === (request.scope.kind === "units" ? request.scope.locale : undefined)))
+    && planningUnitsMatch(preview, request.scope)
     && preview.brief.messages === preview.selectedMessages.length && preview.brief.units === preview.units.length
     && preview.brief.sourceTexts === preview.units.length && preview.system.length > 0 && preview.input.length > 0
     && preview.byteLength <= 32768 && preview.byteLength === bytes.encode(JSON.stringify({ system: preview.system, input: preview.input })).length
@@ -90,13 +113,14 @@ function planningRun(value: NonNullable<Responses["planningRun"]>, request: Requ
     || !termProposalEntries(model.entries, preview.units.map(unit => unit.unitId)) || bytes.encode(JSON.stringify(model)).length > 60 * 1024
     || !termSourceFragments(model.entries, preview.input))) return false;
   if (model?.kind === "proposal" && preview.purpose != null) return false;
+  if (model?.kind === "revision" && (preview.scope.kind !== "selected-revision" || bytes.encode(model.text).length > 16384 || model.text.includes("\0"))) return false;
   return planningReceipt(receipt, { ...request, consent: receipt.consent }) && receipt.consent.attemptId === request.attemptId
-    && receipt.consent.shareUnits === (preview.scope.kind === "units")
+    && receipt.consent.shareUnits === (planningLocale(preview.scope) !== null)
     && planningPreview(preview, { ...request, purpose: preview.purpose, config: preview.config, scope: preview.scope, selectedMessageIds: preview.selectedMessages.map(message => message.messageId) })
     && detail.attemptId === request.attemptId && detail.taskId === receipt.consent.taskId && detail.operation === "conversation-planning"
     && detail.progress.total === 1 && detail.items.length === 1 && !!item && item.status.itemId === receipt.consent.actionId
     && item.scope.kind === "project-conversation" && item.scope.id === request.conversationId
-    && (item.scope.locale ?? null) === (preview.scope.kind === "units" ? preview.scope.locale : null)
+    && (item.scope.locale ?? null) === planningLocale(preview.scope)
     && item.resultId === value.resultId && detail.recovery.attemptId === request.attemptId
     && detail.recovery.units.every(unit => unit.actions.length === 0) && budget !== null && budget.limit === 1 && budget.dispatched <= 1
     && (value.output === null || value.resultId !== null && item.status.execution === "succeeded" && item.status.validation === "valid"

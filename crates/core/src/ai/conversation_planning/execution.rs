@@ -37,6 +37,11 @@ pub enum ConversationPlanningModelOutput {
         entries: Vec<crate::application::ConversationTermEntry>,
         questions: Vec<String>,
     },
+    Revision {
+        summary: String,
+        text: String,
+        questions: Vec<String>,
+    },
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
@@ -69,10 +74,7 @@ pub(crate) fn fixed_input(
         scope: Scope {
             kind: "project-conversation".into(),
             id: preview.conversation_id.to_string(),
-            locale: match &preview.scope {
-                ConversationPlanningScope::ConversationOnly {} => None,
-                ConversationPlanningScope::Units { locale, .. } => Some(locale.clone()),
-            },
+            locale: preview.scope.units().map(|(locale, _)| locale.to_owned()),
         },
         payload: serde_json::to_value(preview)
             .map_err(|_| error(ErrorCode::InvalidInput, "conversation-planning-input"))?,
@@ -90,9 +92,9 @@ pub(crate) fn fixed_input(
         plugin: None,
         operation: OPERATION.into(),
         capability_id: CAPABILITY.into(),
-        capability_version: profile(preview.purpose).0.into(),
+        capability_version: profile_for_scope(preview.purpose, &preview.scope).0.into(),
         settings: serde_json::to_value(Settings {
-            recipe: profile(preview.purpose).1.into(),
+            recipe: profile_for_scope(preview.purpose, &preview.scope).1.into(),
             config: preview.config.clone(),
             consent: consent.clone(),
             material: capture.ai_preview.clone(),
@@ -115,7 +117,7 @@ pub(crate) fn settings(input: &FixedInput) -> Result<Settings, ExecutionError> {
     let e = input.envelope();
     if e.operation != OPERATION
         || e.capability_id != CAPABILITY
-        || !matches!(e.capability_version.as_str(), "1" | "2" | "3")
+        || !matches!(e.capability_version.as_str(), "1" | "2" | "3" | "4")
         || e.plugin.is_some()
         || e.automation.is_some()
         || e.previous_attempt_id.is_some()
@@ -135,12 +137,9 @@ pub(crate) fn settings(input: &FixedInput) -> Result<Settings, ExecutionError> {
     let preview = payload(input)?;
     settings.config.validate()?;
     let consent = &settings.consent;
-    let scope_locale = match &preview.scope {
-        ConversationPlanningScope::ConversationOnly {} => None,
-        ConversationPlanningScope::Units { locale, .. } => Some(locale.as_str()),
-    };
-    if settings.recipe != profile(preview.purpose).1
-        || e.capability_version != profile(preview.purpose).0
+    let scope_locale = preview.scope.units().map(|(locale, _)| locale);
+    if settings.recipe != profile_for_scope(preview.purpose, &preview.scope).1
+        || e.capability_version != profile_for_scope(preview.purpose, &preview.scope).0
         || settings.config != preview.config
         || settings.config.max_requests != 1
         || settings.config.max_retries != 0
@@ -149,7 +148,7 @@ pub(crate) fn settings(input: &FixedInput) -> Result<Settings, ExecutionError> {
         || consent.attempt_id != e.attempt_id
         || consent.task_id != e.task_id
         || !consent.share_messages
-        || consent.share_units != matches!(preview.scope, ConversationPlanningScope::Units { .. })
+        || consent.share_units != preview.scope.units().is_some()
         || consent.preview_digest
             != codec::digest(&codec::encode(
                 &preview,
@@ -172,9 +171,9 @@ pub(crate) fn settings(input: &FixedInput) -> Result<Settings, ExecutionError> {
         ));
     }
     validate_preview(&preview)?;
-    match (&preview.scope, &settings.material) {
-        (ConversationPlanningScope::ConversationOnly {}, None) => {}
-        (ConversationPlanningScope::Units { .. }, Some(material)) => {
+    match (preview.scope.units(), &settings.material) {
+        (None, None) => {}
+        (Some((locale, _)), Some(material)) => {
             if material.config != settings.config
                 || material.recipe != crate::ai::RECIPE
                 || material.items.len() != preview.units.len()
@@ -193,6 +192,7 @@ pub(crate) fn settings(input: &FixedInput) -> Result<Settings, ExecutionError> {
                     Some(preview.project_id),
                 )?;
                 if item.unit_id != basis.unit_id
+                    || item.target_locale != locale
                     || item.source_snapshot_id != basis.source_snapshot_id
                     || item.source_revision_id != basis.source_revision_id
                     || item.context_resources != basis.context_resources
@@ -203,14 +203,19 @@ pub(crate) fn settings(input: &FixedInput) -> Result<Settings, ExecutionError> {
                     ));
                 }
             }
-            let (input, byte_length, brief) = super::prompt_for(
-                preview.purpose,
-                &settings.config,
-                &preview.scope,
-                &preview.selected_messages,
-                &material.items,
-                &preview.units,
-            )?;
+            let (input, byte_length, brief) = if matches!(preview.scope, ConversationPlanningScope::SelectedRevision { .. }) {
+                let projected: Value = codec::decode(preview.input.as_bytes(), MAX_INPUT_BYTES)?;
+                let text = projected["selectedTranslation"].as_str()
+                    .ok_or_else(|| error(ErrorCode::InvalidInput, "selected-revision-material"))?;
+                super::revision_material(
+                    &settings.config, &material.items[0], text, &preview.selected_messages[0].body,
+                )?
+            } else {
+                super::prompt_for(
+                    preview.purpose, &settings.config, &preview.scope,
+                    &preview.selected_messages, &material.items, &preview.units,
+                )?
+            };
             if input != preview.input
                 || byte_length != preview.byte_length
                 || brief != preview.brief
@@ -258,8 +263,8 @@ pub fn consent_from_input(
 
 fn validate_preview(preview: &ConversationPlanningPreview) -> Result<(), ExecutionError> {
     let invalid = || error(ErrorCode::InvalidInput, "conversation-planning-material");
-    if preview.version != profile(preview.purpose).3
-        || preview.system != profile(preview.purpose).2
+    if preview.version != profile_for_scope(preview.purpose, &preview.scope).3
+        || preview.system != profile_for_scope(preview.purpose, &preview.scope).2
         || preview.purpose.is_some()
             && matches!(
                 preview.scope,
@@ -291,6 +296,24 @@ fn validate_preview(preview: &ConversationPlanningPreview) -> Result<(), Executi
         preview.input.as_bytes(),
         ProviderProfile::compatible(&preview.config)?.max_prompt_bytes,
     )?;
+    if let ConversationPlanningScope::SelectedRevision { basis } = &preview.scope {
+        let [unit] = preview.units.as_slice() else { return Err(invalid()); };
+        if preview.purpose.is_some()
+            || preview.selected_messages.len() != 1
+            || unit.unit_id != basis.unit_id
+            || unit.source_snapshot_id != basis.source_snapshot_id
+            || unit.source_revision_id != basis.source_revision_id
+            || unit.selection_id != Some(basis.selection_id)
+            || unit.translation_revision_id != Some(basis.translation_revision_id)
+            || unit.protection.unit_id != basis.unit_id
+            || unit.protection.locale != basis.locale
+            || projected["request"] != preview.selected_messages[0].body
+            || !projected["selectedTranslation"].is_string()
+        {
+            return Err(invalid());
+        }
+        return Ok(());
+    }
     let expected_messages = json!(
         preview
             .selected_messages
@@ -329,6 +352,7 @@ fn validate_preview(preview: &ConversationPlanningPreview) -> Result<(), Executi
             }
             json!({"kind":"units","targetLocale":locale})
         }
+        ConversationPlanningScope::SelectedRevision { .. } => return Err(invalid()),
     };
     if projected["purpose"] != super::purpose_name(preview.purpose)
         || projected["scope"] != expected_scope
@@ -370,6 +394,14 @@ pub(crate) fn validate_model(
     .map_err(|_| invalid())?;
     let (summary, questions) = match model {
         ConversationPlanningModelOutput::Reply { summary, questions } => (summary, questions),
+        ConversationPlanningModelOutput::Revision { summary, text, questions } => {
+            if !matches!(preview.scope, ConversationPlanningScope::SelectedRevision { .. })
+                || text.len() > crate::content::MAX_TEXT_BYTES || text.contains('\0')
+            {
+                return Err(invalid());
+            }
+            (summary, questions)
+        }
         ConversationPlanningModelOutput::Proposal {
             summary,
             questions,
@@ -466,7 +498,7 @@ pub fn validate_proposal_draft_content(
     let invalid = || error(ErrorCode::InvalidInput, "conversation-proposal-draft");
     codec::encode(value, 65536).map_err(|_| invalid())?;
     let (summary, questions) = match value {
-        ConversationPlanningModelOutput::Reply { .. } => return Err(invalid()),
+        ConversationPlanningModelOutput::Reply { .. } | ConversationPlanningModelOutput::Revision { .. } => return Err(invalid()),
         ConversationPlanningModelOutput::Proposal {
             summary,
             questions,
@@ -592,6 +624,9 @@ impl ConversationPlanningRunner {
     }
     pub fn with_terminology_service(service: Arc<super::super::provider::ProviderService>) -> Self {
         Self { service, version: "3" }
+    }
+    pub fn with_selected_revision_service(service: Arc<super::super::provider::ProviderService>) -> Self {
+        Self { service, version: "4" }
     }
 }
 impl Runner for ConversationPlanningRunner {

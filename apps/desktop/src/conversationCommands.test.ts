@@ -125,6 +125,27 @@ it("prepares the exact selected planning materials and validates the unchanged o
   expect(invoke.mock.calls[1][1]).toEqual({ request: { ...context, preparationId: captured.preparationId } });
 });
 
+it("accepts only the exact saved revision and request in a revision preview", async () => {
+  const basis = { unitId: fixtureIdentity(18200), locale: "zh-CN", sourceSnapshotId: fixtureIdentity(18201),
+    sourceRevisionId: fixtureIdentity(18202), selectionId: fixtureIdentity(18203), translationRevisionId: fixtureIdentity(18204) };
+  const scope = { kind: "selected-revision" as const, basis };
+  const request = { ...planningRequest, scope };
+  const prepared = planningView(), system = "Revise the saved translation.";
+  const input = JSON.stringify({ unit: { unitId: basis.unitId, targetLocale: basis.locale, sourceText: "Source" },
+    selectedTranslation: "已保存译文", request: message.body });
+  const unit = { unitId: basis.unitId, sourceSnapshotId: basis.sourceSnapshotId, sourceRevisionId: basis.sourceRevisionId,
+    selectionId: basis.selectionId, translationRevisionId: basis.translationRevisionId,
+    protection: { unitId: basis.unitId, locale: basis.locale, revision: "0", protected: false },
+    sharedTermRevisionIds: [], sharedContextRevisionId: null };
+  const preview = { ...prepared.preview, version: 5, scope, units: [unit], system, input,
+    byteLength: new TextEncoder().encode(JSON.stringify({ system, input })).length,
+    brief: { ...prepared.preview.brief, units: 1, sourceTexts: 1 } };
+  invoke.mockResolvedValueOnce({ ...prepared, preview });
+  await expect(conversationCommands.preparePlanning(request)).resolves.toMatchObject({ preview });
+  invoke.mockResolvedValueOnce({ ...prepared, preview: { ...preview, units: [{ ...unit, translationRevisionId: fixtureIdentity(18205) }] } });
+  await expect(conversationCommands.preparePlanning(request)).rejects.toThrow("Invalid IPC response");
+});
+
 it.each([
   (value: ReturnType<typeof planningView>) => ({ ...value, preview: { ...value.preview, projectId: fixtureIdentity(18900) } }),
   (value: ReturnType<typeof planningView>) => ({ ...value, preview: { ...value.preview, conversationId: fixtureIdentity(18900) } }),
