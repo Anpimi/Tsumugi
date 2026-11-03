@@ -102,6 +102,25 @@ impl ProviderProfile {
     }
 }
 
+pub(crate) fn completion_body(config: &AiConfig, system: &str, input: &str) -> Result<serde_json::Value, ExecutionError> {
+    let profile = ProviderProfile::compatible(config)?;
+    let mut body = serde_json::json!({
+        "model": config.model,
+        "stream": false,
+        "messages": [
+            {"role": "system", "content": system},
+            {"role": "user", "content": input}
+        ]
+    });
+    if config.is_chatgpt_subscription() {
+        profile.check_subscription_completion(&config.model, system, input)?;
+    } else {
+        body[&profile.output_token_field] = config.max_output_tokens.into();
+        profile.check_json_request(&body)?;
+    }
+    Ok(body)
+}
+
 // This is the no-tool Responses input accepted from Pi. It is used to
 // measure a preparation locally. The transport sends Pi's actual bytes.
 fn subscription_completion_input(system: &str, input: &str) -> serde_json::Value {

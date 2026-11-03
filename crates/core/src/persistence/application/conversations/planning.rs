@@ -136,7 +136,7 @@ fn preview_in(
     let (input, byte_length, brief) =
         conversation_planning::prompt_for(request.purpose,&request.config, &request.scope, &messages, items, &units)?;
     let system = conversation_planning::profile(request.purpose).2;
-    conversation_planning::completion_body(&request.config, system, &input)?;
+    crate::ai::provider::completion_body(&request.config, system, &input)?;
     let preview = ConversationPlanningPreview {
             purpose: request.purpose,
         version: conversation_planning::profile(request.purpose).3,

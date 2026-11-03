@@ -355,7 +355,7 @@ pub(crate) fn request_body(input: &FixedInput, item: ExecutionId) -> Result<Valu
         ));
     }
     let preview = payload(input)?;
-    super::completion_body(&settings.config, &preview.system, &preview.input)
+    crate::ai::provider::completion_body(&settings.config, &preview.system, &preview.input)
 }
 
 pub(crate) fn validate_model(

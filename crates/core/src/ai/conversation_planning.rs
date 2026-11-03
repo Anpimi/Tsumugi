@@ -84,25 +84,6 @@ pub(crate) fn prompt_for(
     Ok((input, length as u32, brief_for(&payload)))
 }
 
-pub(crate) fn completion_body(config: &AiConfig, system: &str, input: &str) -> Result<Value, ExecutionError> {
-    let profile = super::provider::ProviderProfile::compatible(config)?;
-    let mut body = json!({
-        "model": config.model,
-        "stream": false,
-        "messages": [
-            {"role": "system", "content": system},
-            {"role": "user", "content": input}
-        ]
-    });
-    if config.is_chatgpt_subscription() {
-        profile.check_subscription_completion(&config.model, system, input)?;
-    } else {
-        body[&profile.output_token_field] = config.max_output_tokens.into();
-        profile.check_json_request(&body)?;
-    }
-    Ok(body)
-}
-
 fn brief_for(payload: &Value) -> ConversationPlanningBrief {
     let array_len = |value: &Value| value.as_array().map_or(0, |items| items.len() as u32);
     let mut brief = ConversationPlanningBrief {

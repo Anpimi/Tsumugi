@@ -472,7 +472,7 @@ fn preview_admits_exact_compatible_request_limit_and_rejects_one_more_byte() {
     push(&mut req, "x");
     let initial = store.prepare_conversation_planning(&req).unwrap();
     let preview = initial.preview();
-    let baseline = conversation_planning::completion_body(&req.config, &preview.system, &preview.input)
+    let baseline = crate::ai::provider::completion_body(&req.config, &preview.system, &preview.input)
         .unwrap()
         .to_string()
         .len();
@@ -481,7 +481,7 @@ fn preview_admits_exact_compatible_request_limit_and_rejects_one_more_byte() {
     push(&mut req, &at_limit);
     let accepted = store.prepare_conversation_planning(&req).unwrap();
     let preview = accepted.preview();
-    assert_eq!(conversation_planning::completion_body(&req.config, &preview.system, &preview.input)
+    assert_eq!(crate::ai::provider::completion_body(&req.config, &preview.system, &preview.input)
         .unwrap().to_string().len(), limit);
     req.selected_message_ids.pop();
     push(&mut req, &(at_limit + "x"));
