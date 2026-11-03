@@ -16,7 +16,7 @@ if (!validateResponsePluginSelection(selection) || selection === null || !valida
 export const pluginSourceWorkflow = { ...workflow, selection, preflight, checkReview };
 export const pluginSourceInventory: PluginInventoryView = {
   uninstallations: [],
-  settingsRevision: "1", lastSettingsAction: null, runtimeOffers: [], defaultsOffer: null,
+  settingsRevision: "1", lastSettingsAction: null, runtimeOffers: [], defaultsOffer: null, memberArtifactAvailability: "resources-unavailable",
   nativeHostOffer: { availability: "unavailable", reason: "identity-unavailable" },
   packages: [{ originalInstallAction: "00000000-0000-4000-8000-000000000001", plugin: source.request.package.plugin, packageDigest: source.request.package.packageDigest, origin: source.view.packageOrigin, state: "sealed" }],
   packageDecisions: [{ plugin: source.request.package.plugin, packageDigest: source.request.package.packageDigest, origin: source.view.packageOrigin, enabled: true }],

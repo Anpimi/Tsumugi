@@ -16,7 +16,7 @@ if (!validateResponseSavedPluginBuild(workflow.savedBuild)) throw new Error("Inv
 export const savedPluginBuild: SavedPluginBuildView = workflow.savedBuild;
 export const pluginBuildInventory: PluginInventoryView = {
   uninstallations: [],
-  settingsRevision: "1", lastSettingsAction: null, runtimeOffers: [], defaultsOffer: null,
+  settingsRevision: "1", lastSettingsAction: null, runtimeOffers: [], defaultsOffer: null, memberArtifactAvailability: "resources-unavailable",
   nativeHostOffer: { availability: "unavailable", reason: "identity-unavailable" },
   packages: [{ originalInstallAction: "00000000-0000-4000-8000-000000000001", ...contract.request.package, origin: contract.view.packageOrigin, state: "sealed" }],
   packageDecisions: [{ ...contract.request.package, origin: contract.view.packageOrigin, enabled: true }],

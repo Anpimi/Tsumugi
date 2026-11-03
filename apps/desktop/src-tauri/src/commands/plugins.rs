@@ -171,6 +171,7 @@ pub struct PluginInventoryView {
     pub runtime_offers: Vec<PluginRuntimeOfferView>,
     pub native_host_offer: PluginNativeHostOfferView,
     pub defaults_offer: Option<PluginDefaultsOfferView>,
+    pub member_artifact_availability: member::MemberArtifactAvailability,
 }
 
 struct PluginDirectory {
@@ -491,6 +492,7 @@ impl ApplicationPlugins {
                 .into_iter()
                 .collect(),
             native_host_offer: runtimes::native_host_offer(),
+            member_artifact_availability: self.member_artifact_availability()?,
         })
     }
 }

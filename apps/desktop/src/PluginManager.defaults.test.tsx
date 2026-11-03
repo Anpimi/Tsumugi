@@ -72,3 +72,33 @@ it("a refreshed included selection cannot inherit old consent", async () => {
   expect(screen.getByRole("button", { name: "Install bundled extensions" })).toBeEnabled(); await user.click(screen.getByRole("button", { name: "Refresh state" }));
   await waitFor(() => expect(screen.getByRole("button", { name: "Install bundled extensions" })).toBeDisabled());
 });
+
+it.each([
+  ["en-US", "Extensions", "AI member resources", "Review included setup", /AI member files are missing or incompatible/, /files are present/],
+  ["zh-CN", "扩展", "AI 成员资源", "核对随附资源安装", /AI 成员文件缺失或不兼容/, /AI 成员文件齐全/],
+])("explains member resources and reaches existing setup without implicit writes in %s", async (locale, entry, title, setup, missing, present) => {
+  await i18n.changeLanguage(locale);
+  const user = userEvent.setup();
+  render(<PluginManager disabled={false} onBusyChange={onBusy} presentation="workbench"/>, { wrapper: ApplicationReadProvider });
+  await user.click(screen.getByRole("button", { name: entry }));
+  const region = await screen.findByRole("region", { name: title });
+  expect(region).toHaveTextContent(missing);
+  await user.click(screen.getByRole("button", { name: setup }));
+  expect(screen.getByRole("checkbox", { name: locale === "en-US" ? /I approve installing the bundled extensions/ : /我批准安装内置扩展/ })).not.toBeChecked();
+  expect(invoke.mock.calls.every(([command]) => command === "read_plugin_inventory")).toBe(true);
+  invoke.mockResolvedValue({ ...bundled(), memberArtifactAvailability: "available" });
+  await user.click(screen.getByRole("button", { name: locale === "en-US" ? "Refresh state" : "刷新状态" }));
+  await user.click(screen.getByRole("tab", { name: locale === "en-US" ? "Installed" : "已安装" }));
+  await waitFor(() => expect(screen.getByRole("region", { name: title })).toHaveTextContent(present));
+  expect(invoke.mock.calls.every(([command]) => command === "read_plugin_inventory")).toBe(true);
+});
+
+it("explains a source build without offering an invented bundled installation", async () => {
+  invoke.mockResolvedValue(inventory.empty);
+  const user = userEvent.setup(); render(<PluginManager disabled={false} onBusyChange={onBusy}/>, { wrapper: ApplicationReadProvider });
+  await user.click(screen.getByRole("button", { name: "Extensions" }));
+  await screen.findByText(/This build has no included extension set/);
+  expect(screen.queryByRole("button", { name: "Install bundled extensions" })).not.toBeInTheDocument();
+  expect(screen.getByRole("button", { name: "Select plugin folder" })).toBeEnabled();
+  expect(invoke.mock.calls.every(([command]) => command === "read_plugin_inventory")).toBe(true);
+});

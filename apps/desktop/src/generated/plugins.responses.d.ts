@@ -198,6 +198,7 @@ export type CommandStage =
   | "execution-adopt"
   | "execution-quiesce";
 export type DefaultsAvailability = "available" | "resources-unavailable" | "runtime-unavailable";
+export type MemberArtifactAvailability = "available" | "resources-unavailable";
 /**
  * Current application observation, independent of an installation or approval.
  */
@@ -453,6 +454,7 @@ export interface PluginGenerationComponentView {
 export interface PluginInventoryView {
   defaultsOffer: PluginDefaultsOfferView | null;
   lastSettingsAction: string | null;
+  memberArtifactAvailability: MemberArtifactAvailability;
   nativeHostOffer: PluginNativeHostOfferView;
   /**
    * @maxItems 128

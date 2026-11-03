@@ -131,7 +131,8 @@ Workers / Domain Plugins / Agent Service
 
 ### 环境要求
 
-- **支持平台**：Windows x64 与 macOS（Apple Silicon 及 Intel 构建目标，最低系统版本 macOS 11）
+- **完整离线包目标**：Apple Silicon macOS 13.5+，须显式准备运行资源并使用对应打包配置。详见[分能力支持矩阵](docs/plugin-distribution.zh-CN.md#平台与构建支持)。
+- **桌面壳开发**：源码保留 Windows x64 与 macOS 目标路径，不表示这些平台的完整 Agent 和随附插件包均已支持。
 - **开发工具链**：Rust 1.98+、Node.js、pnpm 12、Vite 8、Tauri 2
 - **Windows 原生依赖**：Visual Studio C++ Build Tools、Windows SDK、Microsoft Edge WebView2 Runtime
 - **macOS 原生依赖**：Xcode Command Line Tools（使用系统 `WKWebView`）
@@ -143,7 +144,7 @@ Workers / Domain Plugins / Agent Service
 在仓库根目录执行：
 
 ```sh
-pnpm install
+pnpm install --frozen-lockfile
 pnpm --dir apps/desktop build
 cargo test --workspace
 pnpm --dir apps/desktop tauri dev
@@ -163,6 +164,8 @@ pnpm --dir apps/desktop tauri build
 open target/release/bundle/macos/Tsumugi.app
 ```
 
+以上默认构建只生成桌面壳，不会准备或包含 Node、Pi 成员及格式插件。完整 Apple Silicon 包请按[资源准备与构建顺序](docs/plugin-distribution.zh-CN.md#准备与构建)执行。
+
 在 Apple Silicon 上交叉编译 Intel 版本时，需先安装 Rust 的 `x86_64-apple-darwin` target 并传入 `--target x86_64-apple-darwin`。代码签名、公证与分发流程独立于本地构建。
 
 ### 协议契约生成与文本偏移
@@ -180,10 +183,10 @@ pnpm --dir apps/desktop check:contracts
 
 ### 存储格式、诊断与测试宿主
 
-- **数据库 Schema**：当前项目使用 SQLite schema **71**，采用 `DELETE` 日志模式与 `FULL` 同步级别。有效的 schema 61 至 70 项目会在打开时通过单个事务升级，保留原有内容、语境说明、资源历史、对话、规划历史、提议版本、计划、团队讨论和回执；升级中断后，数据库保持升级前的完整格式或完整的 schema 71。更早的开发格式和不支持的存储配置仍会被拒绝，不会重置目录。不支持的存储配置仍返回 Rust 的 `PersistenceError::UnsupportedStorage`，或桌面 IPC 的 `unsupported-schema` 与 `reason: "storage-mode"`。旧客户端不能打开升级后的 schema 71 项目；不受支持的旧目录请原样保留，再在新项目中重新导入原始源文件。
+- **数据库兼容**：[版本管理策略](docs/versioning.md#core-storage-and-desktop-domain-transition)统一记录当前 schema、支持的升级范围及不支持项目的恢复方式。不支持的旧目录请原样保留，打开不会重置其中内容。
 - **结构化诊断与恢复**：命令失败时会保留原始结构化证据。若保存时底层基准已发生变化，可展开诊断面板对照提交值与当前值，并按提示执行下一步读取或决策，系统不会自动重放写入。命令边界日志通过诊断编号关联，仅记录操作标签与错误分类，不包含请求正文或本地工程路径。
 - **执行测试宿主**：开发调试时可使用隔离的[执行测试宿主](docs/execution-test-host.md)，在不接入外部翻译模型的情况下验证任务进度、取消与恢复流程。
 
 ## 版本与状态
 
-当前代码库处于尚未发布的 **`0.2.0-alpha.1`** 开发批次。最近变更、兼容性边界与版本管理规则详见[更新日志](CHANGELOG.zh-CN.md)与[版本管理策略](docs/versioning.md)。
+工作区版本元数据仍为 **`0.2.0-alpha.1`**，该版本已经发布的快照保持冻结；当前源码改动记在 **Unreleased**，不属于该下载快照。最近变更、兼容性边界与版本管理规则详见[更新日志](CHANGELOG.zh-CN.md)与[版本管理策略](docs/versioning.md)。

@@ -137,7 +137,8 @@ The React frontend renders workspace state and dispatches Tauri commands. The Ru
 
 ### Prerequisites
 
-- **Supported platforms**: Windows x64 and macOS (Apple Silicon and Intel targets; minimum macOS 11)
+- **Complete offline bundle target**: Apple Silicon macOS 13.5+, prepared with the explicit runtime configuration. See the [capability support matrix](docs/plugin-distribution.md#platform-and-build-support).
+- **Desktop shell development**: Windows x64 and macOS targets have source paths; this does not establish complete Agent or packaged-plugin support on those targets.
 - **Toolchain**: Rust 1.98+, Node.js, pnpm 12, Vite 8, Tauri 2
 - **Windows native dependencies**: Visual Studio C++ Build Tools, Windows SDK, and Microsoft Edge WebView2 Runtime
 - **macOS native dependencies**: Xcode Command Line Tools (uses system `WKWebView`)
@@ -149,7 +150,7 @@ See the [Tauri prerequisites guide](https://v2.tauri.app/start/prerequisites/) f
 From the repository root:
 
 ```sh
-pnpm install
+pnpm install --frozen-lockfile
 pnpm --dir apps/desktop build
 cargo test --workspace
 pnpm --dir apps/desktop tauri dev
@@ -162,12 +163,14 @@ pnpm --dir apps/desktop tauri build --no-bundle
 # Output: target/release/tsumugi-desktop.exe
 ```
 
-To build a macOS application bundle:
+To build a macOS desktop shell without the bundled Node, Pi member artifact or format packages:
 
 ```sh
 pnpm --dir apps/desktop tauri build
 open target/release/bundle/macos/Tsumugi.app
 ```
+
+For the complete Apple Silicon bundle, follow the [resource preparation and build sequence](docs/plugin-distribution.md#prepare-and-build). The default commands above do not prepare these resources or enable bundled plugins.
 
 On Apple Silicon, cross-compiling for Intel requires installing the `x86_64-apple-darwin` Rust target and passing `--target x86_64-apple-darwin`. Code signing, notarization, and release distribution are handled separately.
 
@@ -186,10 +189,10 @@ Source and translation capture ranges use half-open UTF-8 byte offsets in the ra
 
 ### Storage, Diagnostics, and Test Host
 
-- **Database schema**: Current projects use SQLite schema **71** with `DELETE` journaling and `FULL` synchronization. Opening a project using a valid schema from 61 through 70 upgrades it in one transaction, preserving existing content, context notes, resource history, conversations, planning history, proposal revisions, work plans, team discussions, and receipts. An interrupted upgrade leaves the complete original database or a complete schema 71 database. Older development schemas and unsupported storage modes are refused without resetting the directory. Unsupported storage modes retain `PersistenceError::UnsupportedStorage` in Rust and `unsupported-schema` with `reason: "storage-mode"` over desktop IPC. Earlier clients cannot open an upgraded schema 71 project; keep unsupported older directories intact and re-import original source files into a new project.
+- **Database compatibility**: The [versioning policy](docs/versioning.md#core-storage-and-desktop-domain-transition) owns the current schema, supported upgrade range and unsupported-project recovery instructions. Keep unsupported older directories intact; opening them does not reset their contents.
 - **Diagnostics and recovery**: Command failures preserve structured evidence. When a save conflicts with newer state, expandable diagnostics show both the submitted and current values alongside recovery steps without automatically re-running writes. Boundary log reference IDs record only operation labels and error categories, omitting project paths and request payloads.
 - **Execution test host**: Developers can test task lifecycle, cancellation, and recovery flows without configuring an external AI provider by using the isolated [Execution Test Host](docs/execution-test-host.md).
 
 ## Version and Status
 
-The repository is currently in the unreleased **`0.2.0-alpha.1`** development batch. See the [Changelog](CHANGELOG.md) and [Versioning Policy](docs/versioning.md) for release history and compatibility rules.
+Workspace metadata remains **`0.2.0-alpha.1`**; the published snapshot of that version is frozen. Current source changes accumulate under **Unreleased** and are not part of that download. See the [Changelog](CHANGELOG.md) and [Versioning Policy](docs/versioning.md) for release history and compatibility rules.

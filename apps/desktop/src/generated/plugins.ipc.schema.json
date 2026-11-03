@@ -1671,6 +1671,13 @@
         ],
         "type": "object"
       },
+      "MemberArtifactAvailability": {
+        "enum": [
+          "available",
+          "resources-unavailable"
+        ],
+        "type": "string"
+      },
       "NativeHostEnvironmentDescriptor": {
         "additionalProperties": false,
         "description": "The native executable and its package resources are already fixed by the\nseparate provider binding. Native execution has no Node/tool/bootstrap tree.\nThis profile instead records the actual application Host executable identity.",
@@ -2078,6 +2085,9 @@
               "null"
             ]
           },
+          "memberArtifactAvailability": {
+            "$ref": "#/definitions/MemberArtifactAvailability"
+          },
           "nativeHostOffer": {
             "$ref": "#/definitions/PluginNativeHostOfferView"
           },
@@ -2137,7 +2147,8 @@
           "runtimeDecisions",
           "runtimeOffers",
           "nativeHostOffer",
-          "defaultsOffer"
+          "defaultsOffer",
+          "memberArtifactAvailability"
         ],
         "type": "object"
       },

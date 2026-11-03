@@ -5,6 +5,7 @@ export const CommandStageValues = ["create","open","read","rename","add-target-l
 export const ComponentScopeValues = ["application","project","attempt"] as const;
 export const DefaultsAvailabilityValues = ["available","resources-unavailable","runtime-unavailable"] as const;
 export const EffectKindValues = ["read-only","proposal","external"] as const;
+export const MemberArtifactAvailabilityValues = ["available","resources-unavailable"] as const;
 export const NativeHostProfileValues = ["native-application-host-v1"] as const;
 export const NativeHostUnavailableReasonValues = ["unsupported-platform","identity-unavailable"] as const;
 export const PluginObjectStateValues = ["sealed","recovery-required"] as const;

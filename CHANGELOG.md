@@ -12,6 +12,8 @@ Current workspace version metadata: **`0.2.0-alpha.1`**. Because the published `
 
 ### Added
 
+- Extensions reports missing or incompatible AI member files without starting workers or testing a model connection, and links to the existing included-resource setup. Source-only builds explain their missing bundled extensions; the distribution guide separates platform capabilities and provides a complete offline preparation sequence and a public manual first-run sample.
+
 - Generate terminology proposals from an explicitly reviewed planning request. Save their exact model and entry provenance, compare them in Knowledge, and edit targets before adopting through the original resource decisions and recovery. Old proposals remain readable; saving or viewing does not run a model or adopt terms. Project storage upgrades atomically to schema 73 and the local draft journal to format 18.
 
 - Glossary proposals can be edited before adoption. The original proposal, current-term comparison and receipt remain attached; delayed or uncertain results preserve newer edits and can be checked after reopening.

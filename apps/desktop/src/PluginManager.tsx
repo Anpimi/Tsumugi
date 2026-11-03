@@ -432,7 +432,7 @@ export function PluginManager({ disabled, onBusyChange, hideTrigger = false, pre
               expectedRevision: inventory.settingsRevision, actionId: crypto.randomUUID(),
             } }); }}>{t("plugins.installDefaults")}</Button>
         </>}
-      </section> : null}
+      </section> : inventory ? <p>{t("plugins.defaultsNotBundled")}</p> : null}
       {pack && inventory ? <OfflinePackReview pack={pack} approvedManifests={approvedManifests} selected={packMembers} inventory={inventory} disabled={blocked || intent !== null} headingRef={packFocus}
         onSelect={(digest, checked) => setPackMembers(current => checked ? [...current, digest] : current.filter(member => member !== digest))}
         onDiscard={() => { setPack(null); setPackMembers([]); packTrigger.current?.focus(); }}
@@ -470,6 +470,11 @@ export function PluginManager({ disabled, onBusyChange, hideTrigger = false, pre
       {workbench && repository ? <Banner tone="success" action={<Button variant="secondary" onClick={() => navigateTab("discover", "catalog")}>{t("plugins.openCatalog")}</Button>}>{t("plugins.sourceCatalogReady")}</Banner> : null}
   </>;
   const installedContent = <>
+      {inventory && !query.isError && !query.isFetching ? <section className="plugin-section" aria-label={t("plugins.memberResourcesTitle")}>
+        <h3>{t("plugins.memberResourcesTitle")}</h3>
+        <p>{t(inventory.memberArtifactAvailability === "available" ? "plugins.memberResourcesAvailable" : "plugins.memberResourcesUnavailable")}</p>
+        {workbench && inventory.defaultsOffer ? <Button type="button" variant="secondary" disabled={blocked} onClick={() => navigateTab("discover", "catalog")}>{t("plugins.reviewIncludedSetup")}</Button> : null}
+      </section> : null}
       {cleanupSelection ? <section className="plugin-section plugin-cleanup-review" aria-labelledby="plugin-cleanup-title">
         <h3 id="plugin-cleanup-title" tabIndex={-1} ref={cleanupFocus}>{t(cleanupSelection.original ? "plugins.originalRemovalTitle" : cleanupSelection.intent.kind === "approval-removal" ? "plugins.revokeTitle" : "plugins.uninstallTitle", {
           name: cleanupSelection.intent.request.package.plugin.id, version: cleanupSelection.intent.request.package.plugin.version,

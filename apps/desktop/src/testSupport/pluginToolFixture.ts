@@ -18,7 +18,7 @@ export const toolQueryPackage: PluginPackageDetailsView = { ...pluginBuildPackag
     components: pluginBuildPackage.manifest.components.map(component => ({ ...component, runtime: "javascript" })),
     contributions: [{ id: toolQueryView.resourceId, componentId: pluginBuildPackage.manifest.components[0].id,
       contribution: { kind: "resource", path: "resources/query.json", schema: { id: "tsumugi.capability-tool-declaration", schemaVersion: 1, behaviorVersion: 1 } } }] } };
-export const toolQueryInventory: PluginInventoryView = { uninstallations: [], settingsRevision: "1", lastSettingsAction: null, runtimeOffers: [], defaultsOffer: null,
+export const toolQueryInventory: PluginInventoryView = { uninstallations: [], settingsRevision: "1", lastSettingsAction: null, runtimeOffers: [], defaultsOffer: null, memberArtifactAvailability: "resources-unavailable",
   nativeHostOffer: { availability: "unavailable", reason: "identity-unavailable" },
   packages: [{ originalInstallAction: "00000000-0000-4000-8000-000000000001", plugin: provider.plugin, packageDigest: provider.packageDigest, origin: toolQueryView.packageOrigin, state: "sealed" }],
   packageDecisions: [{ plugin: provider.plugin, packageDigest: provider.packageDigest, origin: toolQueryView.packageOrigin, enabled: true }],

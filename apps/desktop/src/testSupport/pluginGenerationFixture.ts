@@ -15,7 +15,7 @@ export const generationPackage: PluginPackageDetailsView = { enabled: true, pack
       exit: { stopTimeoutMs: 300, cleanupTimeoutMs: 500 } }],
     contributions: [{ id: provider.contributionId, componentId: provider.componentId, contribution: { kind: "capability", declaration: component.binding.declaration } }] } };
 export const generationInventory: PluginInventoryView = { uninstallations: [], settingsRevision: component.settingsRevision, lastSettingsAction: null,
-  defaultsOffer: null, runtimeOffers: [], nativeHostOffer: { availability: "unavailable", reason: "identity-unavailable" },
+  defaultsOffer: null, memberArtifactAvailability: "resources-unavailable", runtimeOffers: [], nativeHostOffer: { availability: "unavailable", reason: "identity-unavailable" },
   packages: [{ originalInstallAction: "00000000-0000-4000-8000-000000000001", plugin: provider.plugin, packageDigest: provider.packageDigest, origin: component.packageOrigin, state: "sealed" }],
   packageDecisions: [{ plugin: provider.plugin, packageDigest: provider.packageDigest, origin: component.packageOrigin, enabled: true }],
   runtimes: [{ environment, environmentDigest: component.environmentDigest, origin: component.runtimeOrigin, state: "sealed" }],
