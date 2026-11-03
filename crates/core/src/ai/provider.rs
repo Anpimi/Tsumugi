@@ -64,6 +64,20 @@ impl ProviderProfile {
         Ok(())
     }
 
+    pub(crate) fn check_subscription_completion(
+        &self,
+        model: &str,
+        system: &str,
+        input: &str,
+    ) -> Result<(), ExecutionError> {
+        self.check_json_request(&serde_json::json!({
+            "model": model,
+            "stream": true,
+            "store": false,
+            "input": subscription_completion_input(system, input)
+        }))
+    }
+
     pub(crate) fn check_json_request(&self, body: &serde_json::Value) -> Result<(), ExecutionError> {
         match codec::encode(body, self.max_prompt_bytes) {
             Ok(_) => Ok(()),
@@ -86,6 +100,15 @@ impl ProviderProfile {
             Err(failure) => Err(failure),
         }
     }
+}
+
+// This is the no-tool Responses input accepted from Pi. It is used to
+// measure a preparation locally. The transport sends Pi's actual bytes.
+fn subscription_completion_input(system: &str, input: &str) -> serde_json::Value {
+    serde_json::json!([
+        {"role": "developer", "content": system},
+        {"role": "user", "content": [{"type": "input_text", "text": input}]}
+    ])
 }
 
 #[derive(Clone, Debug)]

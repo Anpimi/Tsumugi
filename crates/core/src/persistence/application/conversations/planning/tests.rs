@@ -493,6 +493,55 @@ fn preview_admits_exact_compatible_request_limit_and_rejects_one_more_byte() {
 }
 
 #[test]
+fn subscription_preview_checks_full_responses_bytes_and_recovers_with_fewer_messages() {
+    let (_temp, store, project, units) = fixture();
+    let mut req = request(&store, project, &units[..1]);
+    req.config.chatgpt_account = Some(ExecutionId::new());
+    req.config.endpoint = provider::CHATGPT_RESPONSES_ENDPOINT.into();
+    req.config.token_field = "chatgpt_subscription".into();
+    req.config.max_output_tokens = 0;
+    req.config.max_retries = 0;
+    for _ in 0..4 {
+        req.selected_message_ids.push(append(
+            &store, project, req.conversation_id, &"保留 e\u{301} 👩🏽‍💻 \"\\\n".repeat(180),
+        ));
+    }
+    let push = |req: &mut PrepareConversationPlanning, text: &str| {
+        req.selected_message_ids.push(append(&store, project, req.conversation_id, text));
+    };
+    let wire = |preview: &ConversationPlanningPreview| serde_json::json!({
+        "model": preview.config.model, "stream": true, "store": false,
+        "input": [
+            {"role": "developer", "content": preview.system},
+            {"role": "user", "content": [{"type": "input_text", "text": preview.input}]}
+        ]
+    }).to_string();
+    push(&mut req, "x");
+    let initial = store.prepare_conversation_planning(&req).unwrap();
+    let padding = "x".repeat(1 + 32768 - wire(initial.preview()).len());
+    req.selected_message_ids.pop();
+    push(&mut req, &padding);
+    let at_limit = store.prepare_conversation_planning(&req).unwrap();
+    let body = wire(at_limit.preview());
+    assert_eq!(body.len(), 32768);
+    let capture = crate::ai::provider::ProviderRequestCapture {
+        body, team_view: None, team_work_view: None,
+    };
+    capture.validate(&req.config).unwrap();
+    req.selected_message_ids.pop();
+    push(&mut req, &(padding + "x"));
+    readonly(&store, || {
+        let error = store.prepare_conversation_planning(&req).unwrap_err();
+        assert_eq!(error.code, ErrorCode::LimitExceeded);
+        assert_eq!(error.stage, "provider-request-bytes:32769:32768");
+    });
+    req.selected_message_ids.pop();
+    let reduced = store.prepare_conversation_planning(&req).unwrap();
+    assert_eq!(reduced.preview().selected_messages.len(), req.selected_message_ids.len());
+    assert!(wire(reduced.preview()).len() < 32768);
+}
+
+#[test]
 fn original_capture_survives_unrelated_edits_and_unselected_new_messages() {
     let (_temp, mut store, project, units) = fixture();
     let req = request(&store, project, &units[..1]);

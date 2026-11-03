@@ -94,10 +94,12 @@ pub(crate) fn completion_body(config: &AiConfig, system: &str, input: &str) -> R
             {"role": "user", "content": input}
         ]
     });
-    if !config.is_chatgpt_subscription() {
+    if config.is_chatgpt_subscription() {
+        profile.check_subscription_completion(&config.model, system, input)?;
+    } else {
         body[&profile.output_token_field] = config.max_output_tokens.into();
+        profile.check_json_request(&body)?;
     }
-    profile.check_json_request(&body)?;
     Ok(body)
 }
 

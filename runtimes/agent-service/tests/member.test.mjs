@@ -57,6 +57,44 @@ test("public Responses subscription uses Pi serialization and original captured 
   await state.kernel.close();
 });
 
+test("Pi serializes the no-tool Responses envelope measured by planning preflight", async () => {
+  const profile = subscriptionProfile();
+  const system = "Use the captured instructions. 保留 e\u0301 👩🏽‍💻";
+  const material = JSON.stringify({ messages: ['quoted "\\\n material'] });
+  const measure = text => ({
+    model: profile.model.id, stream: true, store: false,
+    input: [
+      { role: "developer", content: system },
+      { role: "user", content: [{ type: "input_text", text }] },
+    ],
+  });
+  const text = material + "x".repeat(32768 - Buffer.byteLength(JSON.stringify(measure(material))));
+  const requests = [];
+  const state = setup(profile);
+  const kernel = new MemberKernel({
+    ...state.options,
+    systemPrompt: system,
+    context: [],
+    tools: [],
+    ports: {
+      ...state.options.ports,
+      request: async request => {
+        requests.push(request.body);
+        return new Response(responsesSse({}), { headers: { "content-type": "text/event-stream" } });
+      },
+    },
+  });
+  try {
+    await kernel.prompt(user(text));
+    assert.equal(requests.length, 1);
+    assert.equal(Buffer.byteLength(requests[0]), 32768);
+    assert.deepEqual(JSON.parse(requests[0]), measure(text));
+  } finally {
+    await kernel.close();
+    await state.kernel.close();
+  }
+});
+
 test("subscription model profile rejects alternate endpoints, API keys and a synthetic output cap", () => {
   const profile = subscriptionProfile();
   for (const change of [

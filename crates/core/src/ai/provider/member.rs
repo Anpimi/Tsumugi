@@ -73,10 +73,7 @@ impl ProviderRequestCapture {
     }
     pub(crate) fn validate_completion(&self, prompt: &CompletionPrompt) -> Result<(), ExecutionError> {
         let value: serde_json::Value = codec::decode(self.body.as_bytes(), 32768)?;
-        let expected = serde_json::json!([
-            {"role":"developer","content":prompt.system},
-            {"role":"user","content":[{"type":"input_text","text":prompt.input}]}
-        ]);
+        let expected = subscription_completion_input(&prompt.system, &prompt.input);
         if self.team_view.is_some() || self.team_work_view.is_some()
             || value["input"] != expected || value.get("tools").is_some() {
             return Err(error(ErrorCode::ResultMismatch, "ai-completion-prompt"));
