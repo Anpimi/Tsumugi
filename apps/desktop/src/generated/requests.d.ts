@@ -5,17 +5,22 @@ export type ExecutionId = string;
 
 export interface Requests {
   addTargetLocale: AddTargetLocaleRequest;
+  backup: BackupProjectRequest;
   changes: ChangesRequest;
   close: CloseProjectRequest;
   create: CreateProjectRequest;
   open: OpenProjectRequest;
   read: ReadProjectRequest;
   rename: RenameProjectRequest;
+  restore: RestoreProjectRequest;
   setTargetLocales: SetTargetLocalesRequest;
 }
 export interface AddTargetLocaleRequest {
   expectedRevision: string;
   locale: string;
+  sessionToken: string;
+}
+export interface BackupProjectRequest {
   sessionToken: string;
 }
 export interface ChangesRequest {
@@ -44,6 +49,9 @@ export interface RenameProjectRequest {
   displayName: string;
   expectedRevision: string;
   sessionToken: string;
+}
+export interface RestoreProjectRequest {
+  directoryName: string;
 }
 export interface SetTargetLocalesRequest {
   expectedRevision: string;

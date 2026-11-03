@@ -1,9 +1,9 @@
 import { checkedInvoke } from "./ipc";
-import { validateResponseClose, validateResponseError, validateResponseMetadataMutation, validateResponseProjectView } from "./generated/validators";
+import { validateResponseBackup, validateResponseRestore, validateResponseClose, validateResponseError, validateResponseMetadataMutation, validateResponseProjectView } from "./generated/validators";
 import type { CommandError } from "./generated/responses";
-import type { CreateProjectRequest, OpenProjectRequest, ReadProjectRequest, RenameProjectRequest, AddTargetLocaleRequest, SetTargetLocalesRequest, CloseProjectRequest } from "./generated/requests";
+import type { BackupProjectRequest, RestoreProjectRequest, CreateProjectRequest, OpenProjectRequest, ReadProjectRequest, RenameProjectRequest, AddTargetLocaleRequest, SetTargetLocalesRequest, CloseProjectRequest } from "./generated/requests";
 export type { CommandErrorCode, CommandStage, CommandError, ProjectMetadataView, ProjectView, MetadataMutationView, MetadataChangeOutcome, CloseProjectView, ReconciliationState } from "./generated/responses";
-export type { CreateProjectRequest, OpenProjectRequest, ReadProjectRequest, RenameProjectRequest, AddTargetLocaleRequest, SetTargetLocalesRequest, CloseProjectRequest } from "./generated/requests";
+export type { BackupProjectRequest, RestoreProjectRequest, CreateProjectRequest, OpenProjectRequest, ReadProjectRequest, RenameProjectRequest, AddTargetLocaleRequest, SetTargetLocalesRequest, CloseProjectRequest } from "./generated/requests";
 
 export function isCommandError(value: unknown): value is CommandError {
   return validateResponseError(value) && (value.code !== "outcome-unknown" || value.outcome === "unknown");
@@ -14,6 +14,12 @@ export function hasUnknownOutcome(error: unknown): boolean {
 }
 
 export const projectCommands = {
+  backup(request: BackupProjectRequest) {
+    return checkedInvoke("backup_project", request, validateResponseBackup);
+  },
+  restore(request: RestoreProjectRequest) {
+    return checkedInvoke("restore_project", request, validateResponseRestore);
+  },
   setTargetLocales(request: SetTargetLocalesRequest) {
     return checkedInvoke("set_target_locales", request, validateResponseMetadataMutation);
   },

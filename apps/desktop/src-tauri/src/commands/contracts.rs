@@ -14,6 +14,8 @@ struct Requests {
     set_target_locales: SetTargetLocalesRequest,
     close: CloseProjectRequest,
     changes: changes::ChangesRequest,
+    backup: project_backup::BackupProjectRequest,
+    restore: project_backup::RestoreProjectRequest,
 }
 #[derive(JsonSchema)]
 #[schemars(rename_all = "camelCase")]
@@ -25,6 +27,8 @@ struct Responses {
     error: CommandError,
     changes: changes::ProjectChanges,
     notification: changes::ChangeNotification,
+    backup: project_backup::BackupProjectView,
+    restore: project_backup::RestoreProjectView,
 }
 
 #[derive(JsonSchema)]

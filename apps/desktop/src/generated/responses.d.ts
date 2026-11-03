@@ -121,12 +121,17 @@ export type NotificationKind = "change" | "progress" | "resync";
 export type ReconciliationState = "settled" | "committed" | "previous";
 
 export interface Responses {
+  backup: BackupProjectView;
   changes: ProjectChanges;
   close: CloseProjectView;
   error: CommandError;
   metadataMutation: MetadataMutationView;
   notification: ChangeNotification;
   projectView: ProjectView;
+  restore: RestoreProjectView;
+}
+export interface BackupProjectView {
+  saved: boolean;
 }
 export interface ProjectChanges {
   epoch: ExecutionId;
@@ -203,4 +208,7 @@ export interface ProjectView {
   metadata: ProjectMetadataView;
   reconciliationState: ReconciliationState;
   sessionToken: string;
+}
+export interface RestoreProjectView {
+  project: ProjectView | null;
 }

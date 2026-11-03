@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { validateResponseBackup, validateResponseRestore } from "./generated/validators";
 import contract from "../test/fixtures/projectCommands.contract.json";
 import type {
   AddTargetLocaleRequest,
@@ -68,6 +69,15 @@ describe("project command wire contract", () => {
       recoveryGuidance: "reconcile-original",
       diagnosticId: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
     });
+  });
+
+  it("distinguishes cancellation from an invalid or incomplete backup or restore response", () => {
+    expect(validateResponseBackup({ saved: false })).toBe(true);
+    expect(validateResponseBackup({ saved: true })).toBe(true);
+    expect(validateResponseBackup({})).toBe(false);
+    expect(validateResponseRestore({ project: null })).toBe(true);
+    expect(validateResponseRestore({ project: responses.projectView })).toBe(true);
+    expect(validateResponseRestore({ project: { locator: responses.projectView.locator } })).toBe(false);
   });
 
   it("uses camelCase wire names and decimal revision strings", () => {

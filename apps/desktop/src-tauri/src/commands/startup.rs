@@ -44,6 +44,7 @@ impl Default for StartupSession {
     fn default() -> Self { Self { epoch: ExecutionId::new(), picker: None, drop: None, chosen: None, handoff: None } }
 }
 impl StartupSession {
+    pub(super) fn epoch(&self) -> ExecutionId { self.epoch }
     pub(super) fn retire(&mut self) { *self = Self::default(); }
     pub(super) fn created(&mut self, project: &ProjectView) {
         let chosen = self.chosen.take(); self.retire();

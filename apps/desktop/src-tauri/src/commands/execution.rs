@@ -18,6 +18,7 @@ macro_rules! handlers {
     ($($extra:path),*) => { tauri::generate_handler![
         super::changes::read_project_changes, super::create_project,super::open_project,super::read_project,super::rename_project,
         decisions::read_decision_page,
+        super::project_backup::backup_project,super::project_backup::restore_project,
         super::add_target_locale,super::set_target_locales,super::close_project,
         super::startup::select_startup_source_directory,super::startup::select_dropped_startup_source_directory,
         super::startup::read_startup_source_preflight,super::startup::claim_startup_source_directory,

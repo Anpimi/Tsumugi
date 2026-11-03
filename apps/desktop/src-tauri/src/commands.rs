@@ -16,6 +16,7 @@ pub(crate) mod mcp;
 mod mcp_retrieval;
 mod native_directory;
 mod plugins;
+mod project_backup;
 mod source_hooks;
 mod startup;
 

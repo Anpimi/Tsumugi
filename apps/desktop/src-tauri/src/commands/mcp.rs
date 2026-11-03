@@ -314,6 +314,10 @@ impl Shares {
             Self::refresh(s);
         }
     }
+    pub(super) fn active(&self) -> bool {
+        self.current.as_ref().and_then(|share| share.control.as_ref())
+            .is_some_and(|control| !control.drained())
+    }
     pub(super) fn close_and_check(&mut self) -> Result<(), CommandError> {
         self.close();
         self.retire();
