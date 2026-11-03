@@ -218,7 +218,7 @@ fn current_release_process_termination_has_original_or_complete_committed_state(
 }
 
 #[test]
-fn current_failed_delivery_preserves_release_receipts_and_complete_snapshot() {
+fn project_backup_restores_current_release_receipts_and_complete_snapshot() {
     let (temp, mut store, action) = review::tests::current_release_fixture(false);
     let path = store.directory().to_path_buf();
     let id = release(&mut store, &action);
@@ -228,6 +228,9 @@ fn current_failed_delivery_preserves_release_receipts_and_complete_snapshot() {
     let pending = store
         .begin_delivery(action_id, id, "isolated-export", false)
         .unwrap();
+    let backup_path = temp.path().join("committed.backup");
+    assert_eq!(store.backup_to(&backup_path).unwrap_err().code(), PersistenceErrorCode::Busy);
+    assert!(!backup_path.exists());
     let mut failed = pending.files;
     failed[0].state = DeliveryFileState::Failed;
     let receipt = store.finish_delivery(action_id, failed).unwrap();
@@ -259,15 +262,22 @@ fn current_failed_delivery_preserves_release_receipts_and_complete_snapshot() {
     assert_eq!(store.release_view(id).unwrap(), original_release);
     assert_eq!(store.release_artifact(id, "zh-CN").unwrap().1, bytes);
     let all_facts = facts(store.connection().unwrap());
-    let backup_path =
-        write_schema_snapshot(store.connection().unwrap(), temp.path(), SCHEMA_VERSION).unwrap();
-    let backup =
-        Connection::open_with_flags(backup_path, OpenFlags::SQLITE_OPEN_READ_ONLY).unwrap();
-    backup.pragma_update(None, "foreign_keys", true).unwrap();
-    // Restore input chunks with the same connection-local reader as ProjectStore::open.
-    ledger::register_input_reader(&backup).unwrap();
-    validate_schema_shape(&backup).unwrap();
-    assert_eq!(facts(&backup), all_facts);
+    store.backup_to(&backup_path).unwrap();
+    assert_eq!(store.backup_to(&backup_path).unwrap_err().code(), PersistenceErrorCode::DestinationConflict);
+    let restored_path = temp.path().join("restored");
+    assert_eq!(ProjectStore::restore_backup(&backup_path, &path).unwrap_err().code(), PersistenceErrorCode::DestinationConflict);
+    ProjectStore::restore_backup(&backup_path, &restored_path).unwrap();
+    let mut restored = ProjectStore::open(&restored_path).unwrap();
+    assert_eq!(facts(restored.connection().unwrap()), all_facts);
+    let original = restored.metadata().unwrap();
+    restored.rename(original.metadata_revision(), "Recovered project").unwrap();
+    restored.close().unwrap();
+    let restored = ProjectStore::open(&restored_path).unwrap();
+    assert_eq!(restored.metadata().unwrap().display_name(), "Recovered project");
+    assert_eq!(restored.metadata().unwrap().project_id(), original.project_id());
+    assert_eq!(store.metadata().unwrap(), original);
+    let backup = Connection::open_with_flags(&backup_path, OpenFlags::SQLITE_OPEN_READ_ONLY).unwrap();
+    assert_eq!(read_metadata_from(&backup).unwrap(), original);
     store.close().unwrap();
     let mut reopened = ProjectStore::open(&path).unwrap();
     assert_current(&reopened);
@@ -279,6 +289,26 @@ fn current_failed_delivery_preserves_release_receipts_and_complete_snapshot() {
         saved
     );
     assert_eq!(facts(reopened.connection().unwrap()), all_facts);
+}
+
+#[test]
+fn project_backup_refuses_unresolved_delivery_and_invalid_restore_without_publishing() {
+    let (temp, mut store, action) = review::tests::current_release_fixture(false);
+    let id = release(&mut store, &action);
+    let pending = store.begin_delivery(ExecutionId::new(), id, "isolated-export", false).unwrap();
+    let mut files = pending.files;
+    files[0].state = DeliveryFileState::Unknown;
+    assert_eq!(store.finish_delivery(pending.action_id, files).unwrap().state, DeliveryState::Unknown);
+    let backup = temp.path().join("refused.backup");
+    assert_eq!(store.backup_to(&backup).unwrap_err().code(), PersistenceErrorCode::OutcomeUnknown);
+    assert!(!backup.exists());
+
+    let invalid = temp.path().join("invalid.backup");
+    fs::write(&invalid, b"not a project database").unwrap();
+    let restored = temp.path().join("not-restored");
+    assert_eq!(ProjectStore::restore_backup(&invalid, &restored).unwrap_err().code(), PersistenceErrorCode::CorruptProject);
+    assert!(!restored.exists());
+    assert_eq!(fs::read(invalid).unwrap(), b"not a project database");
 }
 
 #[test]

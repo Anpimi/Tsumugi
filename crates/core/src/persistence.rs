@@ -34,6 +34,7 @@ pub(crate) mod ledger;
 pub mod model_connections;
 mod plugin_execution;
 mod release;
+mod project_backup;
 mod resources;
 mod review;
 mod translation;
@@ -1059,7 +1060,7 @@ fn validate_existing_connection(
             OpenFlags::SQLITE_OPEN_READ_ONLY,
         )
         .map_err(|error| map_sqlite(error, PersistenceStage::Open))?;
-        write_schema_snapshot(&source, directory, user_version)?;
+        project_backup::write_schema_snapshot(&source, directory, user_version)?;
         drop(source);
         #[cfg(test)]
         migration_crash_hook("conversation-before-ddl");
@@ -1132,49 +1133,6 @@ fn validate_existing_connection(
         .map_err(|error| map_sqlite(error, PersistenceStage::Open))
 }
 
-fn write_schema_snapshot(
-    connection: &Connection,
-    directory: &Path,
-    version: i64,
-) -> Result<PathBuf, PersistenceError> {
-    let stage = PersistenceStage::Open;
-    let temporary = tempfile::Builder::new()
-        .prefix(".project-snapshot-")
-        .tempfile_in(directory)
-        .map_err(|error| map_io(error, stage))?;
-    connection
-        .backup(rusqlite::MAIN_DB, temporary.path(), None)
-        .map_err(|error| map_sqlite(error, stage))?;
-
-    let backup = Connection::open_with_flags(temporary.path(), OpenFlags::SQLITE_OPEN_READ_ONLY)
-        .map_err(|error| map_sqlite(error, stage))?;
-    let backup_version: i64 = backup
-        .pragma_query_value(None, "user_version", |row| row.get(0))
-        .map_err(|error| map_sqlite(error, stage))?;
-    let application_id: i64 = backup
-        .pragma_query_value(None, "application_id", |row| row.get(0))
-        .map_err(|error| map_sqlite(error, stage))?;
-    let check: String = backup
-        .query_row("PRAGMA quick_check", [], |row| row.get(0))
-        .map_err(|error| map_sqlite(error, stage))?;
-    if backup_version != version || application_id != APPLICATION_ID || check != "ok" {
-        return Err(PersistenceError::CorruptProject { stage });
-    }
-    drop(backup);
-    temporary.as_file().sync_all().map_err(|error| map_io(error, stage))?;
-    let path = directory.join(format!(
-        "{DATABASE_FILENAME}.pre-v{version}-{}.backup",
-        uuid::Uuid::new_v4()
-    ));
-    temporary
-        .persist_noclobber(&path)
-        .map_err(|error| map_io(error.error, stage))?;
-    #[cfg(unix)]
-    File::open(directory)
-        .and_then(|directory| directory.sync_all())
-        .map_err(|error| map_io(error, stage))?;
-    Ok(path)
-}
 
 fn validate_schema_shape(connection: &Connection) -> Result<(), PersistenceError> {
     validate_schema_shape_version(connection, SCHEMA_VERSION)
