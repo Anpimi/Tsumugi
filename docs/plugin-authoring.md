@@ -181,7 +181,7 @@ Hello
 ```
 
 In your project:
-1. Confirm the project source language and select **Choose source folder → Check source files** to capture a read-only snapshot of the input files.
+1. Choose the source folder and confirm the project source language to capture a read-only snapshot of the input files. Use **Check source files** to retry capture when needed.
 2. Click **Import for preview** and consent to run the extractor.
 3. Review the extracted entries, run the independent source checker (which requires its own execution consent), and apply the verified snapshot to adopt the source entries into your project without modifying the external files on disk.
 

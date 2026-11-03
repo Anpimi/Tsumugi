@@ -74,12 +74,38 @@ export default function SourcePreparationSheet({ project, owner, open, disabled,
   const choices = inventory.data?.choices ?? [], environments = inventory.data?.environments ?? [];
   const choiceKey = state.source ? `${state.source.package.packageDigest}:${state.source.resourceId}` : state.domain;
   const choice = choices.find(choice => choice.key === choiceKey), runtimes = matchingPluginEnvironments(environments, choice?.runtimeKinds ?? []);
-  const current = () => open && !disabled && !reads.retired && gate.canDispatch({ viewId, source: "button", dialogId });
+  const presentation = useRef({ open, disabled, historyOnly, viewId });
+  useLayoutEffect(() => {
+    presentation.current = { open, disabled, historyOnly, viewId };
+    return () => { presentation.current.open = false; };
+  }, [open, disabled, historyOnly, viewId]);
+  const current = () => presentation.current.open && !presentation.current.disabled && presentation.current.viewId === viewId && !reads.retired
+    && gate.canDispatch({ viewId: presentation.current.viewId, source: "button", dialogId });
+  const producerStartedHere = useRef<{ attemptId: string; viewId: string | null } | null>(null);
+  useEffect(() => {
+    if (!open || historyOnly) producerStartedHere.current = null;
+  }, [open, historyOnly]);
   const readOnly = disabled || owner.journal.hydration !== "ready" || owner.journal.retired;
   const configurationLocked = readOnly || owner.inFlight() || owner.hasPending() || !!state.attempt || !!Object.keys(state.lineage).length || state.actor !== "";
   function fresh(key: readonly unknown[]) { const value = reads.client.getQueryState(reads.key(key)); return value?.status === "success" && value.fetchStatus === "idle" && !value.isInvalidated && value.error === null; }
   const environment = state.source && source.data && !source.error && sameSourceEnvironment(source.data, state.source) ? source.data : null;
-  const canPrepare = current() && !owner.blocked() && !!environment && fresh(sourceOptions.key) && fresh(inventoryOptions.key);
+  const currentPreparation = () => current() && !presentation.current.historyOnly && fresh(sourceOptions.key) && fresh(inventoryOptions.key);
+  const canPrepare = currentPreparation() && !owner.blocked() && !!environment;
+  const checkProposal = state.attempt && item?.resultId && item.status.execution === "succeeded" && item.status.validation !== "valid"
+    ? { attemptId: state.attempt, resultId: item.resultId } : null;
+  const canPrepareCheck = !!checkProposal && canPrepare && !state.checkReview && !state.checkAttempt
+    && !owner.hasPending() && !owner.inFlight() && fresh(["source-attempt", state.attempt, 0, 100]);
+  const readyCheckAttempt = canPrepareCheck ? checkProposal.attemptId : null;
+  const readyCheckResult = canPrepareCheck ? checkProposal.resultId : null;
+  useEffect(() => {
+    if (!readyCheckAttempt || !readyCheckResult || producerStartedHere.current?.attemptId !== readyCheckAttempt || producerStartedHere.current.viewId !== viewId || !currentPreparation()
+      || owner.current().checkPrepareRequest || owner.current().preparationExpired) return;
+    producerStartedHere.current = null;
+    void owner.prepareCheck({ attemptId: readyCheckAttempt, resultId: readyCheckResult }, currentPreparation);
+  });
+  const phase = state.attempt ? item?.status.validation === "valid" ? "phaseApply"
+    : state.checkAttempt ? "phaseChecking" : state.checkReview ? "phaseCheckerReview" : "phaseExtract"
+    : state.preflight ? "phaseProducerReview" : "phaseCapture";
   useEffect(() => {
     if (!open || target?.kind !== "compare-source-mapping" || owner.journal.hydration !== "ready") return;
     if (owner.current().attempt === target.attemptId) { setTargetBlocked(false); return; }
@@ -98,6 +124,7 @@ export default function SourcePreparationSheet({ project, owner, open, disabled,
       onCompositionStart={() => gate.setComposing(inputId, true)} onCompositionEnd={() => gate.setComposing(inputId, false)}>
       <SourceDraftRecovery owner={owner} disabled={disabled} onRevealCorrection={(snapshotId, ordinal) => setCorrectionLocation({ snapshotId, ordinal })}/>
       {!historyOnly ? <>
+      <p role="status">{t(phase)}</p>
       <TaskCancellationFeedback origin="source" taskId={detail.data?.taskId} disabled={disabled} visible={open}/>
       {targetBlocked ? <Banner tone="warning">{t("targetBlocked")}</Banner> : null}
       {drop ? <Banner>{t("droppedFolder", { folder: drop.folderName })}</Banner> : null}
@@ -118,9 +145,15 @@ export default function SourcePreparationSheet({ project, owner, open, disabled,
         if (ticket) void owner.selectDropped(ticket); else void owner.select(); }}>{t(drop ? "useDroppedFolder" : "chooseFolder")}</Button>
       {state.selection || state.preflight ? <>
         <p>{state.selection?.folderName ?? state.selectionLabel}</p>
-        <Field label={old("source.language", { language: project.metadata.sourceLocale })}><input type="checkbox" checked={state.declared} disabled={configurationLocked}
-          onChange={event => { if (current()) owner.declare(event.target.checked); }}/></Field>
-        {state.selection ? <Button disabled={!canPrepare || !state.declared || configurationLocked} onClick={() => { if (current()) void owner.preflight(current); }}>{old("source.preflight")}</Button> : null}
+        <Field label={old("source.language", { language: project.metadata.sourceLocale })}><input type="checkbox" checked={state.declared} disabled={configurationLocked || !canPrepare}
+          onChange={event => {
+            if (!current() || !canPrepare) return;
+            const declared = event.target.checked;
+            owner.declare(declared);
+            if (declared) void owner.preflight(currentPreparation);
+          }}/></Field>
+        {state.selection && state.declared && !state.preflight ? <Button disabled={!canPrepare || configurationLocked}
+          onClick={() => { if (current()) void owner.preflight(currentPreparation); }}>{old("source.preflight")}</Button> : null}
       </> : null}
       {state.preflight ? <section className={styles.body} aria-label={t("capturedInput")}>
         <p>{state.preflight.source.extractor.provider.plugin.id} {state.preflight.source.extractor.provider.plugin.version}</p>
@@ -130,7 +163,11 @@ export default function SourcePreparationSheet({ project, owner, open, disabled,
         <Field label={old("sourcePlugin.producerConsent")}><input type="checkbox" checked={state.producerConsent === state.preflight.inputDigest} disabled={configurationLocked}
           onChange={event => { if (current()) owner.consentProducer(event.target.checked); }}/></Field>
         <Button variant="primary" disabled={!canPrepare || configurationLocked || state.producerConsent !== state.preflight.inputDigest}
-          onClick={() => { if (current()) void owner.start(current); }}>{old("source.start")}</Button>
+          onClick={() => {
+            if (!current()) return;
+            producerStartedHere.current = { attemptId: state.preflight!.attemptId, viewId };
+            void owner.start(currentPreparation);
+          }}>{old("source.start")}</Button>
       </section> : null}
       {state.attempt ? <section className={styles.body} aria-label={t("extraction")}>
         <h2>{t("extraction")}</h2>{detail.isFetching ? <LoadingState label={t("readingTask")}/> : null}
@@ -140,7 +177,8 @@ export default function SourcePreparationSheet({ project, owner, open, disabled,
         {detail.data && item && (item.status.execution === "queued" || item.status.execution === "dispatched") ? <Button disabled={!current() || owner.hasPending()}
           onClick={() => { if (current()) void owner.cancelTask(detail.data!.taskId, current, detail.data!.attemptId); }}>{t("stopTask")}</Button> : null}
         {item?.resultId && item.status.execution === "succeeded" && item.status.validation !== "valid" ? <>
-          <p>{t("checkHelp")}</p><Button disabled={!canPrepare || owner.hasPending() || owner.inFlight()} onClick={() => { if (current()) void owner.prepareCheck({ attemptId: state.attempt!, resultId: item.resultId! }, current); }}>{t("prepareCheck")}</Button>
+          <p>{t("checkHelp")}</p>{!state.checkReview && !state.checkAttempt ? <Button variant="primary" disabled={!canPrepareCheck}
+            onClick={() => { if (current() && checkProposal) void owner.prepareCheck(checkProposal, currentPreparation); }}>{t("prepareCheck")}</Button> : null}
           {state.checkReview ? <><p>{state.checkReview.source.checker.provider.plugin.id} {state.checkReview.source.checker.provider.plugin.version}</p>
             <p>{old("sourcePlugin.rules", { count: state.checkReview.rules.length })}</p><PluginPermissions permissions={state.checkReview.source.checker.declaration.permissions}/><p>{old("sourcePlugin.unsandboxed")}</p>
             <Field label={old("sourcePlugin.checkerConsent")}><input type="checkbox" checked={state.checkerConsent === state.checkReview.inputDigest} disabled={readOnly || owner.inFlight() || owner.hasPending()}

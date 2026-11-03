@@ -14,8 +14,8 @@ import type { CommandError, ProjectView } from "../../../projectCommands";
 import { renderWorkbench, refreshWorkbenchReads } from "../../../testSupport/WorkbenchTestShell";
 import { installSourceDraftFixture } from "../../../testSupport/sourceDraftFixture";
 import { sourceDraftStateFixture } from "../../../testSupport/sourceDraftStateFixture";
-import { sourcePageFixture, sourceRowFixture } from "../../../testSupport/sourceFixture";
-import { pluginSourceInventory, pluginSourcePackage, pluginSourceRequest, pluginSourceView } from "../../../testSupport/pluginSourceFixture";
+import { sourceAttemptFixture, sourcePageFixture, sourceRowFixture } from "../../../testSupport/sourceFixture";
+import { pluginSourceInventory, pluginSourcePackage, pluginSourceRequest, pluginSourceView, pluginSourceWorkflow } from "../../../testSupport/pluginSourceFixture";
 import { fixtureIdentity as id } from "../../../testSupport/executionFixture";
 import { InteractionGate } from "../../workspace/interactionGate";
 import wire from "../../../../test/fixtures/sourceCommands.contract.json";
@@ -45,6 +45,57 @@ beforeEach(async () => {
   vi.spyOn(sourceCommands, "lineage").mockResolvedValue([]);
   vi.spyOn(translationCommands, "history").mockResolvedValue({ unitId: row.unitId!, locale: "zh-CN", current: null,
     currentText: null, total: "0", rows: [], nextOrdinal: null });
+});
+
+it("captures after language confirmation and prepares the independent check without granting either execution role", async () => {
+  const resultId = id(2170);
+  let nextIdentity = 2171;
+  invoke.mockImplementation(async (command, { request }) => {
+    if (command === "read_plugin_inventory") return pluginSourceInventory;
+    if (command === "read_plugin_package") return pluginSourcePackage;
+    if (command === "read_plugin_source") return pluginSourceView;
+    if (command === "select_plugin_source") return pluginSourceWorkflow.selection;
+    if (command === "create_execution_identity") return id(nextIdentity++);
+    if (command === "preflight_plugin_source") return { ...pluginSourceWorkflow.preflight, attemptId: request.attemptId, sourceLanguage: "en" };
+    if (command === "start_plugin_source") return request.attemptId;
+    if (command === "read_execution_attempt") {
+      const detail = sourceAttemptFixture(request.attemptId, resultId);
+      detail.items[0].status.validation = "pending";
+      return detail;
+    }
+    if (command === "prepare_source_check") return { ...pluginSourceWorkflow.checkReview, attemptId: request.attemptId,
+      sourceAttemptId: request.sourceAttemptId, sourceResultId: request.sourceResultId };
+    throw new Error(`Unexpected source flow command: ${command}`);
+  });
+  installSourceDraftFixture();
+  renderWorkbench(<Harness saved={null}/>, project);
+  const user = userEvent.setup(), calls = (command: string) => invoke.mock.calls.filter(([name]) => name === command);
+  const importer = await screen.findByRole("combobox", { name: i18n.t("source.integration") });
+  await waitFor(() => expect(importer).toBeEnabled());
+  await user.selectOptions(importer, `${pluginSourceRequest.package.packageDigest}:${pluginSourceRequest.resourceId}`);
+  await user.selectOptions(screen.getByRole("combobox", { name: i18n.t("sourcePlugin.runtime") }), pluginSourceRequest.environmentDigest);
+  const folder = screen.getByRole("button", { name: i18n.t("sourceMaintenance.chooseFolder") });
+  await waitFor(() => expect(folder).toBeEnabled());
+  await user.click(folder);
+  const language = await screen.findByRole("checkbox", { name: i18n.t("source.language", { language: "en" }) });
+  await waitFor(() => expect(language).toBeEnabled());
+  expect(calls("preflight_plugin_source")).toHaveLength(0);
+  await user.click(language);
+  const review = await screen.findByRole("region", { name: i18n.t("sourceMaintenance.capturedInput") });
+  expect(calls("preflight_plugin_source")).toHaveLength(1);
+  const start = within(review).getByRole("button", { name: i18n.t("source.start") });
+  expect(start).toBeDisabled();
+  expect(calls("start_plugin_source")).toHaveLength(0);
+  const consent = within(review).getByRole("checkbox", { name: i18n.t("sourcePlugin.producerConsent") });
+  await waitFor(() => expect(consent).toBeEnabled());
+  await user.click(consent);
+  await user.click(start);
+  await waitFor(() => expect(calls("prepare_source_check")).toHaveLength(1));
+  expect(calls("prepare_source_check")[0][1].request).toMatchObject({ sourceAttemptId: calls("start_plugin_source")[0][1].request.attemptId, sourceResultId: resultId });
+  expect(await screen.findByText(i18n.t("sourceMaintenance.phaseCheckerReview"))).toBeVisible();
+  expect(screen.getByRole("button", { name: i18n.t("sourceMaintenance.startCheck") })).toBeDisabled();
+  expect(calls("start_source_check")).toHaveLength(0);
+  expect(calls("adopt_execution")).toHaveLength(0);
 });
 
 async function restoreCorrectionForNavigation() {

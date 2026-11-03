@@ -12,6 +12,7 @@ Current workspace version metadata: **`0.2.0-alpha.1`**. Because the published `
 
 ### Added
 
+- Source import shows the current stage, captures files after language confirmation, and prepares the independent check after extraction in the same sheet. Extraction, checker execution, and final adoption each keep explicit confirmation.
 - From an entry, ask the assistant to explain or revise its selected saved translation. Review the source, saved translation and sharing settings before sending. Unconfirmed editor changes stay local. Save a revision suggestion as a candidate, recover the original save, and compare it with the current translation. Suggestions based on an earlier source or saved selection remain readable for comparison, including with the original saved translation when the current entry is unavailable.
 - Team members can read short excerpts of cited translation revisions and source text to fit relevant evidence into a model request. Excerpts identify the original evidence, byte position and next available position.
 - Questions now save and prepare their own message through one primary action, with explicit material review before sending and a separate save-only option. Reviewed work plans offer **Confirm and start**, preserving original confirmation and start receipts for recovery; newer input, composition and focus remain protected.
