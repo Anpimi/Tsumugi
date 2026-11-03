@@ -56,6 +56,9 @@ impl ApplicationPlugins {
             })
             .is_ok()
         });
+        if !self.open.load(Ordering::Acquire) {
+            return Err(map_store_error(InstallError::AuthorityRevoked));
+        }
         Ok(if present {
             MemberArtifactAvailability::Available
         } else {
@@ -186,10 +189,17 @@ mod tests {
             owner.inventory().unwrap().member_artifact_availability,
             MemberArtifactAvailability::ResourcesUnavailable
         );
+        std::fs::write(
+            artifact.join("manifest.json"),
+            serde_json::to_vec(&member_manifest()).unwrap(),
+        )
+        .unwrap();
         std::fs::remove_file(artifact.join("worker.mjs")).unwrap();
         assert_eq!(
             owner.inventory().unwrap().member_artifact_availability,
             MemberArtifactAvailability::ResourcesUnavailable
         );
+        owner.open.store(false, Ordering::Release);
+        assert!(owner.member_artifact_availability().is_err());
     }
 }
