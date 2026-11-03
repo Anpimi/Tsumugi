@@ -2,6 +2,7 @@ import { useLayoutEffect } from "react";
 import { act, cleanup, fireEvent, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
+import { pluginInventoryReadKey, useApplicationQueryClient } from "../../../ApplicationReadProvider";
 import SourcePreparationSheet from "./SourcePreparationSheet";
 import { useSourceDraftSession } from "../../../SourceDraftSession";
 import { sourceCommands } from "../../../sourceCommands";
@@ -28,10 +29,10 @@ const project: ProjectView = { ...wire.session, locator: "/synthetic/source-hist
   metadata: { projectId: wire.session.projectId, displayName: "Source history", sourceLocale: "en", targetLocales: ["zh-CN"], metadataRevision: "1" } };
 const snapshotId = id(920), currentSnapshot = id(921), attemptB = id(922);
 const row = sourceRowFixture({ unitId: id(923), sourceRevisionId: id(924), occurrenceId: id(925) }, { key: "removed.entry", ordinal: 0, text: "Original {{name}} 世界" });
-let owner: ReturnType<typeof useSourceDraftSession>, gate: InteractionGate;
+let owner: ReturnType<typeof useSourceDraftSession>, applicationReads: ReturnType<typeof useApplicationQueryClient>, gate: InteractionGate;
 const onEntry = vi.fn(), onClose = vi.fn();
 function Harness({ saved = snapshotId, open = true }: { saved?: string | null; open?: boolean }) {
-  const value = useSourceDraftSession(); useLayoutEffect(() => { owner = value; });
+  const value = useSourceDraftSession(), client = useApplicationQueryClient(); useLayoutEffect(() => { owner = value; applicationReads = client; });
   return <SourcePreparationSheet project={project} owner={value} gate={gate} viewId="entries" open={open} disabled={false}
     onClose={onClose} onApplied={vi.fn()} onOpenEntry={onEntry} target={null} savedSnapshotId={saved}
     drop={null} dropFailure={null} onDropConsumed={vi.fn()}/>;
@@ -47,12 +48,13 @@ beforeEach(async () => {
     currentText: null, total: "0", rows: [], nextOrdinal: null });
 });
 
-it("captures after language confirmation and prepares the independent check without granting either execution role", async () => {
+it.each(["runtime", "package"] as const)("preserves the captured import and requires fresh consent after its %s disappears and returns", async unavailable => {
   const resultId = id(2170), checkerTask = id(2180);
   let checkerAttempt: string | null = null, cancelled = false;
   let nextIdentity = 2171;
+  let inventory = structuredClone(pluginSourceInventory);
   invoke.mockImplementation(async (command, { request }) => {
-    if (command === "read_plugin_inventory") return pluginSourceInventory;
+    if (command === "read_plugin_inventory") return inventory;
     if (command === "read_plugin_package") return pluginSourcePackage;
     if (command === "read_plugin_source") return pluginSourceView;
     if (command === "select_plugin_source") return pluginSourceWorkflow.selection;
@@ -100,6 +102,20 @@ it("captures after language confirmation and prepares the independent check with
   const consent = within(review).getByRole("checkbox", { name: i18n.t("sourcePlugin.producerConsent") });
   await waitFor(() => expect(consent).toBeEnabled());
   await user.click(consent);
+  expect(consent).toBeChecked();
+  const captured = owner.current().preflight;
+  inventory = { ...inventory, settingsRevision: "2", ...(unavailable === "runtime" ? { runtimeDecisions: [] } : { packageDecisions: [] }) };
+  act(() => { applicationReads.setQueryData(pluginInventoryReadKey, inventory); });
+  expect(await screen.findByText(i18n.t(unavailable === "runtime" ? "sourceMaintenance.selectedRuntimeUnavailable" : "sourceMaintenance.selectedPackageUnavailable"))).toBeVisible();
+  expect(start).toBeDisabled();
+  expect(consent).not.toBeChecked();
+  expect(owner.current().preflight).toEqual(captured);
+  expect(calls("start_plugin_source")).toHaveLength(0);
+  inventory = { ...pluginSourceInventory, settingsRevision: "3" };
+  act(() => { applicationReads.setQueryData(pluginInventoryReadKey, inventory); });
+  await waitFor(() => expect(consent).toBeEnabled());
+  expect(start).toBeDisabled();
+  await user.click(consent);
   await user.click(start);
   await waitFor(() => expect(calls("prepare_source_check")).toHaveLength(1));
   expect(calls("prepare_source_check")[0][1].request).toMatchObject({ sourceAttemptId: calls("start_plugin_source")[0][1].request.attemptId, sourceResultId: resultId });
@@ -140,7 +156,7 @@ async function restoreCorrectionForNavigation() {
   vi.mocked(translationCommands.history).mockImplementation(async request => ({ unitId: request.unitId, locale: request.locale,
     current: null, currentText: null, total: "0", rows: [], nextOrdinal: null }));
   vi.spyOn(sourceReads, "inventory").mockImplementation(refresh => ({ key: ["source-plugin-inventory", refresh], scopes: [],
-    read: async () => ({ choices: [], environments: [] }) }));
+    read: async () => ({ settingsRevision: "1", choices: [], environments: [] }) }));
   const inputs = sourceDraftStateFixture();
   inputs.source.actor = "Other import input B 人工";
   inputs.source.correctionDraft = { snapshotId: basis.snapshotId, ordinal: basis.ordinal,

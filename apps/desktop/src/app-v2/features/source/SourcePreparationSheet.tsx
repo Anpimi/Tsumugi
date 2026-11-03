@@ -5,6 +5,7 @@ import { Button } from "../../../design-system/Button";
 import { Field, Select } from "../../../design-system/Field";
 import { Banner, LoadingState } from "../../../design-system/Feedback";
 import { commandFailure, CommandFailureDetails, type CommandFailure } from "../../../CommandFailure";
+import { usePluginFacts } from "../../../ApplicationReadProvider";
 import { PluginPermissions } from "../../../PluginPermissions";
 import { matchingPluginEnvironments, pluginEnvironmentVersion } from "../../../pluginEnvironments";
 import { useSessionQuery, useSessionReads } from "../../../SessionReadProvider";
@@ -34,7 +35,7 @@ export default function SourcePreparationSheet({ project, owner, open, disabled,
   dropFailure: CommandFailure | null;
 }) {
   const { t } = useTranslation(undefined, { keyPrefix: "sourceMaintenance" }), { t: old } = useTranslation();
-  const reads = useSessionReads(), context = executionContext(project), dialogId = useId(), inputId = useId();
+  const reads = useSessionReads(), pluginFacts = usePluginFacts(), context = executionContext(project), dialogId = useId(), inputId = useId();
   const [inventoryRevision, setInventoryRevision] = useState(0), [targetBlocked, setTargetBlocked] = useState(false);
   const [correctionLocation, setCorrectionLocation] = useState<{ snapshotId: string; ordinal: number } | null>(null);
   const [discardFrame, setDiscardFrame] = useState<SourceDraftValue | null>(null), [discarding, setDiscarding] = useState(false), discardDialogId = useId();
@@ -89,7 +90,25 @@ export default function SourcePreparationSheet({ project, owner, open, disabled,
   const configurationLocked = readOnly || owner.inFlight() || owner.hasPending() || !!state.attempt || !!Object.keys(state.lineage).length || state.actor !== "";
   function fresh(key: readonly unknown[]) { const value = reads.client.getQueryState(reads.key(key)); return value?.status === "success" && value.fetchStatus === "idle" && !value.isInvalidated && value.error === null; }
   const environment = state.source && source.data && !source.error && sameSourceEnvironment(source.data, state.source) ? source.data : null;
-  const currentPreparation = () => current() && !presentation.current.historyOnly && fresh(sourceOptions.key) && fresh(inventoryOptions.key);
+  const appRevision = pluginFacts.state?.data?.settingsRevision;
+  const inventoryRevisionBehind = (latest: string | undefined, local: string | undefined) => latest !== undefined && local !== undefined && BigInt(latest) > BigInt(local);
+  const runtimeAvailable = !!state.source && runtimes.some(runtime => runtime.environmentDigest === state.source?.environmentDigest);
+  const unavailable = state.source && inventory.isSuccess && !inventory.isFetching && !inventoryRevisionBehind(appRevision, inventory.data.settingsRevision)
+    ? !choice ? "selectedPackageUnavailable" : !runtimeAvailable ? "selectedRuntimeUnavailable" : null : null;
+  const refreshedRevision = useRef<string | undefined>(undefined);
+  useEffect(() => {
+    if (!open || historyOnly || !appRevision || refreshedRevision.current === appRevision
+      || !inventoryRevisionBehind(appRevision, inventory.data?.settingsRevision)) return;
+    refreshedRevision.current = appRevision;
+    void inventory.refetch();
+    if (state.source) void source.refetch();
+  });
+  useLayoutEffect(() => {
+    if (open && !historyOnly && (unavailable || source.isError)) owner.invalidateExecutionConsent();
+  }, [open, historyOnly, unavailable, source.isError, owner.invalidateExecutionConsent]);
+  const currentPreparation = () => current() && !presentation.current.historyOnly && !pluginFacts.reserved()
+    && !inventoryRevisionBehind(pluginFacts.current()?.settingsRevision, reads.client.getQueryData<typeof inventory.data>(reads.key(inventoryOptions.key))?.settingsRevision)
+    && !unavailable && fresh(sourceOptions.key) && fresh(inventoryOptions.key);
   const canPrepare = currentPreparation() && !owner.blocked() && !!environment;
   const checkProposal = state.attempt && item?.resultId && item.status.execution === "succeeded" && item.status.validation !== "valid"
     ? { attemptId: state.attempt, resultId: item.resultId } : null;
@@ -143,6 +162,7 @@ export default function SourcePreparationSheet({ project, owner, open, disabled,
         {runtimes.map(runtime => <option key={runtime.environmentDigest} value={runtime.environmentDigest}>{old(runtime.environment.profile === "node-system-libraries-v1" ? "sourcePlugin.runtimeOption" : "sourcePlugin.nativeRuntimeOption",
           { version: pluginEnvironmentVersion(runtime.environment), system: runtime.environment.platform.operatingSystem, architecture: runtime.environment.platform.architecture })}</option>)}
       </Select></Field>
+      {unavailable ? <Banner tone="warning" action={<Button size="sm" onClick={() => { void inventory.refetch(); void source.refetch(); }}>{t("retryRead")}</Button>}>{t(unavailable)}</Banner> : null}
       {source.error ? <Banner tone="error" action={<Button onClick={() => void source.refetch()}>{t("retryRead")}</Button>}>{t("importerUnavailable")}<CommandFailureDetails failure={commandFailure(source.error)}/></Banner> : null}
       {environment ? <><p>{environment.declaration.displayName}</p><ul>{environment.declaration.materials.map(file => <li key={file.logicalPath}>{old("sourcePlugin.material", { path: file.logicalPath, bytes: String(file.maxBytes) })}</li>)}</ul></> : null}
       <Button disabled={!canPrepare || configurationLocked} onClick={() => { if (!current()) return; const ticket = drop?.dropTicket; onDropConsumed();
@@ -164,7 +184,7 @@ export default function SourcePreparationSheet({ project, owner, open, disabled,
         <p>{old("sourcePlugin.captured", { count: state.preflight.files.length, language: state.preflight.sourceLanguage })}</p>
         <ul>{state.preflight.files.map(file => <li key={file.logicalPath}>{old("sourcePlugin.capturedFile", { path: file.logicalPath, bytes: String(file.byteLength) })}</li>)}</ul>
         <PluginPermissions permissions={state.preflight.source.extractor.declaration.permissions}/><p>{old("sourcePlugin.unsandboxed")}</p>
-        <Field label={old("sourcePlugin.producerConsent")}><input type="checkbox" checked={state.producerConsent === state.preflight.inputDigest} disabled={configurationLocked}
+        <Field label={old("sourcePlugin.producerConsent")}><input type="checkbox" checked={state.producerConsent === state.preflight.inputDigest} disabled={configurationLocked || !canPrepare}
           onChange={event => { if (current()) owner.consentProducer(event.target.checked); }}/></Field>
         <Button variant="primary" disabled={!canPrepare || configurationLocked || state.producerConsent !== state.preflight.inputDigest}
           onClick={() => {
@@ -185,10 +205,10 @@ export default function SourcePreparationSheet({ project, owner, open, disabled,
             onClick={() => { if (current() && checkProposal) void owner.prepareCheck(checkProposal, currentProposal); }}>{t("prepareCheck")}</Button> : null}
           {state.checkReview && !state.checkAttempt ? <><p>{state.checkReview.source.checker.provider.plugin.id} {state.checkReview.source.checker.provider.plugin.version}</p>
             <p>{old("sourcePlugin.rules", { count: state.checkReview.rules.length })}</p><PluginPermissions permissions={state.checkReview.source.checker.declaration.permissions}/><p>{old("sourcePlugin.unsandboxed")}</p>
-            <Field label={old("sourcePlugin.checkerConsent")}><input type="checkbox" checked={state.checkerConsent === state.checkReview.inputDigest} disabled={readOnly || owner.inFlight() || owner.hasPending()}
+            <Field label={old("sourcePlugin.checkerConsent")}><input type="checkbox" checked={state.checkerConsent === state.checkReview.inputDigest} disabled={!canPrepare || readOnly || owner.inFlight() || owner.hasPending()}
               onChange={event => { if (current()) owner.consentChecker(event.target.checked); }}/></Field>
-            <Button disabled={!current() || readOnly || owner.inFlight() || owner.hasPending() || state.checkerConsent !== state.checkReview.inputDigest}
-              onClick={() => { if (current()) void owner.startCheck(current); }}>{t("startCheck")}</Button></> : null}
+            <Button disabled={!canPrepare || readOnly || owner.inFlight() || owner.hasPending() || state.checkerConsent !== state.checkReview.inputDigest}
+              onClick={() => { if (current()) void owner.startCheck(currentPreparation); }}>{t("startCheck")}</Button></> : null}
         </> : null}
         {state.checkAttempt ? <><p>{t("independentCheck")}</p>{check.isFetching ? <LoadingState label={t("readingTask")}/> : null}
           {checked ? <p>{old(`execution.states.${checked.status.execution}`)}</p> : null}

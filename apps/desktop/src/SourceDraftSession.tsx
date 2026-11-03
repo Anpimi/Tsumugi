@@ -122,6 +122,7 @@ export interface SourceSession {
   hasPending: () => boolean;
   qualified: () => boolean;
   setSource: (source: PluginSourceRequest | null) => void;
+  invalidateExecutionConsent: () => void;
   consentProducer: (value: boolean) => void;
   consentChecker: (value: boolean) => void;
   setDomain: (domain: string) => void;
@@ -296,6 +297,11 @@ export function SourceDraftSession({ project, children }: { project: ProjectView
     basisVersion.current++;
     update(before => ({ ...before, source, selection: null, preflight: null, declared: false, confirmed: false,
       producerConsent: null, checkReview: null, checkerConsent: null, checkAttempt: null, failure: null }));
+  }
+  function invalidateExecutionConsent() {
+    if (!live() || (!current().producerConsent && !current().checkerConsent)) return;
+    basisVersion.current++;
+    update(before => ({ ...before, producerConsent: null, checkerConsent: null }));
   }
   function consentProducer(value: boolean) {
     if (!reserved() && current().preflight) update(before => ({ ...before, producerConsent: value ? before.preflight!.inputDigest : null }));
@@ -1032,7 +1038,7 @@ export function SourceDraftSession({ project, children }: { project: ProjectView
     closeCorrection: () => journal.flush(), discardCorrection,
     keepLocal: expected => { const conflict = journal.getSnapshot().conflict; return conflict ? journal.keepLocal(expected, conflict) : Promise.resolve(false); },
     draftValue: () => sourceDraftValue(inputs(), journal.sequence()), blocked, hasDraft, subscribe: journal.subscribe, getDecisionActivity: journal.getDecisionActivity, checkPending, readPreparation,
-    current, inFlight: () => !!flight.current, hasPending, qualified: () => identity.current?.qualified === true, setSource, consentProducer, consentChecker, setDomain, declare, edit, confirm,
+    current, inFlight: () => !!flight.current, hasPending, qualified: () => identity.current?.qualified === true, setSource, invalidateExecutionConsent, consentProducer, consentChecker, setDomain, declare, edit, confirm,
     select: () => select(), selectDropped: ticket => select(ticket), claimStartup, preflight, start, retryStart: async () => { const request = current().pendingStart; if (request && current().startRetryAllowed && originalStartPermission(request, false)) await run(() => dispatchStart(request, true), true); },
     checkStart: async () => { const request = current().pendingStart; if (request) await run(() => readStart(request, false), true); },
     checkPluginStart: async () => { const pending = current().pendingPlugin; if (pending?.pendingKind === "start-check") await run(() => readStart(pending.request, true), true); },
