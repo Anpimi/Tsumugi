@@ -1,6 +1,6 @@
 import { useId, useLayoutEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
-import { commandFailure, CommandFailureDetails, type CommandFailure } from "../../../CommandFailure";
+import { commandFailure, CommandFailureDetails, ProviderRequestCapacity, type CommandFailure } from "../../../CommandFailure";
 import type { DecisionItem } from "../../../generated/decisions.responses";
 import { languageName } from "../../../i18n/languageNames";
 import type { GlossaryEntry } from "../../../resourceCommands";
@@ -134,6 +134,7 @@ function ExecutionDetails({ view, item, blocked, openEntry }: { view: Extract<De
       <h3>{t(`decisionDetailsExecution.${status.execution}`)}</h3>
       <p>{t(`decisionDetailsValidation.${status.validation}`)}</p><p>{t(`decisionDetailsAdoption.${status.adoption}`)}</p>
       {status.cancellationRequested ? <Banner tone="warning">{t("decisionDetailsCancellation")}</Banner> : null}
+      <ProviderRequestCapacity reason={status.diagnostic}/>
       {status.diagnostic ? <TextBlock label={t("decisionDetailsDiagnostic")} text={status.diagnostic}/> : null}
       <p>{t(view.item.resultId === null ? "decisionDetailsNoResult" : "decisionDetailsHasResult")}</p>
       {view.output?.diagnostic ? <TextBlock label={t("decisionDetailsDiagnostic")} text={view.output.diagnostic.code}/> : null}

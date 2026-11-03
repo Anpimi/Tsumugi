@@ -27,6 +27,7 @@ it("keeps an unlinked original execution read-only and does not retry or clear i
   const raw: unknown = structuredClone(executionWire.detail);
   if (!validateResponseAttempt(raw) || !raw.items[0]) throw new Error("Expected original attempt");
   const original = raw.items[0]; original.resultId = null;
+  original.status.diagnostic = "provider-request-bytes:38497:32768";
   const context = executionWire.session;
   vi.spyOn(executionCommands, "attempt").mockResolvedValue(raw);
   const recover = vi.spyOn(executionCommands, "recover").mockRejectedValue(new Error("Opening a decision cannot retry execution"));
@@ -40,6 +41,7 @@ it("keeps an unlinked original execution read-only and does not retry or clear i
   const open = await screen.findByRole("button", { name: i18n.t("workbenchV2.decisionDetailsOpenExecution") });
   await waitFor(() => expect(open).toBeEnabled()); await userEvent.setup().click(open);
   expect(await screen.findByText(i18n.t("workbenchV2.decisionDetailsExecutionUnlinked"))).toBeVisible();
+  expect(screen.getByText(i18n.t("commandError.providerRequestBytes", { actual: "38497", limit: "32768" }))).toBeVisible();
   expect(screen.getByRole("region", { name: i18n.t("workbenchV2.decisionDetailsContent") })).toHaveFocus();
   expect(navigate).toHaveBeenCalledOnce(); expect(recover).not.toHaveBeenCalled(); expect(original.status.execution).toBe("unknown");
 });

@@ -3,7 +3,7 @@ import { Disclosure } from "../../../design-system/Disclosure";
 import { useId, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { useTranslation } from "react-i18next";
 import { AiOutputUsage } from "../../../AiUsage";
-import { commandFailure, CommandFailureDetails, type CommandFailure } from "../../../CommandFailure";
+import { commandFailure, CommandFailureDetails, ProviderRequestCapacity, type CommandFailure } from "../../../CommandFailure";
 import type { SessionRequest } from "../../../executionCommands";
 import { useSessionQuery, useSessionReads } from "../../../SessionReadProvider";
 import { workPlanCommands, type TeamDiscussionPost, type TeamExecutionView, type TeamMemberRole, type TeamWorkReference, type TeamToolHistoryAttempt, checkedTeamToolHistoryTask, type WorkPlanStatusView } from "../../../workPlanCommands";
@@ -11,7 +11,7 @@ import { Button } from "../../../design-system/Button";
 import { Banner, LoadingState } from "../../../design-system/Feedback";
 import { TokenizedText } from "../../../design-system/TokenizedText";
 import type { ConversationPlanLink } from "./conversationRun";
-import { conversationTeamCandidateTarget, readConversationTeamToolResults, readConversationTeamExecution, readConversationTeamHistory, readConversationTeamPost, type OpenConversationTeamCandidate } from "./conversationTeamReads";
+import { conversationTeamCandidateTarget, readConversationTeamFailure, readConversationTeamToolResults, readConversationTeamExecution, readConversationTeamHistory, readConversationTeamPost, type OpenConversationTeamCandidate } from "./conversationTeamReads";
 import styles from "./ConversationTeamProgress.module.css";
 import { ConversationText } from "./ConversationText";
 import { ConversationTeamFindings } from "./ConversationTeamFindings";
@@ -58,6 +58,26 @@ function PostCard({ post, roles, status, allowed, openPost, onReply, fullText = 
     {role ? <Disclosure title={<>{t("memberRole")}</>}><p className={styles.text}>{role.request.role}</p><p>{t("model")}: {role.config.model}</p><p>{t("roleVersion")}: <code>{role.request.roleVersionId}</code></p></Disclosure> : null}
     {post.publication.references.length ? <Disclosure title={<>{t("postReferences")}</>}><ul>{post.publication.references.map((reference, index) => <li key={index}><code>{reference.kind === "translation-revision" ? reference.revisionId : reference.resultId}</code></li>)}</ul></Disclosure> : null}
   </article>;
+}
+
+function TeamFailureDetails({ context, work, current }: {
+  context: SessionRequest; work: Work; current: () => boolean;
+}) {
+  const { t } = useTranslation(undefined, { keyPrefix: "conversationTeam" });
+  const [open, setOpen] = useState(false);
+  const read = useSessionQuery({
+    key: ["conversation-team-failure", work.receipt.attemptId, work.receipt.taskId],
+    scopes: ["execution", "project"],
+    enabled: open && current(),
+    read: () => readConversationTeamFailure(context, work),
+  });
+  return <Disclosure title={t("diagnostics")} onToggle={event => setOpen(event.currentTarget.open)}>
+    {open && current() ? <>
+      {read.isPending ? <p role="status">{t("loading")}</p> : null}
+      {read.error ? <ReadFailure label={t("failed")} error={read.error}/> : null}
+      {read.data ? <><ProviderRequestCapacity reason={read.data}/><code>{read.data}</code></> : null}
+    </> : null}
+  </Disclosure>;
 }
 
 /** The original work owns each tool reference; expanding it never runs a tool. */
@@ -269,6 +289,7 @@ function TeamRecords({ context, link, status, visible, canRead, onOpenCandidate,
               {candidate && onOpenCandidate ? <Button size="sm" disabled={!fresh || busyWork !== null} onClick={() => void openCandidate(work)}>{t(busyWork === work.receipt.intentId ? "openingCandidate" : "openCandidate")}</Button> : null}
             </div>
             {feedback?.intentId === work.receipt.intentId ? <Banner tone="warning" role="status"><p>{t("candidateChanged")}</p>{feedback.cause ? <CommandFailureDetails failure={feedback.cause}/> : null}</Banner> : null}
+            {work.execution === "failed" ? <TeamFailureDetails context={context} work={work} current={() => currentPage(page)}/> : null}
             {work.output ? <Disclosure title={<>{global("ai.usageDetails.title")}</>}><AiOutputUsage usage={work.output.usage} incomplete={work.output.usageIncomplete}/></Disclosure> : null}
             <ToolReferences context={context} status={status} frame={frame} work={{ taskId: work.receipt.taskId, attemptId: work.receipt.attemptId, inputDigest: work.receipt.inputDigest }} visible={visible} current={() => currentPage(page)}/>
           </article>;

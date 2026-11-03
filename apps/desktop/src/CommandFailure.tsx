@@ -16,16 +16,19 @@ export function failureReason(value: CommandFailure | null): string | null {
   return typeof value === "string" ? value : value?.code === "outcome-unknown" ? value.code : value?.reason ?? value?.field ?? value?.code ?? null;
 }
 
+export function ProviderRequestCapacity({ reason }: { reason: string | null }) {
+  const { t } = useTranslation();
+  const size = /^provider-request-bytes:([0-9]+):([0-9]+)$/.exec(reason ?? "");
+  return size ? <p>{t("commandError.providerRequestBytes", { actual: size[1], limit: size[2] })}</p> : null;
+}
+
 export function CommandFailureDetails({ failure }: { failure: CommandFailure | null }) {
   const { t } = useTranslation();
   if (!failure || typeof failure === "string") return null;
   const conflict = failure.conflict;
   const diagnostic = failure.reason ?? failure.field;
-  const capacity = failure.code === "limit-exceeded"
-    ? /^provider-request-bytes:([0-9]+):([0-9]+)$/.exec(failure.reason ?? "")
-    : null;
   return <>
-    {capacity ? <p>{t("commandError.providerRequestBytes", { actual: capacity[1], limit: capacity[2] })}</p> : null}
+    {failure.code === "limit-exceeded" ? <ProviderRequestCapacity reason={failure.reason ?? null}/> : null}
     {failure.recoveryGuidance ? <p>{t(`commandError.recovery.${failure.recoveryGuidance}`)}</p> : null}
     <details><summary>{t("execution.diagnostic")}</summary>
       {failure.diagnosticId ? <p>{t("commandError.diagnosticId")} <code>{failure.diagnosticId}</code></p> : null}

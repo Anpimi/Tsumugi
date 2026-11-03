@@ -86,11 +86,39 @@ async function expand() {
   await screen.findByRole("button", { name: t("openCandidate") });
 }
 function section(key: TextKey) { return screen.getByRole("region", { name: t(key) }); }
-const allowedReads = new Set(["read_work_plan_team_execution", "read_work_plan_team_history", "read_work_plan_team_post", "read_work_plan_team_work_tools"]);
+const allowedReads = new Set(["read_execution_attempt", "read_work_plan_team_execution", "read_work_plan_team_history", "read_work_plan_team_post", "read_work_plan_team_work_tools"]);
 beforeEach(async () => { invoke.mockReset(); await i18n.changeLanguage("en-US"); });
 afterEach(() => { vi.restoreAllMocks(); cleanup(); disposals.splice(0).forEach(dispose => dispose()); expect(invoke.mock.calls.every(([command]) => allowedReads.has(command))).toBe(true); });
 
 describe("conversation team records", () => {
+  it("reads the measured capacity failure from the original work on demand", async () => {
+    const h = harness();
+    h.unknown.execution = "failed";
+    const attempt = structuredClone(toolFixture.responses.attempt) as AttemptDetail;
+    attempt.taskId = h.unknown.receipt.taskId;
+    attempt.attemptId = h.unknown.receipt.attemptId;
+    attempt.recovery.attemptId = attempt.attemptId;
+    attempt.operation = "ai-team-work";
+    attempt.nextOffset = null;
+    attempt.items = [attempt.items[0]];
+    const row = attempt.items[0];
+    row.scope = { kind: "translation", id: h.unknown.target.unitId, locale: h.unknown.target.locale };
+    row.status.execution = "failed";
+    row.status.diagnostic = "provider-request-bytes:46352:32768";
+    invoke.mockImplementation(async (command: string, { request }: { request: ReadRequest }) =>
+      command === "read_execution_attempt" ? attempt : response(h, command, request));
+    await expand();
+    const summary = within(section("works")).getByText(t("diagnostics"));
+    expect(invoke.mock.calls.some(([command]) => command === "read_execution_attempt")).toBe(false);
+    const details = summary.closest("details")!;
+    details.open = true;
+    fireEvent(details, new Event("toggle"));
+    expect(await screen.findByText(i18n.t("commandError.providerRequestBytes", { actual: "46352", limit: "32768" }))).toBeVisible();
+    expect(invoke).toHaveBeenCalledWith("read_execution_attempt", expect.objectContaining({
+      request: expect.objectContaining({ attemptId: attempt.attemptId, offset: 0, limit: 1 }),
+    }));
+  });
+
   it.each([
     ["en-US", "Result unconfirmed", "Read records here. Use the run controls above to pause, stop or take over."],
     ["zh-CN", "结果待核对", "这里只回看记录。暂停、停止或接管请使用上方的运行控制。"],

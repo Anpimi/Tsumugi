@@ -631,6 +631,45 @@ fn pi_member_reads_published_artifact_indices_without_expanding_shared_source_sc
     published.finish(&item, "Publisher candidate");
     fixture.wait_saved_for(&publisher["attemptId"], Duration::from_secs(30));
     let before_reads = history(&fixture);
+    let parent_task = ExecutionId::parse(scope["parentTask"].as_str().unwrap()).unwrap();
+    let budget = || fixture.app.state::<AppState>().sessions.with(move |sessions| {
+        sessions.active.as_ref().unwrap().store.provider_budget(parent_task).unwrap().expect("root budget")
+    });
+    let before_overflow = budget();
+    let (_, overflow) = start_member(&fixture, &scope);
+    let first = peer.accept();
+    let (_, overflow_view) = shared_view(&first.body);
+    assert_eq!(overflow_view["posts"], json!([post]));
+    assert_capture(&fixture, &overflow, 0, &first, &overflow_view);
+    first.tool("read-cited-translation", "read_team_artifact",
+        json!({"postId":post_id,"referenceIndex":0}));
+    let deadline = Instant::now() + Duration::from_secs(30);
+    let overflow_status = loop {
+        let attempt = fixture.call("read_execution_attempt",
+            json!({"attemptId":overflow["attemptId"],"offset":0,"limit":1})).unwrap();
+        let item = &attempt["items"][0];
+        if item["status"]["execution"] == "failed" {
+            assert!(item["resultId"].is_string());
+            assert_eq!(item["status"]["adoption"], "unapplied");
+            break item["status"].clone();
+        }
+        assert!(Instant::now() < deadline, "capacity rejection was not recorded: {attempt}");
+        std::thread::sleep(Duration::from_millis(10));
+    };
+    let diagnostic = overflow_status["diagnostic"].as_str().unwrap();
+    let (actual, limit) = diagnostic.strip_prefix("provider-request-bytes:").unwrap()
+        .split_once(':').unwrap();
+    let actual: usize = actual.parse().unwrap();
+    let limit: usize = limit.parse().unwrap();
+    assert!(actual > limit);
+    assert_eq!(limit, 32768);
+    assert_eq!(captures(&fixture, &overflow).len(), 1);
+    assert!(matches!(peer.listener.accept(), Err(error)
+        if error.kind() == std::io::ErrorKind::WouldBlock));
+    let after_overflow = budget();
+    assert_eq!(after_overflow.dispatched, before_overflow.dispatched + 1);
+    assert_eq!(after_overflow.unresolved, before_overflow.unresolved);
+    assert_eq!(history(&fixture), before_reads);
 
     let (_, reader) = start_member(&fixture, &scope);
     let first = peer.accept();
@@ -664,8 +703,6 @@ fn pi_member_reads_published_artifact_indices_without_expanding_shared_source_sc
     full_read["artifact"]["text"] = json!(long_original);
     full_read.as_object_mut().unwrap().remove("excerpt");
     tool_message["content"] = json!(full_read.to_string());
-    let limit = tsumugi_core::ai::provider::ProviderProfile::compatible(&peer.config)
-        .unwrap().max_prompt_bytes;
     assert!(second.raw.len() <= limit);
     assert!(with_full_artifact.to_string().len() > limit);
 

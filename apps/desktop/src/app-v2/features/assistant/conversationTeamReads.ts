@@ -165,6 +165,17 @@ export async function resolveConversationTeamCandidate(context: SessionRequest, 
   return revision;
 }
 
+export async function readConversationTeamFailure(context: SessionRequest, work: TeamWorkView) {
+  const { attemptId, taskId } = work.receipt;
+  const detail = await executionCommands.attempt({ ...context, attemptId, offset: 0, limit: 1 });
+  const item = detail.items[0];
+  match(detail.attemptId === attemptId && detail.taskId === taskId
+    && detail.operation === "ai-team-work" && detail.items.length === 1 && detail.nextOffset === null
+    && item && item.scope.id === work.target.unitId && item.scope.locale === work.target.locale
+    && item.status.execution === "failed");
+  return item.status.diagnostic;
+}
+
 /** Inspect one page of an original recorded tool task. No scope or permit is recreated. */
 export async function readConversationTeamToolResults(context: SessionRequest, planId: string, work: import("../../../workPlanCommands").TeamWorkReference,
   row: import("../../../workPlanCommands").TeamToolHistoryAttempt, locale: string, offset: number, current: () => boolean) {
