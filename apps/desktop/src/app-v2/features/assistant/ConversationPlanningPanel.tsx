@@ -51,14 +51,14 @@ export function ConversationPlanningPanel({ owner, input, visible, disabled, gat
     if (visible && (document.activeElement === ticket.origin || document.activeElement === document.body))
       (ticket.preview && planning.prepared ? previewRegion.current : root.current)?.focus();
   }, [input.busy, input.journalBusy, planning.busy, planning.prepared, visible]);
-  const prepared = planning.prepared;
-  return <section ref={node => { root.current = node; if (reviewRegion) reviewRegion.current = node; }} tabIndex={-1} className={styles.planning} aria-label={t("askTitle")}
+  const prepared = planning.prepared, revision = planning.revision;
+  return <section ref={node => { root.current = node; if (reviewRegion) reviewRegion.current = node; }} tabIndex={-1} className={styles.planning} aria-label={t(revision ? "revisionPrepare" : "askTitle")}
     onFocusCapture={() => gate.setInputOwner(viewId, inputOwner)}
     onBlurCapture={event => { if (!event.currentTarget.contains(event.relatedTarget)) gate.releaseOwner(inputOwner); }}
     onCompositionStartCapture={() => gate.setComposing(inputOwner, true)} onCompositionEndCapture={() => gate.setComposing(inputOwner, false)}>
-    <h3>{t("askTitle")}</h3><p>{t(planning.selection ? "askEntriesHelp" : "askHelp")}</p>
+    <h3>{t(revision ? "revisionPrepare" : "askTitle")}</h3><p>{t(revision ? "revisionSavedOnly" : planning.selection ? "askEntriesHelp" : "askHelp")}</p>
     <p role="status">{t("askSelection", { count: planning.messageIds.length })}</p>
-    <section className={styles.range} aria-label={t("askRange")}>
+    {!revision ? <><section className={styles.range} aria-label={t("askRange")}>
       <p>{t(planning.selection ? "askFixedRange" : "askNoRange", { count: fixedCount, locale: fixedLocale })}</p>
       <div className={styles.actions}><Button size="sm" disabled={blocked || selectedCount === 0 || selectedCount > 100}
         onClick={() => { if (allowed()) owner.setPlanningSelection(conversationId, selection); }}>{t("askUseSelection", { count: selectedCount })}</Button>
@@ -75,6 +75,7 @@ export function ConversationPlanningPanel({ owner, input, visible, disabled, gat
         onChange={() => { if (allowed()) owner.setPlanningPurpose(conversationId, "terminology"); }}/><span>{t("askPurposeTerminology")}</span></label>
       <p>{t("askTerminologyHelp")}</p>{planning.purpose === "terminology" && fixedCount === 0 ? <p role="status">{t("askTerminologyNeedsEntries")}</p> : null}
     </fieldset>
+    </> : null}
     <fieldset className={styles.configuration} disabled={blocked}><legend>{t("askDestination")}</legend>
       <ModelConnectionPicker config={planning.config} label={global("connections.choose")} active={visible} disabled={blocked} editSeq={planning.sequence}
         onSelect={(view, profileId, sequence) => {
@@ -90,7 +91,7 @@ export function ConversationPlanningPanel({ owner, input, visible, disabled, gat
       <AiBudgetInputs config={planning.config} setConfig={change => owner.setPlanningConfig(conversationId, change)} fields={["maxOutputTokens", "timeoutSeconds"]} idPrefix={id}/>
       <p>{t(isChatGptSubscription(planning.config) ? "askSubscriptionBudget" : "askBudget", { tokens: planning.config.maxOutputTokens, seconds: planning.config.timeoutSeconds })}</p>
       <p>{t("askCost")}</p>
-      {planning.selection ? <>
+      {planning.selection || revision ? <>
         <label className={styles.check}><TextInput className={styles.checkbox} type="checkbox" checked={planning.config.shareTerms}
           onChange={event => owner.setPlanningConfig(conversationId, before => ({ ...before, shareTerms: event.target.checked }))}/><span>{global("ai.shareTerms")}</span></label>
         <label className={styles.check}><TextInput className={styles.checkbox} type="checkbox" checked={planning.config.shareContext}
@@ -103,11 +104,11 @@ export function ConversationPlanningPanel({ owner, input, visible, disabled, gat
     <Button size="sm" pending={planning.busy === "prepare"} disabled={blocked || !valid || !connectionCurrent || planning.messageIds.length === 0}
       onClick={event => { if (!allowed()) return; focus.current = { origin: event.currentTarget, preview: true }; void owner.preparePlanning(conversationId, current); }}>{t("askPrepare")}</Button>
     {prepared ? <section ref={previewRegion} tabIndex={-1} className={styles.preview} aria-label={t("askPreview")}>
-      <h4>{t("askPreview")}</h4><p>{t(prepared.preview.purpose === "terminology" ? "askPurposeTerminology" : prepared.preview.purpose === "knowledge" ? "askPurposeKnowledge" : "askPurposePlanning")}</p><p className={styles.text}>{prepared.preview.config.model} · {prepared.preview.config.endpoint}</p>
+      <h4>{t("askPreview")}</h4><p>{t(revision ? "revisionPrepare" : prepared.preview.purpose === "terminology" ? "askPurposeTerminology" : prepared.preview.purpose === "knowledge" ? "askPurposeKnowledge" : "askPurposePlanning")}</p><p className={styles.text}>{prepared.preview.config.model} · {prepared.preview.config.endpoint}</p>
       <p>{t(isChatGptSubscription(prepared.preview.config) ? "askSubscriptionBudget" : "askBudget", { tokens: prepared.preview.config.maxOutputTokens, seconds: prepared.preview.config.timeoutSeconds })}</p>
-      <p>{t(prepared.preview.scope.kind === "units" ? "askEntriesMaterialSummary" : "askMaterialSummary", {
+      <p>{t(revision ? "revisionMaterialSummary" : prepared.preview.scope.kind === "units" ? "askEntriesMaterialSummary" : "askMaterialSummary", {
         count: prepared.preview.selectedMessages.length, units: prepared.preview.brief.units,
-        locale: prepared.preview.scope.kind === "units" ? prepared.preview.scope.locale : "",
+        locale: revision?.basis.locale ?? (prepared.preview.scope.kind === "units" ? prepared.preview.scope.locale : ""),
       })}</p>
       {prepared.preview.scope.kind === "units" ? <>
         <p>{t("askSharedResources", { terms: prepared.preview.brief.terms, contexts: prepared.preview.brief.manualContexts,
@@ -117,10 +118,11 @@ export function ConversationPlanningPanel({ owner, input, visible, disabled, gat
       </> : null}
       {prepared.preview.selectedMessages.map(message => <div className={styles.previewMessage} key={message.messageId}><p className={styles.text}>{message.body}</p></div>)}
       {prepared.preview.units.map(unit => <ContextResourceCapturePreview key={unit.unitId} capture={unit.contextResources}/>)}
+      {revision ? <section aria-label={t("revisionMaterial")}><h5>{t("revisionMaterial")}</h5><pre className={styles.text}>{formattedInput(prepared.preview.input)}</pre></section> : null}
       <Button size="sm" aria-expanded={materialOpen} aria-controls={`${id}-material`} onClick={() => setMaterialOpen(value => !value)}>{t("askFullMaterial")}</Button>
       {materialOpen ? <div id={`${id}-material`}><pre className={styles.text}>{prepared.preview.system}</pre><pre className={styles.text}>{formattedInput(prepared.preview.input)}</pre></div> : null}
       <label className={styles.check}><TextInput className={styles.checkbox} type="checkbox" checked={planning.consent} disabled={blocked || !connectionCurrent}
-        onChange={event => { if (allowed()) owner.setPlanningConsent(conversationId, event.target.checked); }}/><span>{t(prepared.preview.scope.kind === "units" ? "askEntriesConsent" : "askConsent")}</span></label>
+        onChange={event => { if (allowed()) owner.setPlanningConsent(conversationId, event.target.checked); }}/><span>{t(revision ? "revisionConsent" : prepared.preview.scope.kind === "units" ? "askEntriesConsent" : "askConsent")}</span></label>
       <Button variant="primary" size="sm" pending={planning.busy === "start"} disabled={blocked || !connectionCurrent || !planning.consent}
         onClick={event => { if (!allowed()) return; focus.current = { origin: event.currentTarget, preview: false }; void owner.startPlanning(conversationId, current); }}>{t("askSend")}</Button>
     </section> : null}

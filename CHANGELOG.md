@@ -12,6 +12,7 @@ Current workspace version metadata: **`0.2.0-alpha.1`**. Because the published `
 
 ### Added
 
+- From an entry, ask the assistant to explain or revise its selected saved translation. Review the source, saved translation and sharing settings before sending. Unconfirmed editor changes stay local.
 - Team members can read short excerpts of cited translation revisions and source text to fit relevant evidence into a model request. Excerpts identify the original evidence, byte position and next available position.
 - Questions now save and prepare their own message through one primary action, with explicit material review before sending and a separate save-only option. Reviewed work plans offer **Confirm and start**, preserving original confirmation and start receipts for recovery; newer input, composition and focus remain protected.
 - Save and replace API keys in macOS Keychain from Model connections. Keep environment-variable credentials as an explicit option, check or remove current and previous keys independently, and recover original saves without exposing or persisting key input. New captures use immutable non-secret references; existing captures never silently change identity. Projects upgrade to schema 74, saved connections to format 2, and the local draft journal to format 19.

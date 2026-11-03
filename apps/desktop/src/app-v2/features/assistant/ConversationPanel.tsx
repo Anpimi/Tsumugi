@@ -103,7 +103,7 @@ function ThreadHistory({ showWorkPlans = true, owner, input, visible, disabled, 
       : <section aria-label={t("savedMessages")} className={local.history}>{saved.map(message => <div key={message.messageId} className={styles.userMessage}>
         <span className={local.author}>{t("you")}</span><ConversationText text={message.body}/>
         {planning.open ? <label className={local.check}><TextInput className={local.checkbox} type="checkbox" checked={planning.messageIds.includes(message.messageId)}
-          disabled={blocked || !planning.messageIds.includes(message.messageId) && planning.messageIds.length >= 16}
+          disabled={blocked || !planning.messageIds.includes(message.messageId) && planning.messageIds.length >= (planning.revision ? 1 : 16)}
           onChange={event => { if (allowed()) owner.setPlanningMessages(conversationId, event.target.checked ? [...planning.messageIds, message.messageId] : planning.messageIds.filter(id => id !== message.messageId)); }}/><span>{t("askChooseMessage", { number: message.ordinal })}</span></label> : null}</div>)}</section>}
     {messages.hasNextPage ? <Button pending={messages.isFetchingNextPage} onClick={() => void messages.fetchNextPage()}>{t("moreMessages")}</Button> : null}
     {planning.open ? <ConversationPlanningPanel reviewRegion={planningRegion} owner={owner} input={input} visible={visible} disabled={disabled} gate={gate} viewId={viewId} parentDialogId={parentDialogId} selection={selection}/> : null}
@@ -132,13 +132,20 @@ export default function ConversationPanel({ projectBrief, showWorkPlans = true, 
     setMemberRoutes(before => new Map(before).set(key, routes));
     return () => setMemberRoutes(before => { if (before.get(key) !== routes) return before; const next = new Map(before); next.delete(key); return next; });
   } }), []);
-  const inputReady = !!input;
+  const inputReady = !!input, revisionMode = !!input?.planning.revision;
   const contextIdentity = JSON.stringify([selection, targetLocale ?? null, contextFilter ?? null]);
   useLayoutEffect(() => {
-    if (!activeId || !input || !visible || disabled) return;
+    if (!activeId || !inputReady || !visible || disabled || revisionMode) return;
     const locale = selection?.kind === "ids" ? selection.locale : selection?.selection.capture.locale;
     owner.syncComposerContext(activeId, targetLocale && locale !== targetLocale ? null : selection, contextIdentity);
-  }, [activeId, inputReady, visible, disabled, owner, contextIdentity, selection, targetLocale]);
+  }, [activeId, inputReady, visible, disabled, owner, contextIdentity, selection, targetLocale, revisionMode]);
+  const revisionScope = input?.planning.revision;
+  const focusedRevision = useRef<typeof revisionScope>(null);
+  useEffect(() => {
+    if (!visible || disabled || focusedRevision.current === revisionScope) return;
+    focusedRevision.current = revisionScope;
+    if (revisionScope) composer.current?.focus();
+  }, [visible, disabled, revisionScope]);
   const proposalFocusTargets = useRef(new WeakSet<ConversationProposalTarget>());
   const threads = useSessionInfiniteQuery({ key: ["conversations"], scopes: ["project"], enabled: visible,
     initialPageParam: null as string | null, nextPage: noNext,
@@ -189,6 +196,7 @@ export default function ConversationPanel({ projectBrief, showWorkPlans = true, 
     const current = owner.getSnapshot().inputs.get(live.activeId);
     if (!current || current.value.pending || current.busy || current.planning.busy || current.failure) return;
     const prefix = command.aliases[i18n.resolvedLanguage?.startsWith("zh") ? 0 : 1];
+    if (current.planning.revision) owner.setPlanningOpen(live.activeId, false);
     owner.edit(live.activeId, `${prefix} ${current.value.text}`);
     owner.setPlanningOpen(live.activeId, true);
     composer.current?.focus();
@@ -219,6 +227,7 @@ export default function ConversationPanel({ projectBrief, showWorkPlans = true, 
     const origin = document.activeElement;
     if (prepare) {
       planningOrigin.current = origin instanceof HTMLElement ? origin : null;
+      if (command && before.planning.revision) owner.setPlanningOpen(conversationId, false);
       await owner.prepareComposer(conversationId, command?.id === "conversation.terms" ? "terminology" : null, current);
     }
     else await owner.append(conversationId);
@@ -365,8 +374,8 @@ export default function ConversationPanel({ projectBrief, showWorkPlans = true, 
               if (current()) void owner.retry(conversationId, current);
             }}>{t(runPending ? "runRetryOriginal" : "retryOriginal")}</Button> : null}</div>
         </Banner> : null}</section> : null}
-        <ConversationContextChips selection={input.planning.selection} filter={contextFilter} disabled={blocked || !visible || !!input.planning.busy}
-          remove={() => { if (!blocked && visible && gate.canDispatch({ viewId, source: "button", dialogId: parentDialogId })) owner.setPlanningSelection(activeId!, null); }}/>
+        {input.planning.revision ? <p className={local.notice}>{t("revisionSavedOnly")}</p> : <ConversationContextChips selection={input.planning.selection} filter={contextFilter} disabled={blocked || !visible || !!input.planning.busy}
+          remove={() => { if (!blocked && visible && gate.canDispatch({ viewId, source: "button", dialogId: parentDialogId })) owner.setPlanningSelection(activeId!, null); }}/>}
         <div className={local.actions}><Menu label={t("composerCommands")} trigger={<Button size="sm" disabled={blocked || !visible || !!pending}>{t("composerCommands")}</Button>}
           items={assistantComposerCommands.map(command => ({ id: command.id, label: global(command.nameKey), onSelect: () => commands ? commands.dispatch(command.id, commandScope) : chooseCommand(command) }))}/>
           <Menu label={t("composerMembers")} trigger={<Button size="sm" disabled={blocked || !visible || ![...memberRoutes.values()].some(routes => routes.some(route => route.current()))}>{t("composerMembers")}</Button>}
@@ -388,7 +397,7 @@ export default function ConversationPanel({ projectBrief, showWorkPlans = true, 
         <Button variant="secondary" size="sm" disabled={blocked || (!!input.busy || input.journalBusy) || !!input.planning.busy || !!pending || !!input.failure || !isConversationMessageText(input.value.text)}
           onClick={() => void submitComposer(false)}>{t("saveMessage")}</Button>
         <Button variant="primary" size="sm" disabled={blocked || (!!input.busy || input.journalBusy) || !!input.planning.busy || !!pending || !!input.failure || !isConversationMessageText(input.value.text)}
-          onClick={() => void submitComposer(true)}>{t("prepareMessage")}</Button></div>
+          onClick={() => void submitComposer(true)}>{t(input.planning.revision ? "revisionPrepare" : "prepareMessage")}</Button></div>
     </div> : null}
   </div></ConversationMemberRoutes.Provider>;
 }

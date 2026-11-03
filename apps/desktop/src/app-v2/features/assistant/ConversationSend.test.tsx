@@ -46,11 +46,15 @@ async function harness(locale = "en-US", delayedPrepare = false) {
     if (command === "prepare_conversation_planning") {
       await preparing.promise;
       const selected = messages.filter(message => request.selectedMessageIds.includes(message.messageId));
-      const system = "Synthetic planning instructions", input = JSON.stringify({ messages: selected.map(message => message.body), units: [] });
-      prepared = { preparationId: id(49003), previewDigest: "b".repeat(64), preview: { version: 2, ...key,
-        config: request.config, scope: request.scope, selectedMessages: selected, units: [], system, input,
+      const revision = request.scope.kind === "selected-revision" ? request.scope.basis : null;
+      const units = revision ? [{ ...revision, protection: { unitId: revision.unitId, locale: revision.locale, protected: false, revision: "0" },
+        sharedTermRevisionIds: [], sharedContextRevisionId: null, contextResources: null }].map(({ locale: _locale, ...unit }) => unit) : [];
+      const system = "Synthetic planning instructions", input = JSON.stringify(revision ? { unit: { sourceText: "Current source", unitId: revision.unitId, targetLocale: revision.locale },
+        selectedTranslation: "Saved translation", request: selected[0].body } : { messages: selected.map(message => message.body), units: [] });
+      prepared = { preparationId: id(49003), previewDigest: "b".repeat(64), preview: { version: revision ? 5 : 2, ...key,
+        config: request.config, scope: request.scope, selectedMessages: selected, units, system, input,
         byteLength: new TextEncoder().encode(JSON.stringify({ system, input })).length,
-        brief: { messages: selected.length, units: 0, sourceTexts: 0, terms: 0, manualContexts: 0, manualContextFacts: 0, sourceContextFacts: 0, sourceContextNeighbors: 0 } } };
+        brief: { messages: selected.length, units: units.length, sourceTexts: units.length, terms: 0, manualContexts: 0, manualContextFacts: 0, sourceContextFacts: 0, sourceContextNeighbors: 0 } } };
       return structuredClone(prepared);
     }
     if (command === "validate_conversation_planning") return structuredClone(prepared);
@@ -111,4 +115,32 @@ it("does not move focus away from newer B when preparation of A finishes", async
   h.field.focus(); fireEvent.change(h.field, { target: { value: "B keeps focus" } }); await act(async () => h.preparing.resolve());
   await screen.findByRole("region", { name: i18n.t("conversation.askPreview") });
   expect(h.field).toHaveValue("B keeps focus"); expect(h.field).toHaveFocus(); expect(h.calls("start_conversation_planning")).toHaveLength(0);
+});
+
+it("keeps a saved translation request explicit and returns to ordinary questions when closed", async () => {
+  const h = await harness();
+  const scope = { kind: "selected-revision" as const, basis: { unitId: id(49010), locale: "zh-CN", sourceSnapshotId: id(49011),
+    sourceRevisionId: id(49012), selectionId: id(49013), translationRevisionId: id(49014) } };
+  act(() => { expect(h.owner.beginSelectedRevision(scope)).toBe(true); });
+  expect(screen.getAllByText(i18n.t("conversation.revisionSavedOnly")).length).toBeGreaterThan(0);
+  fireEvent.change(h.field, { target: { value: "Explain this wording" } });
+  expect(screen.getByRole("button", { name: i18n.t("conversation.revisionPrepare") })).toBeInTheDocument();
+  fireEvent.keyDown(h.field, { key: "Enter" });
+  const preview = await screen.findByRole("region", { name: i18n.t("conversation.askPreview") });
+  expect(within(preview).getByText(/Saved translation/)).toBeVisible();
+  expect(h.calls("prepare_conversation_planning")[0][1].request).toMatchObject({ scope, selectedMessageIds: [h.messages[1].messageId] });
+  expect(h.calls("start_conversation_planning")).toHaveLength(0);
+  const send = within(preview).getByRole("button", { name: i18n.t("conversation.askSend") });
+  expect(send).toBeDisabled();
+  fireEvent.click(within(preview).getByRole("checkbox", { name: i18n.t("conversation.revisionConsent") }));
+  fireEvent.click(send);
+  await waitFor(() => expect(h.calls("start_conversation_planning")).toHaveLength(1));
+  expect(h.calls("start_conversation_planning")[0][1].request.consent).toMatchObject({ shareMessages: true, shareUnits: true });
+  await act(async () => h.sending.resolve());
+  await screen.findByText(i18n.t("conversation.planningRecorded"));
+  fireEvent.click(screen.getByRole("button", { name: i18n.t("conversation.askClose") }));
+  fireEvent.change(h.field, { target: { value: "An ordinary question" } });
+  fireEvent.keyDown(h.field, { key: "Enter" });
+  await waitFor(() => expect(h.calls("prepare_conversation_planning")).toHaveLength(2));
+  expect(h.calls("prepare_conversation_planning")[1][1].request.scope).toEqual({ kind: "conversation-only" });
 });

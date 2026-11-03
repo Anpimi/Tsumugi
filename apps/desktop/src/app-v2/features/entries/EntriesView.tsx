@@ -8,6 +8,7 @@ import { sameDraftBasis } from "../../../draftCommands";
 import type { EntryReviewEditorRequest } from "../review/navigationTypes";
 import { readEditorNavigation } from "../review/readEditorNavigation";
 import type { WorkbenchCommands } from "../../../workbenchCommands";
+import type { SelectedRevisionScope } from "../assistant/ConversationSession";
 import type { DraftKey } from "../../../draftCommands";
 import { useSessionQuery, useSessionReads } from "../../../SessionReadProvider";
 import { sourceCommands } from "../../../sourceCommands";
@@ -33,6 +34,7 @@ type Props = {
   drafts: TranslationDrafts | null; gate: InteractionGate;
   dispatch: SegmentEditorProps["dispatch"];
   onRevealDraft: (key: DraftKey) => void;
+  onSelectedRevision?: (scope: SelectedRevisionScope) => boolean;
   onImport?: () => void;
   onImportSource?: () => void;
   onCandidateBatch?: (mode: "stage" | "reject" | "restore", selection: WorkspaceSelection) => void;
@@ -52,7 +54,7 @@ export interface EntriesHandle {
 const noSubscription = () => () => {};
 const noDraftSnapshot = () => null;
 
-export default function EntriesView({ project, view, disabled, patch, navigate, drafts, gate, dispatch, onRevealDraft, onImport, onImportSource, onCandidateBatch, candidateBatchTriggerRef, candidateBatchBlocked = false, onReviewBatch, reviewBatchTriggerRef, renderCandidate, commands, ref }: Props) {
+export default function EntriesView({ project, view, disabled, patch, navigate, drafts, gate, dispatch, onRevealDraft, onSelectedRevision, onImport, onImportSource, onCandidateBatch, candidateBatchTriggerRef, candidateBatchBlocked = false, onReviewBatch, reviewBatchTriggerRef, renderCandidate, commands, ref }: Props) {
   const { t } = useTranslation(undefined, { keyPrefix: "workbenchV2" });
   const reads = useSessionReads();
   useSyncExternalStore(drafts?.subscribe ?? noSubscription, drafts?.getSnapshot ?? noDraftSnapshot, drafts?.getSnapshot ?? noDraftSnapshot);
@@ -137,6 +139,8 @@ export default function EntriesView({ project, view, disabled, patch, navigate, 
   const currentComparison = view.compareSource && !comparison.error && comparison.data && capture
     && comparison.data.scopeId === capture.scopeId && comparison.data.currentSnapshotId === capture.snapshotId ? comparison.data : null;
   const key: DraftKey | null = view.focus ? { projectId: reads.context.projectId, unitId: view.focus, locale: view.locale } : null;
+  const [revisionFailureUnit, setRevisionFailureUnit] = useState<string | null>(null);
+  const selected = current?.rows.find(row => row.content.unitId === view.focus)?.content;
   const isEditing = () => view.editing && key !== null;
   const canConfirm = () => {
     const entry = drafts && key ? drafts.getEntry(key) : null, state = drafts?.getSnapshot();
@@ -355,6 +359,15 @@ export default function EntriesView({ project, view, disabled, patch, navigate, 
     {view.reviewNavigation ? <Banner action={<Button size="sm" disabled={!commands || disabled || openingReview.current || !gate.canDispatch({ viewId: view.id, source: "button" })}
       onClick={() => commands?.dispatch("review.entry-return-to-queue", { ...reads.context, area: "translation" })}>{t("reviewEditorReturn")}</Button>}>
       {t(view.reviewNavigation.focus?.status === "stale" ? "reviewEditorLocationChanged" : "reviewEditorReturnHelp")}</Banner> : null}
+    {onSelectedRevision && selected?.selectionId && selected.revisionId ? <Button size="sm" disabled={disabled || !gate.canDispatch({ viewId: view.id, source: "button" })}
+      onClick={() => {
+        if (!selected.selectionId || !selected.revisionId || !gate.canDispatch({ viewId: view.id, source: "button" })) return;
+        const opened = onSelectedRevision({ kind: "selected-revision", basis: { unitId: selected.unitId, locale: selected.locale,
+          sourceSnapshotId: selected.sourceSnapshotId, sourceRevisionId: selected.sourceRevisionId,
+          selectionId: selected.selectionId, translationRevisionId: selected.revisionId } });
+        setRevisionFailureUnit(opened ? null : selected.unitId);
+      }}>{t("entryReviseSaved")}</Button> : null}
+    {revisionFailureUnit && revisionFailureUnit === selected?.unitId ? <Banner tone="warning">{t("entryReviseUnavailable")}</Banner> : null}
     {queueEnd ? <Banner>{t("queueEnd")}</Banner> : null}
     {view.compareSource && current?.rows.length ? comparison.isError ? <Banner tone="error" role="alert" action={<Button disabled={disabled || comparison.isFetching} onClick={() => { void comparison.refetch(); }}>{t("sourceComparisonRetry")}</Button>}>{t("sourceComparisonFailed")}</Banner>
       : comparison.isPending || comparison.isFetching ? <Banner role="status">{t("sourceComparisonLoading")}</Banner>
