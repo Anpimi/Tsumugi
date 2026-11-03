@@ -1,6 +1,7 @@
 import { createContext, useContext, useEffect, useLayoutEffect, useRef, useState, type ReactNode } from "react";
 import { commandFailure, type CommandFailure } from "./CommandFailure";
 import { executionCommands, executionContext, type AdoptionAction, type AttemptDetail, type Receipt } from "./executionCommands";
+import { readCompleteAttempt } from "./executionRead";
 import { hasUnknownOutcome, type ProjectView } from "./projectCommands";
 import { useSessionReads, useSessionAlive } from "./SessionReadProvider";
 import { useExecutionTaskSession } from "./ExecutionTaskSession";
@@ -14,6 +15,14 @@ import { sourceCommands, confirmSourceAction, confirmSourceReceipt, sameSourceCo
   sameSourceCorrectionReceipt, type SourceLineageCorrectionBasis, type SourceLineageCorrectionReceipt, type SourceLineageCorrectionRequest,
   sameSourceEnvironment, sourceRequest, type PluginCaptureRequest, type PluginStartRequest, type SourceCheckPrepareRequest, type SourceCheckFinishRequest, type SourceCheckReview,
   type Preflight, type SourceAdoptRequest, type SourceChangePage, type SourceImpactSummary, type SourceSelection, type PluginStartRequest as StartRequest } from "./sourceCommands";
+
+type SourceCheckProposal = { attemptId: string; resultId: string; replaces?: { attemptId: string; taskId: string } };
+
+export function stoppedSourceCheck(detail: AttemptDetail | null | undefined): boolean {
+  if (detail?.operation !== "source-semantic-check" || detail.progress.running || detail.progress.queued || detail.items.length !== 1) return false;
+  const { status } = detail.items[0];
+  return status.cancellationRequested && status.execution !== "queued" && status.execution !== "dispatched";
+}
 
 export type SourcePluginPending =
   | { pendingKind: "capture"; request: PluginCaptureRequest }
@@ -127,7 +136,7 @@ export interface SourceSession {
   retryStart: () => Promise<void>;
   checkStart: () => Promise<void>;
   checkPluginStart: () => Promise<void>;
-  prepareCheck: (proposal: { attemptId: string; resultId: string }, proof?: () => boolean, dispose?: () => void) => Promise<void>;
+  prepareCheck: (proposal: SourceCheckProposal, proof?: () => boolean, dispose?: () => void) => Promise<void>;
   startCheck: (proof?: () => boolean, dispose?: () => void) => Promise<void>;
   finishCheck: (resultId: string) => Promise<void>;
   canRetryPlugin: () => boolean;
@@ -498,14 +507,21 @@ export function SourceDraftSession({ project, children }: { project: ProjectView
       throw error;
     }
   }
-  async function prepareCheck(proposal: { attemptId: string; resultId: string }, proof: () => boolean = live, dispose?: () => void) {
+  async function prepareCheck(proposal: SourceCheckProposal, proof: () => boolean = live, dispose?: () => void) {
     return withReadCleanup(dispose, async () => {
     const before = current(), version = basisVersion.current, submission = frozenSubmission();
     const source = before.preflight ? sourceRequest(before.preflight.source) : before.source;
-    if (!source || before.attempt !== proposal.attemptId || !proof()) return;
+    const replaces = proposal.replaces;
+    if (!source || before.attempt !== proposal.attemptId || before.checkAttempt !== (replaces?.attemptId ?? null) || !proof()) return;
+    const unchanged = () => live() && proof() && version === basisVersion.current && current().attempt === proposal.attemptId
+      && current().checkAttempt === before.checkAttempt;
     await run(async () => {
+      if (replaces) {
+        const stopped = await readCompleteAttempt(session, replaces.attemptId, "source-semantic-check");
+        if (!unchanged() || stopped?.taskId !== replaces.taskId || !stoppedSourceCheck(stopped)) return;
+      }
       const attemptId = await executionCommands.identity(session);
-      if (!live() || !proof() || version !== basisVersion.current || current().attempt !== proposal.attemptId) return;
+      if (!unchanged()) return;
       await dispatchPlugin({ pendingKind: "prepare-check", request: { ...session, source, attemptId,
         sourceAttemptId: proposal.attemptId, sourceResultId: proposal.resultId } }, false, submission);
     });

@@ -48,7 +48,8 @@ beforeEach(async () => {
 });
 
 it("captures after language confirmation and prepares the independent check without granting either execution role", async () => {
-  const resultId = id(2170);
+  const resultId = id(2170), checkerTask = id(2180);
+  let checkerAttempt: string | null = null, cancelled = false;
   let nextIdentity = 2171;
   invoke.mockImplementation(async (command, { request }) => {
     if (command === "read_plugin_inventory") return pluginSourceInventory;
@@ -58,9 +59,19 @@ it("captures after language confirmation and prepares the independent check with
     if (command === "create_execution_identity") return id(nextIdentity++);
     if (command === "preflight_plugin_source") return { ...pluginSourceWorkflow.preflight, attemptId: request.attemptId, sourceLanguage: "en" };
     if (command === "start_plugin_source") return request.attemptId;
+    if (command === "start_source_check") { checkerAttempt = request.attemptId; return checkerAttempt; }
+    if (command === "cancel_execution_task") { expect(request.taskId).toBe(checkerTask); cancelled = true; return "1"; }
     if (command === "read_execution_attempt") {
       const detail = sourceAttemptFixture(request.attemptId, resultId);
       detail.items[0].status.validation = "pending";
+      if (checkerAttempt === request.attemptId) {
+        detail.operation = "source-semantic-check";
+        detail.taskId = checkerTask;
+        detail.progress = { ...detail.progress, succeeded: 0, running: cancelled ? 0 : 1, cancelled: cancelled ? 1 : 0 };
+        detail.items[0].resultId = null;
+        detail.items[0].status.execution = cancelled ? "cancelled-before-dispatch" : "dispatched";
+        detail.items[0].status.cancellationRequested = cancelled;
+      }
       return detail;
     }
     if (command === "prepare_source_check") return { ...pluginSourceWorkflow.checkReview, attemptId: request.attemptId,
@@ -95,6 +106,23 @@ it("captures after language confirmation and prepares the independent check with
   expect(await screen.findByText(i18n.t("sourceMaintenance.phaseCheckerReview"))).toBeVisible();
   expect(screen.getByRole("button", { name: i18n.t("sourceMaintenance.startCheck") })).toBeDisabled();
   expect(calls("start_source_check")).toHaveLength(0);
+  const checkerConsent = screen.getByRole("checkbox", { name: i18n.t("sourcePlugin.checkerConsent") });
+  await user.click(checkerConsent);
+  await user.click(screen.getByRole("button", { name: i18n.t("sourceMaintenance.startCheck") }));
+  const stop = await screen.findByRole("button", { name: i18n.t("sourceMaintenance.stopCheck") });
+  await waitFor(() => expect(stop).toBeEnabled());
+  await user.click(stop);
+  const replace = await screen.findByRole("button", { name: i18n.t("sourceMaintenance.prepareReplacementCheck") });
+  await waitFor(() => expect(replace).toBeEnabled());
+  expect(calls("prepare_source_check")).toHaveLength(1);
+  await user.click(replace);
+  await waitFor(() => expect(calls("prepare_source_check")).toHaveLength(2));
+  const [first, second] = calls("prepare_source_check").map(([, value]) => value.request);
+  expect(second).toEqual({ ...first, attemptId: second.attemptId });
+  expect(second.attemptId).not.toBe(first.attemptId);
+  expect(await screen.findByRole("button", { name: i18n.t("sourceMaintenance.startCheck") })).toBeDisabled();
+  expect(calls("start_plugin_source")).toHaveLength(1);
+  expect(calls("start_source_check")).toHaveLength(1);
   expect(calls("adopt_execution")).toHaveLength(0);
 });
 

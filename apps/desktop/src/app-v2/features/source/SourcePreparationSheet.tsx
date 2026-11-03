@@ -15,7 +15,7 @@ import { readCompleteAttempt } from "../../../executionRead";
 import type { ProjectView } from "../../../projectCommands";
 import type { InteractionGate } from "../../workspace/interactionGate";
 import SourceDraftRecovery from "../../../SourceDraftRecovery";
-import { SourceDraftHandleProvider } from "../../../SourceDraftSession";
+import { SourceDraftHandleProvider, stoppedSourceCheck } from "../../../SourceDraftSession";
 import { SourceMaintenanceHookChoice } from "../../../SourceMaintenanceHookControls";
 import { TaskCancellationFeedback } from "../../../ExecutionTaskSession";
 import { jsonIdentity } from "../../../pluginToolChoices";
@@ -93,15 +93,19 @@ export default function SourcePreparationSheet({ project, owner, open, disabled,
   const canPrepare = currentPreparation() && !owner.blocked() && !!environment;
   const checkProposal = state.attempt && item?.resultId && item.status.execution === "succeeded" && item.status.validation !== "valid"
     ? { attemptId: state.attempt, resultId: item.resultId } : null;
+  const currentProposal = () => currentPreparation() && fresh(["source-attempt", state.attempt, 0, 100]);
+  const stoppedCheck = stoppedSourceCheck(check.data);
   const canPrepareCheck = !!checkProposal && canPrepare && !state.checkReview && !state.checkAttempt
-    && !owner.hasPending() && !owner.inFlight() && fresh(["source-attempt", state.attempt, 0, 100]);
+    && currentProposal();
+  const currentStoppedCheck = () => currentProposal() && fresh(["source-check", state.checkAttempt]);
+  const canReplaceCheck = !!checkProposal && canPrepare && stoppedCheck && currentStoppedCheck();
   const readyCheckAttempt = canPrepareCheck ? checkProposal.attemptId : null;
   const readyCheckResult = canPrepareCheck ? checkProposal.resultId : null;
   useEffect(() => {
     if (!readyCheckAttempt || !readyCheckResult || producerStartedHere.current?.attemptId !== readyCheckAttempt || producerStartedHere.current.viewId !== viewId || !currentPreparation()
       || owner.current().checkPrepareRequest || owner.current().preparationExpired) return;
     producerStartedHere.current = null;
-    void owner.prepareCheck({ attemptId: readyCheckAttempt, resultId: readyCheckResult }, currentPreparation);
+    void owner.prepareCheck({ attemptId: readyCheckAttempt, resultId: readyCheckResult }, currentProposal);
   });
   const phase = state.attempt ? item?.status.validation === "valid" ? "phaseApply"
     : state.checkAttempt ? "phaseChecking" : state.checkReview ? "phaseCheckerReview" : "phaseExtract"
@@ -178,8 +182,8 @@ export default function SourcePreparationSheet({ project, owner, open, disabled,
           onClick={() => { if (current()) void owner.cancelTask(detail.data!.taskId, current, detail.data!.attemptId); }}>{t("stopTask")}</Button> : null}
         {item?.resultId && item.status.execution === "succeeded" && item.status.validation !== "valid" ? <>
           <p>{t("checkHelp")}</p>{!state.checkReview && !state.checkAttempt ? <Button variant="primary" disabled={!canPrepareCheck}
-            onClick={() => { if (current() && checkProposal) void owner.prepareCheck(checkProposal, currentPreparation); }}>{t("prepareCheck")}</Button> : null}
-          {state.checkReview ? <><p>{state.checkReview.source.checker.provider.plugin.id} {state.checkReview.source.checker.provider.plugin.version}</p>
+            onClick={() => { if (current() && checkProposal) void owner.prepareCheck(checkProposal, currentProposal); }}>{t("prepareCheck")}</Button> : null}
+          {state.checkReview && !state.checkAttempt ? <><p>{state.checkReview.source.checker.provider.plugin.id} {state.checkReview.source.checker.provider.plugin.version}</p>
             <p>{old("sourcePlugin.rules", { count: state.checkReview.rules.length })}</p><PluginPermissions permissions={state.checkReview.source.checker.declaration.permissions}/><p>{old("sourcePlugin.unsandboxed")}</p>
             <Field label={old("sourcePlugin.checkerConsent")}><input type="checkbox" checked={state.checkerConsent === state.checkReview.inputDigest} disabled={readOnly || owner.inFlight() || owner.hasPending()}
               onChange={event => { if (current()) owner.consentChecker(event.target.checked); }}/></Field>
@@ -189,7 +193,13 @@ export default function SourcePreparationSheet({ project, owner, open, disabled,
         {state.checkAttempt ? <><p>{t("independentCheck")}</p>{check.isFetching ? <LoadingState label={t("readingTask")}/> : null}
           {checked ? <p>{old(`execution.states.${checked.status.execution}`)}</p> : null}
           <Button disabled={!current() || check.isFetching} onClick={() => void check.refetch()}>{t("refreshTask")}</Button>
-          {checked?.status.execution === "succeeded" && checked.resultId ? <Button disabled={!current() || owner.inFlight() || owner.hasPending()}
+          {check.data && checked && (checked.status.execution === "queued" || checked.status.execution === "dispatched") ? <Button disabled={!current() || owner.hasPending() || owner.inFlight()}
+            onClick={() => { if (current()) void owner.cancelTask(check.data!.taskId, current, check.data!.attemptId); }}>{t("stopCheck")}</Button> : null}
+          {stoppedCheck ? <Banner action={<Button size="sm" disabled={!canReplaceCheck} onClick={() => {
+            if (canReplaceCheck && checkProposal && check.data) void owner.prepareCheck({ ...checkProposal,
+              replaces: { attemptId: check.data.attemptId, taskId: check.data.taskId } }, currentStoppedCheck);
+          }}>{t("prepareReplacementCheck")}</Button>}>{t("stoppedCheckHelp")}</Banner> : null}
+          {checked?.status.execution === "succeeded" && !checked.status.cancellationRequested && checked.resultId ? <Button disabled={!current() || owner.inFlight() || owner.hasPending()}
             onClick={() => { if (current()) void owner.finishCheck(checked.resultId!); }}>{t("finishCheck")}</Button> : null}</> : null}
         {item?.resultId && item.status.execution === "succeeded" ? <SourceMappingPanel project={project} owner={owner} visible={open} disabled={disabled || targetBlocked}
           current={current} onApplied={snapshotId => onApplied(snapshotId, release)} target={target?.kind === "compare-source-mapping" ? target : null}/> : null}
