@@ -46,6 +46,16 @@
           "credentialEnv": {
             "type": "string"
           },
+          "credentialReference": {
+            "anyOf": [
+              {
+                "$ref": "#/definitions/ExecutionId"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "endpoint": {
             "type": "string"
           },
@@ -670,6 +680,16 @@
           },
           "credentialEnv": {
             "type": "string"
+          },
+          "credentialReference": {
+            "anyOf": [
+              {
+                "$ref": "#/definitions/ExecutionId"
+              },
+              {
+                "type": "null"
+              }
+            ]
           },
           "endpoint": {
             "type": "string"

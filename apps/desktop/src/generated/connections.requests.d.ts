@@ -24,6 +24,9 @@ export interface Requests {
   chatGptAccount: ChatGptAccountRequest;
   chatGptBegin: ChatGptBeginRequest;
   chatGptSession: ChatGptSessionRequest;
+  keyHistory: ApiKeyHistoryRequest;
+  keyReference: ApiKeyReferenceRequest;
+  keySave: ApiKeySaveRequest;
   resolve: ConnectionResolveRequest;
   snapshot: ConnectionSnapshotRequest;
 }
@@ -42,6 +45,7 @@ export interface ModelConnectionChange {
 export interface AiConnection {
   chatgptAccount?: ExecutionId | null;
   credentialEnv: string;
+  credentialReference?: ExecutionId | null;
   endpoint: string;
   model: string;
   tokenField: string;
@@ -59,6 +63,16 @@ export interface ChatGptBeginRequest {
 }
 export interface ChatGptSessionRequest {
   sessionId: ExecutionId;
+}
+export interface ApiKeyHistoryRequest {
+  profileId: ExecutionId;
+}
+export interface ApiKeyReferenceRequest {
+  reference: ExecutionId;
+}
+export interface ApiKeySaveRequest {
+  change: ModelConnectionChange;
+  secret: string;
 }
 export interface ConnectionResolveRequest {
   reference: ModelConnectionReference;

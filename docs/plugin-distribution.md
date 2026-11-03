@@ -14,12 +14,12 @@ This matrix describes current source capabilities and packaging constraints, not
 |---|---|---|
 | Desktop shell and manual editing of saved content | Existing macOS source path | Windows x64 and Intel Mac source paths; current full-package acceptance not established |
 | SMAPI / WebVTT import, checks and export | Pinned packages, approved Node/Host and per-operation consent required | No fixed complete package selected; source compilation alone supplies no format packages |
-| Direct OpenAI-compatible API-key requests | Existing Core transport; currently reads a named environment variable | Transport source exists; no complete-platform acceptance claim |
+| Direct OpenAI-compatible API-key requests | Existing Core transport; macOS Keychain or an explicitly selected environment variable | Transport source exists; no complete-platform acceptance claim |
 | Pi members and dynamic teams | Included member artifact plus installed, approved bundled Node; explicit request permission | Windows member execution returns unsupported-platform; no complete Windows Agent package. Intel/Linux complete bundles are not selected |
 | ChatGPT subscription sign-in | macOS Keychain implementation; an account and separate request consent are required | Unsupported by the current desktop credential implementation |
 | Complete offline application bundle | `tauri.runtime.conf.json`, macOS arm64 builder and target, all resources below | Current bundle configuration rejects other targets |
 
-Saving a connection is not a model compatibility test. Installing resources does not approve an external request. The current API-key environment-variable setup is documented in [AI translation](ai-translation.md); a desktop key-entry workflow is not yet available.
+Saving a connection is not a model compatibility test. Installing resources does not approve an external request. The macOS desktop key-entry and existing environment-variable workflows are documented in [AI translation](ai-translation.md). Keychain availability does not establish provider or complete-platform acceptance.
 
 ## First run and offline sample
 

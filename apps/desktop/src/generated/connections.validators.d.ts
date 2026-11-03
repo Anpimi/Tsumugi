@@ -6,6 +6,9 @@ export declare function validateRequestChange(value: unknown): value is Requests
 export declare function validateRequestChatGptAccount(value: unknown): value is Requests["chatGptAccount"];
 export declare function validateRequestChatGptBegin(value: unknown): value is Requests["chatGptBegin"];
 export declare function validateRequestChatGptSession(value: unknown): value is Requests["chatGptSession"];
+export declare function validateRequestKeyHistory(value: unknown): value is Requests["keyHistory"];
+export declare function validateRequestKeyReference(value: unknown): value is Requests["keyReference"];
+export declare function validateRequestKeySave(value: unknown): value is Requests["keySave"];
 export declare function validateRequestResolve(value: unknown): value is Requests["resolve"];
 export declare function validateRequestSnapshot(value: unknown): value is Requests["snapshot"];
 export declare function validateResponseAction(value: unknown): value is Responses["action"];
@@ -14,5 +17,7 @@ export declare function validateResponseChatGptLogin(value: unknown): value is R
 export declare function validateResponseChatGptStatus(value: unknown): value is Responses["chatGptStatus"];
 export declare function validateResponseConnection(value: unknown): value is Responses["connection"];
 export declare function validateResponseError(value: unknown): value is Responses["error"];
+export declare function validateResponseKeyHistory(value: unknown): value is Responses["keyHistory"];
+export declare function validateResponseKeyStatus(value: unknown): value is Responses["keyStatus"];
 export declare function validateResponseReceipt(value: unknown): value is Responses["receipt"];
 export declare function validateResponseSnapshot(value: unknown): value is Responses["snapshot"];

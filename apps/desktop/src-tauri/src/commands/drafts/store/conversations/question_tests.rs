@@ -165,7 +165,7 @@ fn formats_one_through_fourteen_upgrade_atomically_on_successful_question_write(
         let (_, _, original) = fixture(); write.value.team_drafts = original.value.team_drafts;
         let result = store.write_conversation(&write).unwrap();
         assert_eq!(store.read_conversation(&write.key).unwrap(), result);
-        assert_eq!(connection.pragma_query_value(None, "user_version", |row| row.get::<_, i64>(0)).unwrap(), TEAM_QUESTION_FORMAT);
+        assert_eq!(connection.pragma_query_value(None, "user_version", |row| row.get::<_, i64>(0)).unwrap(), FORMAT);
     }
 }
 

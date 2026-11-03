@@ -14,12 +14,12 @@
 |---|---|---|
 | 桌面壳、已保存内容的人工编辑 | 已有 macOS 源码路径 | 保留 Windows x64、Intel Mac 源码路径；当前完整包未验 |
 | SMAPI／WebVTT 导入、检查与导出 | 需要固定插件包、已批准的 Node／Host，以及逐次执行许可 | 尚无选定的完整资源包；源码编译不自动附带格式插件 |
-| OpenAI 兼容 API Key 直接请求 | 已有 Core transport，目前读取指定环境变量 | 存在 transport 源码，不代表完整平台验收 |
+| OpenAI 兼容 API Key 直接请求 | 已有 Core transport；macOS Keychain 或明确选择的环境变量 | 存在 transport 源码，不代表完整平台验收 |
 | Pi 成员与动态团队 | 需要成员产物和已安装、批准的随附 Node，以及明确请求许可 | Windows 成员执行返回不支持平台，尚无完整 Windows Agent 包；未选定 Intel／Linux 完整包 |
 | ChatGPT 订阅登录 | macOS Keychain 实现；账号与外发许可另行确认 | 当前桌面凭据实现不支持 |
 | 完整离线应用包 | `tauri.runtime.conf.json`，macOS arm64 构建机与目标，下述资源全部齐备 | 当前随附资源配置拒绝其他目标 |
 
-保存连接不代表模型兼容性测试；安装资源也不授予外发许可。普通 API Key 目前仍通过[AI 翻译说明](ai-translation.md)中的环境变量配置，桌面密钥输入尚不可用。
+保存连接不代表模型兼容性测试；安装资源也不授予外发许可。macOS 桌面密钥输入及原环境变量方式见 [AI 翻译说明](ai-translation.md)。钥匙串可用不代表 Provider 或完整平台验收通过。
 
 ## 首次运行与离线样例
 

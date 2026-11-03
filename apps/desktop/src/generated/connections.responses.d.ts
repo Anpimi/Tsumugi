@@ -122,6 +122,7 @@ export type CommandStage =
   | "execution-recover"
   | "execution-adopt"
   | "execution-quiesce";
+export type ApiKeyAvailability = "available" | "missing" | "unsupported-platform";
 
 export interface Responses {
   action: ModelConnectionReceipt | null;
@@ -130,6 +131,8 @@ export interface Responses {
   chatGptStatus: ChatGptAccountStatus;
   connection: AiConnection;
   error: CommandError;
+  keyHistory: ApiKeyStatus[];
+  keyStatus: ApiKeyStatus;
   receipt: ModelConnectionReceipt;
   snapshot: ConnectionReadView;
 }
@@ -158,6 +161,7 @@ export interface ModelConnectionProfile {
 export interface AiConnection {
   chatgptAccount?: ExecutionId | null;
   credentialEnv: string;
+  credentialReference?: ExecutionId | null;
   endpoint: string;
   model: string;
   tokenField: string;
@@ -206,6 +210,10 @@ export interface CommandError {
   recoveryGuidance?: RecoveryGuidance | null;
   recoveryRequired: boolean;
   stage: CommandStage;
+}
+export interface ApiKeyStatus {
+  availability: ApiKeyAvailability;
+  reference: ExecutionId;
 }
 export interface ConnectionReadView {
   basis: ModelConnectionBasis;

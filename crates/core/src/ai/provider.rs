@@ -141,6 +141,11 @@ pub trait SubscriptionCredentials: Send + Sync {
     fn check_active(&self, account: ExecutionId) -> Result<(), ExecutionError>;
 }
 
+/// Resolves an immutable, non-secret reference only at the physical HTTP edge.
+pub trait ApiKeyCredentials: Send + Sync {
+    fn api_key(&self, reference: ExecutionId) -> Result<String, ExecutionError>;
+}
+
 /// Pi is the sole Responses serializer/parser, including ordinary completions.
 pub trait CompletionExecutor: Send + Sync {
     fn complete(&self, request: DispatchRequest, cancellation: Cancellation,
@@ -168,6 +173,7 @@ pub struct ProviderService {
     windows: Mutex<BTreeMap<String, VecDeque<Instant>>>,
     io: OnceLock<tokio::runtime::Runtime>,
     subscription_credentials: Option<std::sync::Arc<dyn SubscriptionCredentials>>,
+    api_key_credentials: Option<std::sync::Arc<dyn ApiKeyCredentials>>,
     completion_executor: OnceLock<std::sync::Weak<dyn CompletionExecutor>>,
 }
 pub(crate) struct HttpResponse {
@@ -177,6 +183,12 @@ pub(crate) struct HttpResponse {
     pub body: Vec<u8>,
 }
 impl ProviderService {
+    pub fn with_credentials(
+        subscription: Option<std::sync::Arc<dyn SubscriptionCredentials>>,
+        api_keys: Option<std::sync::Arc<dyn ApiKeyCredentials>>,
+    ) -> Self {
+        Self { subscription_credentials: subscription, api_key_credentials: api_keys, ..Self::default() }
+    }
     pub fn with_subscription_credentials(credentials: std::sync::Arc<dyn SubscriptionCredentials>) -> Self {
         Self { subscription_credentials: Some(credentials), ..Self::default() }
     }
@@ -276,6 +288,14 @@ impl ProviderService {
                 .and_then(|token| if token.is_empty() { Err(error(ErrorCode::Unauthorized, "ai-credential")) } else { Ok(Some(token)) });
         }
         if config.credential_env.is_empty() {
+            if let Some(reference) = config.credential_reference {
+                return self.api_key_credentials.as_ref()
+                    .ok_or_else(|| error(ErrorCode::Unauthorized, "ai-api-key-unavailable"))?
+                    .api_key(reference)
+                    .and_then(|key| if key.is_empty() {
+                        Err(error(ErrorCode::Unauthorized, "ai-api-key-unavailable"))
+                    } else { Ok(Some(key)) });
+            }
             return Ok(None);
         }
         std::env::var(&config.credential_env)

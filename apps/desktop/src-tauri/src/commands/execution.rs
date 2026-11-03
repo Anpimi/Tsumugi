@@ -51,6 +51,12 @@ macro_rules! handlers {
         super::mcp_retrieval::capture_mcp_glossary,
         super::connections::read_model_connections,
         super::connections::change_model_connections,
+        super::connections::api_keys::save_model_connection_key,
+        super::connections::api_keys::resume_model_connection_key,
+        super::connections::api_keys::discard_model_connection_key,
+        super::connections::api_keys::read_model_connection_key,
+        super::connections::api_keys::read_model_connection_keys,
+        super::connections::api_keys::remove_model_connection_key,
         super::connections::read_model_connection_action,
         super::connections::resolve_model_connection,
         super::connections::read_chatgpt_account,
@@ -310,11 +316,12 @@ impl ExecutionHost {
         store: &ProjectStore,
         member: impl FnOnce(ExecutionId) -> Option<Arc<work_plans::member::MemberFactory>>,
     ) -> Result<Self, CommandError> {
-        Self::with_provider(store, None, member)
+        Self::with_provider(store, None, None, member)
     }
     fn with_provider(
         store: &ProjectStore,
         credentials: Option<Arc<dyn tsumugi_core::ai::provider::SubscriptionCredentials>>,
+        api_keys: Option<Arc<dyn tsumugi_core::ai::provider::ApiKeyCredentials>>,
         member: impl FnOnce(ExecutionId) -> Option<Arc<work_plans::member::MemberFactory>>,
     ) -> Result<Self, CommandError> {
         #[allow(unused_mut)]
@@ -365,10 +372,7 @@ impl ExecutionHost {
         host.runtime
             .register_read_only(Arc::new(tsumugi_core::content::WebvttBuildRunner))
             .map_err(map_read)?;
-        let provider_service = Arc::new(match credentials {
-            Some(credentials) => tsumugi_core::ai::provider::ProviderService::with_subscription_credentials(credentials),
-            None => tsumugi_core::ai::provider::ProviderService::default(),
-        });
+        let provider_service = Arc::new(tsumugi_core::ai::provider::ProviderService::with_credentials(credentials, api_keys));
         let member = member(host.runtime.generation());
         if let Some(member) = &member {
             let completion: Arc<dyn tsumugi_core::ai::provider::CompletionExecutor> = member.clone();
@@ -793,7 +797,10 @@ impl ActiveSession {
                 let credentials = context.chatgpt_accounts.get().cloned().map(|accounts| {
                     accounts as Arc<dyn tsumugi_core::ai::provider::SubscriptionCredentials>
                 });
-                ExecutionHost::with_provider(&self.store, credentials, move |generation| {
+                let api_keys = context.api_keys.get().cloned().map(|keys| {
+                    keys as Arc<dyn tsumugi_core::ai::provider::ApiKeyCredentials>
+                });
+                ExecutionHost::with_provider(&self.store, credentials, api_keys, move |generation| {
                     Some(Arc::new(work_plans::member::MemberFactory::new(
                         context, token, project, generation,
                     )))

@@ -202,12 +202,13 @@ impl SessionExecutor {
         plugins: Arc<super::plugins::ApplicationPlugins>,
         io: BlockingExecutor,
     ) -> Self {
-        Self::with_accounts(plugins, io, Arc::new(std::sync::OnceLock::new()))
+        Self::with_accounts(plugins, io, Arc::new(std::sync::OnceLock::new()), Arc::new(std::sync::OnceLock::new()))
     }
     pub(super) fn with_accounts(
         plugins: Arc<super::plugins::ApplicationPlugins>,
         io: BlockingExecutor,
         chatgpt_accounts: Arc<std::sync::OnceLock<Arc<super::connections::chatgpt::ChatGptAccounts>>>,
+        api_keys: Arc<std::sync::OnceLock<Arc<super::connections::api_keys::ApiKeys>>>,
     ) -> Self {
         let (sender, receiver) = mpsc::channel::<Job>();
         let admission = Arc::new(SessionAdmission {
@@ -224,6 +225,7 @@ impl SessionExecutor {
             plugins,
             io,
             chatgpt_accounts,
+            api_keys,
         };
         let changes: Arc<Mutex<Option<super::changes::ChangeSink>>> = Arc::default();
         let sink = changes.clone();

@@ -1,7 +1,8 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import fixture from "../test/fixtures/aiCommands.contract.json";
 import translationFixture from "../test/fixtures/translation-commands.json";
-import { aiCommands } from "./aiCommands";
+import { aiCommands, defaultAiConfig, connectionAiConfig, sameAiConfig } from "./aiCommands";
+import { sameConnection } from "./connectionCommands";
 import * as validators from "./generated/ai.validators";
 import { hasUnknownOutcome } from "./projectCommands";
 import type { AiView, AiCandidateEffectView, CheckKey } from "./generated/ai.responses";
@@ -396,4 +397,17 @@ it("rejects wrong original lease/action and incomplete mandatory evidence in exa
     const h = candidateEffectFixture(); change(h.value); invoke.mockResolvedValueOnce(h.value);
     await expect(aiCommands.candidateEffect(h.request, h.revision)).rejects.toThrow();
   }
+});
+
+
+it("includes immutable key references in configuration identity and removes them on an explicit source switch",()=>{
+  const key={endpoint:"http://127.0.0.1:9/v1/chat/completions",model:"synthetic",credentialEnv:"",tokenField:"max_tokens",credentialReference:"55555555-5555-4555-8555-555555555555"};
+  const before=connectionAiConfig(structuredClone(defaultAiConfig),key,null);
+  const changed={...key,credentialReference:"66666666-6666-4666-8666-666666666666"};
+  expect(sameAiConfig(before,connectionAiConfig(before,changed,null))).toBe(false);
+  expect(sameConnection(key,changed)).toBe(false);
+  const {credentialReference:_,...environment}=key; environment.credentialEnv="SYNTHETIC_ENV";
+  const after=connectionAiConfig(before,environment,null);
+  expect(after.credentialReference).toBeUndefined();expect(after.credentialEnv).toBe("SYNTHETIC_ENV");
+  expect(sameAiConfig(before,after)).toBe(false);
 });

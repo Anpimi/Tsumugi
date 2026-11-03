@@ -386,6 +386,7 @@ pub struct AppState {
     model_connections: OnceLock<tsumugi_core::model_connections::ModelConnectionStore>,
     local_drafts: OnceLock<drafts::DraftStore>,
     chatgpt_accounts: Arc<OnceLock<Arc<connections::chatgpt::ChatGptAccounts>>>,
+    api_keys: Arc<OnceLock<Arc<connections::api_keys::ApiKeys>>>,
     #[cfg(test)]
     review_compute_probe: Mutex<Option<execution::ComputeProbe>>,
 }
@@ -408,8 +409,9 @@ impl Default for AppState {
         let plugins = Arc::new(plugins::ApplicationPlugins::default());
         let io = dispatch::BlockingExecutor::new(4);
         let chatgpt_accounts = Arc::new(OnceLock::new());
+        let api_keys = Arc::new(OnceLock::new());
         Self {
-            sessions: dispatch::SessionExecutor::with_accounts(plugins.clone(), io.clone(), chatgpt_accounts.clone()),
+            sessions: dispatch::SessionExecutor::with_accounts(plugins.clone(), io.clone(), chatgpt_accounts.clone(), api_keys.clone()),
             io,
             dialogs: dispatch::BlockingExecutor::new(1),
             review_check_cancellations: Arc::default(),
@@ -417,6 +419,7 @@ impl Default for AppState {
             model_connections: OnceLock::new(),
             local_drafts: OnceLock::new(),
             chatgpt_accounts,
+            api_keys,
             #[cfg(test)]
             review_compute_probe: Mutex::default(),
         }
@@ -439,6 +442,7 @@ struct ProjectServiceContext {
     plugins: Arc<plugins::ApplicationPlugins>,
     io: dispatch::BlockingExecutor,
     chatgpt_accounts: Arc<OnceLock<Arc<connections::chatgpt::ChatGptAccounts>>>,
+    api_keys: Arc<OnceLock<Arc<connections::api_keys::ApiKeys>>>,
 }
 
 #[derive(Default)]

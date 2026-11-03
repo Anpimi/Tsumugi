@@ -222,6 +222,9 @@ struct McpRetrievalResponses {
 struct ConnectionRequests {
     snapshot: connections::ConnectionSnapshotRequest,
     change: tsumugi_core::model_connections::ModelConnectionChange,
+    key_save: connections::api_keys::ApiKeySaveRequest,
+    key_reference: connections::api_keys::ApiKeyReferenceRequest,
+    key_history: connections::api_keys::ApiKeyHistoryRequest,
     action: connections::ConnectionActionRequest,
     resolve: connections::ConnectionResolveRequest,
     chat_gpt_begin: connections::ChatGptBeginRequest,
@@ -233,6 +236,8 @@ struct ConnectionRequests {
 #[allow(dead_code)]
 struct ConnectionResponses {
     snapshot: connections::ConnectionReadView,
+    key_status: connections::api_keys::ApiKeyStatus,
+    key_history: Vec<connections::api_keys::ApiKeyStatus>,
     receipt: tsumugi_core::model_connections::ModelConnectionReceipt,
     action: Option<tsumugi_core::model_connections::ModelConnectionReceipt>,
     connection: tsumugi_core::ai::AiConnection,

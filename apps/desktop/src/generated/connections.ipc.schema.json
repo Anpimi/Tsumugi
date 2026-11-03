@@ -19,6 +19,16 @@
           "credentialEnv": {
             "type": "string"
           },
+          "credentialReference": {
+            "anyOf": [
+              {
+                "$ref": "#/definitions/ExecutionId"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "endpoint": {
             "type": "string"
           },
@@ -34,6 +44,46 @@
           "model",
           "credentialEnv",
           "tokenField"
+        ],
+        "type": "object"
+      },
+      "ApiKeyHistoryRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "profileId": {
+            "$ref": "#/definitions/ExecutionId"
+          }
+        },
+        "required": [
+          "profileId"
+        ],
+        "type": "object"
+      },
+      "ApiKeyReferenceRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "reference": {
+            "$ref": "#/definitions/ExecutionId"
+          }
+        },
+        "required": [
+          "reference"
+        ],
+        "type": "object"
+      },
+      "ApiKeySaveRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "change": {
+            "$ref": "#/definitions/ModelConnectionChange"
+          },
+          "secret": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "change",
+          "secret"
         ],
         "type": "object"
       },
@@ -263,6 +313,15 @@
       "chatGptSession": {
         "$ref": "#/definitions/ChatGptSessionRequest"
       },
+      "keyHistory": {
+        "$ref": "#/definitions/ApiKeyHistoryRequest"
+      },
+      "keyReference": {
+        "$ref": "#/definitions/ApiKeyReferenceRequest"
+      },
+      "keySave": {
+        "$ref": "#/definitions/ApiKeySaveRequest"
+      },
       "resolve": {
         "$ref": "#/definitions/ConnectionResolveRequest"
       },
@@ -273,6 +332,9 @@
     "required": [
       "snapshot",
       "change",
+      "keySave",
+      "keyReference",
+      "keyHistory",
       "action",
       "resolve",
       "chatGptBegin",
@@ -304,6 +366,16 @@
           "credentialEnv": {
             "type": "string"
           },
+          "credentialReference": {
+            "anyOf": [
+              {
+                "$ref": "#/definitions/ExecutionId"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "endpoint": {
             "type": "string"
           },
@@ -319,6 +391,30 @@
           "model",
           "credentialEnv",
           "tokenField"
+        ],
+        "type": "object"
+      },
+      "ApiKeyAvailability": {
+        "enum": [
+          "available",
+          "missing",
+          "unsupported-platform"
+        ],
+        "type": "string"
+      },
+      "ApiKeyStatus": {
+        "additionalProperties": false,
+        "properties": {
+          "availability": {
+            "$ref": "#/definitions/ApiKeyAvailability"
+          },
+          "reference": {
+            "$ref": "#/definitions/ExecutionId"
+          }
+        },
+        "required": [
+          "reference",
+          "availability"
         ],
         "type": "object"
       },
@@ -1214,6 +1310,15 @@
       "error": {
         "$ref": "#/definitions/CommandError"
       },
+      "keyHistory": {
+        "items": {
+          "$ref": "#/definitions/ApiKeyStatus"
+        },
+        "type": "array"
+      },
+      "keyStatus": {
+        "$ref": "#/definitions/ApiKeyStatus"
+      },
       "receipt": {
         "$ref": "#/definitions/ModelConnectionReceipt"
       },
@@ -1223,6 +1328,8 @@
     },
     "required": [
       "snapshot",
+      "keyStatus",
+      "keyHistory",
       "receipt",
       "action",
       "connection",

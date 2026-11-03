@@ -764,6 +764,7 @@ export interface AiConfig {
    */
   contextStrategy: ContextStrategyReference | null;
   credentialEnv: string;
+  credentialReference?: ExecutionId | null;
   endpoint: string;
   maxItems: number;
   maxOutputTokens: number;

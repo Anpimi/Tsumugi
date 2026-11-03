@@ -47,6 +47,38 @@ fn application(
 }
 
 #[test]
+fn registered_api_key_commands_use_non_secret_receipts_and_keep_account_and_other_keys() {
+    let temp = tempfile::tempdir().unwrap();
+    let state = AppState::default();
+    assert!(state.model_connections.set(ModelConnectionStore::at(temp.path().join("connections")).unwrap()).is_ok());
+    assert!(state.api_keys.set(std::sync::Arc::new(api_keys::ApiKeys::synthetic())).is_ok());
+    assert!(state.chatgpt_accounts.set(std::sync::Arc::new(chatgpt::ChatGptAccounts::synthetic())).is_ok());
+    let app = tauri::test::mock_builder().manage(state).invoke_handler(super::super::execution::handler())
+        .build(tauri::test::mock_context(tauri::test::noop_assets())).unwrap();
+    let window = tauri::WebviewWindowBuilder::new(&app, "main", tauri::WebviewUrl::App("index.html".into())).build().unwrap();
+    let profile = ExecutionId::new();
+    let mut request = save(&window, profile, "Synthetic system key");
+    if let ModelConnectionEdit::Save { connection, .. } = &mut request.edit {
+        connection.credential_env.clear(); connection.credential_reference = Some(request.action_id);
+    }
+    let secret = "synthetic-registered-ipc-secret";
+    let receipt = call(&window, "save_model_connection_key", json!({"change":request,"secret":secret})).unwrap();
+    assert!(!receipt.to_string().contains(secret));
+    assert_eq!(call(&window, "read_model_connection_key", json!({"reference":request.action_id})).unwrap()["availability"], "available");
+    assert_eq!(call(&window, "read_model_connection_keys", json!({"profileId":profile})).unwrap().as_array().unwrap().len(), 1);
+    assert_eq!(call(&window, "resume_model_connection_key", serde_json::to_value(&request).unwrap()).unwrap(), receipt);
+    assert_eq!(call(&window, "discard_model_connection_key", serde_json::to_value(&request).unwrap()).unwrap(), receipt);
+    assert_eq!(call(&window, "remove_model_connection_key", json!({"reference":request.action_id})).unwrap()["availability"], "missing");
+    assert_eq!(call(&window, "save_model_connection_key", json!({"change":request,"secret":secret})).unwrap(), receipt);
+    assert_eq!(call(&window, "read_model_connection_key", json!({"reference":request.action_id})).unwrap()["availability"], "missing");
+    assert_eq!(call(&window, "read_chatgpt_account", json!({})).unwrap(), json!({"account":null,"registrations":[],"login":null,"issue":null}));
+    let database = std::fs::read(temp.path().join("connections/model-connections.sqlite3")).unwrap();
+    assert!(!String::from_utf8_lossy(&database).contains(secret));
+    assert!(!serde_json::to_string(&read_view(&window)).unwrap().contains(secret));
+    assert!(call(&window, "read_model_connection_key", json!({"reference":request.action_id,"secret":secret})).is_err());
+}
+
+#[test]
 fn registered_chatgpt_commands_keep_local_status_and_account_cas_without_remote_calls() {
     let state = AppState::default();
     assert!(
@@ -133,6 +165,7 @@ fn save(
                 endpoint: "https://example.test/v1/chat/completions".into(),
                 model: "Synthetic model".into(),
                 credential_env: "SYNTHETIC_CREDENTIAL_REFERENCE".into(),
+                credential_reference: None,
                 token_field: "max_tokens".into(),
             },
         },
@@ -330,7 +363,7 @@ fn unsupported_connection_formats_are_reported_in_their_own_scope_without_repair
         .path()
         .join("model-connections/model-connections.sqlite3");
     let db = rusqlite::Connection::open(&path).unwrap();
-    db.pragma_update(None, "user_version", 2).unwrap();
+    db.pragma_update(None, "user_version", 3).unwrap();
     drop(db);
     let before = std::fs::read(&path).unwrap();
     let error = call(&window, "read_model_connections", json!({})).unwrap_err();

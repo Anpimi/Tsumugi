@@ -20,7 +20,7 @@ pub const MAX_CONNECTION_PROFILES: usize = 64;
 const MAX_DOCUMENT_BYTES: usize = 256 * 1024;
 const DATABASE: &str = "model-connections.sqlite3";
 const APPLICATION_ID: i64 = 0x544D_434E;
-const FORMAT: i64 = 1;
+const FORMAT: i64 = 2;
 const STATE_SQL: &str = "CREATE TABLE connection_state (singleton INTEGER PRIMARY KEY CHECK(singleton=1), payload BLOB NOT NULL, digest TEXT NOT NULL)";
 const ACTION_SQL: &str = "CREATE TABLE connection_actions (action_id TEXT PRIMARY KEY NOT NULL, request_digest TEXT NOT NULL, payload BLOB NOT NULL, digest TEXT NOT NULL)";
 
@@ -407,6 +407,28 @@ impl ModelConnectionStore {
         let current = read_snapshot(&tx)?;
         read_action(&tx, action_id, &current)
     }
+    /// References already owned by this profile's original receipts. This is
+    /// a read projection, not a second credential inventory or version ledger.
+    pub fn credential_references(&self, profile_id: ExecutionId) -> Result<Vec<ExecutionId>> {
+        let Some(mut connection) = self.existing(false)? else { return Ok(vec![]); };
+        let tx = connection.transaction_with_behavior(TransactionBehavior::Deferred).map_err(sql)?;
+        verify_schema(&tx)?;
+        let current = read_snapshot(&tx)?;
+        let mut references = BTreeSet::new();
+        let mut statement = tx.prepare("SELECT action_id FROM connection_actions").map_err(sql)?;
+        let mut rows = statement.query([]).map_err(sql)?;
+        while let Some(row) = rows.next().map_err(sql)? {
+            let id: String = row.get(0).map_err(sql)?;
+            let id = ExecutionId::parse(&id).map_err(|_| fail(ErrorCode::CorruptLedger, "model-connections-action"))?;
+            let receipt = read_action(&tx, id, &current)?
+                .ok_or_else(|| fail(ErrorCode::CorruptLedger, "model-connections-action"))?;
+            if let Some(reference) = receipt.snapshot.profiles.iter().find(|profile| profile.id == profile_id)
+                .and_then(|profile| profile.connection.credential_reference) {
+                references.insert(reference);
+            }
+        }
+        Ok(references.into_iter().collect())
+    }
     pub fn resolve(&self, reference: &ModelConnectionReference) -> Result<AiConnection> {
         self.snapshot()?.resolve(reference)
     }
@@ -484,6 +506,26 @@ impl ModelConnectionStore {
             Err(_) => Err(fail(ErrorCode::OutcomeUnknown, "model-connections-publish")),
         }
     }
+
+    /// Validate through the same request, receipt and snapshot rules before an
+    /// external credential write. The final change still repeats its CAS.
+    pub fn check_change(&self, change: &ModelConnectionChange) -> Result<()> {
+        if self.check_action(change)?.is_some() { return Ok(()); }
+        apply(&self.snapshot()?, change).map(|_| ())
+    }
+    /// Verify the original action independently of the current CAS, including
+    /// rejected changes whose settings basis has since advanced.
+    pub fn check_action(&self, change: &ModelConnectionChange) -> Result<Option<ModelConnectionReceipt>> {
+        validate_request(change)?;
+        if let Some(receipt) = self.action(change.action_id)? {
+            return if receipt.request_digest == digest(change)? {
+                Ok(Some(receipt))
+            } else {
+                Err(fail(ErrorCode::DependencyConflict, "model-connections-action"))
+            };
+        }
+        Ok(None)
+    }
 }
 
 // The extra directory flush is Unix-specific; other platforms retain tempfile
@@ -504,7 +546,7 @@ fn verify_schema(connection: &Connection) -> Result<()> {
     let format: i64 = connection
         .pragma_query_value(None, "user_version", |r| r.get(0))
         .map_err(sql)?;
-    if application != APPLICATION_ID || format != FORMAT {
+    if application != APPLICATION_ID || ![1, FORMAT].contains(&format) {
         return Err(fail(ErrorCode::InvalidInput, "model-connections-version"));
     }
     let mut statement = connection
@@ -627,6 +669,7 @@ fn change_existing(
         snapshot: after,
     };
     write_result(&tx, &receipt)?;
+    tx.pragma_update(None, "user_version", FORMAT).map_err(sql)?;
     tx.commit()
         .map_err(|_| fail(ErrorCode::OutcomeUnknown, "model-connections-commit"))?;
     Ok(receipt)

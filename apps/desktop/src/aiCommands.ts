@@ -21,6 +21,7 @@ export function connectionAiConfig(before: AiConfig, connection: AiConnection, c
   const subscription = isChatGptSubscription(connection);
   const previous = { ...before };
   delete previous.chatgptAccount;
+  delete previous.credentialReference;
   return { ...previous, ...connection, connectionProfile,
     maxOutputTokens: subscription ? 0 : isChatGptSubscription(before) ? defaultAiConfig.maxOutputTokens : before.maxOutputTokens,
     maxRetries: subscription ? 0 : isChatGptSubscription(before) ? defaultAiConfig.maxRetries : before.maxRetries };
@@ -42,6 +43,7 @@ export function validAiLimits(config: AiConfig): boolean {
 export function sameAiConfig(left: AiConfig, right: AiConfig): boolean {
   return configurationFields.every(key => left[key] === right[key])
     && (left.chatgptAccount ?? null) === (right.chatgptAccount ?? null)
+    && (left.credentialReference ?? null) === (right.credentialReference ?? null)
     && sourceContextFields.every(key => left.sourceContext[key] === right.sourceContext[key])
     && sameContextStrategy(left.contextStrategy, right.contextStrategy)
     && sameConnectionReference(left.connectionProfile, right.connectionProfile);

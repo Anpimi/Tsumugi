@@ -13,6 +13,8 @@ use tsumugi_core::{
     },
 };
 pub(super) mod chatgpt;
+pub(super) mod api_keys;
+mod secure_storage;
 use chatgpt::{ChatGptAccountStatus, ChatGptLoginView, ChatGptModelCatalog};
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -89,6 +91,8 @@ pub(super) fn configure(
     state
         .model_connections
         .set(store)
+        .map_err(|_| unavailable())?;
+    state.api_keys.set(std::sync::Arc::new(api_keys::ApiKeys::new(application_directory)))
         .map_err(|_| unavailable())?;
     state
         .chatgpt_accounts
@@ -304,11 +308,17 @@ pub async fn change_model_connections(
     request: ModelConnectionChange,
 ) -> Result<ModelConnectionReceipt, CommandError> {
     let store = store(&state)?;
+    let keys = state.api_keys.get().cloned();
     // Bounded admission and accepted work lifetime reuse the existing executor.
     // The Core transaction checks the original action and complete read basis.
     state
         .io
         .run(CommandStage::ModelConnections, move || {
+            if let tsumugi_core::model_connections::ModelConnectionEdit::Save { connection, .. } = &request.edit {
+                if connection.credential_reference.is_some() {
+                    return keys.ok_or_else(unavailable)?.change_plain(&store, &request).map_err(map_error);
+                }
+            }
             store.change(&request).map_err(map_error)
         })
         .await

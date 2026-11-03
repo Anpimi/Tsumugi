@@ -70,6 +70,24 @@ fn setup() -> (tempfile::TempDir, DraftStore, DraftWrite) {
     };
     (temp, store, request)
 }
+
+#[test]
+fn format_eighteen_reads_without_rewriting_and_upgrades_only_after_successful_cas() {
+    let (_directory, store, request) = setup();
+    let head = store.write(&request).unwrap();
+    let path = store.directory.join(DATABASE);
+    set_legacy_format(&Connection::open(&path).unwrap(), TERM_PROPOSAL_FORMAT).unwrap();
+    let bytes = fs::read(&path).unwrap();
+    assert_eq!(store.read(&request.key).unwrap(), head);
+    let mut stale = request.clone();
+    stale.value.text = "Rejected stale input".into(); stale.value.edit_seq = revision(2);
+    assert!(store.write(&stale).is_err());
+    assert_eq!(fs::read(&path).unwrap(), bytes);
+    let next = replace(&request, &head, "New input after upgrade");
+    let updated = store.write(&next).unwrap();
+    assert_eq!(disk_format(&store), FORMAT);
+    assert_eq!(store.read(&request.key).unwrap(), updated);
+}
 fn pending(request: &DraftWrite) -> DraftPending {
     DraftPending::Save {
         request: SaveTranslationRevision { reuse_origin: None,

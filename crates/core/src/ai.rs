@@ -29,6 +29,8 @@ pub struct AiConnection {
     pub endpoint: String,
     pub model: String,
     pub credential_env: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub credential_reference: Option<ExecutionId>,
     pub token_field: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub chatgpt_account: Option<ExecutionId>,
@@ -40,6 +42,7 @@ impl AiConnection {
             endpoint: config.endpoint.clone(),
             model: config.model.clone(),
             credential_env: config.credential_env.clone(),
+            credential_reference: config.credential_reference,
             token_field: config.token_field.clone(),
             chatgpt_account: config.chatgpt_account,
         }
@@ -49,6 +52,7 @@ impl AiConnection {
         config.endpoint.clone_from(&self.endpoint);
         config.model.clone_from(&self.model);
         config.credential_env.clone_from(&self.credential_env);
+        config.credential_reference = self.credential_reference;
         config.token_field.clone_from(&self.token_field);
         config.chatgpt_account = self.chatgpt_account;
         if self.chatgpt_account.is_some() {
@@ -96,6 +100,8 @@ pub struct AiConfig {
     pub endpoint: String,
     pub model: String,
     pub credential_env: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub credential_reference: Option<ExecutionId>,
     pub token_field: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub chatgpt_account: Option<ExecutionId>,
@@ -117,6 +123,7 @@ impl Default for AiConfig {
             endpoint: String::new(),
             model: String::new(),
             credential_env: "OPENAI_API_KEY".into(),
+            credential_reference: None,
             token_field: "max_tokens".into(),
             chatgpt_account: None,
             max_items: 20,
@@ -191,6 +198,11 @@ impl AiConfig {
             return Err(error(ErrorCode::InvalidInput, "ai-credential"));
         }
         provider::ProviderProfile::parameters(&self.token_field)?;
+        if self.credential_reference.is_some()
+            && (!self.credential_env.is_empty() || self.chatgpt_account.is_some())
+        {
+            return Err(error(ErrorCode::InvalidInput, "ai-credential-source"));
+        }
         if self.is_chatgpt_subscription() {
             if self.endpoint != provider::CHATGPT_RESPONSES_ENDPOINT
                 || !self.credential_env.is_empty()

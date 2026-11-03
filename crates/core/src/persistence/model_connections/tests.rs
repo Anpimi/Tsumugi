@@ -3,11 +3,34 @@ use crate::ai::AiConfig;
 #[path = "config_tests.rs"]
 mod config_tests;
 
+#[test]
+fn credential_format_reads_legacy_without_writing_and_upgrades_only_a_successful_change() {
+    let (temp, store) = setup(); let id = ExecutionId::new();
+    store.change(&save(&store, id, "Saved", "synthetic")).unwrap();
+    let path = temp.path().join("models").join(DATABASE);
+    let db = Connection::open(&path).unwrap();
+    db.pragma_update(None, "user_version", 1).unwrap(); drop(db);
+    let before = std::fs::read(&path).unwrap();
+    let snapshot = store.snapshot().unwrap();
+    assert_eq!(before, std::fs::read(&path).unwrap());
+    let invalid = save(&store, id, "", "synthetic");
+    assert!(store.change(&invalid).is_err());
+    assert_eq!(before, std::fs::read(&path).unwrap());
+    let mut update = save(&store, id, "Saved", "synthetic");
+    if let ModelConnectionEdit::Save { connection, .. } = &mut update.edit {
+        connection.credential_env.clear(); connection.credential_reference = Some(update.action_id);
+    }
+    store.change(&update).unwrap();
+    assert_eq!(Connection::open(path).unwrap().pragma_query_value(None, "user_version", |r| r.get::<_, i64>(0)).unwrap(), FORMAT);
+    assert_eq!(store.action(snapshot.last_action_id.unwrap()).unwrap().unwrap().snapshot, snapshot);
+}
+
 fn connection(model: &str) -> AiConnection {
     AiConnection {
         endpoint: "https://example.test/v1/chat/completions".into(),
         model: model.into(),
         credential_env: "SYNTHETIC_KEY_REFERENCE".into(),
+        credential_reference: None,
         token_field: "max_tokens".into(),
         chatgpt_account: None,
     }

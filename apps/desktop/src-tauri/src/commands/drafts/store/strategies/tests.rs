@@ -101,3 +101,22 @@ fn strategy_journal_sixteen_upgrades_fifteen_only_on_successful_shared_quota_wri
     assert_eq!(records,2);assert_eq!(count,2);assert_eq!(total,local);
     assert_eq!(total as usize,encode_bounded(&previous,MAX_DRAFT_RECORD_BYTES).unwrap().len()+encode_bounded(&saved,MAX_RECORD).unwrap().len());
 }
+
+#[test]
+fn system_key_draft_persists_only_the_reference_and_rejects_secret_fields() {
+    let temp = tempfile::tempdir().unwrap();
+    let store = DraftStore::at(temp.path().join("drafts")).unwrap();
+    let key = StrategyDraftKey { project_id: ExecutionId::new() };
+    let mut draft = value();
+    draft.config.credential_env.clear();
+    draft.config.credential_reference = Some(ExecutionId::new());
+    let write = StrategyDraftWrite { key: key.clone(), expected_revision: rev(0), writer_id: ExecutionId::new(), value: draft };
+    let head = store.write_strategy(&write).unwrap();
+    let mut raw = serde_json::to_value(&write).unwrap();
+    raw["value"]["config"]["secret"] = serde_json::json!("synthetic-forbidden-draft-secret");
+    assert!(serde_json::from_value::<StrategyDraftWrite>(raw).is_err());
+    let reopened = DraftStore::at(store.directory.clone()).unwrap();
+    assert_eq!(reopened.read_strategy(&key).unwrap(), head);
+    assert!(!String::from_utf8_lossy(&std::fs::read(store.directory.join(DATABASE)).unwrap())
+        .contains("synthetic-forbidden-draft-secret"));
+}

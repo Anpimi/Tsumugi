@@ -24,11 +24,16 @@ On macOS, **Settings** offers **Continue with ChatGPT**. After signing in and au
 
 ### API-key connections
 
-To use an API-key provider, select a preset or enter a custom full Chat Completions URL, model identifier, and credential environment variable name:
+To use an API-key provider, enter a full Chat Completions URL and model identifier in **Settings → Model connections**, then choose a credential source:
 
-- Presets provide editable defaults, and you must choose a model identifier. Set the API key in your environment before launching the desktop app (or clear the variable name for local services that require no authentication). Never paste a secret key into the URL or variable name field.
+- On macOS, choose **System Keychain (macOS)** and enter a new API key. Saving stores the secret in a separate Keychain service and saves only an opaque reference in connection settings. The input is cleared on submission or when the panel closes. Saving never contacts a model. A missing or inaccessible key blocks dispatch; it never falls back to plaintext storage or another credential.
+- **Environment variable** keeps the existing workflow: set the named variable before launching the app, or clear its name for an unauthenticated local service. System-key entry is currently unavailable on other platforms. Never paste a key into a URL or variable-name field. Presets in request forms remain editable defaults.
 - Remote endpoints must use HTTPS; HTTP is permitted only for loopback addresses. URLs containing embedded credentials, query strings, or fragments are rejected, and HTTP redirects are not followed.
 - Select the token limit parameter expected by your provider (`max_tokens` or `max_completion_tokens`). The client uses your chosen field as-is without switching parameters or providers behind the scenes.
+
+Replacing a key creates a new immutable reference through the same connection revision and action receipt. Fresh preparation must select the new connection; an already captured request never silently switches keys. Earlier keys remain available to their original captures. Under **Previous system keys**, you can check and remove them individually. Removing a current or previous key blocks future physical requests that require it, while keeping non-secret settings, other keys and ChatGPT accounts. It cannot recall a request already sent. A key status check does not prove provider compatibility.
+
+If saving fails or its result is uncertain, keep the connection settings and use the original-result check before retrying. An exact retry uses the staged reference without retaining or resending the secret. After the original change is confirmed absent, you can discard its staged key and enter a new one. If the connection store was replaced, automatic reconciliation remains blocked. Interrupted saves can leave an unused item in Keychain; this is secure storage, not a restored connection or permission. Preserve the application data identity when moving local settings: projects and backups contain references, not keys.
 
 By default, an API-key budget covers 20 selected units, concurrency 1, up to 20 requests, 2,000 output tokens per request, 0 automatic retries, and a 60-second request timeout. You can adjust these limits within the bounds shown in the form. When retries are enabled, they apply only to HTTP `429` and `503` responses and draw from the same persistent request budget. Valid `Retry-After` delta seconds or HTTP dates up to 5 seconds are honored (longer delays abort the attempt rather than dispatching early); other retries use exponential backoff with jitter. Network interruptions and timeouts are recorded as unknown outcomes and are never automatically retried.
 

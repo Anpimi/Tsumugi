@@ -12,6 +12,7 @@ Current workspace version metadata: **`0.2.0-alpha.1`**. Because the published `
 
 ### Added
 
+- Save and replace API keys in macOS Keychain from Model connections. Keep environment-variable credentials as an explicit option, check or remove current and previous keys independently, and recover original saves without exposing or persisting key input. New captures use immutable non-secret references; existing captures never silently change identity. Projects upgrade to schema 74, saved connections to format 2, and the local draft journal to format 19.
 - Extensions reports missing or incompatible AI member files without starting workers or testing a model connection, and links to the existing included-resource setup. Source-only builds explain their missing bundled extensions; the distribution guide separates platform capabilities and provides a complete offline preparation sequence and a public manual first-run sample.
 
 - Generate terminology proposals from an explicitly reviewed planning request. Save their exact model and entry provenance, compare them in Knowledge, and edit targets before adopting through the original resource decisions and recovery. Old proposals remain readable; saving or viewing does not run a model or adopt terms. Project storage upgrades atomically to schema 73 and the local draft journal to format 18.

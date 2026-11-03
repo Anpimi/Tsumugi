@@ -372,7 +372,7 @@ fn format_three(store: &DraftStore) {
     let c = Connection::open(store.directory.join(DATABASE)).unwrap();
     c.execute_batch("BEGIN IMMEDIATE; ALTER TABLE conversation_draft_heads RENAME TO conversation_draft_fixture_new").unwrap();
     c.execute_batch(LEGACY_HEAD_SQL).unwrap();
-    c.execute_batch("DROP TABLE IF EXISTS source_draft_heads; DROP TABLE IF EXISTS resource_draft_heads; INSERT INTO conversation_draft_heads SELECT * FROM conversation_draft_fixture_new; DROP TABLE conversation_draft_fixture_new; PRAGMA user_version=3; COMMIT").unwrap();
+    c.execute_batch("DROP TABLE IF EXISTS source_draft_heads; DROP TABLE IF EXISTS resource_draft_heads; DROP TABLE IF EXISTS strategy_draft_heads; INSERT INTO conversation_draft_heads SELECT * FROM conversation_draft_fixture_new; DROP TABLE conversation_draft_fixture_new; PRAGMA user_version=3; COMMIT").unwrap();
 }
 
 fn format_four(store: &DraftStore) {
@@ -712,7 +712,7 @@ fn formats_four_to_six_read_without_writes_and_upgrade_without_rewriting_heads()
         let upgraded_roots = roots();
         assert_eq!(upgraded_roots.iter().filter(|(name, _)| root_pages.iter().any(|(original, _)| original == name)).cloned().collect::<Vec<_>>(), root_pages);
         assert_eq!(upgraded_roots.iter().map(|(name, _)| name.as_str()).collect::<Vec<_>>(),
-            ["conversation_draft_heads", "draft_heads", "resource_draft_heads", "source_draft_heads"]);
+            ["conversation_draft_heads", "draft_heads", "resource_draft_heads", "source_draft_heads", "strategy_draft_heads"]);
         assert_eq!(
             c.pragma_query_value(None, "user_version", |row| row.get::<_, i64>(0))
                 .unwrap(),

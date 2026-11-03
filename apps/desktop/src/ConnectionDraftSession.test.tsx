@@ -159,3 +159,62 @@ describe("application connection draft owner", () => {
     let permit:unknown;await act(async()=>{permit=await result.result.current.owner.prepareExit(()=>true);});expect(permit).toBeNull();expect(result.result.current.owner.state.pending).not.toBeNull();
   });
 });
+
+describe("system-key connection actions", () => {
+  function keyValues() { const draft = values("System fixture"); draft.connection.credentialEnv = ""; draft.connection.credentialReference = actionId; return draft; }
+  it("keeps secrets out of the shared owner and preserves every newer key edit across a delayed acknowledgement", async () => {
+    const write = deferred<ModelConnectionReceipt>(); let request!:ModelConnectionChange;
+    invoke.mockImplementation(async (command, args) => {
+      if(command === "read_model_connections") return structuredClone(current);
+      if(command === "save_model_connection_key") { expect(args.request.secret).toBe("synthetic-A"); request=args.request.change; return write.promise; }
+      throw new Error(command);
+    });
+    const result=setup(); act(()=>{result.result.current.owner.edit(keyValues());result.result.current.owner.editCredential(true);});
+    let save!:Promise<void>;act(()=>{save=result.result.current.owner.save("synthetic-A");});await waitFor(()=>expect(request).toBeDefined());
+    expect(JSON.stringify(result.result.current.owner.state)).not.toContain("synthetic-A");
+    const before=result.result.current.owner.state.editor.seq;
+    act(()=>{result.result.current.owner.editCredential(true);result.result.current.owner.editCredential(true);});
+    expect(result.result.current.owner.state.editor.seq).toBe(before+2);
+    await act(async()=>{write.resolve(commit(request));await save;});
+    expect(result.result.current.owner.state.notice).toBe("saved-newer-draft");expect(result.result.current.owner.dirty).toBe(true);
+    expect(result.result.current.owner.state.editor.credentialEdited).toBe(true);
+  });
+  it("does not submit A after B is entered while its basis read is pending",async()=>{
+    const read=deferred<ConnectionReadView>();invoke.mockImplementation(command=>command === "read_model_connections"?read.promise:Promise.reject(new Error(command)));
+    const result=setup();act(()=>{result.result.current.owner.edit(keyValues());result.result.current.owner.editCredential(true);});
+    let save!:Promise<void>;act(()=>{save=result.result.current.owner.save("synthetic-A");});
+    act(()=>result.result.current.owner.editCredential(true));await act(async()=>{read.resolve(current);await save;});
+    expect(result.result.current.owner.state.notice).toBe("edited-during-read");expect(result.result.current.owner.dirty).toBe(true);
+    expect(invoke.mock.calls.every(([command])=>command === "read_model_connections")).toBe(true);
+  });
+  it("resumes an uncertain original through its reference without retaining or resending the secret",async()=>{
+    let original!:ModelConnectionChange;
+    invoke.mockImplementation(async(command,args)=>{
+      if(command === "read_model_connections")return structuredClone(current);
+      if(command === "save_model_connection_key"){original=args.request.change;throw rejected();}
+      if(command === "read_model_connection_action")return null;
+      if(command === "resume_model_connection_key"){expect(args.request).toEqual(original);expect(JSON.stringify(args)).not.toContain("synthetic-A");return commit(args.request);}
+      throw new Error(command);
+    });
+    const result=setup();act(()=>{result.result.current.owner.edit(keyValues());result.result.current.owner.editCredential(true);});
+    await act(async()=>{await result.result.current.owner.save("synthetic-A");});
+    expect(JSON.stringify(result.result.current.owner.state)).not.toContain("synthetic-A");
+    await act(async()=>{await result.result.current.owner.reconcile();});expect(result.result.current.owner.state.pending?.retryAllowed).toBe(true);
+    await act(async()=>{await result.result.current.owner.retry();});expect(result.result.current.owner.state.pending).toBeNull();
+    expect(invoke.mock.calls.filter(([command])=>command === "save_model_connection_key")).toHaveLength(1);
+  });
+  it("confirms absence before discarding a failed staged key and leaves settings editable",async()=>{
+    invoke.mockImplementation(async(command)=>{
+      if(command === "read_model_connections")return structuredClone(current);
+      if(command === "read_model_connection_action" || command === "discard_model_connection_key")return null;
+      throw {...rejected("storage-failed"),reason:"api-key-secure-storage"};
+    });
+    const result=setup();act(()=>{result.result.current.owner.edit(keyValues());result.result.current.owner.editCredential(true);});
+    await act(async()=>{await result.result.current.owner.save("synthetic-A");});
+    expect(result.result.current.owner.state.pending?.uncertain).toBe(true);
+    await act(async()=>{await result.result.current.owner.discardAbsentKey();});expect(invoke.mock.calls.some(([command])=>command === "discard_model_connection_key")).toBe(false);
+    await act(async()=>{await result.result.current.owner.reconcile();await result.result.current.owner.discardAbsentKey();});
+    expect(result.result.current.owner.state.pending).toBeNull();expect(result.result.current.owner.state.notice).toBe("key-not-applied");
+    expect(result.result.current.owner.state.editor.values.name).toBe("System fixture");
+  });
+});

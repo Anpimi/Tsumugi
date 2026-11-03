@@ -117,7 +117,7 @@ fn term_pending_a_and_newer_b_survive_reopen() {
         newer.value.as_ref().unwrap().proposal_edits,
         write.value.proposal_edits
     );
-    assert_eq!(format(&store.directory.join(DATABASE)), 18);
+    assert_eq!(format(&store.directory.join(DATABASE)), FORMAT);
 }
 
 #[test]
@@ -140,7 +140,7 @@ fn format_seventeen_reads_without_rewrite_and_upgrades_only_on_successful_write(
     write.expected_revision = original.revision;
     term_write(&mut write);
     let updated = store.write_conversation(&write).unwrap();
-    assert_eq!(format(&path), 18);
+    assert_eq!(format(&path), FORMAT);
     assert_eq!(
         DraftStore::at(store.directory.clone())
             .unwrap()

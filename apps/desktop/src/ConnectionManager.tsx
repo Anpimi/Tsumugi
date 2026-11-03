@@ -1,4 +1,4 @@
-import { useImperativeHandle, useRef, useState, type Ref } from "react";
+import { useEffect, useImperativeHandle, useRef, useState, type Ref } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
 import { connectionReadOptions, useApplicationQueryClient } from "./ApplicationReadProvider";
@@ -7,6 +7,7 @@ import { CommandFailureDetails, commandFailure, failureReason } from "./CommandF
 import type { TranslationKey } from "./i18n/types";
 import type { ModelConnectionProfile } from "./connectionCommands";
 import type { SessionExitPermit } from "./sessionNavigation";
+import { ConnectionKeyFields } from "./ConnectionKeyFields";
 import { ChatGptConnectionFields } from "./ChatGptConnectionFields";
 import { Button } from "./design-system/Button";
 import { Dialog } from "./design-system/Dialog";
@@ -26,6 +27,13 @@ const reasons: Partial<Record<string, { field: string; message: TranslationKey }
   "ai-subscription-account": { field: "subscription", message: "ai.errors.ai-subscription-account" },
   "model-connection-name-duplicate": { field: "name", message: "connections.errors.duplicate" },
   "model-connections-capacity": { field: "capacity", message: "connections.errors.capacity" },
+  "api-key-secure-storage": { field: "key", message: "connections.keyWriteFailed" },
+  "api-key-owner": { field: "key", message: "connections.keyWriteFailed" },
+  "api-key-platform": { field: "key", message: "connections.keyUnsupported" },
+  "api-key-value": { field: "key", message: "connections.keyInvalid" },
+  "api-key-connection": { field: "key", message: "connections.keyInvalid" },
+  "api-key-reference-changed": { field: "key", message: "connections.keyChanged" },
+  "ai-api-key-unavailable": { field: "key", message: "connections.keyMissing" },
 };
 const labels = { endpoint: "connections.endpoint", model: "connections.model", credentialEnv: "connections.credentialEnv" } as const;
 const notices: Record<ConnectionNotice, TranslationKey> = {
@@ -33,7 +41,7 @@ const notices: Record<ConnectionNotice, TranslationKey> = {
   "restore": "connections.notices.restore", "edited-during-read": "connections.notices.edited-during-read", "changed": "connections.notices.changed",
   "different-store": "connections.notices.different-store", "not-applied-changed": "connections.notices.not-applied-changed",
   "not-applied": "connections.notices.not-applied", "draft-retained": "connections.notices.draft-retained", "unavailable": "connections.notices.unavailable",
-  "exit-blocked": "connections.notices.exit-blocked", "exit-edited": "connections.notices.exit-edited",
+  "exit-blocked": "connections.notices.exit-blocked", "exit-edited": "connections.notices.exit-edited", "key-removed": "connections.keyRemoved", "key-not-applied": "connections.keyNotApplied",
 };
 export interface ConnectionManagerProps {
   disabled: boolean;
@@ -51,6 +59,14 @@ export function ConnectionManager({ disabled, hideTrigger = false, presentation 
   const embedded = presentation === "embedded";
   const query = useQuery({ ...connectionReadOptions(), enabled: embedded ? visible : open }, client);
   const { state } = owner, { editor } = state;
+  const [secret, setSecret] = useState("");
+  const active = embedded ? visible : open;
+  useEffect(() => { setSecret(""); }, [state.credentialReset]);
+  useEffect(() => () => owner.editCredential(false), [owner.editCredential]);
+  useEffect(() => {
+    if (!active && secret) { setSecret(""); owner.editCredential(false); }
+  }, [active, secret, owner.editCredential]);
+  function keyInput(value: string) { setSecret(value); owner.editCredential(value.length > 0); }
   const confirmed = owner.currentView();
   const view = query.data;
   const changed = state.conflict || (confirmed ? owner.changed(confirmed) : false);
@@ -106,12 +122,13 @@ export function ConnectionManager({ disabled, hideTrigger = false, presentation 
             <Button type="button" disabled={!canSelect || owner.dirty} onClick={() => void owner.archive(profile, profile.archived, view)}>{t(profile.archived ? "connections.restore" : "connections.archive")}</Button>
           </li>)}</ul><p className={styles.hint}>{t("connections.capacity", { count: view.snapshot.profiles.length })}</p></> : null}
       </section><section className={styles.editor} aria-label={t("connections.editProfile")}><h3>{t("connections.editProfile")}</h3>
-        <form className={styles.form} onSubmit={event => { event.preventDefault(); void owner.save(); }}>
+        <form className={styles.form} onSubmit={event => { event.preventDefault(); const input = !subscription && editor.values.connection.credentialReference ? secret || undefined : undefined; setSecret(""); void owner.save(input); }}>
           <Field id="connection-name" label={t("connections.name")} description={t("connections.nameHelp", { count: Array.from(editor.values.name).length })} error={fieldError("name") ?? fieldError("duplicate")}>
             <TextInput ref={nameInput} value={editor.values.name} disabled={state.exitHeld} onChange={event => change("name", event.target.value)}/>
           </Field>
           <Field id="connection-authentication" label={t("connections.authentication")}>
             <select className={fieldStyles.input} value={subscription ? "chatgpt" : "api"} disabled={state.exitHeld} onChange={event => {
+              keyInput("");
               const values = owner.current().editor.values;
               owner.edit({ ...values, connection: event.target.value === "chatgpt"
                 ? { endpoint: "https://api.openai.com/v1/responses", model: "", credentialEnv: "", tokenField: "chatgpt_subscription", chatgptAccount: null }
@@ -121,9 +138,14 @@ export function ConnectionManager({ disabled, hideTrigger = false, presentation 
           <ChatGptConnectionFields connection={editor.values.connection} disabled={state.exitHeld || disabled || state.exitPrompt || switchTarget !== null} modelInvalid={field === "model"}
             onChange={connection => owner.edit({ ...owner.current().editor.values, connection })}/>
           {!subscription ? <>
-            {(["endpoint", "model", "credentialEnv"] as const).map(key => <Field key={key} id={"connection-" + key} label={t(labels[key])} error={fieldError(key)} description={key === "credentialEnv" ? t("connections.credentialHelp") : undefined}>
+            {(["endpoint", "model"] as const).map(key => <Field key={key} id={"connection-" + key} label={t(labels[key])} error={fieldError(key)} >
               <TextInput value={editor.values.connection[key]} disabled={state.exitHeld} spellCheck={false} autoCapitalize="none" onChange={event => change(key, event.target.value)}/>
             </Field>)}
+            {fieldError("key")}
+            <ConnectionKeyFields connection={editor.values.connection} profileId={editor.id} secret={secret} onSecret={keyInput}
+              onChange={connection => owner.edit({ ...owner.current().editor.values, connection })}
+              onRemove={reference => void owner.removeCredential(reference)} disabled={state.exitHeld || disabled || state.exitPrompt || switchTarget !== null}
+              removeDisabled={blocked} visible={active} updating={state.busy}/>
             <Field id="connection-tokenField" label={t("connections.tokenField")} error={fieldError("tokenField")}>
               <select className={fieldStyles.input} value={editor.values.connection.tokenField} disabled={state.exitHeld} onChange={event => change("tokenField", event.target.value)}>
                 <option value="max_tokens">max_tokens</option><option value="max_completion_tokens">max_completion_tokens</option>
@@ -133,7 +155,7 @@ export function ConnectionManager({ disabled, hideTrigger = false, presentation 
           {editor.baseline?.archived ? <Banner>{t("connections.archivedEdit")}</Banner> : null}
           {fieldError("capacity")}{!issue && state.failure ? <Banner tone="error" role="alert">{t("connections.failed")}</Banner> : null}
           <CommandFailureDetails failure={state.failure}/>
-          <div className={styles.saveActions}><Button type="submit" variant="primary" pending={state.busy} disabled={blocked || !owner.dirty}>{t(state.busy ? "connections.saving" : "connections.save")}</Button>
+          <div className={styles.saveActions}><Button type="submit" variant="primary" pending={state.busy} disabled={blocked || !owner.dirty || (!!editor.values.connection.credentialReference && editor.values.connection.credentialReference !== editor.baseline?.connection.credentialReference && !secret)}>{t(state.busy ? "connections.saving" : "connections.save")}</Button>
             <Button type="button" disabled={blocked || !owner.dirty} onClick={() => owner.discard()}>{t("connections.discardDraft")}</Button></div>
         </form>
         {changed ? <Banner tone="warning" role="region" aria-label={t("connections.changedTitle")}><h3>{t("connections.changedTitle")}</h3><p>{t("connections.changedHelp")}</p>
@@ -143,7 +165,7 @@ export function ConnectionManager({ disabled, hideTrigger = false, presentation 
             <Button disabled={blocked} onClick={() => confirmed && owner.reviewCurrent(confirmed, false)}>{t("connections.useSaved")}</Button></div></> : <><p>{t("connections.unavailable")}</p><Button variant="secondary" disabled={blocked} onClick={() => owner.keepAsNew()}>{t("connections.saveAsNew")}</Button></>}</Banner> : null}
         {state.pending?.uncertain ? <Banner tone="warning" role="region" aria-label={t("connections.recoveryTitle")}><h3>{t("connections.recoveryTitle")}</h3><p>{t("connections.unknown")}</p>
           <div className={styles.actions}><Button variant="secondary" disabled={state.busy || state.exitHeld} onClick={() => void owner.reconcile()}>{t("connections.reconcile")}</Button>
-          {state.pending.retryAllowed ? <Button disabled={state.busy || state.exitHeld} onClick={() => void owner.retry()}>{t("connections.retry")}</Button> : null}</div></Banner> : null}
+          {state.pending.retryAllowed ? <Button disabled={state.busy || state.exitHeld} onClick={() => void owner.retry()}>{t("connections.retry")}</Button> : null}{state.pending.discardAllowed && state.pending.withCredential ? <Button disabled={state.busy || state.exitHeld} onClick={() => void owner.discardAbsentKey()}>{t("connections.keyDiscardAbsent")}</Button> : null}</div></Banner> : null}
         {state.notice ? <Banner role="status">{t(notices[state.notice])}</Banner> : null}
       </section></div>
   </div>;
