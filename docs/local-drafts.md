@@ -2,6 +2,12 @@
 
 The desktop workspace uses a local journal for unconfirmed translation, conversation, resource and source-maintenance input. Its editor keeps translation input by project, entry, and language, while resource and source-maintenance input are kept by project. The recovery panel lists drafts and requests whose results still need checking. Translation draft recovery after closing and reopening a project has been observed in a native macOS build; recovery after quitting and restarting the whole app has not yet been verified. Conversation, resource and source-maintenance draft recovery have not yet been verified in a native build.
 
+## Back up and restore a project
+
+Open **Project settings → Save project backup** to save the committed project database to a new local file. Finish or check unresolved work before backing up. The backup includes committed content, decisions and saved delivery history. Local drafts, external files, machine credentials, extension approvals and runtime caches stay separate.
+
+With no project open, choose **Restore a backup**. Enter a new folder name, choose the backup and then its destination parent. The restored project opens separately. Use Extensions or Model connections to set up any missing dependencies. If the restore result is uncertain, use **Open a project** to check the destination folder before restoring again.
+
 ## What is stored
 
 The journal keeps one translation head per project, source entry, and target language. A head can contain draft text, its edit sequence, the original source and translation basis, and a translation-memory reference when one has been placed in the draft. It distinguishes an absent selected translation from a selected empty string. A merge draft also keeps its saved comparison, the contributing revision identities, and the comparison basis. When a save, revision selection, or merge has an uncertain result, the head can also retain the original request and the sequence submitted with it, including its reuse reference. It does not retain session tokens or grants.

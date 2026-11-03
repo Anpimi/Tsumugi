@@ -1,4 +1,8 @@
 export const startupEn = {
+  restoreBackup: "Restore a backup…", restoreTitle: "Restore a project", restoreChoose: "Choose backup and destination…",
+  restoreHelp: "Choose a backup file and a parent folder. The app creates and opens a new project folder. Local drafts, external files and machine credentials are separate. Missing plugins or connections can be set up in Extensions or Model connections.",
+  restoreFailed: "Could not restore the project. Check the backup and choose a new folder name and destination.",
+  restoreUnknown: "The new folder may already contain the restored project. Open that folder to check before restoring again.",
   openExisting: "Open a project…", dropFolder: "Drop a game, Mod or subtitle folder here", chooseAndPrepare: "Or choose a folder to prepare a project",
   recentTitle: "Recent projects", lastOpened: "Last opened {{time}}", openedTimeUnknown: "Time unavailable", continueRecent: "Continue {{name}}",
   createdBeforeImport: "The project is ready. Its source folder has not been imported yet.", continueImport: "Continue preparing import", importLater: "Import later",
@@ -24,6 +28,10 @@ export const startupEn = {
 } as const;
 
 export const startupZh = {
+  restoreBackup: "从备份恢复…", restoreTitle: "恢复工程", restoreChoose: "选择备份和存放位置…",
+  restoreHelp: "选择备份文件和父文件夹，应用会创建并打开新的工程目录。本机草稿、外部文件和本机凭据另行保留。缺少插件或连接时，可在扩展或模型连接中准备。",
+  restoreFailed: "无法恢复工程。请检查备份，并选择新的文件夹名称和存放位置。",
+  restoreUnknown: "新文件夹中可能已有恢复的工程。请先打开该文件夹核对，再决定是否重新恢复。",
   openExisting: "打开项目…", dropFolder: "把游戏、Mod 或字幕文件夹拖到这里", chooseAndPrepare: "也可以选择文件夹，准备新项目",
   recentTitle: "最近项目", lastOpened: "上次打开：{{time}}", openedTimeUnknown: "时间未记录", continueRecent: "继续{{name}}",
   createdBeforeImport: "项目已创建，源文件夹还没有导入。", continueImport: "继续准备导入", importLater: "稍后导入",

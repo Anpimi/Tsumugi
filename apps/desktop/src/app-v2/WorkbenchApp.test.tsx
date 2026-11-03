@@ -244,6 +244,59 @@ it("opens project metadata through the shared command and protects name input wh
   expect(name).toHaveValue("Project name B {{name}}");
 }, 15000);
 
+it("restores from Welcome, keeps the folder name on cancellation, and installs the returned session", async () => {
+  const restored = { ...project, locator: "/synthetic/restored", sessionToken: "restored-session" };
+  const restore = vi.fn<ProjectLifecyclePorts["restore"]>()
+    .mockResolvedValueOnce({ project: null }).mockResolvedValueOnce({ project: restored });
+  controller = new ProjectLifecycle({ restore });
+  render(<WorkbenchApp controller={controller} native/>);
+  fireEvent.click(screen.getByRole("button", { name: i18n.t("startup.restoreBackup") }));
+  const panel = within(await screen.findByRole("dialog", { name: i18n.t("startup.restoreTitle") }));
+  const field = panel.getByRole("textbox", { name: i18n.t("startup.folder") });
+  const submit = panel.getByRole("button", { name: i18n.t("startup.restoreChoose") });
+  fireEvent.change(field, { target: { value: "Restored" } });
+  fireEvent.click(submit);
+  await waitFor(() => expect(submit).toBeEnabled());
+  expect(field).toHaveValue("Restored");
+  expect(controller.getSnapshot().session).toBeNull();
+  fireEvent.click(submit);
+  await waitFor(() => expect(controller.getSnapshot().session?.project).toEqual(restored));
+  expect(restore.mock.calls).toEqual([[{ directoryName: "Restored" }], [{ directoryName: "Restored" }]]);
+});
+
+it("keeps an uncertain restore from repeating and offers opening the destination", async () => {
+  const restore = vi.fn<ProjectLifecyclePorts["restore"]>().mockRejectedValue(new Error("lost reply"));
+  controller = new ProjectLifecycle({ restore });
+  render(<WorkbenchApp controller={controller} native/>);
+  fireEvent.click(screen.getByRole("button", { name: i18n.t("startup.restoreBackup") }));
+  const panel = within(await screen.findByRole("dialog", { name: i18n.t("startup.restoreTitle") }));
+  fireEvent.change(panel.getByRole("textbox", { name: i18n.t("startup.folder") }), { target: { value: "Restored" } });
+  fireEvent.click(panel.getByRole("button", { name: i18n.t("startup.restoreChoose") }));
+  expect(await panel.findByText(i18n.t("startup.restoreUnknown"))).toBeVisible();
+  expect(panel.getByRole("button", { name: i18n.t("startup.restoreChoose") })).toBeDisabled();
+  fireEvent.click(panel.getByRole("button", { name: i18n.t("startup.openDestination") }));
+  expect(await screen.findByRole("dialog", { name: i18n.t("workbenchV2.openProject") })).toBeVisible();
+  expect(restore).toHaveBeenCalledTimes(1);
+});
+
+it("backs up the current session from project settings without saving a newer name edit", async () => {
+  const backup = vi.spyOn(projectCommands, "backup").mockResolvedValue({ saved: true });
+  const rename = vi.spyOn(projectCommands, "rename");
+  await openImportWorkspace();
+  await userEvent.setup().click(screen.getByRole("button", { name: i18n.t("workbenchV2.commandPlaceholder") }));
+  const settings = await screen.findByRole("option", { name: i18n.t("projectMetadata.title") });
+  await waitFor(() => expect(settings).not.toHaveAttribute("aria-disabled", "true"));
+  fireEvent.click(settings);
+  const sheet = within(await screen.findByRole("dialog", { name: i18n.t("projectMetadata.title") }));
+  const name = sheet.getByRole("textbox", { name: i18n.t("projectMetadata.name") });
+  fireEvent.change(name, { target: { value: "Unsaved project name" } });
+  fireEvent.click(sheet.getByRole("button", { name: i18n.t("projectMetadata.backup") }));
+  expect(await sheet.findByText(i18n.t("projectMetadata.backupSaved"))).toBeVisible();
+  expect(backup).toHaveBeenCalledWith({ sessionToken: project.sessionToken });
+  expect(rename).not.toHaveBeenCalled();
+  expect(name).toHaveValue("Unsaved project name");
+}, 15000);
+
 it("continues and reopens the moved project from Welcome after renaming its folder", async () => {
   const position = { unitId: page.rows[0].content.unitId, locale: project.metadata.targetLocales[0], nativeKey: "chapter.{{name}}" };
   localStorage.setItem(RECENT_PROJECTS_STORAGE_KEY, JSON.stringify([{ locator: project.locator, lastOpenedAt: Date.now(), position }]));

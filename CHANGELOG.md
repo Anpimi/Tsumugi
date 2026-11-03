@@ -12,6 +12,7 @@ Current workspace version metadata: **`0.2.0-alpha.1`**. Because the published `
 
 ### Added
 
+- Save a committed project backup from Project settings and restore it from the welcome screen into a new folder. The restored project uses a separate local draft journal.
 - Supported project upgrades save a verified original-schema database snapshot beside the project before applying the migration. An unavailable snapshot stops the upgrade.
 - Source import shows the current stage, captures files after language confirmation, and prepares the independent check after extraction in the same sheet. Extraction, checker execution, and final adoption each keep explicit confirmation. A stopped check can be prepared again from the saved extraction with fresh checker consent. If the selected package or runtime becomes unavailable, source import explains which one is missing and retains the captured preparation.
 - From an entry, ask the assistant to explain or revise its selected saved translation. Review the source, saved translation and sharing settings before sending. Unconfirmed editor changes stay local. Save a revision suggestion as a candidate, recover the original save, and compare it with the current translation. Suggestions based on an earlier source or saved selection remain readable for comparison, including with the original saved translation when the current entry is unavailable.

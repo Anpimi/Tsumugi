@@ -1,5 +1,5 @@
 import { executionCommands, executionContext, type ApplicationShutdownRequest, type ApplicationShutdownView, type RuntimeStatus, type SessionRequest } from "../../executionCommands";
-import { hasUnknownOutcome, isCommandError, projectCommands, type CloseProjectView, type CreateProjectRequest, type OpenProjectRequest, type ProjectView, type ReadProjectRequest } from "../../projectCommands";
+import { hasUnknownOutcome, isCommandError, projectCommands, type CloseProjectView, type CreateProjectRequest, type OpenProjectRequest, type ProjectView, type ReadProjectRequest, type RestoreProjectRequest } from "../../projectCommands";
 import { SessionNavigation, type ExitDisposition, type SessionExitPermit, type WorkspaceArea } from "../../sessionNavigation";
 import { SessionReads } from "../../sessionReads";
 
@@ -49,6 +49,7 @@ export interface ProjectLifecycleState {
 }
 
 export interface ProjectLifecyclePorts {
+  restore: typeof projectCommands.restore;
   create: (request: CreateProjectRequest) => Promise<ProjectView>;
   open: (request: OpenProjectRequest) => Promise<ProjectView>;
   read: (request: ReadProjectRequest) => Promise<ProjectView>;
@@ -78,7 +79,7 @@ export class ProjectLifecycle {
 
   constructor(ports: Partial<ProjectLifecyclePorts> = {}) {
     this.ports = {
-      create: projectCommands.create, open: projectCommands.open, read: projectCommands.read, close: projectCommands.close,
+      restore: projectCommands.restore, create: projectCommands.create, open: projectCommands.open, read: projectCommands.read, close: projectCommands.close,
       status: executionCommands.status, quiesce: executionCommands.quiesce,
       stopCleanup: executionCommands.stopApplicationInstances, resumeCleanup: executionCommands.resumeApplicationInstances,
       createReads: project => new SessionReads(executionContext(project)), actionId: () => crypto.randomUUID(), ...ports,
@@ -220,6 +221,11 @@ export class ProjectLifecycle {
     return this.enterProject({ kind: "create", locator: request.destination, request }, () => this.ports.create(request));
   }
 
+  restore(input: RestoreProjectRequest) {
+    if (this.state.session) return Promise.resolve(false);
+    return this.enterProject({ kind: "restore" }, async () => (await this.ports.restore({ ...input })).project);
+  }
+
   /** Explicitly opens the original destination; never retries an uncertain create. */
   openCreatedProject() {
     const pending = this.state.pending;
@@ -228,22 +234,21 @@ export class ProjectLifecycle {
     return this.enterProject({ kind: "open", locator }, () => this.ports.open({ locator }), pending);
   }
 
-  private async enterProject(action: { kind: "open"; locator: string } | { kind: "create"; locator: string; request: CreateProjectRequest },
-    dispatch: () => Promise<ProjectView>, recovery?: PendingLifecycle) {
+  private async enterProject(action: { kind: "restore" } | { kind: "open"; locator: string } | { kind: "create"; locator: string; request: CreateProjectRequest },
+    dispatch: () => Promise<ProjectView | null>, recovery?: PendingLifecycle) {
     if (recovery && this.state.pending !== recovery) return false;
-    const locator = action.locator;
-    if (!locator.trim()) { this.update({ failure: { code: "command-failed", cause: { field: "locator" } } }); return false; }
+    if (action.kind !== "restore" && !action.locator.trim()) { this.update({ failure: { code: "command-failed", cause: { field: "locator" } } }); return false; }
     const ticket = this.begin("guarding", !!recovery); if (!ticket) return false;
     let permit: SessionExitPermit | null = null;
     let dispatched = false;
     try {
-      permit = await this.guard(ticket, { kind: action.kind === "create" ? "create-project" : "open-project" }, () => !recovery || this.state.pending === recovery);
+      permit = await this.guard(ticket, { kind: action.kind === "restore" ? "restore" : action.kind === "create" ? "create-project" : "open-project" }, () => !recovery || this.state.pending === recovery);
       if (!permit?.current()) return false;
-      this.update({ phase: action.kind === "create" ? "creating" : "opening" });
+      this.update({ phase: action.kind === "open" ? "opening" : "creating" });
       dispatched = true;
       const project = await dispatch();
       // The promise belongs to this exact request. A revoked leave permit cannot discard its Core ACK.
-      if (!this.owns(ticket)) return false;
+      if (!this.owns(ticket) || !project) return false;
       const canLeave = permit.current(), previous = ticket.session;
       if (previous && sameProject(project, previous.project)) {
         this.update({ session: { ...previous, project } });
@@ -259,7 +264,7 @@ export class ProjectLifecycle {
       return canLeave;
     } catch (cause) {
       if (this.owns(ticket)) this.update(dispatched && hasUnknownOutcome(cause)
-        ? { pending: recovery ?? { ...action, session: ticket.session }, failure: { code: "unknown-lifecycle", cause } }
+        ? { pending: action.kind === "restore" ? null : recovery ?? { ...action, session: ticket.session }, failure: { code: "unknown-lifecycle", cause } }
         : { failure: { code: "command-failed", cause } });
       return false;
     } finally { permit?.release(); this.finish(ticket); }

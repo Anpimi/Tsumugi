@@ -9,6 +9,11 @@ export const projectMetadataEn = {
   unknown: "The change may have been saved. Check the original result before submitting another change. Your current input is kept.", check: "Check original result", checking: "Checking the original project change…", readFailed: "The original result could not be confirmed. Your input and original request are kept. Check again.",
   previous: "The original change was not applied. Your input is kept; review it before saving again.", stale: "Project settings changed elsewhere. The current settings were refreshed; your input is kept. Review it before saving again.",
   refreshFailed: "The result is known, but the workspace could not refresh its current settings. Refresh before continuing; your input is kept.", refresh: "Refresh project settings",
+  backupTitle: "Project backup", backup: "Save project backup…",
+  backupHelp: "Save committed project data to a new local file. Unsaved settings, local drafts, external files and account credentials stay separate.",
+  backupSaved: "Project backup saved.", backupCancelled: "Backup cancelled.",
+  backupFailed: "Could not save the backup. Check the selected location. If work is running or its result is uncertain, check that work in Runs before trying again.",
+  backupUnknown: "The backup may have been saved. Check the selected location before trying again.",
   leaveTitle: "Keep your project settings edits?", leaveHelp: "These edits have not been submitted. Stay to keep editing, or discard only these project settings edits.", stay: "Stay and keep edits", discard: "Discard settings edits", leaveChanged: "Your input changed after closing was requested. Stay and review it before closing again.",
 };
 export const projectMetadataZh: typeof projectMetadataEn = {
@@ -22,5 +27,10 @@ export const projectMetadataZh: typeof projectMetadataEn = {
   unknown: "更改可能已经保存。再次提交前，请先核对原操作的结果。当前输入仍会保留。", check: "核对原操作结果", checking: "正在核对原项目更改…", readFailed: "无法确认原操作的结果。当前输入和原请求已保留，请再次核对。",
   previous: "原更改未应用。输入已保留，请检查后重新保存。", stale: "项目设置已被其他操作更改。已刷新当前设置，输入仍会保留，请检查后重新保存。",
   refreshFailed: "已确认操作结果，但工作区未能刷新当前设置。输入已保留，请刷新后继续。", refresh: "刷新项目设置",
+  backupTitle: "工程备份", backup: "保存工程备份…",
+  backupHelp: "将已提交的工程数据保存到新的本地文件。未保存的设置、本机草稿、外部文件和账号凭据另行保留。",
+  backupSaved: "工程备份已保存。", backupCancelled: "已取消备份。",
+  backupFailed: "无法保存备份。请检查所选位置。如果有正在运行或结果未确认的工作，请先到运行记录核对。",
+  backupUnknown: "备份可能已保存。请先检查所选位置，再决定是否重试。",
   leaveTitle: "保留项目设置中的编辑？", leaveHelp: "这些编辑尚未提交。可以留下继续编辑，或仅放弃这些项目设置编辑。", stay: "留下并保留编辑", discard: "放弃设置编辑", leaveChanged: "请求关闭后输入又有变化，请留下核对，再次发起关闭。",
 };
