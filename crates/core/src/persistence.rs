@@ -443,6 +443,7 @@ pub struct ProjectStore {
     conversation_planning_permits: std::collections::BTreeMap<crate::execution::ExecutionId, crate::application::ConversationPlanningPermit>,
     planning_authority_revision: std::sync::Arc<std::sync::atomic::AtomicU64>,
     directory: PathBuf,
+    restored_instance: Option<crate::execution::ExecutionId>,
     connection: Option<Connection>,
     lock: Option<File>,
     pending: Option<PendingChange>,
@@ -492,6 +493,7 @@ impl ProjectStore {
             conversation_planning_permits: Default::default(),
             planning_authority_revision: Default::default(),
             directory,
+            restored_instance: None,
             connection: Some(connection),
             lock: Some(lock),
             pending: None,
@@ -524,7 +526,7 @@ impl ProjectStore {
         }
 
         let lock_path = directory.join(LOCK_FILENAME);
-        let lock = OpenOptions::new()
+        let mut lock = OpenOptions::new()
             .read(true)
             .write(true)
             .open(&lock_path)
@@ -538,6 +540,7 @@ impl ProjectStore {
                 }
             })?;
         acquire_lock(&lock)?;
+        let restored_instance = project_backup::read_restored_instance(&mut lock)?;
 
         let mut connection =
             Connection::open_with_flags(&database_path, OpenFlags::SQLITE_OPEN_READ_WRITE)
@@ -549,6 +552,7 @@ impl ProjectStore {
             conversation_planning_permits: Default::default(),
             planning_authority_revision: Default::default(),
             directory,
+            restored_instance,
             connection: Some(connection),
             lock: Some(lock),
             pending: None,
@@ -566,6 +570,11 @@ impl ProjectStore {
 
     pub fn directory(&self) -> &Path {
         &self.directory
+    }
+
+    /// Local draft namespace assigned when restoring this directory.
+    pub fn restored_instance(&self) -> Option<crate::execution::ExecutionId> {
+        self.restored_instance
     }
 
     pub fn metadata(&self) -> Result<ProjectMetadata, PersistenceError> {

@@ -47,8 +47,7 @@ async fn journal<T: Send + 'static>(
 ) -> Result<T, CommandError> {
     // A not-yet-created thread is an explicit local input identity. Project
     // ownership is required; no fabricated translation target is involved.
-    authorize(state, token.clone(), project, None).await?;
-    let drafts = store(state)?;
+    let drafts = authorize(state, token.clone(), project, None).await?;
     let result = state
         .io
         .run(CommandStage::DraftStorage, move || {

@@ -112,6 +112,13 @@ impl DraftStore {
         })
     }
 
+    pub(in crate::commands) fn for_project(&self, project: &tsumugi_core::ProjectStore) -> Result<Self> {
+        match project.restored_instance() {
+            Some(instance) => Self::at(self.directory.join("restored").join(instance.to_string())),
+            None => Ok(self.clone()),
+        }
+    }
+
     pub fn read(&self, key: &DraftKey) -> Result<DraftHead> {
         validate_key(key)?;
         let Some(mut connection) = self.existing(false)? else {

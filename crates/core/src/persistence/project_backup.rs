@@ -1,6 +1,10 @@
 //! Committed project snapshots, independent of the desktop draft and execution owners.
 
 use super::*;
+use crate::execution::ExecutionId;
+use std::io::{Read, Write};
+
+const RESTORED_PREFIX: &str = "tsumugi-restored-v1:";
 
 impl ProjectStore {
     /// Save a standalone current-schema database to a new file. The desktop
@@ -35,7 +39,9 @@ impl ProjectStore {
         let result = (|| {
             let database = capture(&source, destination, SCHEMA_VERSION, stage)?;
             validate_current_snapshot(&database, destination, stage)?;
-            let lock = tempfile::NamedTempFile::new_in(destination)
+            let mut lock = tempfile::NamedTempFile::new_in(destination)
+                .map_err(|error| map_io(error, stage))?;
+            write!(lock, "{RESTORED_PREFIX}{}", ExecutionId::new())
                 .map_err(|error| map_io(error, stage))?;
             publish(database, &destination.join(DATABASE_FILENAME), stage)?;
             sync_directory(destination, stage)?;
@@ -49,6 +55,29 @@ impl ProjectStore {
         }
         result
     }
+}
+
+pub(super) fn read_restored_instance(
+    lock: &mut File,
+) -> Result<Option<ExecutionId>, PersistenceError> {
+    let stage = PersistenceStage::Ownership;
+    let mut marker = Vec::new();
+    lock.take((RESTORED_PREFIX.len() + 37) as u64)
+        .read_to_end(&mut marker)
+        .map_err(|error| map_io(error, stage))?;
+    if marker.is_empty() {
+        return Ok(None);
+    }
+    let id = std::str::from_utf8(&marker)
+        .ok()
+        .and_then(|marker| marker.strip_prefix(RESTORED_PREFIX))
+        .and_then(|id| {
+            ExecutionId::parse(id)
+                .ok()
+                .filter(|parsed| parsed.to_string() == id)
+        })
+        .ok_or(PersistenceError::CorruptProject { stage })?;
+    Ok(Some(id))
 }
 
 fn validate_current_snapshot(

@@ -20,8 +20,7 @@ pub struct ResourceDraftResolveRequest {pub session_token:String,pub resolve:Res
 
 async fn journal<T:Send+'static>(state:&AppState,token:String,project:ExecutionId,
     operation:impl FnOnce(DraftStore)->Result<T,ExecutionError>+Send+'static)->Result<T,CommandError>{
-    authorize(state,token.clone(),project,None).await?;
-    let drafts=store(state)?;
+    let drafts = authorize(state,token.clone(),project,None).await?;
     let result=state.io.run(CommandStage::DraftStorage,move||operation(drafts).map_err(map_error)).await?;
     authorize(state,token,project,None).await?;
     Ok(result)

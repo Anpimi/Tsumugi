@@ -122,12 +122,6 @@ pub(super) fn configure(
         })
 }
 
-fn store(state: &AppState) -> Result<DraftStore, CommandError> {
-    state.local_drafts.get().cloned().ok_or_else(|| {
-        CommandError::simple(CommandErrorCode::StorageFailed, CommandStage::DraftStorage)
-    })
-}
-
 fn map_error(error: ExecutionError) -> CommandError {
     let corrupt = error.code == ErrorCode::CorruptLedger;
     let unsupported = error.stage == "drafts-schema-version";
@@ -196,7 +190,8 @@ async fn authorize(
     token: String,
     project: ExecutionId,
     key: Option<DraftKey>,
-) -> Result<(), CommandError> {
+) -> Result<DraftStore, CommandError> {
+    let drafts = state.local_drafts.get().cloned();
     state
         .sessions
         .run(
@@ -212,7 +207,10 @@ async fn authorize(
                 if let Some(key) = key {
                     validate_target(&active.store, &key)?;
                 }
-                Ok(())
+                let drafts = drafts.ok_or_else(|| {
+                    CommandError::simple(CommandErrorCode::StorageFailed, CommandStage::DraftStorage)
+                })?;
+                drafts.for_project(&active.store).map_err(map_error)
             },
         )
         .await
@@ -226,8 +224,7 @@ pub async fn read_local_drafts(
         || request.unit_ids.iter().collect::<std::collections::BTreeSet<_>>().len() != request.unit_ids.len() {
         return Err(map_error(ExecutionError::new(ErrorCode::InvalidInput,"drafts-read-many")));
     }
-    authorize(&state,request.session_token.clone(),request.project_id,None).await?;
-    let drafts = store(&state)?;
+    let drafts = authorize(&state,request.session_token.clone(),request.project_id,None).await?;
     let initial = request.clone();
     let heads = state.io.run(CommandStage::DraftStorage, move || drafts.read_many(initial.project_id,&initial.locale,&initial.unit_ids).map_err(map_error)).await?;
     state.sessions.run("read_local_drafts.finish",CommandStage::DraftStorage,move |sessions| {
@@ -263,14 +260,13 @@ pub async fn read_local_draft(
     state: State<'_, AppState>,
     request: DraftReadRequest,
 ) -> Result<DraftReadView, CommandError> {
-    authorize(
+    let drafts = authorize(
         &state,
         request.session_token.clone(),
         request.key.project_id,
         Some(request.key.clone()),
     )
     .await?;
-    let drafts = store(&state)?;
     let key = request.key.clone();
     let head = state
         .io
@@ -305,14 +301,13 @@ pub async fn write_local_draft(
     request: DraftWriteRequest,
 ) -> Result<DraftHead, CommandError> {
     let key = request.write.key.clone();
-    authorize(
+    let drafts = authorize(
         &state,
         request.session_token.clone(),
         key.project_id,
         Some(key.clone()),
     )
     .await?;
-    let drafts = store(&state)?;
     let head = state
         .io
         .run(CommandStage::DraftStorage, move || {
@@ -329,14 +324,13 @@ pub async fn clear_local_draft(
     request: DraftClearRequest,
 ) -> Result<DraftHead, CommandError> {
     let key = request.clear.key.clone();
-    authorize(
+    let drafts = authorize(
         &state,
         request.session_token.clone(),
         key.project_id,
         Some(key.clone()),
     )
     .await?;
-    let drafts = store(&state)?;
     let head = state
         .io
         .run(CommandStage::DraftStorage, move || {
@@ -352,14 +346,13 @@ pub async fn list_local_drafts(
     state: State<'_, AppState>,
     request: DraftListRequest,
 ) -> Result<DraftPage, CommandError> {
-    authorize(
+    let drafts = authorize(
         &state,
         request.session_token.clone(),
         request.project_id,
         None,
     )
     .await?;
-    let drafts = store(&state)?;
     let page = state
         .io
         .run(CommandStage::DraftStorage, move || {

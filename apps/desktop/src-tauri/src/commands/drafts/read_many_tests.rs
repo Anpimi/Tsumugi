@@ -67,3 +67,57 @@ fn draft_read_many_ipc_keeps_full_pending_heads_and_bounded_current_member_order
     let kept = call(&window,"read_local_draft",json!({"sessionToken":token,"key":{"projectId":project,"unitId":units[0],"locale":"zh-CN"}})).unwrap();
     assert_eq!(kept["head"],serde_json::to_value(head).unwrap());
 }
+
+#[test]
+fn restored_project_draft_scope_survives_session_switches_and_reopen() {
+    let (directory, core, rows) = fixture::source_fixture();
+    let original = core.directory().to_path_buf();
+    let backup = directory.path().join("project.backup");
+    let restored = directory.path().join("restored");
+    let project = ExecutionId::parse(&core.metadata().unwrap().project_id().to_string()).unwrap();
+    core.backup_to(&backup).unwrap();
+    core.close().unwrap();
+    ProjectStore::restore_backup(&backup, &restored).unwrap();
+
+    let application = tempfile::tempdir().unwrap();
+    let state = AppState::default();
+    configure(&state, application.path()).unwrap();
+    let app = tauri::test::mock_builder().manage(state).invoke_handler(super::super::execution::handler())
+        .build(tauri::test::mock_context(tauri::test::noop_assets())).unwrap();
+    let window = tauri::WebviewWindowBuilder::new(&app, "main", tauri::WebviewUrl::App("index.html".into())).build().unwrap();
+    let open = |path: &Path| call(&window, "open_project", json!({"locator":path})).unwrap()["sessionToken"].clone();
+    let unit = rows[0].unit_id.unwrap();
+    let key = json!({"projectId":project,"unitId":unit,"locale":"zh-CN"});
+    let read = |token: &Value| call(&window, "read_local_draft", json!({"sessionToken":token,"key":key}));
+    let inbox = |token: &Value| call(&window, "read_decision_page", json!({"sessionToken":token,"projectId":project,
+        "query":{"locale":"zh-CN","sources":["local-action-recovery"]},"cursor":null,"limit":10,"activity":[]})).unwrap()["total"].clone();
+
+    let original_token = open(&original);
+    let basis: DraftBasis = serde_json::from_value(read(&original_token).unwrap()["current"]["basis"].clone()).unwrap();
+    let pending = DraftPending::Save { request: SaveTranslationRevision { reuse_origin: None, project_id: project,
+        action_id: ExecutionId::new(), unit_id: unit, locale: "zh-CN".into(), source_revision_id: basis.source_revision_id,
+        expected_selection_id: basis.selection_id, text: "Original submitted".into() }, submitted_seq: Revision::new(1).unwrap() };
+    let mut value = DraftValue { reuse_origin: None, basis, text: "Original newer input".into(),
+        edit_seq: Revision::new(2).unwrap(), pending: Some(pending), merge: None };
+    let write = |token: &Value, value: &DraftValue| call(&window, "write_local_draft", json!({"sessionToken":token,"write":{
+        "key":key,"expectedRevision":"0","writerId":ExecutionId::new(),"value":value}})).unwrap();
+    let original_head = write(&original_token, &value);
+    assert_eq!(inbox(&original_token), 1);
+
+    let restored_token = open(&restored);
+    assert!(read(&original_token).is_err());
+    assert!(read(&restored_token).unwrap()["head"]["value"].is_null());
+    assert_eq!(inbox(&restored_token), 0);
+    let list = call(&window, "list_local_drafts", json!({"sessionToken":restored_token,"projectId":project,"after":null,"limit":10})).unwrap();
+    assert_eq!(list["items"], json!([]));
+    value.pending = None;
+    value.text = "Restored draft".into();
+    let restored_head = write(&restored_token, &value);
+
+    let original_token = open(&original);
+    assert_eq!(read(&original_token).unwrap()["head"], original_head);
+    assert_eq!(inbox(&original_token), 1);
+    let restored_token = open(&restored);
+    assert_eq!(read(&restored_token).unwrap()["head"], restored_head);
+    assert_eq!(inbox(&restored_token), 0);
+}
