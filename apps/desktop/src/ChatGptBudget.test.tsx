@@ -50,6 +50,14 @@ it.each(["en-US", "zh-CN"])("states the subscription limits accurately in prepar
   expect(screen.getByText(i18n.t("connections.subscriptionInvocationSummary", { items: "3", requests: "7", concurrency: "1", timeout: "60" }))).toBeInTheDocument();
   rerender(<PreparationBudgetSummary config={config} perRequest/>);
   expect(screen.getByText(i18n.t("connections.subscriptionRequestSummary", { timeout: "60" }))).toBeInTheDocument();
+  rerender(<PreparationBudgetSummary config={original} team/>);
+  expect(screen.getByText(i18n.t("connections.teamRequestLimit", { requests: "7" }))).toBeVisible();
+  expect(screen.queryByText(/37/)).not.toBeInTheDocument();
+  rerender(<PreparationBudgetSummary config={config} team/>);
+  expect(screen.getByText(i18n.t("connections.teamRequestLimit", { requests: "7" }))).toBeVisible();
+  expect(screen.queryByText(i18n.t("connections.subscriptionInvocationSummary", { items: "3", requests: "7", concurrency: "1", timeout: "60" }))).not.toBeInTheDocument();
+  rerender(<CapturedRequestLimits config={original} member/>);
+  expect(screen.getByText(i18n.t("ai.team.capturedMemberLimits", { requests: "7", tokens: "37", timeout: "60", retries: "2" }))).toBeVisible();
   rerender(<CapturedRequestLimits config={config} member/>);
   expect(screen.getByText(i18n.t("connections.subscriptionMemberSummary", { requests: "7", timeout: "60" }))).toBeInTheDocument();
 });

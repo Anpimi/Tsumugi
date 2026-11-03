@@ -547,6 +547,7 @@ connections: {
   "selectionChanged": "所选的已保存连接已更新或不可用。您当前的参数已保留；请重新选择最新连接或改用一次性连接，然后重新生成预览并确认。",
   "selectionChecking": "正在核验当前绑定的连接… 您的参数设置与待处理请求已保留，核验完成后即可重新授权。",
   "invocationSummaryTitle": "任务预算与数据分享",
+  "teamRequestLimit": "团队计划共享 {{requests}} 次请求额度，含重试。每位成员有各自的单次请求设置。",
   "invocationSummary": "最多 {{items}} 个条目 · {{requests}} 次请求 · 并发 {{concurrency}} · 每次最多 {{tokens}} 个输出 token · 重试 {{retries}} 次 · 单次超时 {{timeout}} 秒。",
   "incompleteBudget": "请先填妥所有预算字段，再准备请求。",
   "sharingBoth": "将按预览所示范围分享已采纳术语与已保存的人工上下文。",
@@ -580,8 +581,8 @@ connections: {
   "authentication": "认证方式",
   "api": "API Key 或本地服务",
   "subscriptionRequestSummary": "ChatGPT 订阅：无输出 token 硬性上限、不自动重试，单次请求超时 {{timeout}} 秒；总请求数与并发数共享整场对比的预算。同时受您的 ChatGPT 套餐与工作区额度限制；系统会记录实际返回的 token 用量，但不统计金额费用。",
-  "subscriptionInvocationSummary": "ChatGPT 订阅：最多 {{items}} 个条目 · {{requests}} 次请求 · 并发 {{concurrency}} · 无输出 token 硬性上限 · 不自动重试 · 单次超时 {{timeout}} 秒。同时受您的 ChatGPT 套餐与工作区额度限制；系统会记录实际返回的 token 用量，但不统计金额费用。",
-  "subscriptionMemberSummary": "ChatGPT 订阅成员：最多 {{requests}} 次请求 · 无输出 token 硬性上限 · 不自动重试 · 单次超时 {{timeout}} 秒。同时受您的 ChatGPT 套餐与工作区额度限制；系统会记录实际返回的 token 用量，但不统计金额费用。",
+  "subscriptionInvocationSummary": "ChatGPT 订阅：最多 {{items}} 个条目 · {{requests}} 次请求 · 并发 {{concurrency}} · Tsumugi 不设输出 token 硬性上限 · 不自动重试 · 单次超时 {{timeout}} 秒。同时受您的 ChatGPT 套餐与工作区额度限制；系统会记录实际返回的 token 用量，但不统计金额费用。",
+  "subscriptionMemberSummary": "ChatGPT 订阅成员：在计划共享额度内最多 {{requests}} 次请求 · Tsumugi 不设输出 token 硬性上限 · 不自动重试 · 单次超时 {{timeout}} 秒。同时受您的 ChatGPT 套餐与工作区额度限制；系统会记录实际返回的 token 用量，但不统计金额费用。",
   "chatgpt": {
     "connection": "ChatGPT 订阅",
     "title": "ChatGPT 账号",

@@ -161,7 +161,7 @@ Current workspace version metadata: **`0.2.0-alpha.1`**. Because the published `
 
 ### Fixed
 
-- Request summaries show remaining request capacity after reservations and older holds. When the provider reports no tokens for a total or detail, the summary shows that the figure is unreported.
+- Request summaries show remaining request capacity after reservations and older holds. When the provider reports no tokens for a total or detail, the summary shows that the figure is unreported. Team previews separate the shared request limit from each member’s request settings.
 
 - Execution details retain the measured size and limit when a team model request exceeds capacity. The details explain how to reduce the shared material before preparing again.
 

@@ -544,6 +544,7 @@ connections: {
   "selectionChanged": "The saved connection was updated or is no longer available. Your current settings are kept. Select the updated connection or switch to a one-time connection, then preview and confirm again.",
   "selectionChecking": "Verifying the bound connection… Your settings and pending requests are kept; new authorization will be available once verified.",
   "invocationSummaryTitle": "Task budget and sharing",
+  "teamRequestLimit": "Shared plan request limit: {{requests}} requests, including retries. Each member has its own per-request settings.",
   "invocationSummary": "Up to {{items}} items · {{requests}} requests · concurrency {{concurrency}} · {{tokens}} output tokens/request · {{retries}} retries · {{timeout}}s timeout.",
   "incompleteBudget": "Fill in all budget fields before preparing a request.",
   "sharingBoth": "Adopted terms and saved manual context will be shared for the previewed scope.",
@@ -577,8 +578,8 @@ connections: {
   "authentication": "Authentication",
   "api": "API key or local service",
   "subscriptionRequestSummary": "ChatGPT subscription: no output-token cap, no automatic retries, {{timeout}}s timeout per request. Requests and concurrency share the comparison budget. Subject to your ChatGPT plan and workspace limits; reported token usage is logged, and monetary cost is not tracked.",
-  "subscriptionInvocationSummary": "ChatGPT subscription: up to {{items}} items · {{requests}} requests · concurrency {{concurrency}} · no output-token cap · no automatic retries · {{timeout}}s timeout. Subject to your ChatGPT plan and workspace limits; reported token usage is logged, and monetary cost is not tracked.",
-  "subscriptionMemberSummary": "ChatGPT subscription member: up to {{requests}} requests · no output-token cap · no automatic retries · {{timeout}}s timeout. Subject to your ChatGPT plan and workspace limits; reported token usage is logged, and monetary cost is not tracked.",
+  "subscriptionInvocationSummary": "ChatGPT subscription: up to {{items}} items · {{requests}} requests · concurrency {{concurrency}} · Tsumugi sets no output-token cap · no automatic retries · {{timeout}}s timeout. Subject to your ChatGPT plan and workspace limits; reported token usage is logged, and monetary cost is not tracked.",
+  "subscriptionMemberSummary": "ChatGPT subscription member: up to {{requests}} requests within the shared plan limit · Tsumugi sets no output-token cap · no automatic retries · {{timeout}}s timeout. Subject to your ChatGPT plan and workspace limits; reported token usage is logged, and monetary cost is not tracked.",
   "chatgpt": {
     "connection": "ChatGPT subscription",
     "title": "ChatGPT account",
