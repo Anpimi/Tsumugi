@@ -126,7 +126,7 @@ fn bundled_application(
     (app, window, installed, environment)
 }
 
-fn journey(material: Materials) {
+fn journey(material: Materials, reopen_before_publication: bool) {
     let temporary = OwnedTemporary(tempfile::tempdir().unwrap());
     let (app, window, installed, environment) = bundled_application(temporary.path());
     let state = app.state::<AppState>();
@@ -254,15 +254,36 @@ fn journey(material: Materials) {
     assert!(call(&window, "start_source_check", borrowed).is_err());
     let checked = call(&window, "start_source_check", check_start).unwrap();
     let checked_detail = completed(&window, &context, &checked);
-    call(
-        &window,
-        "finish_source_check",
-        scoped(
-            &context,
-            json!({"attemptId":checked,"resultId":checked_detail["items"][0]["resultId"]}),
-        ),
-    )
-    .unwrap();
+    let checked_result = &checked_detail["items"][0]["resultId"];
+    let finish = scoped(&context, json!({"attemptId":checked,"resultId":checked_result}));
+    if reopen_before_publication {
+        // A finished Worker is not a published check. Reopen before recording
+        // it so recovery uses the original SQLite attempt and result.
+        call(&window, "close_project", json!({"sessionToken":context["sessionToken"]})).unwrap();
+        let reopened = call(&window, "open_project", json!({"locator":project_path})).unwrap();
+        let context = json!({"sessionToken":reopened["sessionToken"],"projectId":context["projectId"]});
+        let mut original_adoption = original_adoption;
+        original_adoption["adoption"]["sessionToken"] = context["sessionToken"].clone();
+        let observation = json!({"action":prepared_adoption,"receipt":null});
+        assert_eq!(call(&window, "read_source_adoption_action", original_adoption.clone()).unwrap(), observation);
+        let finish = scoped(&context, json!({"attemptId":checked,"resultId":checked_result}));
+        let mut wrong = finish.clone();
+        wrong["resultId"] = source_result.clone();
+        assert!(call(&window, "finish_source_check", wrong).is_err());
+        call(&window, "finish_source_check", finish.clone()).unwrap();
+        call(&window, "finish_source_check", finish).unwrap();
+        assert_eq!(completed(&window, &context, &started)["items"][0]["status"]["validation"], "valid");
+        let action = scoped(&context, json!({"actionId":adoption["actionId"]}));
+        assert_eq!(call(&window, "adopt_execution", action).unwrap_err()["reason"], "plugin-authority");
+        assert_eq!(call(&window, "read_source_adoption_action", original_adoption).unwrap(), observation);
+        call(&window, "close_project", json!({"sessionToken":context["sessionToken"]})).unwrap();
+        state.plugins.close();
+        drop(state);
+        drop(app);
+        removable(temporary.path());
+        return;
+    }
+    call(&window, "finish_source_check", finish).unwrap();
     let adopted = call(&window, "adopt_execution", action.clone()).unwrap();
     assert_eq!(call(&window, "read_source_adoption_action", original_adoption.clone()).unwrap()["receipt"], adopted);
     assert_eq!(call(&window, "adopt_execution", action).unwrap(), adopted);
@@ -480,7 +501,16 @@ fn journey(material: Materials) {
 
 #[test]
 fn included_webvtt_source_review_build_and_reopen_use_fixed_packages_and_real_workers() {
-    journey(Materials {
+    journey(webvtt_materials(), false);
+}
+
+#[test]
+fn included_webvtt_checker_publication_after_reopen_uses_fixed_packages_and_real_workers() {
+    journey(webvtt_materials(), true);
+}
+
+fn webvtt_materials() -> Materials {
+    Materials {
         plugin: "webvtt",
         files: &[(
             "source.vtt",
@@ -496,7 +526,7 @@ fn included_webvtt_source_review_build_and_reopen_use_fixed_packages_and_real_wo
                 .into_bytes()
         },
         rules: ["plugin:webvtt.source-structure", "plugin:webvtt.payload"],
-    });
+    }
 }
 
 #[test]
@@ -523,5 +553,5 @@ fn included_smapi_source_review_build_and_reopen_use_fixed_packages_and_real_wor
             .into_bytes()
         },
         rules: ["plugin:smapi.placeholders", "plugin:smapi.format"],
-    });
+    }, false);
 }
