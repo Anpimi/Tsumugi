@@ -994,7 +994,7 @@ fn configure_new_connection(connection: &Connection) -> Result<(), PersistenceEr
 
 fn validate_existing_connection(
     connection: &mut Connection,
-    _directory: &Path,
+    directory: &Path,
 ) -> Result<(), PersistenceError> {
     connection
         .pragma_update(None, "foreign_keys", true)
@@ -1051,6 +1051,16 @@ fn validate_existing_connection(
         }
         validate_schema_shape_version(&transaction, user_version)?;
         let _ = read_metadata_from(&transaction)?;
+        // The immediate transaction excludes other SQLite writers while this
+        // separate read-only connection captures the pre-migration database.
+        // A SQLite backup cannot use a source holding a write transaction.
+        let source = Connection::open_with_flags(
+            directory.join(DATABASE_FILENAME),
+            OpenFlags::SQLITE_OPEN_READ_ONLY,
+        )
+        .map_err(|error| map_sqlite(error, PersistenceStage::Open))?;
+        write_schema_snapshot(&source, directory, user_version)?;
+        drop(source);
         #[cfg(test)]
         migration_crash_hook("conversation-before-ddl");
         if user_version == 61 {
@@ -1122,38 +1132,48 @@ fn validate_existing_connection(
         .map_err(|error| map_sqlite(error, PersistenceStage::Open))
 }
 
-#[cfg(test)]
-fn backup_current_schema(
+fn write_schema_snapshot(
     connection: &Connection,
     directory: &Path,
-) -> Result<(), PersistenceError> {
-    // VACUUM INTO uses SQLite's consistent database snapshot rather than a raw
-    // copy of a possibly active rollback-journal database. This test helper
-    // checks a current snapshot; it is not an older-schema opening route.
-    // Never replace a previous snapshot.
-    let version = SCHEMA_VERSION;
-    let filename = format!(
-        "{DATABASE_FILENAME}.pre-v{version}-{}.backup",
-        uuid::Uuid::new_v4()
-    );
-    let path = directory.join(filename);
+    version: i64,
+) -> Result<PathBuf, PersistenceError> {
+    let stage = PersistenceStage::Open;
+    let temporary = tempfile::Builder::new()
+        .prefix(".project-snapshot-")
+        .tempfile_in(directory)
+        .map_err(|error| map_io(error, stage))?;
     connection
-        .execute("VACUUM INTO ?1", params![path.to_string_lossy().as_ref()])
-        .map_err(|error| map_sqlite(error, PersistenceStage::Open))?;
-    let backup = Connection::open_with_flags(&path, OpenFlags::SQLITE_OPEN_READ_ONLY)
-        .map_err(|error| map_sqlite(error, PersistenceStage::Open))?;
+        .backup(rusqlite::MAIN_DB, temporary.path(), None)
+        .map_err(|error| map_sqlite(error, stage))?;
+
+    let backup = Connection::open_with_flags(temporary.path(), OpenFlags::SQLITE_OPEN_READ_ONLY)
+        .map_err(|error| map_sqlite(error, stage))?;
     let backup_version: i64 = backup
-        .query_row("PRAGMA user_version", [], |row| row.get(0))
-        .map_err(|error| map_sqlite(error, PersistenceStage::Open))?;
+        .pragma_query_value(None, "user_version", |row| row.get(0))
+        .map_err(|error| map_sqlite(error, stage))?;
+    let application_id: i64 = backup
+        .pragma_query_value(None, "application_id", |row| row.get(0))
+        .map_err(|error| map_sqlite(error, stage))?;
     let check: String = backup
         .query_row("PRAGMA quick_check", [], |row| row.get(0))
-        .map_err(|error| map_sqlite(error, PersistenceStage::Open))?;
-    if backup_version != version || check != "ok" {
-        return Err(PersistenceError::CorruptProject {
-            stage: PersistenceStage::Open,
-        });
+        .map_err(|error| map_sqlite(error, stage))?;
+    if backup_version != version || application_id != APPLICATION_ID || check != "ok" {
+        return Err(PersistenceError::CorruptProject { stage });
     }
-    Ok(())
+    drop(backup);
+    temporary.as_file().sync_all().map_err(|error| map_io(error, stage))?;
+    let path = directory.join(format!(
+        "{DATABASE_FILENAME}.pre-v{version}-{}.backup",
+        uuid::Uuid::new_v4()
+    ));
+    temporary
+        .persist_noclobber(&path)
+        .map_err(|error| map_io(error.error, stage))?;
+    #[cfg(unix)]
+    File::open(directory)
+        .and_then(|directory| directory.sync_all())
+        .map_err(|error| map_io(error, stage))?;
+    Ok(path)
 }
 
 fn validate_schema_shape(connection: &Connection) -> Result<(), PersistenceError> {
@@ -1549,6 +1569,35 @@ mod tests {
         );
         assert_eq!(store.metadata().unwrap().display_name(), "Demo");
         store.close().unwrap();
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn project_upgrade_stops_when_snapshot_cannot_be_written() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let temp = tempfile::tempdir().unwrap();
+        let path = temp.path().join("project");
+        ProjectStore::create(&path, metadata()).unwrap().close().unwrap();
+        let database = path.join(DATABASE_FILENAME);
+        let legacy = Connection::open(&database).unwrap();
+        legacy.pragma_update(None, "user_version", 73).unwrap();
+        let before = read_metadata_from(&legacy).unwrap();
+        drop(legacy);
+
+        let permissions = fs::metadata(&path).unwrap().permissions();
+        fs::set_permissions(&path, fs::Permissions::from_mode(0o500)).unwrap();
+        let refused = ProjectStore::open(&path);
+        fs::set_permissions(&path, permissions).unwrap();
+        assert_eq!(refused.unwrap_err().code(), PersistenceErrorCode::PermissionDenied);
+
+        let legacy = Connection::open_with_flags(&database, OpenFlags::SQLITE_OPEN_READ_ONLY).unwrap();
+        assert_eq!(legacy.pragma_query_value(None, "user_version", |row| row.get::<_, i64>(0)).unwrap(), 73);
+        assert_eq!(read_metadata_from(&legacy).unwrap(), before);
+        assert_eq!(fs::read_dir(&path).unwrap().count(), 2);
+        drop(legacy);
+        let reopened = ProjectStore::open(&path).unwrap();
+        assert_eq!(reopened.metadata().unwrap(), before);
     }
 
     #[test]

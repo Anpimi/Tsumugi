@@ -553,6 +553,15 @@ fn migration_interruptions_preserve_all_original_plan_team_and_receipt_rows() {
             point,
             "the actual migration hook must run"
         );
+        let backups: Vec<_> = std::fs::read_dir(&path).unwrap()
+            .map(|entry| entry.unwrap().path())
+            .filter(|path| path.extension().is_some_and(|extension| extension == "backup"))
+            .collect();
+        assert_eq!(backups.len(), 1);
+        let backup = Connection::open_with_flags(&backups[0], rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY).unwrap();
+        assert_eq!(version(&backup), 61);
+        assert_eq!(legacy_rows(&backup), before_legacy);
+        drop(backup);
         let raw = Connection::open(path.join(super::super::super::DATABASE_FILENAME)).unwrap();
         assert_eq!(
             version(&raw),

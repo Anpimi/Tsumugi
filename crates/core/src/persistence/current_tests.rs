@@ -259,13 +259,8 @@ fn current_failed_delivery_preserves_release_receipts_and_complete_snapshot() {
     assert_eq!(store.release_view(id).unwrap(), original_release);
     assert_eq!(store.release_artifact(id, "zh-CN").unwrap().1, bytes);
     let all_facts = facts(store.connection().unwrap());
-    // Exercise the existing consistent snapshot mechanism at the current schema.
-    backup_current_schema(store.connection().unwrap(), temp.path()).unwrap();
-    let backup_path = fs::read_dir(temp.path())
-        .unwrap()
-        .map(|e| e.unwrap().path())
-        .find(|p| p.extension().is_some_and(|x| x == "backup"))
-        .unwrap();
+    let backup_path =
+        write_schema_snapshot(store.connection().unwrap(), temp.path(), SCHEMA_VERSION).unwrap();
     let backup =
         Connection::open_with_flags(backup_path, OpenFlags::SQLITE_OPEN_READ_ONLY).unwrap();
     backup.pragma_update(None, "foreign_keys", true).unwrap();
