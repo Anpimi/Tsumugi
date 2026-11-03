@@ -23,11 +23,27 @@ export type { TranslationRevisionRequest } from "./generated/translation.request
 export type { CandidateDecision, CandidateDecisionWrite, CandidateDisposition } from "./generated/translation.responses";
 
 export type { TranslationCheckPrepareRequest, TranslationCheckFinishRequest, TranslationProjectionPrepareRequest, TranslationProjectionStartRequest, PluginStartRequest, TranslationSourceRequest, PluginTranslationSelectRequest, PluginTranslationCaptureRequest, TranslationAdoptRequest, TranslationSaveRequest, TranslationSelectRequest, TranslationAdoptionConfirmation as TranslationConfirmation, TranslationSelectionDecision as TranslationDecision } from "./generated/translation.requests";
+/** Assistant suggestions remain tied to the saved selection used to generate them. */
+export function selectedRevisionBasisCurrent(revision: Responses["revision"], target: {
+  sourceSnapshotId?: string; sourceRevisionId: string; selectionId: string | null; revisionId: string | null;
+}) {
+  const basis = revision.selectedRevisionBasis;
+  return !basis || (target.sourceSnapshotId === undefined || basis.sourceSnapshotId === target.sourceSnapshotId)
+    && basis.sourceRevisionId === target.sourceRevisionId && basis.selectionId === target.selectionId
+    && basis.translationRevisionId === target.revisionId;
+}
 export type { TranslationCheckReview, TranslationProjectionReview, TranslationSourceContext, PluginTranslationSelection, PluginTranslationPreflight, TranslationMatch, TranslationOrigin, TranslationEntry, TranslationSelection, TranslationPreviewRow, TranslationPreview, TranslationRevision, TranslationHistory, TranslationEditBasis, TranslationSaveReceipt } from "./generated/translation.responses";
 export type { TranslationSaveRecovery, TranslationSelectionRecovery } from "./generated/translation.responses";
 export type { TranslationCandidateSlice, TranslationCandidateSliceRow, TranslationCandidateSliceNext } from "./generated/translation.responses";
 export type { TranslationCandidateState, TranslationReuseOrigin } from "./generated/translation.requests";
 type TranslationCandidateSliceRequest = Omit<Requests["candidateSlice"], "unitIds"> & { unitIds: string[] };
+
+function relatedSelectedRevision(revision: Responses["revision"]) {
+  const basis = revision.selectedRevisionBasis;
+  return !basis || revision.originKind === "ai" && revision.attemptId !== null && revision.itemId !== null
+    && revision.resultId === revision.actionId && basis.unitId === revision.unitId && basis.locale === revision.locale
+    && basis.sourceSnapshotId === revision.sourceSnapshotId && basis.sourceRevisionId === revision.sourceRevisionId;
+}
 
 function relatedCandidateSlice(request: TranslationCandidateSliceRequest, page: Responses["candidateSlice"]) {
   const rows = page.rows, after = BigInt(request.afterOrdinal ?? "0"), revisions = rows.flatMap(row => row.revisions);
@@ -52,7 +68,7 @@ function relatedCandidateSlice(request: TranslationCandidateSliceRequest, page: 
       && row.protection.unitId === target.unitId && row.protection.locale === target.locale && row.candidateCount >= row.revisions.length
       && (index === 0 && after > 0n || partial ? row.candidateCount >= row.revisions.length : row.candidateCount === row.revisions.length)
       && row.revisions.every((revision,position) => revision.unitId === target.unitId && revision.locale === target.locale
-        && revision.originKind === "ai" && revision.sourceRevisionId === target.sourceRevisionId && revision.revisionId !== target.revisionId
+        && relatedSelectedRevision(revision) && revision.originKind === "ai" && revision.sourceRevisionId === target.sourceRevisionId && revision.revisionId !== target.revisionId
         && BigInt(revision.ordinal) > (position ? BigInt(row.revisions[position-1].ordinal) : index === 0 ? after : 0n)
         && new Set(revision.contributors).size === revision.contributors.length
         && (!revision.candidateDecision || revision.candidateDecision.request.projectId === request.projectId
@@ -102,7 +118,7 @@ export const translationCommands = {
   history: (request: TranslationHistoryRequest) => checkedInvoke("read_translation_history", request, validateResponseHistory),
   revision: (request: TranslationRevisionRequest) => checkedInvoke("read_translation_revision", request,
     (value): value is Responses["revision"] => validateResponseRevision(value)
-      && value.unitId === request.unitId && value.locale === request.locale && value.revisionId === request.revisionId
+      && relatedSelectedRevision(value) && value.unitId === request.unitId && value.locale === request.locale && value.revisionId === request.revisionId
       && (!value.candidateDecision || value.candidateDecision.request.projectId === request.projectId
         && value.candidateDecision.request.unitId === request.unitId && value.candidateDecision.request.locale === request.locale
         && value.candidateDecision.request.revisionId === request.revisionId

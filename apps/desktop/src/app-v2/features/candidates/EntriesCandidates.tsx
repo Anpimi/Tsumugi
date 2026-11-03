@@ -1,3 +1,4 @@
+import { selectedRevisionBasisCurrent } from "../../../translationCommands";
 import { lazy, Suspense, useEffect, useId, useLayoutEffect, useRef, useState, useSyncExternalStore } from "react";
 import { useTranslation } from "react-i18next";
 import { useSessionReads } from "../../../SessionReadProvider";
@@ -51,7 +52,17 @@ export default function EntriesCandidates({ project, target, drafts, owners, com
   useEffect(() => {
     if (visible && !disabled && snapshot.hydration === "ready" && !drafts.getEntry(key)) void drafts.open(key);
   }, [drafts, key.projectId, key.unitId, key.locale, visible, disabled, snapshot.hydration]);
-  useEffect(() => { if (initialRevisionId) setAudit({ identity, revisionId: initialRevisionId }); }, [initialRevisionId, identity]);
+  const initialRevision = history.data?.rows.find(row => row.revisionId === initialRevisionId);
+  const initialKind = !initialRevision ? null : initialRevision.selectedRevisionBasis ? "comparison" : "audit";
+  useEffect(() => {
+    if (!initialRevisionId) return;
+    if (initialKind === "comparison") {
+      setAudit(null);
+      setComparison({ identity, id: `revision:${initialRevisionId}` });
+    } else if (initialKind === "audit") {
+      setAudit({ identity, revisionId: initialRevisionId });
+    }
+  }, [initialRevisionId, initialKind, identity]);
   const revisions: CandidateEvidence[] = (history.data?.rows ?? []).map(value => ({ kind: "revision", value }));
   const memories: CandidateEvidence[] = (tm.data ?? []).map(value => ({ kind: "tm", value }));
   const evidence = [...revisions, ...memories];
@@ -182,11 +193,12 @@ export default function EntriesCandidates({ project, target, drafts, owners, com
     const payload = candidateStagePayload(entry, target, item), staged = availability(payload ?? undefined).enabled, canAudit = availability(payload ?? undefined, "audit").enabled;
     const sourceCurrent = revision?.sourceRevisionId === target.sourceRevisionId;
     const selected = revision?.revisionId === target.revisionId, rejected = revision?.candidateDecision?.request.disposition === "rejected";
+    const staleRevision = !!revision && !selected && !selectedRevisionBasisCurrent(revision, target);
     const effectInput = effectPayload(revision ?? undefined), effectOpen = !!revision && effectRevision?.revisionId === revision.revisionId;
     const origin = revision?.originKind ?? memory?.originKind;
     return <li key={candidateEvidenceId(item)} className={styles.item} data-ai={origin === "ai" || undefined}>
       <header className={styles.itemHeader}><strong>{origin === "ai" ? t("candidateAi") : legacy(origin === "import" ? "resource.imported" : "resource.manual")}</strong>
-        <span>{memory ? t("candidateTmMatch", { score: memory.scorePercent, matchKind: legacy(`resource.match.${memory.matchKind}`) }) : t(selected ? "candidateCurrent" : sourceCurrent ? "candidateSameSource" : "candidateOldSource")}</span></header>
+        <span>{memory ? t("candidateTmMatch", { score: memory.scorePercent, matchKind: legacy(`resource.match.${memory.matchKind}`) }) : t(selected ? "candidateCurrent" : staleRevision ? "candidateOldSelection" : sourceCurrent ? "candidateSameSource" : "candidateOldSource")}</span></header>
       {rejected ? <p className={styles.meta}>{t("candidateRejected")}</p> : null}
       {revision?.candidateDecision ? <p className={styles.meta}>{revision.candidateDecision.request.actor}: {revision.candidateDecision.request.reason}</p> : null}
       {memory ? <><p className={styles.donor}><TokenizedText text={memory.sourceText} /></p><p className={styles.meta}>{legacy(memory.quality ? memory.quality.currentApproval ? "knowledge.memoryCurrentApproval"
@@ -224,7 +236,10 @@ export default function EntriesCandidates({ project, target, drafts, owners, com
       <Field label={t("candidateReason")} required><TextArea value={state.reason} disabled={disabled || state.busy || !!state.pending} onChange={event => owners.decisions.edit("reason", event.currentTarget.value)} onFocus={() => gate.setInputOwner(viewId, inputOwner)} onBlur={() => gate.setInputOwner(viewId, null)} onCompositionStart={() => gate.setComposing(inputOwner, true)} onCompositionEnd={() => gate.setComposing(inputOwner, false)} /></Field>
       <div className={styles.actions}><Button disabled={!present() || state.busy} onClick={() => dispatch("translation.cancel-candidate-audit")}>{t("candidateCancel")}</Button><Button disabled={!present() || owners.decisions.blocked() || !owners.decisions.hasDraft()} onClick={() => dispatch("translation.discard-candidate-inputs")}>{t("candidateDiscard")}</Button><Button variant="primary" pending={state.busy} disabled={!decision || !decisionAvailability(decision).enabled} onClick={() => { if (decision) commands.dispatch("translation.decide-draft-candidate", scope, decision); }}>{t("candidateRecord")}</Button></div>
     </section> : null}
-    {chosen ? <section ref={comparisonRegion} tabIndex={-1} className={styles.comparison} aria-label={t("candidateComparison")}><header className={styles.header}><h3>{t("candidateComparison")}</h3><Button size="sm" disabled={!common().enabled} onClick={() => dispatch("translation.close-candidate-comparison")}>{t("candidateCloseCompare")}</Button></header><div className={styles.compareColumns}><div><h4>{t("candidateCurrent")}</h4><div className={styles.text}>{text(target.translationText)}</div></div><div><h4>{t("candidateCompared")}</h4><div className={styles.text}>{text(chosen.kind === "revision" ? chosen.value.text : chosen.value.translationText)}</div></div></div></section> : null}
+    {chosen ? <section ref={comparisonRegion} tabIndex={-1} className={styles.comparison} aria-label={t("candidateComparison")}><header className={styles.header}><h3>{t("candidateComparison")}</h3><Button size="sm" disabled={!common().enabled} onClick={() => dispatch("translation.close-candidate-comparison")}>{t("candidateCloseCompare")}</Button></header>
+      {chosen.kind === "revision" && chosen.value.revisionId !== target.revisionId && !selectedRevisionBasisCurrent(chosen.value, target)
+        ? <Banner tone="warning">{t("candidateOldSelection")}</Banner> : null}
+      <div className={styles.compareColumns}><div><h4>{t("candidateCurrent")}</h4><div className={styles.text}>{text(target.translationText)}</div></div><div><h4>{t("candidateCompared")}</h4><div className={styles.text}>{text(chosen.kind === "revision" ? chosen.value.text : chosen.value.translationText)}</div></div></div></section> : null}
     {history.isError ? <ErrorState title={t("readFailed")} description={t("readFailedHelp")} /> : null}
     {!history.data && !history.isError ? <LoadingState label={t("candidateLoading")} /> : null}
     {history.data ? mode === "history" ? <ul className={styles.list}>{revisions.length ? revisions.map(card) : <li><EmptyState title={t("candidateEmpty")} /></li>}</ul> : <Tabs defaultValue="revisions" label={t("candidateSources")} items={[

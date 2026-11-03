@@ -5,7 +5,7 @@ import { executionContext } from "../../../executionCommands";
 import type { ProjectView } from "../../../projectCommands";
 import type { ReviewTarget } from "../../../reviewCommands";
 import { useSessionQuery, useSessionReads } from "../../../SessionReadProvider";
-import { translationCommands, type TranslationRevision } from "../../../translationCommands";
+import { selectedRevisionBasisCurrent, translationCommands, type TranslationRevision } from "../../../translationCommands";
 import { Button } from "../../../design-system/Button";
 import { Banner, EmptyState, LoadingState } from "../../../design-system/Feedback";
 import { TokenizedText } from "../../../design-system/TokenizedText";
@@ -210,9 +210,10 @@ export default function ComparisonPanel({ project, target, drafts, owner, comman
         <p className={styles.meta}>{t("comparisonMergeHelp")}</p>
         <div className={styles.columns}>{view.rows.map((row, index) => {
           const revision = realRevision(row.revisionId), payload = revision ? stageInput(revision) : null, merge = mergeInput(row.revisionId);
+          const staleRevision = revision && revision.revisionId !== target.revisionId && !selectedRevisionBasisCurrent(revision, target);
           return <article className={styles.column} key={row.revisionId} data-ai={view.revealed && row.originKind === "ai" || undefined} aria-label={t("comparisonCandidate", { label: String.fromCharCode(65 + index) })}>
             <h4>{t("comparisonCandidate", { label: String.fromCharCode(65 + index) })}</h4><div className={styles.text}>{text(row.text)}</div>
-            <p className={styles.meta}>{t(row.basisCurrent ? "comparisonCurrentSource" : "comparisonStaleSource")}</p>
+            <p className={styles.meta}>{t(staleRevision ? "candidateOldSelection" : row.basisCurrent ? "comparisonCurrentSource" : "comparisonStaleSource")}</p>
             {row.revisionId === view.selectedRevisionId ? <p className={styles.meta}>{t("candidateCurrent")}</p> : null}
             {row.candidateDisposition === "rejected" ? <p className={styles.meta}>{t("candidateRejected")}</p> : null}
             {view.revealed ? <p className={styles.meta}>{row.model ?? legacy(row.originKind === "ai" ? "ai.origin" : row.originKind === "manual" ? "translation.manualOrigin" : "resource.imported")} {row.recipe}</p> : null}

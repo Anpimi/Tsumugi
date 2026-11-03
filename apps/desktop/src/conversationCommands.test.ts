@@ -125,11 +125,10 @@ it("prepares the exact selected planning materials and validates the unchanged o
   expect(invoke.mock.calls[1][1]).toEqual({ request: { ...context, preparationId: captured.preparationId } });
 });
 
-it("accepts only the exact saved revision and request in a revision preview", async () => {
+function revisionPlanningView() {
   const basis = { unitId: fixtureIdentity(18200), locale: "zh-CN", sourceSnapshotId: fixtureIdentity(18201),
     sourceRevisionId: fixtureIdentity(18202), selectionId: fixtureIdentity(18203), translationRevisionId: fixtureIdentity(18204) };
   const scope = { kind: "selected-revision" as const, basis };
-  const request = { ...planningRequest, scope };
   const prepared = planningView(), system = "Revise the saved translation.";
   const input = JSON.stringify({ unit: { unitId: basis.unitId, targetLocale: basis.locale, sourceText: "Source" },
     selectedTranslation: "已保存译文", request: message.body });
@@ -140,7 +139,12 @@ it("accepts only the exact saved revision and request in a revision preview", as
   const preview = { ...prepared.preview, version: 5, scope, units: [unit], system, input,
     byteLength: new TextEncoder().encode(JSON.stringify({ system, input })).length,
     brief: { ...prepared.preview.brief, units: 1, sourceTexts: 1 } };
-  invoke.mockResolvedValueOnce({ ...prepared, preview });
+  return { ...prepared, preview };
+}
+it("accepts only the exact saved revision and request in a revision preview", async () => {
+  const prepared = revisionPlanningView(), { preview } = prepared, [unit] = preview.units;
+  const request = { ...planningRequest, scope: preview.scope };
+  invoke.mockResolvedValueOnce(prepared);
   await expect(conversationCommands.preparePlanning(request)).resolves.toMatchObject({ preview });
   invoke.mockResolvedValueOnce({ ...prepared, preview: { ...preview, units: [{ ...unit, translationRevisionId: fixtureIdentity(18205) }] } });
   await expect(conversationCommands.preparePlanning(request)).rejects.toThrow("Invalid IPC response");
@@ -210,6 +214,27 @@ it("binds planning starts and recovery to the complete original consent without 
   await expect(conversationCommands.recoverPlanning(recover)).rejects.toThrow("Invalid IPC response");
   invoke.mockResolvedValueOnce({ request: { ...original, consent: { ...planningConsent, taskId: fixtureIdentity(18900) } }, outcome: { kind: "recorded", receipt: planningReceipt } });
   await expect(conversationCommands.recoverPlanning(recover)).rejects.toThrow("Invalid IPC response");
+});
+
+it("exposes only the original typed revision save or receipt through planning history", async () => {
+  const read = { ...context, conversationId: create.conversationId, attemptId: planningConsent.attemptId };
+  const view = planningRunView(), preview = revisionPlanningView().preview;
+  const scope = { ...view.detail.items[0].scope, locale: preview.scope.basis.locale };
+  const item = { ...view.detail.items[0], scope };
+  const unit = { ...view.detail.recovery.units[0], scopes: [scope], actions: ["adopt-result"], blockedReason: null };
+  const base = { ...view, preview, receipt: { ...view.receipt, consent: { ...view.receipt.consent, shareUnits: true } },
+    detail: { ...view.detail, items: [item], recovery: { ...view.detail.recovery, units: [unit] } },
+    output: { ...view.output, model: { kind: "revision", summary: "A revision", text: "Updated wording", questions: [] } } };
+  const committed = { ...base, detail: { ...base.detail, items: [{ ...item, status: { ...item.status, adoption: "committed" } }],
+    recovery: { ...base.detail.recovery, units: [{ ...unit, actions: ["view-receipt"], receiptId: view.resultId }] } } };
+  invoke.mockResolvedValueOnce(base).mockResolvedValueOnce(committed)
+    .mockResolvedValueOnce({ ...base, output: view.output })
+    .mockResolvedValueOnce({ ...committed, detail: { ...committed.detail, recovery: { ...base.detail.recovery,
+      units: [{ ...unit, actions: ["view-receipt"], receiptId: fixtureIdentity(18206) }] } } });
+  await expect(conversationCommands.readPlanning(read)).resolves.toEqual(base);
+  await expect(conversationCommands.readPlanning(read)).resolves.toEqual(committed);
+  await expect(conversationCommands.readPlanning(read)).rejects.toThrow("Invalid IPC response");
+  await expect(conversationCommands.readPlanning(read)).rejects.toThrow("Invalid IPC response");
 });
 
 it("reads typed planning history with its original task, result and one-request budget", async () => {

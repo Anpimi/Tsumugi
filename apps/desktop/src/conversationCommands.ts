@@ -122,7 +122,16 @@ function planningRun(value: NonNullable<Responses["planningRun"]>, request: Requ
     && item.scope.kind === "project-conversation" && item.scope.id === request.conversationId
     && (item.scope.locale ?? null) === planningLocale(preview.scope)
     && item.resultId === value.resultId && detail.recovery.attemptId === request.attemptId
-    && detail.recovery.units.every(unit => unit.actions.length === 0) && budget !== null && budget.limit === 1 && budget.dispatched <= 1
+    && detail.recovery.units.every(unit => {
+      if (unit.actions.length === 0) return unit.receiptId === null;
+      return model?.kind === "revision" && value.resultId !== null && unit.unitId === receipt.consent.actionId
+        && sameExecutionIds(unit.itemIds, [item.status.itemId]) && sameExecutionIds(unit.resultIds, [value.resultId])
+        && unit.remainingItemIds.length === 0 && unit.scopes.length === 1
+        && unit.scopes[0].kind === item.scope.kind && unit.scopes[0].id === item.scope.id && unit.scopes[0].locale === item.scope.locale
+        && unit.actions.length === 1 && (unit.actions[0] === "adopt-result" && unit.receiptId === null
+          && item.status.adoption === "unapplied" && !item.status.cancellationRequested
+          || unit.actions[0] === "view-receipt" && unit.receiptId === value.resultId && item.status.adoption === "committed");
+    }) && budget !== null && budget.limit === 1 && budget.dispatched <= 1
     && (value.output === null || value.resultId !== null && item.status.execution === "succeeded" && item.status.validation === "valid"
       && value.output.requests === 1 && (value.output.usage !== null || value.output.usageIncomplete))
     && bounded(value);

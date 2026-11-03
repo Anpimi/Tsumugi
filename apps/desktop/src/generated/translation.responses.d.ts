@@ -259,6 +259,10 @@ export interface TranslationRevision {
   resultId: ExecutionId | null;
   reuseOrigin?: TranslationReuseOrigin | null;
   revisionId: ExecutionId;
+  /**
+   * Original saved selection for an assistant revision candidate.
+   */
+  selectedRevisionBasis?: SelectedRevisionBasis | null;
   sourceRevisionId: ExecutionId;
   sourceSnapshotId: ExecutionId;
   text: string;
@@ -276,6 +280,14 @@ export interface TranslationReuseOrigin {
   targetSourceRevisionId: ExecutionId;
   targetSourceSnapshotId: ExecutionId;
   targetUnitId: ExecutionId;
+}
+export interface SelectedRevisionBasis {
+  locale: string;
+  selectionId: ExecutionId;
+  sourceRevisionId: ExecutionId;
+  sourceSnapshotId: ExecutionId;
+  translationRevisionId: ExecutionId;
+  unitId: ExecutionId;
 }
 export interface ReviewTarget {
   basis: string;

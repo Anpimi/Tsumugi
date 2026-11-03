@@ -173,6 +173,7 @@ fn bodies_in(c: &Connection, project: ExecutionId, references: &[CandidateRef]) 
         let body = bodies.get_mut(&reference.revision).ok_or_else(|| error(ErrorCode::CorruptLedger,"candidate-slice-revision"))?;
         if body.unit_id != reference.unit || body.ordinal != reference.ordinal || body.origin_kind != TranslationOrigin::Ai { return Err(error(ErrorCode::CorruptLedger,"candidate-slice-revision")); }
         body.candidate_decision = reference.decision.clone();
+        body.selected_revision_basis = candidates::selected_revision_basis(c, body.revision_id)?.map(|(_, basis)| basis);
     }
     Ok(bodies)
 }

@@ -1,7 +1,7 @@
 import { sameDraftBasis, type DraftKey } from "../../../draftCommands";
 import type { ReviewTarget } from "../../../reviewCommands";
 import type { TmSuggestion } from "../../../resourceCommands";
-import type { TranslationRevision } from "../../../translationCommands";
+import { selectedRevisionBasisCurrent, type TranslationRevision } from "../../../translationCommands";
 import type { TranslationStageCommandPayload } from "../../../workbenchCommands";
 import type { DraftEntry, TranslationDrafts } from "../editor/translationDrafts";
 
@@ -34,6 +34,7 @@ export function canStageCandidate(entry: DraftEntry | undefined, target: ReviewT
     && !entry.value.merge && entry.value.text === (entry.value.basis.text ?? "") && entry.failure === null
     && (evidence.kind === "tm" ? evidence.value.targetLocale === target.locale
       : evidence.value.sourceRevisionId === target.sourceRevisionId && evidence.value.revisionId !== target.revisionId
+        && selectedRevisionBasisCurrent(evidence.value, target)
         && evidence.value.candidateDecision?.request.disposition !== "rejected");
 }
 export function stageCandidate(drafts: TranslationDrafts, key: DraftKey, evidence: CandidateEvidence, input: TranslationStageCommandPayload, proof: () => boolean) {

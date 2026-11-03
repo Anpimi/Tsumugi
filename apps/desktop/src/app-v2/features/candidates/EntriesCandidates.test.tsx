@@ -61,7 +61,7 @@ beforeEach(async () => {
 });
 afterEach(() => { cleanup(); resources.splice(0).forEach(value => { value.reads.retire(); value.drafts.retire(); value.lifecycle.dispose(); }); vi.restoreAllMocks(); });
 
-async function harness(options: { inline?: boolean; page?: string } = {}) {
+async function harness(options: { inline?: boolean; page?: string; initialRevisionId?: string } = {}) {
   const reads = new SessionReads(context), gate = new InteractionGate(), commands = new WorkbenchCommands(); gate.setVisibleOwner("entries");
   let disk: DraftHead = { key, revision: "0", writerId: null, value: null };
   const ports = {
@@ -82,7 +82,7 @@ async function harness(options: { inline?: boolean; page?: string } = {}) {
     const [value, retain] = useState<CandidateOwners | null>(null); owners = value;
     return <><CandidateOwnerHost project={project} drafts={drafts} lifecycle={lifecycle} onOwners={retain} onReveal={() => undefined} />{value ? <>
       {recovery ? <CandidateRecovery project={project} owners={value} commands={commands} gate={gate} viewId={null} disabled={false} visible={visible} /> : <>
-        <EntriesCandidates project={project} target={target} drafts={drafts} owners={value} commands={commands} gate={gate} viewId="entries" disabled={disabled} visible={visible} mode="candidates" afterOrdinal={options.page ?? "0"} onPage={onPage} onEdit={onEdit} />
+        <EntriesCandidates project={project} target={target} drafts={drafts} owners={value} commands={commands} gate={gate} viewId="entries" disabled={disabled} visible={visible} mode="candidates" afterOrdinal={options.page ?? "0"} onPage={onPage} onEdit={onEdit} initialRevisionId={options.initialRevisionId} />
         {inline ? <InlineCandidate project={project} target={target} drafts={drafts} owners={value} commands={commands} gate={gate} viewId="entries" disabled={disabled} visible={visible} focused aiCandidateCount={1} onEdit={onEdit} onInspect={onInspect} /> : null}
       </>}
     </> : null}</>;
@@ -210,6 +210,21 @@ it("requires real audit input, retains unknown requests with no tabs, and retrie
   expect(writes.map(([, payload]) => payload.request)).toEqual([original, original]);
   expect(invoke.mock.calls.filter(([name]) => name === "create_execution_identity")).toHaveLength(1);
   expect(h.ports.select).not.toHaveBeenCalled(); expect(h.ports.save).not.toHaveBeenCalled();
+});
+
+it("shows an assistant candidate with an earlier saved selection as read-only", async () => {
+  const stale: TranslationRevision = { ...candidate, selectedRevisionBasis: { unitId: target.unitId, locale: target.locale,
+    sourceSnapshotId: target.sourceSnapshotId, sourceRevisionId: target.sourceRevisionId,
+    selectionId: fixtureIdentity(783), translationRevisionId: fixtureIdentity(784) } };
+  vi.mocked(translationCommands.history).mockResolvedValue({ ...copy(baseHistory), rows: [stale] });
+  const h = await harness({ initialRevisionId: stale.revisionId });
+  const row = await screen.findByRole("listitem");
+  expect(within(row).getByText(w("candidateOldSelection"))).toBeVisible();
+  expect(within(row).getByRole("button", { name: w("candidateAdopt") })).toBeDisabled();
+  expect(within(row).getByRole("button", { name: w("candidateEdit") })).toBeDisabled();
+  const comparison = await screen.findByRole("region", { name: w("candidateComparison") });
+  expect(within(comparison).getByText(w("candidateOldSelection"))).toBeVisible();
+  expect(h.ports.write).not.toHaveBeenCalled();
 });
 
 it("keeps older-source and rejected candidates readable and comparable while preventing draft adoption", async () => {

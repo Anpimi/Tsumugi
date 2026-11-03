@@ -1910,9 +1910,35 @@ impl ProjectStore {
                     entry.result_ids.push(id);
                 }
             }
-            // Planning results are read through their conversation action. They
-            // cannot become an executable retry or a generic domain mutation.
+            // Planning never offers execution replay. A validated typed revision
+            // can be saved as an unselected candidate through the original result.
             if is_conversation_planning(&input) {
+                if input.envelope().capability_version == "4"
+                    && let [result_id] = entry.result_ids.as_slice()
+                    && let [status] = statuses.as_slice()
+                    && status.execution == ExecutionState::Succeeded
+                    && status.validation == ValidationState::Valid
+                {
+                    let result = load_result(connection, &input, *result_id)?;
+                    if matches!(
+                        crate::ai::conversation_planning::validate_output(&input, &result)?.model,
+                        crate::ai::conversation_planning::ConversationPlanningModelOutput::Revision { .. }
+                    ) {
+                        if let Some(receipt) = read_receipt(connection, *result_id)? {
+                            if receipt.attempt_id != attempt || receipt.unit_id != unit.unit_id {
+                                return Err(error(ErrorCode::CorruptLedger, "selected-revision-receipt"));
+                            }
+                            entry.receipt_id = Some(*result_id);
+                            entry.actions.push(RecoveryAction::ViewReceipt);
+                        } else if !status.cancellation_requested && status.adoption == AdoptionState::Unapplied {
+                            entry.actions.push(RecoveryAction::AdoptResult);
+                        }
+                        if !entry.actions.is_empty() {
+                            units.push(entry);
+                            continue;
+                        }
+                    }
+                }
                 let reason = if statuses
                     .iter()
                     .any(|item| item.execution == ExecutionState::Dispatched)
@@ -4098,6 +4124,9 @@ impl ProjectStore {
         }
         let input = load_input_cached(&tx, attempt)?;
         check_planning_candidate_action(&input, &parameters)?;
+        if is_conversation_planning(&input) && result_ids.as_slice() != [action_id] {
+            return Err(error(ErrorCode::ResultMismatch, "selected-revision-action"));
+        }
         result_ids.sort();
         let existing: Option<Vec<u8>> = tx
             .query_row(
@@ -4134,6 +4163,9 @@ impl ProjectStore {
             .map(|id| load_result(&tx, &input, *id))
             .collect::<Result<Vec<_>, _>>()?;
         check_planning_candidate_result(&input, &results)?;
+        if is_conversation_planning(&input) && action.cancellation_revision.get() != 0 {
+            return Err(error(ErrorCode::Cancelled, "selected-revision-action"));
+        }
         let digest = action.digest(&input, &results)?;
         tx.execute(
             "INSERT INTO execution_actions VALUES (?1,?2,?3,?4,?5)",

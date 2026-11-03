@@ -28,6 +28,7 @@ pub use recovery::{
     TranslationMergeRecovery, TranslationSelectionRecovery,
 };
 pub(in crate::persistence) use candidates::selectable as candidate_selectable;
+pub(super) use candidates::{check_selected_revision_basis, selected_revision_basis};
 pub(in crate::persistence) use candidates::rejected as candidate_rejected;
 pub(in crate::persistence) use candidates::summaries as candidate_summaries;
 
@@ -279,6 +280,9 @@ impl TranslationOrigin {
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct TranslationRevision {
+    /// Original saved selection for an assistant revision candidate.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub selected_revision_basis: Option<crate::ai::selected_revision::SelectedRevisionBasis>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub reuse_origin: Option<TranslationReuseOrigin>,
     pub revision_id: ExecutionId,
@@ -2185,6 +2189,9 @@ fn revision_view_in(connection: &Connection, mut revision: TranslationRevision) 
     revision.reuse_origin = memory::read_origin(connection, revision.revision_id)?;
     revision.contributors = super::arena::contributors(connection, revision.revision_id)?;
     revision.candidate_decision = candidates::latest(connection, revision.revision_id)?;
+    if revision.origin_kind == TranslationOrigin::Ai {
+        revision.selected_revision_basis = candidates::selected_revision_basis(connection, revision.revision_id)?.map(|(_, basis)| basis);
+    }
     Ok(revision)
 }
 
@@ -2233,6 +2240,7 @@ impl RawRevision {
 
     fn parse(self) -> Result<TranslationRevision, ExecutionError> {
         Ok(TranslationRevision {
+            selected_revision_basis: None,
             reuse_origin: None,
             revision_id: id(self.revision_id)?,
             unit_id: id(self.unit_id)?,

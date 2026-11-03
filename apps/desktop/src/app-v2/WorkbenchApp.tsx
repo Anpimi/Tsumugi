@@ -1,3 +1,4 @@
+import type { OpenConversationRevisionCandidate } from "./features/assistant/ConversationRevisionCandidate";
 import type { OpenConversationTeamFinding } from "./features/assistant/teamFindingReads";
 import ProjectMetadataSheet from "./features/settings/ProjectMetadataSheet";
 import { createContext, lazy, Suspense, useCallback, useContext, useEffect, useId, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore, type ComponentProps, type Dispatch, type ReactNode, type SetStateAction } from "react";
@@ -1255,6 +1256,15 @@ function WorkspaceShell() {
     if (accepted && narrow) showDock();
     return accepted;
   }, [view, runtime.navigation, narrow, showDock]);
+  const openRevisionCandidate: OpenConversationRevisionCandidate = async (revision, current) => {
+    if (disabled || !current()) return false;
+    try {
+      const { translationHistoryAfter } = await import("../translationCommands");
+      if (!current()) return false;
+      if (narrow && drawer) closeDrawer();
+      return await inspectCandidate(revision.unitId, revision.locale, revision.revisionId, translationHistoryAfter(revision.ordinal, 1));
+    } catch { setCommandFailed(true); return false; }
+  };
   const openRunCandidate = useCallback<OpenConversationRunCandidate>(async (target, current) => {
     const allowed = () => current() && !disabled && !session.reads.retired
       && target.projectId === session.project.metadata.projectId
@@ -1457,7 +1467,7 @@ function WorkspaceShell() {
       <TabsContent value="agent" forceMount className={styles.dockContent}><FeatureBoundary fallback={conversationFallback(<ErrorState title={t("conversation.unavailable")}/>)}><Suspense fallback={conversationFallback(<LoadingState label={t("conversation.loading")}/>)}>
         {conversations ? <ConversationPanel commands={commandsReady ? commands : undefined} showWorkPlans={view?.kind !== "runs" || view.runsMode === "strategy" || !!conversationTeamQuestion} onOpenCandidate={openRunCandidate} onOpenCandidateBatch={openRunCandidateBatch} onOpenTeamCandidate={openTeamCandidate} onOpenTeamFinding={openTeamFinding} onPrepareFindingRepair={prepareTeamFindingRepair} onOpenKnowledgeProposal={openKnowledgeProposal} onOpenTermProposal={openTermProposal} owner={conversations} visible={(view?.dock ?? "agent") === "agent" && (!narrow || drawer)} disabled={disabled} gate={gate} viewId={currentId} parentDialogId={narrow && drawer ? "workspace-dock" : undefined}
           selection={view?.kind === "entries" && !importVisible ? view.selection : null} targetLocale={activeLocale}
-          contextFilter={view?.kind === "entries" && !importVisible ? entryQuery(view.preset, view.query) : null} onOpenEntryReference={openEntryReference}
+          contextFilter={view?.kind === "entries" && !importVisible ? entryQuery(view.preset, view.query) : null} onOpenEntryReference={openEntryReference} onOpenRevisionCandidate={openRevisionCandidate}
           decisionTray={decisionTray()} projectBrief={projectBrief} maintenanceBrief={sourceBrief()} recoveryTarget={conversationRecovery} proposalTarget={conversationProposal} questionTarget={conversationTeamQuestion}/>
           : conversationFallback(conversationLoadFailed ? <ErrorState title={t("conversation.unavailable")} action={<Button onClick={retryConversations}>{t("conversation.retryRead")}</Button>}/> : <LoadingState label={t("conversation.loading")}/>)}
       </Suspense></FeatureBoundary></TabsContent>

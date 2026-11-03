@@ -7,6 +7,7 @@ import { ChevronDown, MessageSquare, Plus, RefreshCw, Sparkles } from "lucide-re
 import { assistantComposerCommands, composerCommand, type AssistantComposerCommand } from "../../../assistantComposerCommands";
 import type { SegmentQuery } from "../../../segmentCommands";
 import { ConversationContextChips } from "./ConversationContextChips";
+import { ConversationRevisionCandidate, type OpenConversationRevisionCandidate } from "./ConversationRevisionCandidate";
 import { ConversationText } from "./ConversationText";
 import { ConversationEntryReferences, type OpenConversationEntryReference } from "./ConversationEntryReferences";
 import { composerMemberRoute, ConversationMemberRoutes, type ConversationMemberRoute } from "./ConversationMemberRoutes";
@@ -40,24 +41,29 @@ import styles from "../../WorkbenchLayout.module.css";
 import local from "./ConversationPanel.module.css";
 
 export type ConversationRecoveryTarget = { conversationId: string; slot: "primary" | "revocation"; actionId: string; focus: boolean };
-interface Props { projectBrief?: (emptyThread: boolean) => ReactNode; showWorkPlans?: boolean; commands?: WorkbenchCommands; owner: ConversationSession; visible: boolean; disabled: boolean; gate: InteractionGate; viewId: string | null; parentDialogId?: string; selection?: WorkspaceSelection | null; targetLocale?: string | null; contextFilter?: SegmentQuery | null; onOpenEntryReference?: OpenConversationEntryReference; onOpenCandidate?: OpenConversationRunCandidate; onOpenCandidateBatch?: OpenRunCandidateBatch; onOpenTeamCandidate?: OpenConversationTeamCandidate; onOpenTeamFinding?: OpenConversationTeamFinding; onPrepareFindingRepair?: OpenConversationTeamFinding; onOpenKnowledgeProposal?: OpenKnowledgeProposal; onOpenTermProposal?: OpenTermProposal; decisionTray?: ReactNode; maintenanceBrief?: ReactNode; recoveryTarget?: ConversationRecoveryTarget | null; proposalTarget?: ConversationProposalTarget | null; questionTarget?: ConversationTeamQuestionTarget | null }
+interface Props { projectBrief?: (emptyThread: boolean) => ReactNode; showWorkPlans?: boolean; commands?: WorkbenchCommands; owner: ConversationSession; visible: boolean; disabled: boolean; gate: InteractionGate; viewId: string | null; parentDialogId?: string; selection?: WorkspaceSelection | null; targetLocale?: string | null; contextFilter?: SegmentQuery | null; onOpenEntryReference?: OpenConversationEntryReference; onOpenRevisionCandidate?: OpenConversationRevisionCandidate; onOpenCandidate?: OpenConversationRunCandidate; onOpenCandidateBatch?: OpenRunCandidateBatch; onOpenTeamCandidate?: OpenConversationTeamCandidate; onOpenTeamFinding?: OpenConversationTeamFinding; onPrepareFindingRepair?: OpenConversationTeamFinding; onOpenKnowledgeProposal?: OpenKnowledgeProposal; onOpenTermProposal?: OpenTermProposal; decisionTray?: ReactNode; maintenanceBrief?: ReactNode; recoveryTarget?: ConversationRecoveryTarget | null; proposalTarget?: ConversationProposalTarget | null; questionTarget?: ConversationTeamQuestionTarget | null }
 const noNext = (last: { nextAfter: string | null }) => last.nextAfter ?? undefined;
 const pendingAction = (pending: ConversationDraftPending | null | undefined) => pending ? conversationPendingActionId(pending) : undefined;
 
-function PlanningResult({ owner, input, attemptId, visible, disabled, gate, viewId, parentDialogId, savedResultIds, onOpenEntryReference }: Omit<Props, "selection"> & { input: ConversationInput; attemptId: string; savedResultIds: ReadonlySet<string> }) {
+function PlanningResult({ owner, input, attemptId, visible, disabled, gate, viewId, parentDialogId, savedResultIds, onOpenEntryReference, onOpenRevisionCandidate }: Omit<Props, "selection"> & { input: ConversationInput; attemptId: string; savedResultIds: ReadonlySet<string> }) {
   const context = owner.context, conversationId = input.key.conversationId;
   const { t } = useTranslation(undefined, { keyPrefix: "conversation" });
   const [materialOpen, setMaterialOpen] = useState(false), materialId = useId();
-  const query = useSessionQuery({ key: ["conversation", conversationId, "planning", attemptId], scopes: ["project", "execution"], enabled: visible,
+  const runKey = ["conversation", conversationId, "planning", attemptId];
+  const query = useSessionQuery({ key: runKey, scopes: ["project", "execution"], enabled: visible,
     read: () => conversationCommands.readPlanning({ ...context, conversationId, attemptId }) });
   if (query.isPending) return <p role="status">{t("readingReply")}</p>;
   if (query.isError || !query.data) return <Banner tone="error" action={<Button size="sm" onClick={() => void query.refetch()}>{t("retryRead")}</Button>}>{t("replyReadFailed")}</Banner>;
   const run = query.data, output = run.output?.model;
+  const current = () => visible && !disabled && !query.isFetching && owner.getSnapshot().activeId === conversationId
+    && gate.canDispatch({ viewId, source: "button", dialogId: parentDialogId });
   const unavailable = run.detail.progress.cancelled ? "replyStopped" : run.detail.items.some(item => item.status.validation === "invalid") ? "replyInvalid"
     : run.detail.progress.failed || run.detail.progress.unknown ? "replyUnfinished" : "replyPending";
   return <section className={styles.agentCard} aria-label={t("reply")}>
     <h3><Sparkles className={styles.ai}/>{t(output?.kind === "term-proposal" ? "termProposal" : output?.kind === "knowledge-proposal" ? "knowledgeProposal" : output?.kind === "proposal" ? "proposal" : output?.kind === "revision" ? "revisionSuggestion" : "reply")}</h3>
-    {output ? <><ConversationText text={output.summary}/>{output.kind === "revision" ? <ConversationText text={output.text}/> : null}<ConversationEntryReferences run={run} onOpen={onOpenEntryReference} current={() => visible && !disabled && !query.isFetching && !query.isError && owner.getSnapshot().activeId === conversationId && gate.canDispatch({ viewId, source: "button", dialogId: parentDialogId })}/>
+    {output ? <><ConversationText text={output.summary}/>{output.kind === "revision" ? <ConversationText text={output.text}/> : null}
+      {output.kind === "revision" && run.preview.scope.kind === "selected-revision" ? <ConversationRevisionCandidate run={run}
+        basis={run.preview.scope.basis} runKey={runKey} visible={visible} current={current} onOpen={onOpenRevisionCandidate}/> : null}<ConversationEntryReferences run={run} onOpen={onOpenEntryReference} current={() => visible && !disabled && !query.isFetching && !query.isError && owner.getSnapshot().activeId === conversationId && gate.canDispatch({ viewId, source: "button", dialogId: parentDialogId })}/>
       <ConversationMaterialReferences context={context} run={run} visible={visible} disabled={disabled} gate={gate} viewId={viewId} parentDialogId={parentDialogId} onOpenEntry={onOpenEntryReference}/>
       {output.kind === "proposal" ? <p className={styles.meta}>{t("proposalScope", { count: output.unitIds.length })}</p> : null}
       {output.kind === "knowledge-proposal" ? <ConversationKnowledgeEntries entries={output.entries}/> : null}
@@ -75,7 +81,7 @@ function PlanningResult({ owner, input, attemptId, visible, disabled, gate, view
   </section>;
 }
 
-function ThreadHistory({ showWorkPlans = true, owner, input, visible, disabled, gate, viewId, parentDialogId, selection, onOpenCandidate, onOpenCandidateBatch, onOpenTeamCandidate, onOpenTeamFinding, onPrepareFindingRepair, onOpenKnowledgeProposal, onOpenTermProposal, onOpenEntryReference, proposalTarget, questionTarget, proposalFocusTargets, planningRegion, onPlanningClosed }: Omit<Props, "owner"> & { owner: ConversationSession; input: ConversationInput; proposalFocusTargets: RefObject<WeakSet<ConversationProposalTarget>>; planningRegion: RefObject<HTMLElement | null>; onPlanningClosed: () => void }) {
+function ThreadHistory({ showWorkPlans = true, owner, input, visible, disabled, gate, viewId, parentDialogId, selection, onOpenCandidate, onOpenCandidateBatch, onOpenTeamCandidate, onOpenTeamFinding, onPrepareFindingRepair, onOpenKnowledgeProposal, onOpenTermProposal, onOpenEntryReference, onOpenRevisionCandidate, proposalTarget, questionTarget, proposalFocusTargets, planningRegion, onPlanningClosed }: Omit<Props, "owner"> & { owner: ConversationSession; input: ConversationInput; proposalFocusTargets: RefObject<WeakSet<ConversationProposalTarget>>; planningRegion: RefObject<HTMLElement | null>; onPlanningClosed: () => void }) {
   const context = owner.context, conversationId = input.key.conversationId, planning = input.planning;
   const { t } = useTranslation(undefined, { keyPrefix: "conversation" });
   const messages = useSessionInfiniteQuery({ key: ["conversation", conversationId, "messages"], scopes: ["project"], enabled: visible,
@@ -109,7 +115,7 @@ function ThreadHistory({ showWorkPlans = true, owner, input, visible, disabled, 
     {planning.open ? <ConversationPlanningPanel reviewRegion={planningRegion} owner={owner} input={input} visible={visible} disabled={disabled} gate={gate} viewId={viewId} parentDialogId={parentDialogId} selection={selection}/> : null}
     {attempts.isError ? <Banner tone="error" action={<Button size="sm" onClick={() => void attempts.refetch()}>{t("retryRead")}</Button>}>{t("repliesReadFailed")}</Banner> : null}
     {runs.length ? <section aria-label={t("savedReplies")} className={local.history}>{runs.map(run => <PlanningResult key={run.attemptId} owner={owner} input={input}
-      attemptId={run.attemptId} visible={visible} disabled={disabled} gate={gate} viewId={viewId} parentDialogId={parentDialogId} savedResultIds={savedResultIds} onOpenEntryReference={onOpenEntryReference}/>)}</section> : null}
+      attemptId={run.attemptId} visible={visible} disabled={disabled} gate={gate} viewId={viewId} parentDialogId={parentDialogId} savedResultIds={savedResultIds} onOpenEntryReference={onOpenEntryReference} onOpenRevisionCandidate={onOpenRevisionCandidate}/>)}</section> : null}
     {attempts.hasNextPage ? <Button pending={attempts.isFetchingNextPage} onClick={() => void attempts.fetchNextPage()}>{t("moreReplies")}</Button> : null}
     {proposals.isError ? <Banner tone="error" action={<Button size="sm" onClick={() => void proposals.refetch()}>{t("retryRead")}</Button>}>{t("proposalReadFailed")}</Banner> : null}
     <ConversationProposals owner={owner} input={input} visible={visible} disabled={disabled} gate={gate} viewId={viewId} parentDialogId={parentDialogId} revisions={revisions} proposalTarget={proposalTarget} proposalFocusTargets={proposalFocusTargets} onOpenKnowledgeProposal={onOpenKnowledgeProposal} onOpenTermProposal={onOpenTermProposal}/>
@@ -118,7 +124,7 @@ function ThreadHistory({ showWorkPlans = true, owner, input, visible, disabled, 
   </>;
 }
 
-export default function ConversationPanel({ projectBrief, showWorkPlans = true, commands, owner, visible, disabled, gate, viewId, parentDialogId, selection = null, targetLocale, contextFilter, onOpenEntryReference, onOpenCandidate, onOpenCandidateBatch, onOpenTeamCandidate, onOpenTeamFinding, onPrepareFindingRepair, onOpenKnowledgeProposal, onOpenTermProposal, decisionTray, maintenanceBrief, recoveryTarget, proposalTarget, questionTarget }: Props) {
+export default function ConversationPanel({ projectBrief, showWorkPlans = true, commands, owner, visible, disabled, gate, viewId, parentDialogId, selection = null, targetLocale, contextFilter, onOpenEntryReference, onOpenRevisionCandidate, onOpenCandidate, onOpenCandidateBatch, onOpenTeamCandidate, onOpenTeamFinding, onPrepareFindingRepair, onOpenKnowledgeProposal, onOpenTermProposal, decisionTray, maintenanceBrief, recoveryTarget, proposalTarget, questionTarget }: Props) {
   const { t, i18n } = useTranslation(undefined, { keyPrefix: "conversation" }), { t: global } = useTranslation();
   const reads = useSessionReads();
   const state = useSyncExternalStore(owner.subscribe, owner.getSnapshot, owner.getSnapshot);
@@ -309,7 +315,7 @@ export default function ConversationPanel({ projectBrief, showWorkPlans = true, 
       {!activeId ? <EmptyState icon={<MessageSquare/>} title={t("welcome")} description={t("welcomeHelp")}
         action={<Button variant="secondary" disabled={createDisabled} onClick={dispatchNewThread}>{t("newThread")}</Button>}/>
         : !input ? state.inputFailure?.conversationId === activeId ? <ErrorState title={t("inputReadFailed")} description={<CommandFailureDetails failure={state.inputFailure.cause}/>} action={<Button onClick={() => void owner.open(activeId)}>{t("retryRead")}</Button>}/>
-          : <LoadingState label={t("readingInput")}/> : exists ? <ThreadHistory showWorkPlans={showWorkPlans} onOpenCandidate={onOpenCandidate} onOpenCandidateBatch={onOpenCandidateBatch} onOpenTeamCandidate={onOpenTeamCandidate} onOpenTeamFinding={onOpenTeamFinding} onPrepareFindingRepair={onPrepareFindingRepair} onOpenKnowledgeProposal={onOpenKnowledgeProposal} onOpenTermProposal={onOpenTermProposal} onOpenEntryReference={onOpenEntryReference} key={activeId} owner={owner} input={input} visible={visible} disabled={blocked} gate={gate} viewId={viewId} parentDialogId={parentDialogId} selection={selection} proposalTarget={proposalTarget} proposalFocusTargets={proposalFocusTargets} planningRegion={planningRegion} onPlanningClosed={() => {
+          : <LoadingState label={t("readingInput")}/> : exists ? <ThreadHistory showWorkPlans={showWorkPlans} onOpenCandidate={onOpenCandidate} onOpenCandidateBatch={onOpenCandidateBatch} onOpenTeamCandidate={onOpenTeamCandidate} onOpenTeamFinding={onOpenTeamFinding} onPrepareFindingRepair={onPrepareFindingRepair} onOpenKnowledgeProposal={onOpenKnowledgeProposal} onOpenTermProposal={onOpenTermProposal} onOpenEntryReference={onOpenEntryReference} onOpenRevisionCandidate={onOpenRevisionCandidate} key={activeId} owner={owner} input={input} visible={visible} disabled={blocked} gate={gate} viewId={viewId} parentDialogId={parentDialogId} selection={selection} proposalTarget={proposalTarget} proposalFocusTargets={proposalFocusTargets} planningRegion={planningRegion} onPlanningClosed={() => {
             const live = presentation.current;
             if (!live.visible || live.blocked || live.activeId !== activeId) return;
             const origin = planningOrigin.current; planningOrigin.current = null;

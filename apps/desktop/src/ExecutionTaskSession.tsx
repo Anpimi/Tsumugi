@@ -88,8 +88,9 @@ interface TaskSession {
   busy: boolean;
 }
 const TaskContext = createContext<TaskSession | null>(null);
+export function useOptionalExecutionTaskSession() { return useContext(TaskContext); }
 export function useExecutionTaskSession() {
-  const owner = useContext(TaskContext);
+  const owner = useOptionalExecutionTaskSession();
   if (!owner) throw new Error("Task cancellation requires a project session owner");
   return owner;
 }
@@ -476,7 +477,10 @@ export function ExecutionTaskProvider({ project, mutations, children }: {
     reservation.current = { token, owner: coordinator };
     let value = change(start, { phase: "identifying", failure: null });
     try {
-      const actionId = await executionCommands.identity(session);
+      // A conversation revision is saved under its immutable result identity.
+      // Reopening can read or finish the same preparation without local state.
+      const actionId = value.intent.operation === "conversation-planning" && value.intent.unit.resultIds.length === 1
+        ? value.intent.unit.resultIds[0] : await executionCommands.identity(session);
       if (!holds(value)) return;
       if (!currentRead()) throw new Error("Captured task read changed during identity allocation");
       if (!validateResponseIdentity(actionId) || cancellationBlocks(value.intent.taskId)) throw new Error("Invalid task adoption identity");

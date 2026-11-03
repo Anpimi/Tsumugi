@@ -6,7 +6,7 @@ import { hasUnknownOutcome } from "../../../projectCommands";
 import { resourceCommands, type TmSuggestion, type TranslationMemoryReusePreview } from "../../../resourceCommands";
 import { jsonIdentity } from "../../../pluginToolChoices";
 import type { SessionReads } from "../../../sessionReads";
-import { translationCommands, type TranslationCandidateSliceRow, type TranslationRevision, type TranslationSaveReceipt, type TranslationSelection } from "../../../translationCommands";
+import { selectedRevisionBasisCurrent, translationCommands, type TranslationCandidateSliceRow, type TranslationRevision, type TranslationSaveReceipt, type TranslationSelection } from "../../../translationCommands";
 import { readCandidateSliceRows } from "../candidates/candidateBatchReads";
 import { candidateRevisionMatches, type CandidateRevisionTarget } from "../candidates/candidateBatchTargets";
 import type { LeaveIntent, LifecycleParticipant } from "../../platform/projectLifecycle";
@@ -407,6 +407,7 @@ export class TranslationDrafts {
       if (history.unitId !== target.unitId || history.locale !== target.locale || !candidate
         || candidate.unitId !== target.unitId || candidate.locale !== target.locale || candidate.text !== selected.text
         || candidate.sourceRevisionId !== capture.basis.sourceRevisionId || candidate.ordinal !== selected.ordinal
+        || !selectedRevisionBasisCurrent(candidate, capture.basis)
         || candidate.candidateDecision?.request.disposition === "rejected"
         || (candidate.candidateDecision?.request.actionId ?? null) !== selected.decisionId
         || (history.current?.eventId ?? null) !== capture.basis.selectionId
@@ -443,7 +444,7 @@ export class TranslationDrafts {
           || !sameDraftBasis(value.basis, { sourceRevisionId: row.target.sourceRevisionId, selectionId: row.target.selectionId,
             revisionId: row.target.revisionId, text: row.target.translationText })) continue;
         const exact = item.exact, candidate = exact ? row.revisions.find(revision => candidateRevisionMatches(exact, revision)) : row.revisions[0];
-        if (!candidate || !this.edit(key, candidate.text)) continue;
+        if (!candidate || !selectedRevisionBasisCurrent(candidate, row.target) || !this.edit(key, candidate.text)) continue;
         results[index] = { key, staged: true, durable: await this.flush(key) };
         if (!results[index].durable) break;
       }

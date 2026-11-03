@@ -6,7 +6,7 @@ import { executionContext, type SessionRequest } from "../../../executionCommand
 import type { ProjectView } from "../../../projectCommands";
 import type { ReviewTarget } from "../../../reviewCommands";
 import type { SessionReads } from "../../../sessionReads";
-import { translationCommands, type CandidateDecisionRequest, type TranslationCandidateSliceRow, type TranslationRevision } from "../../../translationCommands";
+import { selectedRevisionBasisCurrent, translationCommands, type CandidateDecisionRequest, type TranslationCandidateSliceRow, type TranslationRevision } from "../../../translationCommands";
 import type { LifecycleParticipant } from "../../platform/projectLifecycle";
 import { copyWorkspaceSelection, workspaceSelectionIds, type WorkspaceSelection } from "../../workspace/workspaceSelection";
 import type { DraftEntry, RevisionStageCapture, TranslationDrafts } from "../editor/translationDrafts";
@@ -179,6 +179,8 @@ export class CandidateBatchSession {
           if (!reason && row.candidateCount === 0) reason = "no-candidate";
           if (mode === "stage") {
             if (!reason && !expected && row.candidateCount !== 1) reason = "multiple-candidates";
+            const candidate = exactRevision ?? row.revisions[0];
+            if (!reason && candidate && !selectedRevisionBasisCurrent(candidate, row.target)) reason = "basis-changed";
             if (!reason && row.protection.protected) reason = "protected";
             if (!reason && row.selectedOriginKind !== null && row.selectedOriginKind !== "ai") reason = "human-selection";
             if (!reason) reason = draftSkip(opened[index], row);

@@ -2996,6 +2996,38 @@
         ],
         "type": "object"
       },
+      "SelectedRevisionBasis": {
+        "additionalProperties": false,
+        "properties": {
+          "locale": {
+            "type": "string"
+          },
+          "selectionId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "sourceRevisionId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "sourceSnapshotId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "translationRevisionId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "unitId": {
+            "$ref": "#/definitions/ExecutionId"
+          }
+        },
+        "required": [
+          "unitId",
+          "locale",
+          "sourceSnapshotId",
+          "sourceRevisionId",
+          "selectionId",
+          "translationRevisionId"
+        ],
+        "type": "object"
+      },
       "SourceReviewBinding": {
         "additionalProperties": false,
         "properties": {
@@ -4286,6 +4318,17 @@
           },
           "revisionId": {
             "$ref": "#/definitions/ExecutionId"
+          },
+          "selectedRevisionBasis": {
+            "anyOf": [
+              {
+                "$ref": "#/definitions/SelectedRevisionBasis"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Original saved selection for an assistant revision candidate."
           },
           "sourceRevisionId": {
             "$ref": "#/definitions/ExecutionId"

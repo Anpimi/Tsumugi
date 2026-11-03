@@ -1944,11 +1944,15 @@ pub(super) mod tests {
     };
 
     fn adopt_source_files(store: &mut ProjectStore, manifest: &[u8], bytes: &[u8]) {
+        let mut runtime = ExecutionRuntime::new(store).unwrap();
+        adopt_source_files_in_runtime(store, &mut runtime, manifest, bytes);
+    }
+
+    fn adopt_source_files_in_runtime(store: &mut ProjectStore, runtime: &mut ExecutionRuntime, manifest: &[u8], bytes: &[u8]) {
         let bundle = SourceBundle::capture(manifest, bytes, "en").unwrap();
         let input = bundle
             .fixed_input(store.metadata().unwrap().project_id())
             .unwrap();
-        let mut runtime = ExecutionRuntime::new(store).unwrap();
         runtime.register_read_only(Arc::new(SourceRunner)).unwrap();
         runtime.submit(store, &input).unwrap();
         let deadline = Instant::now() + Duration::from_secs(5);
@@ -1990,8 +1994,14 @@ pub(super) mod tests {
     }
 
     pub(in crate::persistence) fn adopt_source(store: &mut ProjectStore, bytes: &[u8]) {
-        adopt_source_files(
+        let mut runtime = ExecutionRuntime::new(store).unwrap();
+        adopt_source_in_runtime(store, &mut runtime, bytes);
+    }
+
+    pub(in crate::persistence) fn adopt_source_in_runtime(store: &mut ProjectStore, runtime: &mut ExecutionRuntime, bytes: &[u8]) {
+        adopt_source_files_in_runtime(
             store,
+            runtime,
             br#"{"UniqueID":"Review.Test","Name":"Review","Version":"1.0.0","EntryDll":"Review.dll"}"#,
             bytes,
         );

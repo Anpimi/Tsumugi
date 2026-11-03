@@ -143,6 +143,33 @@ it("shares the existing translation reservation before identity and excludes sam
   act(() => { if (token) translation.releaseMutation(token); });
 });
 
+it("looks up a lost assistant candidate acknowledgement under the fixed result identity", async () => {
+  render(<Probe />, project);
+  const detail = applicationDetail(), resultId = fixture.prepare.resultIds[0];
+  detail.operation = "conversation-planning";
+  const action = { ...generalAction(), operation: detail.operation, actionId: resultId };
+  const receipt = { ...fixture.receipt, actionId: resultId };
+  invoke.mockImplementation(async (command, payload) => {
+    if (command === "prepare_execution_adoption") {
+      expect(payload.request).toMatchObject({ actionId: resultId, resultIds: [resultId] });
+      return action;
+    }
+    if (command === "adopt_execution") throw new Error("Candidate save acknowledgement lost");
+    if (command === "read_execution_adoption_action") {
+      expect(payload.request).toMatchObject({ actionId: resultId, resultIds: [resultId] });
+      return { action, receipt };
+    }
+    throw new Error(String(command));
+  });
+  await confirmApplication(detail);
+  await act(async () => { await owner.submit(); });
+  expect(owner.activity?.receipt).toEqual(receipt);
+  expect(owner.activity?.phase).toBe("recorded");
+  expect(calls("create_execution_identity")).toHaveLength(0);
+  expect(calls("adopt_execution")).toHaveLength(1);
+  expect(calls("read_execution_adoption_action")).toHaveLength(1);
+});
+
 it("does not start general adoption while that task's original cancellation is still preparing", async () => {
   render(<Probe />, project); installApplication();
   let identify!: (value: unknown) => void;

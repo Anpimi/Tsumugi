@@ -227,6 +227,9 @@ pub(super) fn check_merge(
         if !valid {
             return Err(error(ErrorCode::DependencyConflict, "arena-contributor"));
         }
+        if target.revision_id != Some(*parent) {
+            super::translation::check_selected_revision_basis(c, *parent)?;
+        }
     }
     Ok(())
 }
@@ -471,6 +474,12 @@ impl ProjectStore {
                 locale,
                 &target.source_text,
             )?;
+            let selected_basis_current = target.revision_id == Some(*revision)
+                || super::translation::selected_revision_basis(c, *revision)?.is_none_or(|(_, basis)| {
+                    target.source_snapshot_id == basis.source_snapshot_id
+                        && target.selection_id == Some(basis.selection_id)
+                        && target.revision_id == Some(basis.translation_revision_id)
+                });
             rows.push(ComparisonEntry {
                 revision_id: *revision,
                 text,
@@ -479,7 +488,7 @@ impl ProjectStore {
                 contributors: contributors(c, *revision)?,
                 model,
                 recipe,
-                basis_current: source_id == target.source_revision_id && !changed,
+                basis_current: source_id == target.source_revision_id && !changed && selected_basis_current,
                 // Reuse the verified append-only decision owner. Only status is
                 // projected, so a human reason cannot disclose a blind model.
                 candidate_disposition: self.translation_candidate_decision(project, *revision)?

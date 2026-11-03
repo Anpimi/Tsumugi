@@ -1069,6 +1069,110 @@ fn conversation_planning_ipc_requires_explicit_permission_and_reopens_as_history
     );
 }
 
+fn planning_source(app: &tauri::App<tauri::test::MockRuntime>) -> ExecutionId {
+    app.state::<AppState>().sessions.with(|sessions| {
+        let (host, store) = sessions.active.as_mut().unwrap().execution_parts().unwrap();
+        let source = tsumugi_core::content::SourceBundle::capture(
+            br#"{"UniqueID":"Example.Mod","Name":"Example","Version":"1.0.0","EntryDll":"Example.dll"}"#,
+            br#"{"first":"Keep {{name}}"}"#, "en").unwrap();
+        let input = source.fixed_input(store.metadata().unwrap().project_id()).unwrap();
+        host.runtime.submit(store, &input).unwrap();
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+        while host.active(store).unwrap() {
+            host.tick(store).unwrap();
+            assert!(std::time::Instant::now() < deadline);
+            std::thread::yield_now();
+        }
+        let result = store.execution_current_result(input.envelope().attempt_id, input.envelope().items[0].item_id).unwrap().unwrap();
+        let preview = store.source_preview(input.envelope().attempt_id, result, 0, 1).unwrap();
+        let action = store.prepare_adoption_with_id(ExecutionId::new(), input.envelope().attempt_id, input.envelope().units[0].unit_id,
+            vec![result], serde_json::to_value(preview.confirmation).unwrap()).unwrap();
+        store.adopt_execution(&action, &tsumugi_core::content::SourceAdoptionHandler).unwrap();
+        let snapshot = store.content_scope().unwrap().current_snapshot.unwrap();
+        store.source_content(snapshot, 0, 1).unwrap().rows.remove(0).unit_id.unwrap()
+    })
+}
+
+#[test]
+fn selected_revision_ipc_saves_and_recovers_the_original_candidate() {
+    let provider = PlanningProvider::with_content(json!({"kind":"revision","summary":"Clearer wording","text":"建议译文 {{name}}","questions":[]}));
+    let temporary = tempfile::tempdir().unwrap();
+    let destination = temporary.path().join("project");
+    let app = crate::commands::register_commands(tauri::test::mock_builder())
+        .build(tauri::test::mock_context(tauri::test::noop_assets())).unwrap();
+    let window = tauri::WebviewWindowBuilder::new(&app, "main", tauri::WebviewUrl::App("index.html".into())).build().unwrap();
+    let project = call(&window, "create_project",
+        json!({"destination":destination,"displayName":"Revision IPC","sourceLocale":"en","targetLocales":["zh-CN"]}));
+    let unit = planning_source(&app);
+    let target = |project: &Value| in_session(project, json!({"unitId":unit,"locale":"zh-CN"}));
+    let before = call(&window, "read_review_target", target(&project));
+    let save = |expected: &Value, text: &str| in_session(&project, json!({"actionId":identity(),"unitId":unit,"locale":"zh-CN",
+        "sourceRevisionId":expected["sourceRevisionId"],"expectedSelectionId":expected["selectionId"],"text":text}));
+    call(&window, "save_translation_revision", save(&before, "已保存译文 {{name}}"));
+    let original_target = call(&window, "read_review_target", target(&project));
+    let original_basis = json!({"unitId":unit,"locale":"zh-CN","sourceSnapshotId":original_target["sourceSnapshotId"],
+        "sourceRevisionId":original_target["sourceRevisionId"],"selectionId":original_target["selectionId"],"translationRevisionId":original_target["revisionId"]});
+    let thread = call(&window, "create_project_conversation", in_session(&project,
+        json!({"actionId":identity(),"conversationId":identity(),"title":null})));
+    let conversation_id = &thread["conversationId"];
+    let message = call(&window, "append_project_conversation_message", in_session(&project,
+        json!({"actionId":identity(),"conversationId":conversation_id,"messageId":identity(),"body":"修订这一版。"})));
+    let config = tsumugi_core::ai::AiConfig { endpoint: provider.endpoint.clone(), model: "synthetic-revision".into(),
+        credential_env: String::new(), max_items: 1, max_requests: 1, ..Default::default() };
+    let preparation = call(&window, "prepare_conversation_planning", in_session(&project,
+        json!({"conversationId":conversation_id,"selectedMessageIds":[message["messageId"]],"scope":{"kind":"selected-revision","basis":original_basis},"config":config})));
+    assert_eq!(provider.count(), 0);
+    let material: Value = serde_json::from_str(preparation["preview"]["input"].as_str().unwrap()).unwrap();
+    assert_eq!(material["selectedTranslation"], "已保存译文 {{name}}");
+    let attempt = identity();
+    let expires = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_millis() + 60_000;
+    call(&window, "start_conversation_planning", in_session(&project, json!({"conversationId":conversation_id,
+        "preparationId":preparation["preparationId"],"consent":{"actionId":attempt,"attemptId":attempt,"taskId":identity(),
+        "previewDigest":preparation["previewDigest"],"expiresAtMs":expires.to_string(),"shareMessages":true,"shareUnits":true}})));
+    let read = |project: &Value| in_session(project, json!({"conversationId":conversation_id,"attemptId":attempt}));
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(8);
+    let run = loop {
+        let run = call(&window, "read_conversation_planning", read(&project));
+        if run["output"].is_object() { break run; }
+        assert!(std::time::Instant::now() < deadline, "selected revision did not finish: {run}");
+        std::thread::sleep(std::time::Duration::from_millis(10));
+    };
+    assert_eq!(run["detail"]["recovery"]["units"][0]["actions"], json!(["adopt-result"]));
+    assert_eq!(run["output"]["model"]["text"], "建议译文 {{name}}");
+    let result_id = &run["resultId"];
+    let save_request = |project: &Value| in_session(project,
+        json!({"actionId":result_id,"attemptId":attempt,"unitId":attempt,"resultIds":[result_id]}));
+    assert!(call(&window, "read_execution_adoption_action", save_request(&project)).is_null());
+    let action = call(&window, "prepare_execution_adoption", save_request(&project));
+    assert_eq!(call(&window, "read_execution_adoption_action", save_request(&project)), json!({"action":action,"receipt":null}));
+    call(&window, "save_translation_revision", save(&original_target, "更新的人工译文 {{name}}"));
+    let human = call(&window, "read_review_target", target(&project));
+    let adoption = in_session(&project, json!({"actionId":result_id}));
+    let receipt = call(&window, "adopt_execution", adoption.clone());
+    assert_eq!(call(&window, "adopt_execution", adoption), receipt);
+    let candidate = &receipt["changes"][0]["id"];
+    let read_candidate = |project: &Value| in_session(project, json!({"unitId":unit,"locale":"zh-CN","revisionId":candidate}));
+    assert_eq!(call(&window, "read_translation_revision", read_candidate(&project))["selectedRevisionBasis"], original_basis);
+    assert_eq!(reject(&window, "select_translation_revision", in_session(&project, json!({"actionId":identity(),
+        "unitId":unit,"locale":"zh-CN","sourceRevisionId":human["sourceRevisionId"],"expectedSelectionId":human["selectionId"],"revisionId":candidate})))["code"], "dependency-conflict");
+    assert_eq!(call(&window, "read_review_target", target(&project)), human);
+    assert_eq!(call(&window, "read_work_protection", target(&project))["protected"], true);
+    let decision = call(&window, "decide_translation_candidate", in_session(&project, json!({"decision":{
+        "projectId":project["metadata"]["projectId"],"actionId":identity(),"unitId":unit,"locale":"zh-CN","revisionId":candidate,
+        "sourceRevisionId":human["sourceRevisionId"],"expectedSelectionId":human["selectionId"],"expectedDecisionId":null,
+        "disposition":"rejected","actor":"Reviewer","reason":"Keep the human translation."}})));
+    assert_eq!(decision["request"]["disposition"], "rejected");
+    call(&window, "close_project", json!({"sessionToken":project["sessionToken"]}));
+    let reopened = call(&window, "open_project", json!({"locator":destination}));
+    assert_eq!(call(&window, "read_execution_adoption_action", save_request(&reopened))["receipt"], receipt);
+    assert_eq!(call(&window, "read_conversation_planning", read(&reopened))["detail"]["recovery"]["units"][0]["actions"], json!(["view-receipt"]));
+    let revision = call(&window, "read_translation_revision", read_candidate(&reopened));
+    assert_eq!(revision["text"], "建议译文 {{name}}");
+    assert_eq!(revision["candidateDecision"], decision);
+    assert!(runtime_absent(&app, &reopened));
+    assert_eq!(provider.count(), 1);
+}
+
 #[test]
 fn conversation_proposal_ipc_versions_authorization_and_candidate_history_use_original_owners() {
     let temporary = tempfile::tempdir().unwrap();
@@ -1092,27 +1196,7 @@ fn conversation_proposal_ipc_versions_authorization_and_candidate_history_use_or
         "create_project",
         json!({"destination":destination,"displayName":"Proposal IPC","sourceLocale":"en","targetLocales":["zh-CN"]}),
     );
-    let unit = app.state::<AppState>().sessions.with(|sessions| {
-        let (host, store) = sessions.active.as_mut().unwrap().execution_parts().unwrap();
-        let source = tsumugi_core::content::SourceBundle::capture(
-            br#"{"UniqueID":"Example.Mod","Name":"Example","Version":"1.0.0","EntryDll":"Example.dll"}"#,
-            br#"{"first":"Keep {{name}}"}"#, "en").unwrap();
-        let input = source.fixed_input(store.metadata().unwrap().project_id()).unwrap();
-        host.runtime.submit(store, &input).unwrap();
-        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
-        while host.active(store).unwrap() {
-            host.tick(store).unwrap();
-            assert!(std::time::Instant::now() < deadline);
-            std::thread::yield_now();
-        }
-        let result = store.execution_current_result(input.envelope().attempt_id, input.envelope().items[0].item_id).unwrap().unwrap();
-        let preview = store.source_preview(input.envelope().attempt_id, result, 0, 1).unwrap();
-        let action = store.prepare_adoption_with_id(ExecutionId::new(), input.envelope().attempt_id, input.envelope().units[0].unit_id,
-            vec![result], serde_json::to_value(preview.confirmation).unwrap()).unwrap();
-        store.adopt_execution(&action, &tsumugi_core::content::SourceAdoptionHandler).unwrap();
-        let snapshot = store.content_scope().unwrap().current_snapshot.unwrap();
-        store.source_content(snapshot, 0, 1).unwrap().rows.remove(0).unit_id.unwrap()
-    });
+    let unit = planning_source(&app);
     let content = json!({"kind":"proposal","summary":"先为这一条生成候选译文。","unitIds":[unit],"options":tsumugi_core::application::PlanOptions::default(),"questions":[]});
     let provider = PlanningProvider::with_content(content.clone());
     let thread = call(
