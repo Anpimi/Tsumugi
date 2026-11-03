@@ -165,7 +165,7 @@ pub(super) fn validate_existing(connection: &Connection, format:i64) -> Result<(
     }
     Ok(())
 }
-fn read(c:&Connection,key:&ResourceDraftKey,format:i64)->Result<ResourceDraftHead>{
+pub(super) fn read(c:&Connection,key:&ResourceDraftKey,format:i64)->Result<ResourceDraftHead>{
     if format<RESOURCE_FORMAT{return Ok(empty(key));}
     let row=c.query_row("SELECT revision,edit_seq,has_pending,CASE WHEN length(payload)<=?2 THEN payload END
         FROM resource_draft_heads WHERE project_id=?1",params![key.project_id.to_string(),MAX_RECORD as i64],

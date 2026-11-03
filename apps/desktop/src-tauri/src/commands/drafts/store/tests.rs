@@ -1160,3 +1160,43 @@ fn draft_store_crash_child() {
         .unwrap();
     panic!("selected crash stage was not reached");
 }
+
+#[test]
+fn draft_rescue_saves_newer_text_and_excludes_original_pending_request() {
+    let (directory, store, mut request) = setup();
+    request.value.text = "Original submitted text".into();
+    request.value.pending = Some(pending(&request));
+    let original = store.write(&request).unwrap();
+    let newer = replace(&request, &original, "Newer input e\u{301} 👩🏽‍💻\nsecond line");
+    let head = store.write(&newer).unwrap();
+    let project = tsumugi_core::ProjectId::parse(&request.key.project_id.to_string()).unwrap();
+    let metadata = tsumugi_core::ProjectMetadata::create_with_id(project, "Rescue test", "en-US", ["zh-Hans"]).unwrap();
+    let conversation = ConversationDraftWrite {
+        key: ConversationDraftKey { project_id: request.key.project_id, conversation_id: ExecutionId::new() },
+        expected_revision: revision(0),
+        writer_id: ExecutionId::new(),
+        value: ConversationDraftValue { text: "Unsent conversation".into(), edit_seq: revision(1),
+            message_edit_seq: None, pending: None, revocations: vec![], proposal_edits: vec![], team_drafts: vec![] },
+    };
+    store.write_conversation(&conversation).unwrap();
+    let fixture: serde_json::Value = serde_json::from_str(include_str!(concat!(
+        env!("CARGO_MANIFEST_DIR"), "/../test/fixtures/resourceDraftCommands.contract.json"))).unwrap();
+    let mut resource: ResourceDraftWrite = serde_json::from_value(fixture["requests"]["write"]["write"].clone()).unwrap();
+    resource.key.project_id = request.key.project_id;
+    resource.value.pending = None;
+    resource.value.fact_pending = None;
+    resource.value.context_draft = "Unconfirmed context".into();
+    store.write_resource(&resource).unwrap();
+    let path = directory.path().join("rescue.txt");
+    store.rescue_to(&metadata, &path).unwrap();
+    let saved = fs::read_to_string(&path).unwrap();
+    assert!(saved.contains(&newer.value.text));
+    assert!(saved.contains(&request.key.unit_id.to_string()));
+    assert!(saved.contains("zh-Hans"));
+    assert!(saved.contains("Unsent conversation"));
+    assert!(saved.contains("Unconfirmed context"));
+    assert!(!saved.contains("Original submitted text"));
+    assert_eq!(store.read(&request.key).unwrap(), head);
+    assert_eq!(store.rescue_to(&metadata, &path).unwrap_err().code, ErrorCode::DependencyConflict);
+    assert_eq!(fs::read_to_string(&path).unwrap(), saved);
+}

@@ -122,6 +122,48 @@ pub(super) fn configure(
         })
 }
 
+async fn rescue_source(
+    state: &AppState,
+    token: String,
+) -> Result<(DraftStore, tsumugi_core::ProjectMetadata), CommandError> {
+    let drafts = state.local_drafts.get().cloned();
+    let stage = CommandStage::DraftStorage;
+    state.sessions.run("rescue_local_drafts.source", stage, move |sessions| {
+        let active = sessions.active.as_ref().filter(|active| active.token == token)
+            .ok_or_else(|| CommandError::simple(CommandErrorCode::SessionInvalid, stage))?;
+        let metadata = active.store.metadata().map_err(|error| super::map_persistence_error(error, stage))?;
+        let drafts = drafts.ok_or_else(|| CommandError::simple(CommandErrorCode::StorageFailed, stage))?;
+        Ok((drafts.for_project(&active.store).map_err(map_error)?, metadata))
+    }).await
+}
+
+#[tauri::command]
+pub async fn rescue_local_drafts<R: tauri::Runtime>(
+    app: tauri::AppHandle<R>,
+    window: tauri::Window<R>,
+    state: State<'_, AppState>,
+    request: super::project_backup::BackupProjectRequest,
+) -> Result<super::project_backup::BackupProjectView, CommandError> {
+    use tauri_plugin_dialog::DialogExt;
+    use super::project_backup::BackupProjectView;
+    let stage = CommandStage::DraftStorage;
+    if window.label() != "main" {
+        return Err(CommandError::simple(CommandErrorCode::SessionInvalid, stage));
+    }
+    rescue_source(&state, request.session_token.clone()).await?;
+    let destination = state.dialogs.run(stage, move || {
+        app.dialog().file().set_file_name("tsumugi-draft-rescue.txt").blocking_save_file()
+            .map(|path| path.into_path().map_err(|_| CommandError::invalid_input(stage, Some("destination"))))
+            .transpose()
+    }).await?;
+    let Some(destination) = destination else { return Ok(BackupProjectView { saved: false }); };
+    let (drafts, metadata) = rescue_source(&state, request.session_token).await?;
+    state.io.run(stage, move || {
+        drafts.rescue_to(&metadata, &destination).map_err(map_error)?;
+        Ok(BackupProjectView { saved: true })
+    }).await
+}
+
 fn map_error(error: ExecutionError) -> CommandError {
     let corrupt = error.code == ErrorCode::CorruptLedger;
     let unsupported = error.stage == "drafts-schema-version";

@@ -14,6 +14,8 @@ import styles from "./ProjectMetadataSheet.module.css";
 
 type Pending = { previous: ProjectView; raw: string; renameFolder: boolean } & (
   { kind: "name"; request: RenameProjectRequest } | { kind: "languages"; request: SetTargetLocalesRequest });
+type ExportKind = "backup" | "rescue";
+type ExportNotice = { key: `${ExportKind}${"Saved" | "Cancelled" | "Failed" | "Unknown"}`; failure?: CommandFailure };
 type Notice = "saved" | "failed" | "unknown" | "readFailed" | "previous" | "stale" | "refreshFailed" | null;
 const locales = (raw: string) => raw.split(/[,;\n]/).map(value => value.trim()).filter(Boolean);
 const sameTags = (left: readonly string[], right: readonly string[]) => left.map(value => value.toLowerCase()).sort().join("\n") === right.map(value => value.toLowerCase()).sort().join("\n");
@@ -41,16 +43,17 @@ export default function ProjectMetadataSheet(props: ProjectMetadataSheetProps) {
   const [state, setState] = useState<State>(() => ({ basis: props.project, name: props.project.metadata.displayName, renameFolder: false,
     languages: props.project.metadata.targetLocales.join(", "), sequence: 0, busy: false, pending: null, refreshRequired: false, notice: null, failure: null, error: null }));
   const stateRef = useRef(state), latest = useRef(props), alive = useRef(true), composing = useRef(false), leaveFocus = useRef<HTMLHeadingElement>(null);
-  const [backupBusy, setBackupBusy] = useState(false);
-  const backupInFlight = useRef(false);
-  const [backupNotice, setBackupNotice] = useState<{ key: "backupSaved" | "backupCancelled" | "backupFailed" | "backupUnknown"; failure?: CommandFailure } | null>(null);
+  const [exportBusy, setExportBusy] = useState<ExportKind | null>(null);
+  const exportInFlight = useRef<ExportKind | null>(null);
+  const [exportNotices, setExportNotices] = useState<Partial<Record<ExportKind, ExportNotice>>>({});
+  const { backup: backupNotice, rescue: rescueNotice } = exportNotices;
   const [leaving, setLeaving] = useState<number | null>(null);
   const [composingInput, setComposingInput] = useState(false);
   const leave = useRef<{ proof: () => boolean; current: () => boolean; resolve: (allowed: boolean) => void } | null>(null);
   function update(change: (before: State) => State) { const next = change(stateRef.current); stateRef.current = next; setState(next); }
   const live = () => alive.current && latest.current.project.sessionToken === stateRef.current.basis.sessionToken
     && latest.current.project.metadata.projectId === stateRef.current.basis.metadata.projectId;
-  const blocked = () => backupInFlight.current || stateRef.current.busy || !!stateRef.current.pending || stateRef.current.refreshRequired;
+  const blocked = () => !!exportInFlight.current || stateRef.current.busy || !!stateRef.current.pending || stateRef.current.refreshRequired;
   const dirty = () => { const value = stateRef.current; return value.name !== value.basis.metadata.displayName || value.renameFolder || !sameTags(locales(value.languages), value.basis.metadata.targetLocales); };
   useLayoutEffect(() => { latest.current = props; });
   useLayoutEffect(() => { if (leaving !== null) leaveFocus.current?.focus(); }, [leaving]);
@@ -64,7 +67,7 @@ export default function ProjectMetadataSheet(props: ProjectMetadataSheetProps) {
   useLayoutEffect(() => {
     const participant: LifecycleParticipant = { id: "project-metadata", area: "overview", scope: { kind: "project", projectId: props.project.metadata.projectId, sessionToken: props.project.sessionToken },
       inspect: intent => ({ status: blocked() ? "blocked" : ["create-project", "open-project", "close-project", "close-window", "restore"].includes(intent.kind) && dirty() ? "dirty" : "ready",
-        revision: JSON.stringify([stateRef.current.sequence, stateRef.current.basis.metadata.metadataRevision, stateRef.current.busy, stateRef.current.pending, stateRef.current.refreshRequired, backupInFlight.current]) }),
+        revision: JSON.stringify([stateRef.current.sequence, stateRef.current.basis.metadata.metadataRevision, stateRef.current.busy, stateRef.current.pending, stateRef.current.refreshRequired, exportInFlight.current]) }),
       reveal: () => latest.current.onReveal(), prepareLeave: async (_intent, proof, current) => {
         if (!live() || blocked()) return false;
         latest.current.onReveal(); setLeaving(stateRef.current.sequence);
@@ -131,19 +134,23 @@ export default function ProjectMetadataSheet(props: ProjectMetadataSheetProps) {
       }
     }
   }
-  async function backup() {
-    if (!live() || blocked() || latest.current.disabled || !latest.current.current() || composing.current) return;
-    backupInFlight.current = true;
-    setBackupBusy(true);
-    setBackupNotice(null);
+  async function exportLocal(kind: ExportKind) {
+    if (!live() || exportInFlight.current || stateRef.current.busy || kind === "backup" && blocked()
+      || latest.current.disabled || !latest.current.current() || composing.current) return;
+    exportInFlight.current = kind;
+    setExportBusy(kind);
+    setExportNotices(previous => ({ ...previous, [kind]: undefined }));
+    const write = kind === "backup" ? projectCommands.backup : projectCommands.rescueDrafts;
     try {
-      const result = await projectCommands.backup({ sessionToken: stateRef.current.basis.sessionToken });
-      if (live()) setBackupNotice({ key: result.saved ? "backupSaved" : "backupCancelled" });
+      const result = await write({ sessionToken: stateRef.current.basis.sessionToken });
+      if (live()) setExportNotices(previous => ({ ...previous, [kind]: { key: result.saved ? `${kind}Saved` : `${kind}Cancelled` } }));
     } catch (error) {
-      if (live()) setBackupNotice({ key: hasUnknownOutcome(error) ? "backupUnknown" : "backupFailed", failure: commandFailure(error) });
+      if (live()) setExportNotices(previous => ({ ...previous, [kind]: {
+        key: hasUnknownOutcome(error) ? `${kind}Unknown` : `${kind}Failed`, failure: commandFailure(error),
+      } }));
     } finally {
-      backupInFlight.current = false;
-      if (live()) setBackupBusy(false);
+      exportInFlight.current = null;
+      if (live()) setExportBusy(null);
     }
   }
   function requestClose() {
@@ -178,9 +185,18 @@ export default function ProjectMetadataSheet(props: ProjectMetadataSheetProps) {
       <section className={styles.section}>
         <h3>{t("backupTitle")}</h3>
         <p>{t("backupHelp")}</p>
-        <div className={styles.actions}><Button variant="secondary" pending={backupBusy} disabled={locked || composingInput} onClick={() => void backup()}>{t("backup")}</Button></div>
+        <div className={styles.actions}><Button variant="secondary" pending={exportBusy === "backup"} disabled={locked || composingInput} onClick={() => void exportLocal("backup")}>{t("backup")}</Button></div>
         {backupNotice ? <Banner role="status" tone={backupNotice.key === "backupSaved" ? "success" : "warning"}>
           <p>{t(backupNotice.key)}</p><CommandFailureDetails failure={backupNotice.failure ?? null}/>
+        </Banner> : null}
+      </section>
+      <section className={styles.section}>
+        <h3>{t("rescueTitle")}</h3>
+        <p>{t("rescueHelp")}</p>
+        <div className={styles.actions}><Button variant="secondary" pending={exportBusy === "rescue"}
+          disabled={unavailable || state.busy || !!exportBusy || composingInput} onClick={() => void exportLocal("rescue")}>{t("rescue")}</Button></div>
+        {rescueNotice ? <Banner role="status" tone={rescueNotice.key === "rescueSaved" ? "success" : "warning"}>
+          <p>{t(rescueNotice.key)}</p><CommandFailureDetails failure={rescueNotice.failure ?? null}/>
         </Banner> : null}
       </section>
       <div>

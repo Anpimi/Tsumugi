@@ -279,8 +279,9 @@ it("keeps an uncertain restore from repeating and offers opening the destination
   expect(restore).toHaveBeenCalledTimes(1);
 });
 
-it("backs up the current session from project settings without saving a newer name edit", async () => {
+it("backs up and rescues drafts from project settings without saving a newer name edit", async () => {
   const backup = vi.spyOn(projectCommands, "backup").mockResolvedValue({ saved: true });
+  const rescue = vi.spyOn(projectCommands, "rescueDrafts").mockResolvedValue({ saved: true });
   const rename = vi.spyOn(projectCommands, "rename");
   await openImportWorkspace();
   await userEvent.setup().click(screen.getByRole("button", { name: i18n.t("workbenchV2.commandPlaceholder") }));
@@ -293,6 +294,10 @@ it("backs up the current session from project settings without saving a newer na
   fireEvent.click(sheet.getByRole("button", { name: i18n.t("projectMetadata.backup") }));
   expect(await sheet.findByText(i18n.t("projectMetadata.backupSaved"))).toBeVisible();
   expect(backup).toHaveBeenCalledWith({ sessionToken: project.sessionToken });
+  fireEvent.click(sheet.getByRole("button", { name: i18n.t("projectMetadata.rescue") }));
+  expect(await sheet.findByText(i18n.t("projectMetadata.rescueSaved"))).toBeVisible();
+  expect(sheet.getByText(i18n.t("projectMetadata.backupSaved"))).toBeVisible();
+  expect(rescue).toHaveBeenCalledWith({ sessionToken: project.sessionToken });
   expect(rename).not.toHaveBeenCalled();
   expect(name).toHaveValue("Unsaved project name");
 }, 15000);

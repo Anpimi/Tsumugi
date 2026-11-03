@@ -201,3 +201,29 @@ fn format_eleven_source_bytes_and_pending_survive_read_failed_upgrade_and_new_co
     assert_eq!(blocker.query_row("SELECT rowid,payload FROM source_draft_heads WHERE project_id=?1", [project.to_string()], |r| Ok((r.get::<_, i64>(0)?, r.get::<_, Vec<u8>>(1)?))).unwrap(), row);
     assert_eq!(store.read_source(&original.key).unwrap(), head);
 }
+
+#[test]
+fn draft_rescue_exports_source_reasons_without_a_pending_grant() {
+    use tsumugi_core::content::{LineageChoice, LineageDecision};
+    let directory = tempfile::tempdir().unwrap();
+    let store = DraftStore::at(directory.path().join("drafts")).unwrap();
+    let project = ExecutionId::new();
+    let mut request = write(project);
+    request.value.lineage.push(LineageChoice {
+        new_ordinal: 1, old_occurrence_id: ExecutionId::new(),
+        decision: LineageDecision::Reject, reason: "Original occurrence differs".into(),
+    });
+    let pending = primary_requests(project).remove(1);
+    let SourceDraftPending::Start { request: start, .. } = &pending else { panic!("start fixture") };
+    let grant = start.grant_id.to_string();
+    request.value.pending = Some(pending);
+    let head = store.write_source(&request).unwrap();
+    let project = tsumugi_core::ProjectId::parse(&project.to_string()).unwrap();
+    let metadata = tsumugi_core::ProjectMetadata::create_with_id(project, "Source rescue", "en-US", ["zh-CN"]).unwrap();
+    let path = directory.path().join("rescue.txt");
+    store.rescue_to(&metadata, &path).unwrap();
+    let saved = fs::read_to_string(path).unwrap();
+    assert!(saved.contains("Original occurrence differs"));
+    assert!(!saved.contains(&grant));
+    assert_eq!(store.read_source(&request.key).unwrap(), head);
+}

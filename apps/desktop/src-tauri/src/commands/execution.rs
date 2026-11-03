@@ -23,7 +23,7 @@ macro_rules! handlers {
         super::startup::select_startup_source_directory,super::startup::select_dropped_startup_source_directory,
         super::startup::read_startup_source_preflight,super::startup::claim_startup_source_directory,
         super::drafts::read_local_draft,super::drafts::read_local_drafts,super::drafts::write_local_draft,
-        super::drafts::clear_local_draft,super::drafts::list_local_drafts,
+        super::drafts::clear_local_draft,super::drafts::list_local_drafts,super::drafts::rescue_local_drafts,
         super::drafts::read_local_conversation_draft,super::drafts::write_local_conversation_draft,
         super::drafts::resolve_local_conversation_draft,super::drafts::clear_local_conversation_draft,super::drafts::list_local_conversation_drafts,
         super::drafts::read_local_resource_draft,super::drafts::write_local_resource_draft,

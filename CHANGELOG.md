@@ -12,6 +12,7 @@ Current workspace version metadata: **`0.2.0-alpha.1`**. Because the published `
 
 ### Added
 
+- Export supported local draft text separately from a project backup. The UTF-8 rescue file supports manual recovery and leaves original pending requests on the device.
 - Save a committed project backup from Project settings and restore it from the welcome screen into a new folder. The restored project uses a separate local draft journal.
 - Supported project upgrades save a verified original-schema database snapshot beside the project before applying the migration. An unavailable snapshot stops the upgrade.
 - Source import shows the current stage, captures files after language confirmation, and prepares the independent check after extraction in the same sheet. Extraction, checker execution, and final adoption each keep explicit confirmation. A stopped check can be prepared again from the saved extraction with fresh checker consent. If the selected package or runtime becomes unavailable, source import explains which one is missing and retains the captured preparation.

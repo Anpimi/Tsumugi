@@ -59,7 +59,7 @@ pub(super) fn decode(key: &SourceDraftKey, stored: (i64, Option<i64>, i64, Optio
     }
     Ok(head)
 }
-fn read(connection: &Connection, key: &SourceDraftKey, format: i64) -> Result<SourceDraftHead> {
+pub(super) fn read(connection: &Connection, key: &SourceDraftKey, format: i64) -> Result<SourceDraftHead> {
     if format < SOURCE_FORMAT { return Ok(empty(key)); }
     let row = connection.query_row("SELECT revision,edit_seq,has_pending,CASE WHEN length(payload)<=?2 THEN payload END FROM source_draft_heads WHERE project_id=?1",
         params![key.project_id.to_string(), MAX_RECORD as i64], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)))

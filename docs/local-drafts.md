@@ -8,6 +8,10 @@ Open **Project settings → Save project backup** to save the committed project 
 
 With no project open, choose **Restore a backup**. Enter a new folder name, choose the backup and then its destination parent. The restored project opens separately. Use Extensions or Model connections to set up any missing dependencies. If the restore result is uncertain, use **Open a project** to check the destination folder before restoring again.
 
+## Rescue local draft text
+
+Open **Project settings → Export draft text** to save a UTF-8 text file from the active project’s local journal. The export reads one saved journal snapshot, which can be newer or older than the committed project backup. It includes saved translation text, conversation messages and human team text, proposal summaries and questions, knowledge and context edits, and source decision reasons. It identifies the project, language, entries and draft revisions where available. Structured proposal settings, strategy drafts, captured files, credentials and original pending requests stay separate. Reapply rescued text manually and check pending requests on the original device. Exporting leaves the journal and any earlier rescue file intact.
+
 ## What is stored
 
 The journal keeps one translation head per project, source entry, and target language. A head can contain draft text, its edit sequence, the original source and translation basis, and a translation-memory reference when one has been placed in the draft. It distinguishes an absent selected translation from a selected empty string. A merge draft also keeps its saved comparison, the contributing revision identities, and the comparison basis. When a save, revision selection, or merge has an uncertain result, the head can also retain the original request and the sequence submitted with it, including its reuse reference. It does not retain session tokens or grants.

@@ -17,6 +17,9 @@ export const projectCommands = {
   backup(request: BackupProjectRequest) {
     return checkedInvoke("backup_project", request, validateResponseBackup);
   },
+  rescueDrafts(request: BackupProjectRequest) {
+    return checkedInvoke("rescue_local_drafts", request, validateResponseBackup);
+  },
   restore(request: RestoreProjectRequest) {
     return checkedInvoke("restore_project", request, validateResponseRestore);
   },

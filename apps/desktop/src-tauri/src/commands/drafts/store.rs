@@ -10,6 +10,7 @@ mod resources;
 mod strategies;
 mod sources;
 mod pending;
+mod rescue;
 pub use pending::{PendingActionRef, PendingJournalKey, PendingJournalSlot, PendingSnapshot};
 use rusqlite::{Connection, OpenFlags, OptionalExtension, TransactionBehavior, params};
 use serde::Serialize;

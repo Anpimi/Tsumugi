@@ -586,7 +586,7 @@ pub(super) fn decode(key: &ConversationDraftKey, row: Stored, format: i64) -> Re
     }
     Ok(head)
 }
-fn read_head(
+pub(super) fn read_head(
     c: &Connection,
     key: &ConversationDraftKey,
     format: i64,

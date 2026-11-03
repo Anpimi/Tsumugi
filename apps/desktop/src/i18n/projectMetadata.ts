@@ -14,6 +14,11 @@ export const projectMetadataEn = {
   backupSaved: "Project backup saved.", backupCancelled: "Backup cancelled.",
   backupFailed: "Could not save the backup. Check the selected location. If work is running or its result is uncertain, check that work in Runs before trying again.",
   backupUnknown: "The backup may have been saved. Check the selected location before trying again.",
+  rescueTitle: "Draft rescue", rescue: "Export draft text…",
+  rescueHelp: "Save a readable copy of supported inputs already in this project’s local journal. Reapply text manually. Pending requests stay available for checking on this device.",
+  rescueSaved: "Draft text saved.", rescueCancelled: "Draft export cancelled.",
+  rescueFailed: "Could not export draft text. Check the selected location and the details below.",
+  rescueUnknown: "The text file may have been saved. Check the selected location before trying again.",
   leaveTitle: "Keep your project settings edits?", leaveHelp: "These edits have not been submitted. Stay to keep editing, or discard only these project settings edits.", stay: "Stay and keep edits", discard: "Discard settings edits", leaveChanged: "Your input changed after closing was requested. Stay and review it before closing again.",
 };
 export const projectMetadataZh: typeof projectMetadataEn = {
@@ -32,5 +37,10 @@ export const projectMetadataZh: typeof projectMetadataEn = {
   backupSaved: "工程备份已保存。", backupCancelled: "已取消备份。",
   backupFailed: "无法保存备份。请检查所选位置。如果有正在运行或结果未确认的工作，请先到运行记录核对。",
   backupUnknown: "备份可能已保存。请先检查所选位置，再决定是否重试。",
+  rescueTitle: "草稿救援", rescue: "导出草稿文本…",
+  rescueHelp: "将此工程已写入本机日志的受支持输入导出为可读文本，可手动重新应用。待确认请求保留在此设备上核对。",
+  rescueSaved: "草稿文本已保存。", rescueCancelled: "已取消导出草稿。",
+  rescueFailed: "无法导出草稿文本。请检查所选位置及下方详情。",
+  rescueUnknown: "文本文件可能已保存。请先检查所选位置，再决定是否重试。",
   leaveTitle: "保留项目设置中的编辑？", leaveHelp: "这些编辑尚未提交。可以留下继续编辑，或仅放弃这些项目设置编辑。", stay: "留下并保留编辑", discard: "放弃设置编辑", leaveChanged: "请求关闭后输入又有变化，请留下核对，再次发起关闭。",
 };
