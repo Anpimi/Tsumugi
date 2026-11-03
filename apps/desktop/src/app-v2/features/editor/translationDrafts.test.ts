@@ -453,6 +453,30 @@ it("stages a checked candidate into the existing Host journal and only creates a
   expect(h.ports.save.mock.calls[0][0].text).toBe(candidate.text); expect(h.ports.select).not.toHaveBeenCalled();
 });
 
+it.each(["unchanged", "changed"] as const)("confirms an edited assistant candidate against its original selection when the selection is %s", async change => {
+  const original = fixture.receipt.selection;
+  const base = { ...initial, selectionId: original.eventId, revisionId: original.revisionId, text: "Original saved wording" };
+  const assistant = { ...candidate, revisionId: "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbc", selectedRevisionBasis: { unitId: key.unitId, locale: key.locale,
+    sourceSnapshotId: candidate.sourceSnapshotId, sourceRevisionId: base.sourceRevisionId,
+    selectionId: base.selectionId, translationRevisionId: base.revisionId } };
+  const h = harness(); h.setCurrent(currentView(base)); await h.ready();
+  h.ports.history.mockResolvedValueOnce({ unitId: key.unitId, locale: key.locale, current: original, currentText: base.text,
+    total: "2", rows: [assistant], nextOrdinal: null });
+  const { editSeq, basis } = h.owner.getEntry(key)!.value!;
+  expect(await h.owner.stageRevision(key, assistant, { editSeq, basis }, () => true)).toEqual({ staged: true, durable: true });
+  h.owner.edit(key, "Human edited suggestion");
+  await h.owner.flush(key);
+  if (change === "changed") h.setCurrent(currentView({ ...base, selectionId: writerId, revisionId: writerId, text: "Newer human translation" }));
+  expect(await h.owner.confirm(key)).toEqual({ confirmed: change === "unchanged", savedCurrent: change === "unchanged" });
+  if (change === "unchanged") {
+    expect(h.ports.save).toHaveBeenCalledWith(expect.objectContaining({ expectedSelectionId: base.selectionId, text: "Human edited suggestion" }));
+  } else {
+    expect(h.ports.save).not.toHaveBeenCalled();
+    expect(h.disk().value).toMatchObject({ basis: base, text: "Human edited suggestion", pending: null });
+  }
+  expect(h.ports.select).not.toHaveBeenCalled();
+});
+
 it("keeps an existing dirty draft and its original edit sequence instead of adopting over it", async () => {
   const h = harness(retained()); await h.ready();
   const { editSeq, basis } = h.owner.getEntry(key)!.value!;

@@ -9,6 +9,7 @@ import { reviewCommands } from "../../../reviewCommands";
 import { useSessionQuery, useSessionReads } from "../../../SessionReadProvider";
 import { translationCommands, type TranslationRevision } from "../../../translationCommands";
 import { Button } from "../../../design-system/Button";
+import { Disclosure } from "../../../design-system/Disclosure";
 import { Banner } from "../../../design-system/Feedback";
 import styles from "./ConversationPanel.module.css";
 
@@ -52,6 +53,8 @@ export function ConversationRevisionCandidate({ run, basis, runKey, visible, cur
     && tasks.activity.intent.unit.resultIds[0] === resultId ? tasks.activity : null;
   const candidate = saved.isError ? null : saved.data?.revision;
   const observed = target.isError ? null : target.data;
+  const historical = candidate && target.isError
+    ? (JSON.parse(run.preview.input) as { selectedTranslation: string }).selectedTranslation : null;
   const stale = observed && (observed.sourceSnapshotId !== basis.sourceSnapshotId || observed.sourceRevisionId !== basis.sourceRevisionId
     || observed.selectionId !== basis.selectionId || observed.revisionId !== basis.translationRevisionId);
   const canSave = !!unit?.actions.includes("adopt-result") && saved.isSuccess && !saved.isFetching && !candidate;
@@ -63,18 +66,25 @@ export function ConversationRevisionCandidate({ run, basis, runKey, visible, cur
   const active = () => live.current?.() === true;
   return <section aria-label={t("revisionCandidate")}>
     {stale && observed.revisionId !== candidate?.revisionId ? <Banner tone="warning">{t("revisionCandidateStale")}</Banner> : null}
-    {target.isError ? <p role="status">{t("revisionBasisUnavailable")}</p> : null}
+    {target.isError ? <Banner tone="warning" action={<Button size="sm" disabled={target.isFetching}
+      onClick={() => void target.refetch()}>{t("retryRead")}</Button>}>{t("revisionBasisUnavailable")}</Banner> : null}
     {saved.isError ? <Banner tone="warning" action={<Button size="sm" onClick={() => void saved.refetch()}>{t("retryRead")}</Button>}>
       <p>{t("revisionCandidateReadFailed")}</p><CommandFailureDetails failure={commandFailure(saved.error)}/>
     </Banner> : null}
     {candidate ? <div className={styles.actions}><p role="status">{t("revisionCandidateSaved")}</p>
-      {onOpen ? <Button size="sm" disabled={!active() || saved.isFetching} onClick={() => {
+      {onOpen && observed ? <Button size="sm" disabled={!active() || saved.isFetching} onClick={() => {
         if (!active()) return;
         const witness = reads.watchExactQuery(["execution-adoption", detail.attemptId, resultId]);
         const original = witness.current(), version = original?.state.dataUpdateCount;
         void onOpen(candidate, () => active() && !!original && witness.current() === original && original.state.dataUpdateCount === version
           && !original.state.isInvalidated && original.state.fetchStatus === "idle").finally(witness.dispose);
       }}>{t("revisionCandidateCompare")}</Button> : null}</div> : null}
+    {candidate && historical !== null ? <Disclosure title={t("revisionHistoricalCompare")}>
+      <div className={styles.revisionComparison}>
+        <div><h4>{t("revisionOriginalTranslation")}</h4><p className={styles.text} lang={basis.locale}>{historical}</p></div>
+        <div><h4>{t("revisionCandidate")}</h4><p className={styles.text} lang={basis.locale}>{candidate.text}</p></div>
+      </div>
+    </Disclosure> : null}
     {!candidate && activity?.phase === "recorded" ? <Button size="sm" disabled={saved.isFetching} onClick={() => void saved.refetch()}>{t("revisionCandidateCheck")}</Button> : null}
     {!activity && canSave && tasks && unit ? <Button size="sm" disabled={!active() || !tasks.canBegin(detail.taskId)} onClick={() => {
       if (active()) void tasks.beginFromQuery(runKey, detail, unit, "adopt-result", 0);

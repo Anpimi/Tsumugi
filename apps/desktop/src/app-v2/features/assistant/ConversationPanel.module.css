@@ -38,3 +38,5 @@
 .proposalFields { margin: 0; padding: var(--space-4); border: var(--border-width) solid var(--color-border-subtle); }
 .proposalRevision, .proposalEditor { border-block-start: var(--border-width) solid var(--color-border-subtle); padding-block-start: var(--space-4); }
 .proposalEditor:focus-visible, .proposalRevision:focus-visible { outline: var(--focus-width) solid var(--color-accent-solid); outline-offset: var(--focus-offset); }
+
+.revisionComparison { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 12rem), 1fr)); gap: var(--space-3); }
