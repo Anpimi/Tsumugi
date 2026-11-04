@@ -1200,3 +1200,41 @@ fn draft_rescue_saves_newer_text_and_excludes_original_pending_request() {
     assert_eq!(store.rescue_to(&metadata, &path).unwrap_err().code, ErrorCode::DependencyConflict);
     assert_eq!(fs::read_to_string(&path).unwrap(), saved);
 }
+
+#[test]
+fn draft_rescue_and_project_backup_fail_independently_without_publishing_partial_output() {
+    let (directory, drafts, request) = setup();
+    let head = drafts.write(&request).unwrap();
+    let project_id = tsumugi_core::ProjectId::parse(&request.key.project_id.to_string()).unwrap();
+    let metadata = tsumugi_core::ProjectMetadata::create_with_id(
+        project_id, "Independent recovery", "en-US", ["zh-Hans"],
+    ).unwrap();
+    let project = tsumugi_core::ProjectStore::create(
+        directory.path().join("project"), metadata.clone(),
+    ).unwrap();
+    let blocked = directory.path().join("not-a-directory");
+    fs::write(&blocked, b"Retained existing file").unwrap();
+    assert!(project.backup_to(&blocked.join("project.backup")).is_err());
+    assert_eq!(
+        drafts.rescue_to(&metadata, &blocked.join("drafts.txt")).unwrap_err().code,
+        ErrorCode::StorageFailed,
+    );
+    assert_eq!(drafts.read(&request.key).unwrap(), head);
+    assert_eq!(fs::read(&blocked).unwrap(), b"Retained existing file");
+    let rescued = directory.path().join("drafts.txt");
+    drafts.rescue_to(&metadata, &rescued).unwrap();
+    assert!(fs::read_to_string(&rescued).unwrap().contains(&request.value.text));
+
+    let journal = drafts.directory.join(DATABASE);
+    Connection::open(&journal).unwrap().execute_batch("DROP TABLE draft_heads").unwrap();
+    let damaged = fs::read(&journal).unwrap();
+    let unpublished = directory.path().join("unreadable-drafts.txt");
+    assert!(drafts.rescue_to(&metadata, &unpublished).is_err());
+    assert!(!unpublished.exists());
+    assert_eq!(fs::read(&journal).unwrap(), damaged);
+    let backup = directory.path().join("project.backup");
+    project.backup_to(&backup).unwrap();
+    let restored = directory.path().join("restored");
+    tsumugi_core::ProjectStore::restore_backup(&backup, &restored).unwrap();
+    assert_eq!(tsumugi_core::ProjectStore::open(restored).unwrap().metadata().unwrap(), metadata);
+}
