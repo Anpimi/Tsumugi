@@ -50,12 +50,12 @@
           },
           "inputSchema": {
             "id": "tsumugi.build-input",
-            "schemaVersion": 1,
+            "schemaVersion": 2,
             "behaviorVersion": 1
           },
           "outputSchema": {
             "id": "tsumugi.artifact-set",
-            "schemaVersion": 1,
+            "schemaVersion": 2,
             "behaviorVersion": 1
           },
           "errorSchema": {
@@ -98,7 +98,7 @@
           },
           "inputSchema": {
             "id": "tsumugi.artifact-check-input",
-            "schemaVersion": 1,
+            "schemaVersion": 2,
             "behaviorVersion": 1
           },
           "outputSchema": {

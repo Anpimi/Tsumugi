@@ -1,23 +1,23 @@
 # `tsumugi-plugin-sdk`
 
-`tsumugi-plugin-sdk` (`0.1.0-alpha.1`) is the experimental Rust contract library, conformance CLI, and JavaScript codegen package for Tsumugi plugins. It defines data schemas, semantic validators, and an optional native Rust worker entrypoint without depending on Core, SQLite, or the desktop application.
+`tsumugi-plugin-sdk` (`0.1.0-alpha.2`) is the experimental Rust contract library, conformance CLI, and JavaScript codegen package for Tsumugi plugins. It defines data schemas, semantic validators, and an optional native Rust worker entrypoint without depending on Core, SQLite, or the desktop application.
 
 By default, the crate is data-only: it validates manifests and payloads and computes digests, while package installation, process management, and runtime authorization belong to the Host and application layers. Building this crate requires Rust 1.98 or newer.
 
 ## Contract Documentation
 
-Protocol versions (`1` for manifests, content exchange, and runtime environments; `3` for the local process transport) are versioned independently of the crate's SemVer (`0.1.0-alpha.1`).
+Protocol versions (`1` for manifests, exchange envelopes, and runtime environments; `3` for the local process transport) are versioned independently of the crate's SemVer (`0.1.0-alpha.2`).
 
 - **[Plugin Declarations](docs/declarations.md)**: `PluginManifest` structure, component scopes (`application`, `project`, `attempt`), capability compatibility predicates (`ValidatedManifest::diagnose_capability`), provider bindings (`bind_capability`, `ProviderSelectionBinding`, `ProviderBinding`), and [component dependency closure diagnostics](docs/declarations.md#component-dependency-closure-diagnostics).
 - **[Content & Invocation Exchange](docs/exchange.md)**: `ExchangeDocument` envelopes, the three-layer `ContentExchange` model, Unicode text range conversions (`utf8-byte`, `utf16`, `grapheme`), `InvocationRequest` / `receive_invocation_result` channel matching, and `FixedCheckSet` coverage evaluation.
 - **[Local Process Protocol](docs/process.md)**: Protocol 3 length-prefixed framing, `ProcessActivation` multi-capability rosters (up to 128 capabilities per `ComponentInstanceBinding`), project service bindings, and the JavaScript `ComponentAPI` (`api.instance`, `api.contributions`, `api.register(contributionId, handler)`).
 - **[Rust Native Components](docs/native-worker.md)**: The optional `native-worker` Cargo feature (`NativeComponent` and `serve_native_component`) for serving single-capability native workers over stdio using the standard library.
 - **[Runtime Environments](docs/environment.md)**: `RuntimeEnvironmentDescriptor` (`node-system-libraries-v1` on `macos`, `linux`, and `windows`), `NativeHostEnvironmentDescriptor` (`native-application-host-v1` on macOS and Linux), `ExecutionEnvironmentDescriptor`, and deterministic artifact/environment SHA-256 digests.
-- **[Source Extraction](docs/source-extraction.md)**: `SourceExtractionInput`, `SourceExtractionCheckInput`, `SourceExtractionError`, and package-owned `SourceImportDeclaration` resources (`tsumugi.source-import-declaration/2/2` with required `reviewResource` bindings).
-- **[Source Context Facts](docs/source-context.md)**: Optional `tsumugi.source-context-facts/1/1` domain blocks for attaching extracted or inferred speaker, role, scene, time, location, and note facts with Unicode source ranges.
+- **[Source Extraction](docs/source-extraction.md)**: `SourceExtractionInput`, `SourceExtractionCheckInput`, `SourceExtractionError`, and package-owned `SourceImportDeclaration` resources (`tsumugi.source-import-declaration/3/2` with explicit material encodings and required `reviewResource` bindings).
+- **[Source Context Facts](docs/source-context.md)**: Optional `tsumugi.source-context-facts/2/1` domain blocks for attaching extracted or inferred speaker, role, scene, time, location, and note facts with Unicode source ranges.
 - **[Existing Translation Import](docs/translation-import.md)**: `TranslationExtractionInput`, `TranslationExchange`, `TranslationExtractionCheckInput`, and `TranslationImportDeclaration` resources (`1/1`).
 - **[Domain & Advisory Text Review](docs/review.md)**: Format-specific mandatory checks (`ReviewDeclaration`, `ReviewCheckInput`, `ReviewCheckError`) and format-independent advisory text checks (`TextReviewDeclaration`, `TextReviewCheckInput`, `TextReviewCheckReport`).
-- **[Build & Artifact Verification](docs/build.md)**: `BuildInput`, `ArtifactSet`, `ArtifactCheckInput`, `BuildDeclaration`, and `BuildError` (`1/1`) for generating and verifying target text files.
+- **[Build & Artifact Verification](docs/build.md)**: `BuildInput`, `ArtifactSet`, `ArtifactCheckInput`, `BuildDeclaration`, and `BuildError` (`2/1` for data, `1/1` for declarations/errors) for generating and verifying target text or binary files.
 - **[Read-Only Capability Tools](docs/tools.md)**: `CapabilityToolDeclaration` (`1/1`), `reference-query` UI slot bindings, and structured query template helpers (`createToolQuery` and `ToolQueryDeclaration::prepare_payload`).
 - **[Work-Plan Generation Service](docs/generation.md)**: `tsumugi.work-plan-generation` (`GenerationServiceInput`, `GenerationServiceReceipt`, `GenerationServiceError`) and `tsumugi.generation-component-input` for invoking prepared read-only tools before enqueuing generation tasks.
 
@@ -43,10 +43,10 @@ To depend on a verified SDK directory or an unpacked `cargo package -p tsumugi-p
 
 ```toml
 [dependencies]
-tsumugi-plugin-sdk = { path = "/absolute/path/to/verified/tsumugi-plugin-sdk", version = "=0.1.0-alpha.1" }
+tsumugi-plugin-sdk = { path = "/absolute/path/to/verified/tsumugi-plugin-sdk", version = "=0.1.0-alpha.2" }
 ```
 
-Because `tsumugi-plugin-sdk` is not published to `crates.io` and `0.1.0-alpha.1` has been used across multiple source snapshots, consumers should pin the exact commit or archive digest rather than relying on the version string alone. When packaging with `cargo package -p tsumugi-plugin-sdk --locked`, Cargo normalizes workspace-inherited fields so the unpacked crate builds standalone with its own lockfile (use `--offline` only when a Cargo registry cache is already populated).
+Consumers pin the exact producer commit and archive digest in addition to the SDK version. The `0.1.0-alpha.1` archives retain their original text-only contracts; `0.1.0-alpha.2` introduces typed text/binary artifacts and separate source ranges. Rebuild consumers against the matching generated bindings and payload schema versions. When packaging with `cargo package -p tsumugi-plugin-sdk --locked`, Cargo normalizes workspace-inherited fields so the unpacked crate builds standalone with its own lockfile (use `--offline` only when a Cargo registry cache is already populated).
 
 Minimal manifest validation example:
 

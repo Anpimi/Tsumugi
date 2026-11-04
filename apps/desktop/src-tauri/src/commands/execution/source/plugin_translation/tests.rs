@@ -261,7 +261,7 @@ fn translation_capture_ipc_binds_current_source_target_and_raw_bytes_without_run
         let (host, store) = sessions.active.as_mut().unwrap().execution_parts().unwrap();
         let review = host.source.translation.review.as_ref().unwrap();
         let (material, _) = content::plugin_translation_input(&review.input).unwrap();
-        assert_eq!(material.artifacts[0].utf8, raw);
+        assert_eq!(material.artifacts[0].as_text().unwrap().utf8, raw);
         assert_eq!(material.native_scope, source.native_scopes[0]);
         assert_eq!(
             material.language_evidence,

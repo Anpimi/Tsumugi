@@ -72,6 +72,56 @@ fn source_import_resource_resolves_exact_captured_bytes_and_providers() {
 }
 
 #[test]
+fn historical_source_recipe_requires_its_exact_immutable_resource_version() {
+    for schema_version in [2, 3, 4] {
+        let captured = image(|manifest, files| {
+            for entry in &mut manifest.contributions {
+                match &mut entry.contribution {
+                    sdk::ContributionKind::Resource { schema, .. }
+                        if schema.id == "tsumugi.source-import-declaration" =>
+                    {
+                        schema.schema_version = schema_version
+                    }
+                    sdk::ContributionKind::Capability { declaration } => {
+                        if declaration.input_schema.id == sdk::source_extraction_input_contract().id
+                        {
+                            declaration.input_schema.schema_version = 1;
+                            declaration.output_schema.schema_version = 2;
+                        } else if [
+                            sdk::source_extraction_check_input_contract().id,
+                            sdk::review_check_input_contract().id,
+                        ]
+                        .contains(&declaration.input_schema.id)
+                        {
+                            declaration.input_schema.schema_version = 1;
+                        }
+                    }
+                    _ => {}
+                }
+            }
+            let file = files.get_mut("source-profile.json").unwrap();
+            let mut value: serde_json::Value = serde_json::from_slice(&file.bytes).unwrap();
+            for material in value["materials"].as_array_mut().unwrap() {
+                material.as_object_mut().unwrap().remove("encoding");
+            }
+            file.bytes = serde_json::to_vec(&value).unwrap();
+        });
+        let read = captured.source_import("source-profile");
+        if schema_version == 2 {
+            let binding = read.unwrap();
+            assert!(binding.declaration.is_legacy_text());
+            assert_eq!(
+                binding.extractor.provider.package_digest,
+                captured.package_digest()
+            );
+            assert_eq!(binding.extractor.declaration.input_schema.schema_version, 1);
+        } else {
+            assert_eq!(read, Err(HostError::InvalidContract));
+        }
+    }
+}
+
+#[test]
 fn source_import_reads_only_the_referenced_immutable_review_resource() {
     for scenario in 0..4 {
         let captured = image(|_, files| {

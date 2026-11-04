@@ -1,6 +1,14 @@
 // Generated from the Rust SDK. Run pnpm generate:contracts; do not edit.
 
 /**
+ * Exactly one representation. Text retains its original wire shape; mixed,
+ * null and unknown fields are rejected by the two closed representations.
+ *
+ * This interface was referenced by `TranslationTypes`'s JSON-Schema
+ * via the `definition` "CapturedArtifact".
+ */
+export type CapturedArtifact = CapturedTextArtifact | CapturedBinaryArtifact;
+/**
  * Describes the caller's recorded explicit choice, not an execution/adoption
  * grant. Only the trusted application can establish that consent actually ran.
  *
@@ -9,10 +17,12 @@
  */
 export type TranslationLanguageEvidence = "user-confirmed";
 /**
+ * Source coordinates are separate from ranges in decoded unit/target text.
+ *
  * This interface was referenced by `TranslationTypes`'s JSON-Schema
- * via the `definition` "TextEncoding".
+ * via the `definition` "SourceEncoding".
  */
-export type TextEncoding = "utf8-byte" | "utf16" | "grapheme";
+export type SourceEncoding = "utf8-byte" | "utf16" | "grapheme" | "raw-byte";
 /**
  * This interface was referenced by `TranslationTypes`'s JSON-Schema
  * via the `definition` "CheckImplementation".
@@ -47,7 +57,7 @@ export interface TranslationExtractionCheckInput {
  * via the `definition` "TranslationExtractionInput".
  */
 export interface TranslationExtractionInput {
-  artifacts: CapturedTextArtifact[];
+  artifacts: CapturedArtifact[];
   importId: string;
   languageEvidence: TranslationLanguageEvidence;
   nativeScope: TranslationNativeScope;
@@ -57,8 +67,7 @@ export interface TranslationExtractionInput {
   targetLanguage: string;
 }
 /**
- * Captured UTF-8 bytes, including a BOM and original line endings. These are
- * immutable source evidence; logical paths are not local filesystem authority.
+ * Exact UTF-8 bytes, including BOMs and original line endings.
  *
  * This interface was referenced by `TranslationTypes`'s JSON-Schema
  * via the `definition` "CapturedTextArtifact".
@@ -69,6 +78,20 @@ export interface CapturedTextArtifact {
   role: string;
   sha256: string;
   utf8: string;
+}
+/**
+ * Canonical padded RFC 4648 base64 of the original bytes. The digest describes
+ * the decoded bytes, never their transport encoding. Decoding is domain-owned.
+ *
+ * This interface was referenced by `TranslationTypes`'s JSON-Schema
+ * via the `definition` "CapturedBinaryArtifact".
+ */
+export interface CapturedBinaryArtifact {
+  base64: string;
+  id: string;
+  logicalPath: string;
+  role: string;
+  sha256: string;
 }
 /**
  * Captured from the current adopted source. The plugin supplies canonical
@@ -101,7 +124,7 @@ export interface ContractRef {
  * via the `definition` "TranslationExchange".
  */
 export interface TranslationExchange {
-  artifacts: CapturedTextArtifact[];
+  artifacts: CapturedArtifact[];
   declaredLanguage: string;
   entries: ImportedTranslation[];
   importId: string;
@@ -154,16 +177,14 @@ export interface NativeIdentityDisplay {
  */
 export interface SourceReference {
   artifactId: string;
-  range: TextRange;
+  range: SourceRange;
 }
 /**
- * Half-open offsets into one exact string, never between different strings.
- *
  * This interface was referenced by `TranslationTypes`'s JSON-Schema
- * via the `definition` "TextRange".
+ * via the `definition` "SourceRange".
  */
-export interface TextRange {
-  encoding: TextEncoding;
+export interface SourceRange {
+  encoding: SourceEncoding;
   end: number;
   start: number;
 }

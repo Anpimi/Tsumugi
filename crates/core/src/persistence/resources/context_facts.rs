@@ -71,7 +71,7 @@ impl SourceFactBasis {
                 .source_result_digest
                 .bytes()
                 .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
-            && self.fact.schema == sdk::source_context_facts_contract()
+            && sdk::is_source_context_facts_contract(&self.fact.schema)
             && self.fact.block_index < sdk::MAX_CONTENT_DOMAIN_BLOCKS as u32
             && self.fact.fact_index < sdk::MAX_SOURCE_CONTEXT_FACTS as u32
             && (sdk::SourceContextFacts {

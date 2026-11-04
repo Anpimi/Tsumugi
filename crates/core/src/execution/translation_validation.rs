@@ -20,7 +20,7 @@ fn invalid() -> ExecutionError {
 // The ledger captures each material once. The SDK checker still receives its
 // complete original contract; only fields proven equal by SDK association are
 // shared here. Coordinates, opaque IDs and proposal artifact order stay exact.
-type CheckSource = (String, sdk::TextEncoding, u32, u32);
+type CheckSource = (String, sdk::SourceEncoding, u32, u32);
 type CheckEntry = (
     String,
     String,
@@ -52,7 +52,7 @@ fn pack_source(source: sdk::SourceReference) -> CheckSource {
 fn unpack_source(source: CheckSource) -> sdk::SourceReference {
     sdk::SourceReference {
         artifact_id: source.0,
-        range: sdk::TextRange {
+        range: sdk::SourceRange {
             encoding: source.1,
             start: source.2,
             end: source.3,
@@ -70,7 +70,7 @@ impl TranslationCheckPayload {
                 .proposal
                 .artifacts
                 .into_iter()
-                .map(|a| a.id)
+                .map(|a| a.id().to_owned())
                 .collect(),
             entries: payload
                 .proposal
@@ -102,7 +102,7 @@ impl TranslationCheckPayload {
                 self.input
                     .artifacts
                     .iter()
-                    .find(|artifact| &artifact.id == id)
+                    .find(|artifact| artifact.id() == id)
                     .cloned()
                     .ok_or_else(invalid)
             })

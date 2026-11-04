@@ -10077,6 +10077,16 @@
         ],
         "type": "object"
       },
+      "SourceEncoding": {
+        "description": "Source coordinates are separate from ranges in decoded unit/target text.",
+        "enum": [
+          "utf8-byte",
+          "utf16",
+          "grapheme",
+          "raw-byte"
+        ],
+        "type": "string"
+      },
       "SourceExtractionError": {
         "additionalProperties": false,
         "description": "A bounded public diagnostic. Producers must use public descriptions and\ncaptured artifact IDs, never local paths, raw source text or secrets. Data\nvalidation cannot establish that arbitrary diagnostic text is safe to share.",
@@ -10137,6 +10147,30 @@
         ],
         "type": "object"
       },
+      "SourceRange": {
+        "additionalProperties": false,
+        "properties": {
+          "encoding": {
+            "$ref": "#/definitions/SourceEncoding"
+          },
+          "end": {
+            "maximum": 4294967295,
+            "minimum": 0,
+            "type": "integer"
+          },
+          "start": {
+            "maximum": 4294967295,
+            "minimum": 0,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "encoding",
+          "start",
+          "end"
+        ],
+        "type": "object"
+      },
       "SourceReference": {
         "additionalProperties": false,
         "properties": {
@@ -10144,7 +10178,7 @@
             "type": "string"
           },
           "range": {
-            "$ref": "#/definitions/TextRange"
+            "$ref": "#/definitions/SourceRange"
           }
         },
         "required": [

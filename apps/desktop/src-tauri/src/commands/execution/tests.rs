@@ -163,13 +163,13 @@ fn execution_wire_fixture_matches_rust_types() {
 
 #[test]
 fn source_failure_projection_requires_valid_public_payload_and_captured_artifact() {
-    let artifacts = [sdk::CapturedTextArtifact {
+    let artifacts: [sdk::CapturedArtifact; 1] = [sdk::CapturedTextArtifact {
         id: "captured-1".into(),
         logical_path: "manifest.json".into(),
         role: "source".into(),
         sha256: "a".repeat(64),
         utf8: "{}".into(),
-    }];
+    }.into()];
     let encoded =
         |schema, value: Value| sdk::EncodedPayload::capture(schema, value.to_string()).unwrap();
     let valid = json!({"code":"unsupported-structure","artifactId":"captured-1","detail":"The Name value must be a string."});

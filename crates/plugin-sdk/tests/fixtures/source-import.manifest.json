@@ -31,7 +31,7 @@
         "kind": "resource",
         "schema": {
           "id": "tsumugi.source-import-declaration",
-          "schemaVersion": 2,
+          "schemaVersion": 3,
           "behaviorVersion": 2
         },
         "path": "source-profile.json"
@@ -50,12 +50,12 @@
           },
           "inputSchema": {
             "id": "tsumugi.source-extraction-input",
-            "schemaVersion": 1,
+            "schemaVersion": 2,
             "behaviorVersion": 1
           },
           "outputSchema": {
             "id": "tsumugi.content-exchange",
-            "schemaVersion": 2,
+            "schemaVersion": 3,
             "behaviorVersion": 1
           },
           "errorSchema": {
@@ -98,7 +98,7 @@
           },
           "inputSchema": {
             "id": "tsumugi.source-extraction-check-input",
-            "schemaVersion": 1,
+            "schemaVersion": 2,
             "behaviorVersion": 1
           },
           "outputSchema": {
@@ -146,7 +146,7 @@
           },
           "inputSchema": {
             "id": "tsumugi.review-check-input",
-            "schemaVersion": 1,
+            "schemaVersion": 2,
             "behaviorVersion": 1
           },
           "outputSchema": {

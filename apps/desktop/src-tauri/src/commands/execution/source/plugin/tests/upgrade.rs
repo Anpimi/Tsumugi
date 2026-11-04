@@ -765,7 +765,7 @@ fn actual_two_version_identity_upgrade_compares_before_adoption_and_preserves_or
     });
     assert_eq!(old_bundle.profile, expected_profile);
     assert_eq!(old_bundle.files.len(), 1);
-    assert_eq!(old_bundle.files[0].utf8.as_bytes(), RAW.as_bytes());
+    assert_eq!(old_bundle.files[0].text().unwrap().as_bytes(), RAW.as_bytes());
     assert_eq!(old_bundle.files[0].sha256, sdk::payload_digest(RAW));
     let original_source_input = original_frames
         .iter()
@@ -1028,8 +1028,8 @@ fn actual_two_version_identity_upgrade_compares_before_adoption_and_preserves_or
     );
     assert_eq!(new_bundle.files[0].role, old_bundle.files[0].role);
     assert_eq!(
-        new_bundle.files[0].utf8.as_bytes(),
-        old_bundle.files[0].utf8.as_bytes()
+        new_bundle.files[0].text().unwrap().as_bytes(),
+        old_bundle.files[0].text().unwrap().as_bytes()
     );
     assert_eq!(new_bundle.files[0].sha256, old_bundle.files[0].sha256);
     assert_eq!(

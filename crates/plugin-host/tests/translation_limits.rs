@@ -170,7 +170,7 @@ fn maximum_complete_translation_transport_preserves_sdk_bytes_and_fixed_budgets(
                 role: "translation".into(),
                 sha256: sdk::payload_digest(&raw),
                 utf8: raw,
-            }],
+            }.into()],
         };
         let settings = PluginTranslationSettings {
             declaration: resource.declaration.clone(),
@@ -224,7 +224,7 @@ fn maximum_complete_translation_transport_preserves_sdk_bytes_and_fixed_budgets(
         );
         assert_eq!(
             restored.proposal.entries[0].source.range.encoding,
-            sdk::TextEncoding::Utf16
+            sdk::SourceEncoding::Utf16
         );
         // Changing the version or dropping an entry never creates a complete
         // checker payload, even when the enclosing digest is recaptured.

@@ -2323,7 +2323,7 @@ fn complete_projection_cache_rechecks_current_coverage_bytes_and_dispatch() {
             role: "translation".into(),
             byte_length: 2,
             sha256: codec::digest(b"xx"),
-            utf8: "xx".into(),
+            data: tsumugi_plugin_sdk::CapturedArtifactData::Utf8("xx".into()),
         },
         "entries": [
             ["key-a", "Key A", "x", null, [0, 1]],

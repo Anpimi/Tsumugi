@@ -199,7 +199,7 @@ pub fn extract(
 ) -> Result<SourceOutput, ExecutionError> {
     bundle.validate_builtin_capture()?;
     let source = &bundle.files[0];
-    let raw = &source.utf8;
+    let raw = source.text()?;
     let all = lines(raw);
     let Some(first) = all.first() else {
         return Err(invalid("vtt-header"));

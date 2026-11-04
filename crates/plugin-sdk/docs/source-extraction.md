@@ -4,13 +4,15 @@ Source extraction runs over the standard invocation and process transport using 
 
 | Payload Type | Contract ID | Schema / Behavior |
 |---|---|---|
-| `SourceExtractionInput` | `tsumugi.source-extraction-input` | `1 / 1` |
-| `ContentExchange` | `tsumugi.content-exchange` | `2 / 1` |
+| `SourceExtractionInput` | `tsumugi.source-extraction-input` | `2 / 1` |
+| `ContentExchange` | `tsumugi.content-exchange` | `3 / 1` |
 | `SourceExtractionError` | `tsumugi.source-extraction-error` | `1 / 1` |
-| `SourceExtractionCheckInput` | `tsumugi.source-extraction-check-input` | `1 / 1` |
+| `SourceExtractionCheckInput` | `tsumugi.source-extraction-check-input` | `2 / 1` |
 | `CheckResult[]` | `tsumugi.check-results` | `1 / 1` |
 
 The SDK exports these contract identifiers alongside the helper constructors `source_extraction_input_contract`, `content_exchange_contract`, and `source_extraction_error_contract`.
+
+The supported text-only family retains source input `1/1`, content exchange `2/1`, and checker input `1/1`. `source_extraction_contracts_support_binary` distinguishes that complete family from the current one; mixed or unknown versions are rejected. Frozen inputs keep their original schemas and bytes. A text-only binding cannot receive binary representations, even when the decoded bytes happen to be valid UTF-8.
 
 ## Extraction Input and Proposed `ContentExchange`
 
@@ -18,16 +20,16 @@ The SDK exports these contract identifiers alongside the helper constructors `so
 
 - `profile`: the target domain profile (`ContractRef`).
 - `sourceSetId` and `sourceLanguage` (wire label validated by the SDK; canonical language support is checked by the application's locale owner).
-- `artifacts`: up to 2,000 source files (bounded to 2 MiB total and 2 MiB for the entire encoded `SourceExtractionInput`), each carrying a unique artifact ID, safe relative logical path, role, exact UTF-8 string (preserving BOMs, line endings, combining marks, and emoji), and SHA-256 digest.
+- `artifacts`: up to 2,000 source files (bounded to 2 MiB total and 2 MiB for the entire encoded `SourceExtractionInput`), each carrying a unique artifact ID, safe relative logical path, role, exact text or binary bytes, and SHA-256 digest. See [artifact representations and source coordinates](exchange.md#captured-artifacts-and-source-coordinates).
 
 `SourceExtractionInput::validate` and `ContentExchange::validate` share the same artifact validator to enforce size limits, unique IDs and paths, portable relative path rules, and exact SHA-256 byte digests.
 
 ### Validating Extraction Proposals (`validate_source_extraction`)
 
-`validate_source_extraction(input, exchange)` verifies both the input and the proposed `ContentExchange` (schema/behavior `2/1`) and checks that:
+`validate_source_extraction(input, exchange)` verifies both the input and the proposed `ContentExchange` (schema/behavior `3/1`) and checks that:
 
 - The proposal matches the input's `profile`, `sourceSetId`, `sourceLanguage`, and complete artifact set (artifact array order may differ; occurrence ordering is defined explicitly by `ContentExchange.order`).
-- Every occurrence and protected fragment range lands on valid Unicode boundaries within its referenced artifact or unit text.
+- Every occurrence has valid artifact coordinates: Unicode boundaries for text or original byte bounds for binary. Protected fragments always use decoded unit-text Unicode boundaries.
 - Every unit provides required `NativeIdentityEvidence`:
   - `value`: the domain's canonical matching key (used as-is by Core without additional normalization or case-folding).
   - `display`: the original spelling and source range in the artifact, or `null` for derived identities.
@@ -38,12 +40,12 @@ Unit IDs and `sourceRevisionId` values in an extraction output are operation-loc
 
 Before running extraction, the policy owner captures a `SourceRevisionPolicy` specifying which `DomainBlock` schema/behavior IDs contribute their opaque UTF-8 payload bytes to semantic source revision hashing alongside decoded unit text and protected fragments.
 
-## Package-Owned Source Import Declarations (`tsumugi.source-import-declaration/2/2`)
+## Package-Owned Source Import Declarations (`tsumugi.source-import-declaration/3/2`)
 
-A plugin package can bundle a non-executable JSON resource with schema `tsumugi.source-import-declaration/2/2` (`SourceImportDeclaration`, up to 32 KiB) to declare a self-contained source import pipeline:
+A plugin package can bundle a non-executable JSON resource with schema `tsumugi.source-import-declaration/3/2` (`SourceImportDeclaration`, up to 32 KiB) to declare a self-contained source import pipeline:
 
 - `displayName` and exact domain `profile`.
-- `materials`: an ordered list of 1 to 32 fixed relative files (each with a literal `logicalPath` up to 16 segments, `role`, and `maxBytes`, up to 2 MiB aggregate across all materials). No globs, optional files, or discovery scripts are permitted, and case-insensitive path aliases or file/directory overlaps are rejected.
+- `materials`: an ordered list of 1 to 32 fixed relative files (each with a literal `logicalPath` up to 16 segments, `role`, explicit `encoding` (`utf8` or `binary`), and `maxBytes`, up to 2 MiB aggregate across all materials). No globs, optional files, or discovery scripts are permitted, and case-insensitive path aliases or file/directory overlaps are rejected.
 - `extractor` and `checker`: distinct capability contribution IDs in the same package.
 - `reviewResource`: the contribution ID of a [`ReviewDeclaration`](review.md) resource (`tsumugi.review-declaration/1/1`) in the same package.
 - `revisionPolicy` (`SourceRevisionPolicy`) and a non-empty list of mandatory `semanticRules`.
@@ -53,6 +55,8 @@ A plugin package can bundle a non-executable JSON resource with schema `tsumugi.
 - Both `extractor` and `checker` must support the declared `profile` and the SDK's source extraction input/output/error contracts, and may request only `captured-input` permissions.
 - The `checker` capability must be `read-only` and distinct from `extractor`.
 - The referenced `reviewResource` is bound into a `ReviewBinding` fixed to the same package and profile (earlier `1/1` source-import resources without `reviewResource` are rejected).
+
+`parse_source_import_declaration_for_contract` also reads the supported resource `2/2` when selected by that exact immutable manifest reference. Its materials omit `encoding` and retain the original UTF-8 interpretation and serialization. They bind only to the original text-only capability family. Current `3/2` authoring requires explicit encodings and cannot claim an old resource body; unknown resource versions and mixed legacy/current materials are rejected. The same reader preserves source declarations saved in existing desktop drafts without rewriting those records.
 
 The Host reads `SourceImportDeclaration` directly from the immutable `PackageImage` without executing plugin code.
 

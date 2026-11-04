@@ -50,7 +50,7 @@
           },
           "inputSchema": {
             "id": "tsumugi.review-check-input",
-            "schemaVersion": 1,
+            "schemaVersion": 2,
             "behaviorVersion": 1
           },
           "outputSchema": {

@@ -20,7 +20,7 @@ fn changed_producer(fixture: &mut PluginFixture) -> (FixedInput, ExecutionId) {
     let mut output = crate::content::validate_output(&fixture.input, &original).unwrap().exchange;
     let mut source: sdk::SourceExtractionInput = serde_json::from_value(fixture.input.envelope().items[0].payload.clone()).unwrap();
     assert_eq!(source.artifacts.len(), 1);
-    let artifact = &mut source.artifacts[0];
+    let artifact = source.artifacts[0].as_text_mut().unwrap();
     let original_id = artifact.id.clone();
     let original_length = artifact.utf8.len() as u32;
     let mut material: serde_json::Value = serde_json::from_str(&artifact.utf8).unwrap();

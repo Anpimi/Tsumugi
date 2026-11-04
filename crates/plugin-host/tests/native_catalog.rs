@@ -83,7 +83,7 @@ fn source(profile: sdk::ContractRef, text: &str) -> sdk::SourceExtractionInput {
             role: "source".into(),
             sha256: sdk::payload_digest(text),
             utf8: text.into(),
-        }],
+        }.into()],
     }
 }
 fn requirement(
@@ -243,7 +243,7 @@ async fn native_catalog_actual_package_checks_semantics_and_returns_finite_error
     assert_eq!(content.units[1].text, "Line\n\"quoted\" 😀");
     for unit in &content.units {
         let range = unit.occurrences[0].source.range;
-        assert_eq!(range.encoding, sdk::TextEncoding::Utf8Byte);
+        assert_eq!(range.encoding, sdk::SourceEncoding::Utf8Byte);
         let literal = &SOURCE[range.start as usize..range.end as usize];
         assert_eq!(serde_json::from_str::<String>(literal).unwrap(), unit.text);
     }
@@ -292,11 +292,11 @@ async fn native_catalog_actual_package_checks_semantics_and_returns_finite_error
     let built = success(call(&image, &build_binding.builder, json!(build), &runtime).await);
     let output = sdk::parse_artifact_set(built.utf8.as_bytes()).unwrap();
     build_binding.validate_artifacts(&build, &output).unwrap();
-    assert_eq!(output.artifacts[0].utf8, EXPECTED);
+    assert_eq!(output.artifacts[0].as_text().unwrap().utf8, EXPECTED);
     let required = vec![requirement(
         build_binding.declaration.artifact_rules[0].clone(),
         &build_binding.checker,
-        vec![output.artifacts[0].id.clone()],
+        vec![output.artifacts[0].as_text().unwrap().id.clone()],
     )];
     let check = sdk::ArtifactCheckInput {
         input: build.clone(),
@@ -309,8 +309,8 @@ async fn native_catalog_actual_package_checks_semantics_and_returns_finite_error
         0,
     );
     let mut tampered = check;
-    tampered.output.artifacts[0].utf8 = EXPECTED.replace("你好", "错误");
-    tampered.output.artifacts[0].sha256 = sdk::payload_digest(&tampered.output.artifacts[0].utf8);
+    tampered.output.artifacts[0].as_text_mut().unwrap().utf8 = EXPECTED.replace("你好", "错误");
+    tampered.output.artifacts[0].as_text_mut().unwrap().sha256 = sdk::payload_digest(&tampered.output.artifacts[0].as_text().unwrap().utf8);
     tampered.validate().unwrap();
     check_output(
         success(call(&image, &build_binding.checker, json!(tampered), &runtime).await),
@@ -600,6 +600,7 @@ fn native_catalog_normal_core_requires_source_qa_human_and_artifact_proofs_and_k
                 source_revision_id: target.source_revision_id,
                 expected_selection_id: target.selection_id,
                 text: text.into(),
+                reuse_origin: None,
             })
             .unwrap();
         let target = store.review_target(project, unit, "zh-CN").unwrap();

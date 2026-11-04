@@ -1,0 +1,26 @@
+{
+  "attemptId": "dac039c8-e0a2-4194-aeb7-1bd47237ba8c",
+  "inputDigest": "2aa6d2aa4b496b0b2b0450eaf79b8402633f8d2277d3d6628c6c21d4aa44c950",
+  "projectId": "9f32dc2b-b253-4ecc-a410-8bd78d9b8e29",
+  "resultDigest": "37ca7ac71447ff526942d815714512bbe2ae12babd4c226cff2171ddc5898910",
+  "resultId": "895992c3-fa84-44e9-8d40-9719bd76c0ca",
+  "schema": 74,
+  "sdkVersion": "0.1.0-alpha.1",
+  "snapshotId": "e55a0d0b-14d2-4cf1-a6f5-c316a60b801b",
+  "sourceCommit": "3477ba401ccf7ce71b62245de3e330d3b5724dfc",
+  "sourceReceipt": {
+    "actionId": "253c63f7-190f-4a0d-8c4d-88cc1081ff7a",
+    "attemptId": "dac039c8-e0a2-4194-aeb7-1bd47237ba8c",
+    "changes": [
+      {
+        "id": "e55a0d0b-14d2-4cf1-a6f5-c316a60b801b",
+        "kind": "source-snapshot",
+        "revision": "2"
+      }
+    ],
+    "projectId": "9f32dc2b-b253-4ecc-a410-8bd78d9b8e29",
+    "requestDigest": "284cac351cb6a8bdd55a243aa174d610a87d4e214f16999457bc9af8d997ae3b",
+    "unitId": "0f9bafcc-2485-47c3-89ea-5357d5bcb9fd"
+  },
+  "unitId": "b92f7f49-b6c3-4353-b2ff-c2f18fa4b9a5"
+}

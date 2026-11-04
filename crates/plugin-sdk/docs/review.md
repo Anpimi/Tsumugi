@@ -1,6 +1,6 @@
 # Domain and Advisory Text Review Contracts
 
-The SDK provides two complementary sets of review contracts at schema/behavior `1/1`:
+The SDK provides two complementary sets of review contracts:
 
 1. **Domain Review Checks**: Mandatory, format-aware checks (`ReviewDeclaration`, `ReviewCheckInput`, `ReviewCheckError`) that validate source content and selected translations against domain-specific structural and semantic rules before release preparation.
 2. **Advisory Text Review Checks**: Format-independent editorial or terminology checks (`TextReviewDeclaration`, `TextReviewCheckInput`, `TextReviewCheckReport`) that run on projected plain text alongside supporting package resources.
@@ -13,10 +13,12 @@ Both families emit results compatible with Core's `FixedCheckSet` coverage evalu
 
 | Data Type | Contract ID | Schema / Behavior |
 | --- | --- | --- |
-| `ReviewCheckInput` | `tsumugi.review-check-input` | `1 / 1` |
+| `ReviewCheckInput` | `tsumugi.review-check-input` | `2 / 1` |
 | `ReviewDeclaration` | `tsumugi.review-declaration` | `1 / 1` |
 | `ReviewCheckError` | `tsumugi.review-check-error` | `1 / 1` |
 | Check Results | `tsumugi.check-results` | `1 / 1` |
+
+`ReviewBinding` also reads the exact supported `tsumugi.review-check-input/1/1` contract with text-only source artifacts. It retains that captured version, rejects binary representations under it, and rejects unknown contract versions. Schema `2/1` admits both source representations; decoded translation ranges keep their existing text meaning.
 
 ### Input Scope (`ReviewCheckInput`)
 

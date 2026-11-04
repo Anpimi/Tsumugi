@@ -113,7 +113,7 @@ pub fn extract(
     bundle.validate_builtin_capture()?;
     let deadline = Instant::now() + Duration::from_secs(60);
     check(cancel, deadline)?;
-    let (manifest, _) = parse(&bundle.files[0].utf8, cancel, deadline)?;
+    let (manifest, _) = parse(bundle.files[0].text()?, cancel, deadline)?;
     let manifest = manifest
         .as_object()
         .ok_or_else(|| invalid("invalid-structure"))?;
@@ -134,7 +134,7 @@ pub fn extract(
         return Err(invalid("invalid-structure"));
     }
     let source = &bundle.files[1];
-    let (root, offset) = parse(&source.utf8, cancel, deadline)?;
+    let (root, offset) = parse(source.text()?, cancel, deadline)?;
     let root = root
         .as_object()
         .ok_or_else(|| invalid("invalid-structure"))?;

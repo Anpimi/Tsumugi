@@ -15,6 +15,28 @@ fn binding() -> ReviewBinding {
 fn input() -> ReviewCheckInput {
     parse_review_check_input(include_bytes!("fixtures/review.input.json")).unwrap()
 }
+
+#[test]
+fn supported_text_review_refuses_binary_even_when_decoded_bytes_are_utf8() {
+    let mut binding = binding();
+    binding.checker.declaration.input_schema.schema_version = 1;
+    let mut input = input();
+    binding.validate_input(&input).unwrap();
+    // The unreferenced companion has no text coordinates to convert. Its
+    // binary representation is valid under v2, but remains outside v1.
+    let text = &input.source.artifacts[0];
+    input.source.artifacts[0] = CapturedArtifact::from_bytes(
+        text.id().into(),
+        text.logical_path().into(),
+        text.role().into(),
+        &text.bytes().unwrap(),
+    )
+    .unwrap();
+    input.validate().unwrap();
+    assert!(binding.validate_input(&input).is_err());
+    binding.checker.declaration.input_schema.schema_version = 3;
+    assert!(binding.validate().is_err());
+}
 fn core_requirement(input: &ReviewCheckInput) -> CheckRequirement {
     let mut requirement = input.requirements[0].clone();
     requirement.key = CheckKey {

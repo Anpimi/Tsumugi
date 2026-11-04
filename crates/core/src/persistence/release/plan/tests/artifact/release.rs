@@ -753,6 +753,15 @@ fn default_unknown_effect_policy_keeps_partial_build_replay_blocked() {
 
 #[test]
 fn valid_empty_and_more_than_one_mebibyte_artifacts_are_stored_without_narrowing_sdk_limits() {
+    assert_large_artifact_storage(false);
+}
+
+#[test]
+fn binary_artifacts_are_stored_as_original_bytes_and_reopen_without_loss() {
+    assert_large_artifact_storage(true);
+}
+
+fn assert_large_artifact_storage(binary: bool) {
     let (_directory, mut store, generation, input) =
         fixture_build_limit(&["zh-CN"], sdk::MAX_EXCHANGE_BYTES as u32);
     let item = input.envelope().items[0].item_id;
@@ -761,26 +770,22 @@ fn valid_empty_and_more_than_one_mebibyte_artifacts_are_stored_without_narrowing
         .unwrap();
     let build: sdk::BuildInput =
         serde_json::from_value(input.item(item).unwrap().payload.clone()).unwrap();
-    let large = "A".repeat(1024 * 1024 + 17);
+    let large = vec![if binary { 0xff } else { b'A' }; 1024 * 1024 + 17];
+    let artifact = |id: &str, path: &str, role: &str, bytes: &[u8]| -> sdk::CapturedArtifact {
+        if binary {
+            sdk::CapturedArtifact::from_bytes(id.into(), path.into(), role.into(), bytes).unwrap()
+        } else {
+            sdk::CapturedTextArtifact { id: id.into(), logical_path: path.into(), role: role.into(),
+                sha256: codec::digest(bytes), utf8: String::from_utf8(bytes.to_vec()).unwrap() }.into()
+        }
+    };
     let output = sdk::ArtifactSet {
         profile: build.source.profile,
         source_set_id: build.source.source_set_id,
         target_language: build.target_language,
         artifacts: vec![
-            sdk::CapturedTextArtifact {
-                id: "empty".into(),
-                logical_path: build.output_paths[0].clone(),
-                role: "empty".into(),
-                sha256: codec::digest(b""),
-                utf8: String::new(),
-            },
-            sdk::CapturedTextArtifact {
-                id: "large".into(),
-                logical_path: build.output_paths[1].clone(),
-                role: "locale".into(),
-                sha256: codec::digest(large.as_bytes()),
-                utf8: large.clone(),
-            },
+            artifact("empty", &build.output_paths[0], "empty", b""),
+            artifact("large", &build.output_paths[1], "locale", &large),
         ],
     };
     let result = sdk_result(&request, serde_json::to_value(output).unwrap());
@@ -803,7 +808,7 @@ fn valid_empty_and_more_than_one_mebibyte_artifacts_are_stored_without_narrowing
             .release_artifact_by_path(id, "zh-CN", "zh-CN/second.txt")
             .unwrap()
             .1,
-        large.as_bytes()
+        large
     );
     let path = store.directory().to_owned();
     drop(store);
@@ -814,6 +819,6 @@ fn valid_empty_and_more_than_one_mebibyte_artifacts_are_stored_without_narrowing
             .release_artifact_by_path(id, "zh-CN", "zh-CN/second.txt")
             .unwrap()
             .1,
-        large.as_bytes()
+        large
     );
 }

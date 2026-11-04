@@ -1,14 +1,16 @@
 # Build and Artifact Contracts
 
-The SDK defines five schema/behavior `1/1` contracts for building target files and verifying the resulting output:
+The SDK defines these contracts for building target files and verifying the resulting output:
 
-- `tsumugi.build-input` (`BuildInput`)
-- `tsumugi.artifact-set` (`ArtifactSet`)
-- `tsumugi.artifact-check-input` (`ArtifactCheckInput`)
-- `tsumugi.build-declaration` (`BuildDeclaration`)
-- `tsumugi.build-error` (`BuildError`)
+- `tsumugi.build-input/2/1` (`BuildInput`)
+- `tsumugi.artifact-set/2/1` (`ArtifactSet`)
+- `tsumugi.artifact-check-input/2/1` (`ArtifactCheckInput`)
+- `tsumugi.build-declaration/1/1` (`BuildDeclaration`)
+- `tsumugi.build-error/1/1` (`BuildError`)
 
 These contracts define the data payloads exchanged between Core and build/check plugins; release qualification and file writing remain handled by Core and the Host.
+
+The supported schema-1 build input, artifact set and artifact-check input remain a complete text-only family. `BuildBinding` accepts that family without relabeling historical evidence, rejects mixed versions, and requires text artifacts for both its source and output. The current schema-2 family admits binary artifacts. Output evidence must match the exact captured producer declaration.
 
 ## Build Input (`BuildInput`)
 
@@ -24,7 +26,7 @@ Validation rejects missing, duplicate, unknown, or mismatched source revision re
 
 ## Output Artifacts (`ArtifactSet`) and Size Limits
 
-`ArtifactSet` returns the generated UTF-8 files along with the fixed profile, source set ID, and target language. Each artifact includes its ID, role, logical path, UTF-8 string (preserving BOMs and line endings), and recomputed SHA-256 digest. Only UTF-8 text artifacts are supported.
+`ArtifactSet` returns generated text or binary files with the fixed profile, source set ID and target language. Each artifact includes its ID, role, logical path, one exact byte representation and original-byte SHA-256 digest. See [artifact representations](exchange.md#captured-artifacts-and-source-coordinates). Output byte limits count decoded bytes; complete encoded limits also apply.
 
 Returned paths must exactly match the expected relative paths declared in `BuildInput` (no extra paths, missing outputs, or case substitutions) and obey the portable relative-path rules:
 

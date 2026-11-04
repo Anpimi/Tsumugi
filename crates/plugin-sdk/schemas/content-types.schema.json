@@ -34,8 +34,48 @@
     "check_results"
   ],
   "$defs": {
+    "CapturedArtifact": {
+      "description": "Exactly one representation. Text retains its original wire shape; mixed,\nnull and unknown fields are rejected by the two closed representations.",
+      "anyOf": [
+        {
+          "$ref": "#/$defs/CapturedTextArtifact"
+        },
+        {
+          "$ref": "#/$defs/CapturedBinaryArtifact"
+        }
+      ]
+    },
+    "CapturedBinaryArtifact": {
+      "description": "Canonical padded RFC 4648 base64 of the original bytes. The digest describes\nthe decoded bytes, never their transport encoding. Decoding is domain-owned.",
+      "type": "object",
+      "properties": {
+        "base64": {
+          "type": "string"
+        },
+        "id": {
+          "type": "string"
+        },
+        "logicalPath": {
+          "type": "string"
+        },
+        "role": {
+          "type": "string"
+        },
+        "sha256": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "logicalPath",
+        "role",
+        "sha256",
+        "base64"
+      ]
+    },
     "CapturedTextArtifact": {
-      "description": "Captured UTF-8 bytes, including a BOM and original line endings. These are\nimmutable source evidence; logical paths are not local filesystem authority.",
+      "description": "Exact UTF-8 bytes, including BOMs and original line endings.",
       "type": "object",
       "properties": {
         "id": {
@@ -299,7 +339,7 @@
         "artifacts": {
           "type": "array",
           "items": {
-            "$ref": "#/$defs/CapturedTextArtifact"
+            "$ref": "#/$defs/CapturedArtifact"
           }
         },
         "domainBlocks": {
@@ -687,6 +727,16 @@
         "packageDigest"
       ]
     },
+    "SourceEncoding": {
+      "description": "Source coordinates are separate from ranges in decoded unit/target text.",
+      "type": "string",
+      "enum": [
+        "utf8-byte",
+        "utf16",
+        "grapheme",
+        "raw-byte"
+      ]
+    },
     "SourceExtractionCheckInput": {
       "description": "A domain checker receives captured source and the complete proposal, with\nrequirements fixed independently by its caller. Receiving these values does\nnot authenticate the selected provider or authorize adoption.",
       "type": "object",
@@ -747,13 +797,13 @@
       ]
     },
     "SourceExtractionInput": {
-      "description": "Raw captured UTF-8 material supplied for one selected extraction profile.\nLogical paths and artifact IDs carry no filesystem or execution authority.\nThis input contains no authoritative project unit or source revision IDs.",
+      "description": "Raw captured text or binary material for one selected extraction profile.\nLogical paths and artifact IDs carry no filesystem or execution authority.\nThis input contains no authoritative project unit or source revision IDs.",
       "type": "object",
       "properties": {
         "artifacts": {
           "type": "array",
           "items": {
-            "$ref": "#/$defs/CapturedTextArtifact"
+            "$ref": "#/$defs/CapturedArtifact"
           }
         },
         "profile": {
@@ -774,6 +824,30 @@
         "artifacts"
       ]
     },
+    "SourceRange": {
+      "type": "object",
+      "properties": {
+        "encoding": {
+          "$ref": "#/$defs/SourceEncoding"
+        },
+        "end": {
+          "type": "integer",
+          "maximum": 4294967295,
+          "minimum": 0
+        },
+        "start": {
+          "type": "integer",
+          "maximum": 4294967295,
+          "minimum": 0
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "encoding",
+        "start",
+        "end"
+      ]
+    },
     "SourceReference": {
       "type": "object",
       "properties": {
@@ -781,7 +855,7 @@
           "type": "string"
         },
         "range": {
-          "$ref": "#/$defs/TextRange"
+          "$ref": "#/$defs/SourceRange"
         }
       },
       "additionalProperties": false,

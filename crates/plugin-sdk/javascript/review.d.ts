@@ -59,6 +59,14 @@ export type CheckImplementation =
       provider: ProviderSelectionBinding;
     };
 /**
+ * Exactly one representation. Text retains its original wire shape; mixed,
+ * null and unknown fields are rejected by the two closed representations.
+ *
+ * This interface was referenced by `ReviewTypes`'s JSON-Schema
+ * via the `definition` "CapturedArtifact".
+ */
+export type CapturedArtifact = CapturedTextArtifact | CapturedBinaryArtifact;
+/**
  * This interface was referenced by `ReviewTypes`'s JSON-Schema
  * via the `definition` "ExtensionHandling".
  */
@@ -79,6 +87,13 @@ export type ContentTarget =
       id: string;
       kind: "occurrence";
     };
+/**
+ * Source coordinates are separate from ranges in decoded unit/target text.
+ *
+ * This interface was referenced by `ReviewTypes`'s JSON-Schema
+ * via the `definition` "SourceEncoding".
+ */
+export type SourceEncoding = "utf8-byte" | "utf16" | "grapheme" | "raw-byte";
 /**
  * This interface was referenced by `ReviewTypes`'s JSON-Schema
  * via the `definition` "TextEncoding".
@@ -296,7 +311,7 @@ export interface ReviewSelection {
  * via the `definition` "ContentExchange".
  */
 export interface ContentExchange {
-  artifacts: CapturedTextArtifact[];
+  artifacts: CapturedArtifact[];
   domainBlocks: DomainBlock[];
   /**
    * Exact occurrence order. Hierarchies and other graphs use typed relations.
@@ -309,8 +324,7 @@ export interface ContentExchange {
   units: ContentUnit[];
 }
 /**
- * Captured UTF-8 bytes, including a BOM and original line endings. These are
- * immutable source evidence; logical paths are not local filesystem authority.
+ * Exact UTF-8 bytes, including BOMs and original line endings.
  *
  * This interface was referenced by `ReviewTypes`'s JSON-Schema
  * via the `definition` "CapturedTextArtifact".
@@ -321,6 +335,20 @@ export interface CapturedTextArtifact {
   role: string;
   sha256: string;
   utf8: string;
+}
+/**
+ * Canonical padded RFC 4648 base64 of the original bytes. The digest describes
+ * the decoded bytes, never their transport encoding. Decoding is domain-owned.
+ *
+ * This interface was referenced by `ReviewTypes`'s JSON-Schema
+ * via the `definition` "CapturedBinaryArtifact".
+ */
+export interface CapturedBinaryArtifact {
+  base64: string;
+  id: string;
+  logicalPath: string;
+  role: string;
+  sha256: string;
 }
 /**
  * This interface was referenced by `ReviewTypes`'s JSON-Schema
@@ -404,16 +432,14 @@ export interface NativeIdentityDisplay {
  */
 export interface SourceReference {
   artifactId: string;
-  range: TextRange;
+  range: SourceRange;
 }
 /**
- * Half-open offsets into one exact string, never between different strings.
- *
  * This interface was referenced by `ReviewTypes`'s JSON-Schema
- * via the `definition` "TextRange".
+ * via the `definition` "SourceRange".
  */
-export interface TextRange {
-  encoding: TextEncoding;
+export interface SourceRange {
+  encoding: SourceEncoding;
   end: number;
   start: number;
 }
@@ -423,12 +449,12 @@ export interface TextRange {
  */
 export interface ProtectedFragment {
   kind: ContractRef;
-  range: TextRange1;
+  range: TextRange;
 }
 /**
- * Half-open offsets into one exact string, never between different strings.
+ * Coordinates into the decoded unit text, not its original artifact.
  */
-export interface TextRange1 {
+export interface TextRange {
   encoding: TextEncoding;
   end: number;
   start: number;
@@ -452,4 +478,15 @@ export interface CheckFinding {
   code: string;
   severity: FindingSeverity;
   target: string;
+}
+/**
+ * Half-open offsets into one exact string, never between different strings.
+ *
+ * This interface was referenced by `ReviewTypes`'s JSON-Schema
+ * via the `definition` "TextRange".
+ */
+export interface TextRange1 {
+  encoding: TextEncoding;
+  end: number;
+  start: number;
 }

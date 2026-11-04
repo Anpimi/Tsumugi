@@ -26,7 +26,7 @@ fn current_native_capture_matches_the_actual_host_not_a_worker_claim() {
 #[test]
 fn native_capture_refuses_foreign_identity_application_version_and_platform() {
     let current = CapturedNativeRuntime::inspect_current().unwrap();
-    let mut wrong = vec![current.clone(); 3];
+    let mut wrong = vec![current.clone(); 4];
     wrong[0].host_version = "9.0.0".into();
     wrong[1].platform.architecture = match current.platform.architecture {
         sdk::RuntimeArchitecture::Aarch64 => sdk::RuntimeArchitecture::X86_64,
@@ -37,6 +37,9 @@ fn native_capture_refuses_foreign_identity_application_version_and_platform() {
         | sdk::NativeHostExecutableIdentity::LinuxExecutableSha256V1(value) => value,
     };
     digest.replace_range(..1, if digest.starts_with('a') { "b" } else { "a" });
+    // The historical descriptor is readable, but cannot stand in for this
+    // application's actual current Host at the execution boundary.
+    wrong[3].sdk_version = "0.1.0-alpha.1".into();
     for value in wrong {
         value.validate().unwrap();
         assert!(matches!(

@@ -998,11 +998,11 @@ fn real_532_key_source_can_compare_and_adopt_a_controlled_successor() {
     let mut store = create(&temp.path().join("project"));
     let original = bundle();
     let source = original.files[1]
-        .utf8
+        .text().unwrap()
         .replace("\"generic.now\": \"now\"", "\"generic.now\": \"right now\"");
-    assert_ne!(source, original.files[1].utf8);
+    assert_ne!(source, original.files[1].text().unwrap());
     let successor =
-        SourceBundle::capture(original.files[0].utf8.as_bytes(), source.as_bytes(), "en").unwrap();
+        SourceBundle::capture(original.files[0].text().unwrap().as_bytes(), source.as_bytes(), "en").unwrap();
     let (first_input, first_result) = generate(&mut store, original);
     let first_action = prepare(&mut store, &first_input, &first_result);
     store
@@ -1224,7 +1224,7 @@ fn real_source_matches_independent_oracle_and_keeps_byte_locations() {
             (row.value_byte_range, &row.text),
         ] {
             let decoded: String =
-                serde_json::from_str(&bundle.files[1].utf8[range[0] as usize..range[1] as usize])
+                serde_json::from_str(&bundle.files[1].text().unwrap()[range[0] as usize..range[1] as usize])
                     .unwrap();
             assert_eq!(&decoded, expected);
         }
@@ -1804,7 +1804,7 @@ fn generic_source_binding(checker: bool) -> PluginExecutionBinding {
                 operating_system: sdk::RuntimeOperatingSystem::Macos,
                 architecture: sdk::RuntimeArchitecture::Aarch64,
             },
-            sdk_version: "0.1.0-alpha.1".into(),
+            sdk_version: sdk::SDK_VERSION.into(),
             process_protocol: sdk::PROCESS_PROTOCOL,
             profile: sdk::RuntimeEnvironmentProfile::NodeSystemLibrariesV1,
             tool_version: "26.10.0".into(),
@@ -1880,7 +1880,7 @@ fn source_import_declared_capture_preserves_material_without_domain_interpretati
     assert_eq!(bundle.plugin_id, "plain-text");
     assert_eq!(bundle.profile.id, "example.plain-text");
     assert_eq!(bundle.files[0].logical_path, "materials/raw.txt");
-    assert_eq!(bundle.files[0].utf8.as_bytes(), raw.as_bytes());
+    assert_eq!(bundle.files[0].text().unwrap().as_bytes(), raw.as_bytes());
     assert_ne!(bundle.files[0].artifact_id, bundle.files[1].artifact_id);
     assert!(SourceBundle::capture_declared(&binding, vec![materials[0].clone()], "en-US").is_err());
     assert!(
@@ -1936,15 +1936,17 @@ fn source_import_declared_capture_preserves_material_without_domain_interpretati
 }
 
 fn generic_source_proposal(source: &sdk::SourceExtractionInput) -> sdk::ContentExchange {
-    let config: serde_json::Value = serde_json::from_str(&source.artifacts[0].utf8).unwrap();
+    let artifact = &source.artifacts[0];
+    let bytes = artifact.bytes().unwrap();
+    let config: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
     let suffix = config["metadata"].as_u64().unwrap();
     let reference = sdk::SourceReference {
-        artifact_id: source.artifacts[0].id.clone(),
-        range: sdk::TextRange {
+        artifact_id: artifact.id().into(),
+        range: if artifact.as_text().is_some() { sdk::TextRange {
             encoding: sdk::TextEncoding::Utf8Byte,
             start: 0,
-            end: source.artifacts[0].utf8.len() as u32,
-        },
+            end: bytes.len() as u32,
+        }.into() } else { sdk::SourceRange::raw_bytes(0, bytes.len() as u32) },
     };
     let occurrence = |name: &str, canonical: &str, display: &str| sdk::ContentOccurrence {
         id: format!("{name}-{suffix}"),
@@ -2068,7 +2070,7 @@ impl Runner for GenericSourcePlugin {
                 from_value(&request.input.item(request.item_id)?.payload)?;
             check.validate().unwrap();
             let config: serde_json::Value =
-                serde_json::from_str(&check.source.artifacts[0].utf8).unwrap();
+                serde_json::from_slice(&check.source.artifacts[0].bytes().unwrap()).unwrap();
             let matches = check.proposal == generic_source_proposal(&check.source)
                 && config["reject"] == false;
             let checked: Vec<_> = check
@@ -2338,6 +2340,51 @@ fn maintenance_window_keeps_occurrence_display_and_canonical_plan_identity_separ
             "{field}"
         );
     }
+}
+
+#[test]
+fn generic_source_binary_capture_is_checked_adopted_and_reopened_from_original_blobs() {
+    let temp = tempfile::tempdir().unwrap();
+    let path = temp.path().join("project");
+    let mut store = create(&path);
+    let seed = generic_source_input(&store, 1, 1, "CaseKey", false);
+    let mut bundle = SourceBundle::from_input(&seed).unwrap();
+    let original = bundle.files[0].bytes().unwrap().into_owned();
+    let mut companion = vec![0, 255, 128, 10];
+    let artifact = sdk::CapturedArtifact::from_bytes(bundle.files[0].artifact_id.to_string(), "records.bin".into(), "source".into(), &original).unwrap();
+    bundle.files[0] = CapturedFile::from_artifact(&artifact, bundle.files[0].artifact_id).unwrap();
+    let id = ExecutionId::new();
+    let artifact = sdk::CapturedArtifact::from_bytes(id.to_string(), "companion.bin".into(), "companion".into(), &companion).unwrap();
+    bundle.files.push(CapturedFile::from_artifact(&artifact, id).unwrap());
+    bundle.manifest_digest = bundle.calculate_digest().unwrap();
+    let input = bundle.fixed_plugin_input(store.metadata().unwrap().project_id(), generic_source_binding(false), SourceSettings::from_input(&seed).unwrap()).unwrap();
+    companion.fill(0); // Caller buffers cannot alter the already captured set.
+    let mut runtime = ExecutionRuntime::new(&store).unwrap();
+    for checker in [false, true] {
+        runtime.register_read_only(Arc::new(GenericSourcePlugin(generic_source_binding(checker)))).unwrap();
+    }
+    let result = run_generic_source(&mut runtime, &mut store, &input);
+    let action = prepare(&mut store, &input, &result);
+    assert!(store.adopt_execution(&action, &SourceAdoptionHandler).is_err());
+    check_generic_source(&mut runtime, &mut store, &input, &result);
+    let action = prepare(&mut store, &input, &result);
+    store.adopt_execution(&action, &SourceAdoptionHandler).unwrap();
+    let snapshot = store.content_scope().unwrap().current_snapshot.unwrap();
+    drop(runtime);
+    store.close().unwrap();
+    let reopened = ProjectStore::open(&path).unwrap();
+    let saved = reopened.source_bundle(snapshot).unwrap();
+    assert_eq!(saved, bundle);
+    assert_eq!(saved.files[0].bytes().unwrap().as_ref(), original);
+    assert_eq!(saved.files[1].bytes().unwrap().as_ref(), [0, 255, 128, 10]);
+    assert_eq!(reopened.source_content(snapshot, 0, 10).unwrap().total, 3);
+    reopened.close().unwrap();
+    let raw = rusqlite::Connection::open(path.join("project.sqlite3")).unwrap();
+    let bytes: Vec<u8> = raw.query_row("SELECT bytes FROM source_files WHERE artifact_id=?1", [id.to_string()], |row| row.get(0)).unwrap();
+    assert_eq!(bytes, [0, 255, 128, 10]);
+    raw.execute("UPDATE source_files SET bytes=?1 WHERE artifact_id=?2", rusqlite::params![vec![0_u8, 0, 0, 0], id.to_string()]).unwrap();
+    drop(raw);
+    assert!(ProjectStore::open(&path).is_err(), "stored raw bytes must match their fixed capture");
 }
 
 #[test]
@@ -2865,9 +2912,10 @@ fn generic_captured_source_rejects_its_serialized_store_budget_before_enqueue() 
     let file = &mut capture.files[0];
     // The raw material is within the SDK budget; JSON quoting pushes the
     // immutable Core capture over its separate one MiB storage boundary.
-    file.utf8 = "\"".repeat(600_000);
-    file.byte_length = file.utf8.len() as u32;
-    file.sha256 = codec::digest(file.utf8.as_bytes());
+    let text = "\"".repeat(600_000);
+    file.byte_length = text.len() as u32;
+    file.sha256 = codec::digest(text.as_bytes());
+    file.data = sdk::CapturedArtifactData::Utf8(text);
     capture.manifest_digest = capture.calculate_digest().unwrap();
     capture.source_input().validate().unwrap();
     assert_eq!(
@@ -2878,7 +2926,7 @@ fn generic_captured_source_rejects_its_serialized_store_budget_before_enqueue() 
 
 #[test]
 fn source_limits_unknown_fields_and_bundle_associations_fail_closed() {
-    let manifest = small(r#"{"a":"b"}"#).files[0].utf8.clone();
+    let manifest = small(r#"{"a":"b"}"#).files[0].text().unwrap().to_owned();
     let mut padded_manifest = manifest.as_bytes().to_vec();
     padded_manifest.resize(MAX_MANIFEST_BYTES, b' ');
     assert!(SourceBundle::capture(&padded_manifest, b"{}", "en").is_ok());

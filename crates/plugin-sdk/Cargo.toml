@@ -1,6 +1,6 @@
 [package]
 name = "tsumugi-plugin-sdk"
-version = "0.1.0-alpha.1"
+version = "0.1.0-alpha.2"
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
@@ -16,6 +16,7 @@ name = "native-worker"
 required-features = ["native-worker"]
 
 [dependencies]
+base64 = "=0.22.1"
 schemars = { version = "=1.2.2", optional = true }
 semver = "=1.0.28"
 serde = { version = "=1.0.229", features = ["derive"] }

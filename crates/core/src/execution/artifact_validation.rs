@@ -74,7 +74,7 @@ impl ArtifactValidationCapture {
         binding
             .validate_artifacts(&input, &output)
             .map_err(|_| invalid())?;
-        let targets: Vec<_> = output.artifacts.iter().map(|a| a.id.clone()).collect();
+        let targets: Vec<_> = output.artifacts.iter().map(|a| a.id().to_owned()).collect();
         let requirement = |key| sdk::CheckRequirement {
             key,
             input_digest: build.input.digest().into(),

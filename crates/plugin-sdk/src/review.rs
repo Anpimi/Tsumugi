@@ -25,7 +25,10 @@ fn contract(id: &str) -> ContractRef {
     }
 }
 pub fn review_check_input_contract() -> ContractRef {
-    contract("tsumugi.review-check-input")
+    ContractRef {
+        schema_version: 2,
+        ..contract("tsumugi.review-check-input")
+    }
 }
 pub fn review_declaration_contract() -> ContractRef {
     contract("tsumugi.review-declaration")
@@ -199,7 +202,11 @@ impl ReviewBinding {
         self.checker.validate()?;
         let d = &self.checker.declaration;
         if self.checker.provider.contribution_id != self.declaration.checker
-            || d.input_schema != review_check_input_contract()
+            || crate::artifact::artifact_contract_version(
+                &d.input_schema,
+                review_check_input_contract(),
+            )
+            .is_none()
             || d.output_schema != check_results_contract()
             || d.error_schema != review_check_error_contract()
             || !d.profiles.contains(&self.declaration.profile)
@@ -219,6 +226,12 @@ impl ReviewBinding {
     pub fn validate_input(&self, input: &ReviewCheckInput) -> Result<(), ContractError> {
         self.validate()?;
         input.validate()?;
+        if self.checker.declaration.input_schema.schema_version == 1 {
+            crate::artifact::require_text_artifacts(
+                &input.source.artifacts,
+                "review.binding.artifacts",
+            )?;
+        }
         if input.source.profile != self.declaration.profile
             || input.requirements.len() != self.declaration.rules.len()
         {

@@ -18,6 +18,13 @@ pub const MAX_RUNTIME_ARTIFACT_BYTES: usize = 256 * 1024 * 1024;
 
 pub const NATIVE_HOST_ENVIRONMENT_PROTOCOL: u32 = 1;
 
+// The supported pre-binary SDK uses the same Process-3 transport. Its exact
+// descriptor and digest remain readable; capture/dispatch still require the
+// independently approved runtime bytes and the actual current Host identity.
+fn supported_sdk(version: &str) -> bool {
+    version == crate::SDK_VERSION || version == "0.1.0-alpha.1"
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
@@ -60,7 +67,7 @@ impl NativeHostEnvironmentDescriptor {
     pub fn validate(&self) -> Result<(), ContractError> {
         if self.protocol_version != NATIVE_HOST_ENVIRONMENT_PROTOCOL
             || self.process_protocol != PROCESS_PROTOCOL
-            || self.sdk_version != crate::SDK_VERSION
+            || !supported_sdk(&self.sdk_version)
         {
             return Err(ContractError::at(
                 ContractErrorCode::UnsupportedProtocol,
@@ -219,7 +226,7 @@ impl RuntimeEnvironmentDescriptor {
     pub fn validate(&self) -> Result<(), ContractError> {
         if self.protocol_version != RUNTIME_ENVIRONMENT_PROTOCOL
             || self.process_protocol != PROCESS_PROTOCOL
-            || self.sdk_version != crate::SDK_VERSION
+            || !supported_sdk(&self.sdk_version)
         {
             return Err(ContractError::at(
                 ContractErrorCode::UnsupportedProtocol,

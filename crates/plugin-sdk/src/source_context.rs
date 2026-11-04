@@ -5,8 +5,7 @@
 use serde::{Deserialize, Serialize};
 
 use crate::{
-    CapturedTextArtifact, ContractError, ContractErrorCode, ContractRef, DomainBlock,
-    SourceReference,
+    CapturedArtifact, ContractError, ContractErrorCode, ContractRef, DomainBlock, SourceReference,
     content::validate_source_reference,
     validation::{encoded_limit, opaque_id, unique},
 };
@@ -21,9 +20,19 @@ const IDENTIFIER_PATTERN: &str = r"^[A-Za-z0-9.\-_:/]{1,128}(?![\s\S])";
 pub fn source_context_facts_contract() -> ContractRef {
     ContractRef {
         id: SOURCE_CONTEXT_FACTS_SCHEMA_ID.into(),
-        schema_version: 1,
+        schema_version: 2,
         behavior_version: 1,
     }
+}
+
+/// Exact context profiles retained by the supported text and binary baselines.
+pub fn is_source_context_facts_contract(reference: &ContractRef) -> bool {
+    reference == &source_context_facts_contract()
+        || reference
+            == &ContractRef {
+                schema_version: 1,
+                ..source_context_facts_contract()
+            }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -146,10 +155,7 @@ impl SourceContextFacts {
 
     /// The material must come from the caller's captured source scope. Checking
     /// coordinates does not authenticate that material or establish fact truth.
-    pub fn validate_sources(
-        &self,
-        artifacts: &[CapturedTextArtifact],
-    ) -> Result<(), ContractError> {
+    pub fn validate_sources(&self, artifacts: &[CapturedArtifact]) -> Result<(), ContractError> {
         self.validate()?;
         for fact in &self.facts {
             for source in fact.origin.sources() {
@@ -185,12 +191,21 @@ pub fn parse_source_context_facts(bytes: &[u8]) -> Result<SourceContextFacts, Co
 
 pub fn parse_source_context_block(
     block: &DomainBlock,
-    artifacts: &[CapturedTextArtifact],
+    artifacts: &[CapturedArtifact],
 ) -> Result<SourceContextFacts, ContractError> {
-    if block.schema != source_context_facts_contract() {
+    if !is_source_context_facts_contract(&block.schema) {
         return Err(invalid(ContractErrorCode::UnsupportedExtension));
     }
     let facts = parse_source_context_facts(block.payload_utf8.as_bytes())?;
+    if block.schema.schema_version == 1
+        && facts
+            .facts
+            .iter()
+            .flat_map(|fact| fact.origin.sources())
+            .any(|source| source.range.encoding == crate::SourceEncoding::RawByte)
+    {
+        return Err(invalid(ContractErrorCode::InvalidRange));
+    }
     facts.validate_sources(artifacts)?;
     Ok(facts)
 }

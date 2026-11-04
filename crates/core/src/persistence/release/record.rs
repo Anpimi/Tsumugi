@@ -1,7 +1,11 @@
 //! Saved releases bind exact frozen inputs, original results and adoption
 //! receipts. Reading historical plugin output needs no live process or grant.
 use super::*;
-#[cfg(any(test, feature = "execution-test-host", feature = "legacy-desktop-domain"))]
+#[cfg(any(
+    test,
+    feature = "execution-test-host",
+    feature = "legacy-desktop-domain"
+))]
 mod legacy;
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
@@ -20,7 +24,11 @@ struct ReleaseManifest {
     deny_unknown_fields
 )]
 enum FrozenPlan {
-    #[cfg(any(test, feature = "execution-test-host", feature = "legacy-desktop-domain"))]
+    #[cfg(any(
+        test,
+        feature = "execution-test-host",
+        feature = "legacy-desktop-domain"
+    ))]
     Builtin(BuildManifest),
     Plugin(ReleasePlan),
 }
@@ -76,16 +84,20 @@ fn prepare_data(
             let count = u32::try_from(plan.plugin_input(locale)?.targets.len())
                 .map_err(|_| failure(ErrorCode::OutputInvalid, "release-unit-count"))?;
             for artifact in output.artifacts {
+                let bytes = artifact
+                    .validated_bytes()
+                    .map_err(|_| failure(ErrorCode::OutputInvalid, "release-artifact-bytes"))?
+                    .into_owned();
                 artifacts.push(Artifact {
-                    id: artifact.id,
-                    role: artifact.role,
+                    id: artifact.id().into(),
+                    role: artifact.role().into(),
                     summary: ReleasedArtifact {
                         locale: locale.into(),
-                        file_name: artifact.logical_path,
-                        sha256: artifact.sha256,
+                        file_name: artifact.logical_path().into(),
+                        sha256: artifact.sha256().into(),
                         entry_count: count,
                     },
-                    bytes: artifact.utf8.into_bytes(),
+                    bytes,
                 });
             }
         }
@@ -94,11 +106,19 @@ fn prepare_data(
         }
         (FrozenPlan::Plugin(plan), summary)
     } else {
-        #[cfg(any(test, feature = "execution-test-host", feature = "legacy-desktop-domain"))]
+        #[cfg(any(
+            test,
+            feature = "execution-test-host",
+            feature = "legacy-desktop-domain"
+        ))]
         {
             legacy::prepare(input, results, &mut seen, &mut artifacts)?
         }
-        #[cfg(not(any(test, feature = "execution-test-host", feature = "legacy-desktop-domain")))]
+        #[cfg(not(any(
+            test,
+            feature = "execution-test-host",
+            feature = "legacy-desktop-domain"
+        )))]
         {
             return Err(failure(ErrorCode::InvalidInput, "build-plugin-required"));
         }
@@ -224,7 +244,11 @@ pub(super) fn load(
     if input.envelope().plugin.is_some() {
         match &manifest.plan {
             FrozenPlan::Plugin(plan) => plan.validate_source_reference(connection)?,
-            #[cfg(any(test, feature = "execution-test-host", feature = "legacy-desktop-domain"))]
+            #[cfg(any(
+                test,
+                feature = "execution-test-host",
+                feature = "legacy-desktop-domain"
+            ))]
             FrozenPlan::Builtin(_) => {
                 return Err(failure(ErrorCode::CorruptLedger, "release-plugin-plan"));
             }

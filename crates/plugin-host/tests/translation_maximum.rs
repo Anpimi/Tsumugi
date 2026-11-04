@@ -224,7 +224,7 @@ fn maximum_file_workflow(unicode: bool, key_length: usize) {
             role: "translation".into(),
             sha256: sdk::payload_digest(&raw),
             utf8: raw,
-        }],
+        }.into()],
     };
     let settings = PluginTranslationSettings {
         declaration: resource.declaration.clone(),
@@ -245,10 +245,10 @@ fn maximum_file_workflow(unicode: bool, key_length: usize) {
         ] {
             let mut rejected = material.clone();
             rejected.import_id = ExecutionId::new().to_string();
-            rejected.artifacts[0].id = ExecutionId::new().to_string();
-            rejected.artifacts[0].utf8 =
+            rejected.artifacts[0].as_text_mut().unwrap().id = ExecutionId::new().to_string();
+            rejected.artifacts[0].as_text_mut().unwrap().utf8 =
                 serde_json::to_string(&std::collections::BTreeMap::from([(key, text)])).unwrap();
-            rejected.artifacts[0].sha256 = sdk::payload_digest(&rejected.artifacts[0].utf8);
+            rejected.artifacts[0].as_text_mut().unwrap().sha256 = sdk::payload_digest(&rejected.artifacts[0].as_text().unwrap().utf8);
             let input = settings
                 .fixed_input(
                     project,

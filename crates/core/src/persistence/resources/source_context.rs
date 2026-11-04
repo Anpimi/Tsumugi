@@ -291,7 +291,7 @@ impl SourceContextReader {
                         .revision_policy
                         .revision_basis
                         .contains(&block.schema),
-                    facts: if block.schema == sdk::source_context_facts_contract() {
+                    facts: if sdk::is_source_context_facts_contract(&block.schema) {
                         Some(
                             sdk::parse_source_context_block(block, &output.exchange.artifacts)
                                 .map_err(|_| corrupt())?,

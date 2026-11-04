@@ -486,7 +486,7 @@ fn shared_occurrence(mut exchange: sdk::ContentExchange) -> sdk::ContentExchange
     // spanning both captured files rather than adding a third source row.
     let mut second = exchange.units.remove(1);
     let mut occurrence = second.occurrences.remove(0);
-    occurrence.source.artifact_id = exchange.artifacts[1].id.clone();
+    occurrence.source.artifact_id = exchange.artifacts[1].id().into();
     occurrence.source.range.start = 0;
     occurrence.source.range.end = 4;
     exchange.units[0].occurrences.push(occurrence);

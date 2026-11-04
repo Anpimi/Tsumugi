@@ -1,29 +1,16 @@
 use crate::{
-    validation::{digest, encoded_limit, name, opaque_id, path, reference, unique},
+    validation::{encoded_limit, opaque_id, reference, unique},
     *,
 };
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeSet;
-
-/// Captured UTF-8 bytes, including a BOM and original line endings. These are
-/// immutable source evidence; logical paths are not local filesystem authority.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase", deny_unknown_fields)]
-#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
-pub struct CapturedTextArtifact {
-    pub id: String,
-    pub logical_path: String,
-    pub role: String,
-    pub sha256: String,
-    pub utf8: String,
-}
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 pub struct SourceReference {
     pub artifact_id: String,
-    pub range: TextRange,
+    pub range: SourceRange,
 }
 
 /// Domain-confirmed spelling for presentation, separate from canonical
@@ -140,7 +127,7 @@ pub struct ContentExchange {
     pub profile: ContractRef,
     pub source_set_id: String,
     pub source_language: String,
-    pub artifacts: Vec<CapturedTextArtifact>,
+    pub artifacts: Vec<CapturedArtifact>,
     pub units: Vec<ContentUnit>,
     /// Exact occurrence order. Hierarchies and other graphs use typed relations.
     pub order: Vec<String>,
@@ -260,7 +247,7 @@ impl ContentExchange {
                     "content.domainBlocks.target",
                 ));
             }
-            if block.schema == source_context_facts_contract() {
+            if is_source_context_facts_contract(&block.schema) {
                 parse_source_context_block(block, &self.artifacts)?;
             }
         }
@@ -289,19 +276,19 @@ impl ContentExchange {
 }
 
 pub(crate) fn validate_source_reference(
-    artifacts: &[CapturedTextArtifact],
+    artifacts: &[CapturedArtifact],
     source: &SourceReference,
 ) -> Result<(), ContractError> {
     let artifact = artifacts
         .iter()
-        .find(|artifact| artifact.id == source.artifact_id)
+        .find(|artifact| artifact.id() == source.artifact_id)
         .ok_or_else(|| {
             ContractError::at(
                 ContractErrorCode::InvalidDeclaration,
                 "content.source.artifactId",
             )
         })?;
-    convert_text_range(&artifact.utf8, source.range, TextEncoding::Utf8Byte)?;
+    source.range.byte_range(artifact)?;
     Ok(())
 }
 
@@ -319,7 +306,7 @@ pub(crate) fn validate_native_scope(
 }
 
 pub(crate) fn validate_native_identity(
-    artifacts: &[CapturedTextArtifact],
+    artifacts: &[CapturedArtifact],
     identity: &NativeIdentityEvidence,
 ) -> Result<(), ContractError> {
     validate_native_scope(&identity.namespace, &identity.policy)?;
@@ -342,12 +329,12 @@ pub(crate) fn validate_native_identity(
 }
 
 /// One source-material validator shared by captured input and extracted content.
-/// It checks wire labels and exact UTF-8 bytes, never a domain grammar or locale.
+/// It checks wire labels and exact raw bytes, never a domain grammar or locale.
 pub(crate) fn validate_source_material(
     profile: &ContractRef,
     source_set_id: &str,
     source_language: &str,
-    artifacts: &[CapturedTextArtifact],
+    artifacts: &[CapturedArtifact],
 ) -> Result<(), ContractError> {
     reference(profile, "content.profile")?;
     opaque_id(source_set_id, "content.sourceSetId")?;
@@ -360,28 +347,19 @@ pub(crate) fn validate_source_material(
             "content.artifacts",
         ));
     }
-    unique(artifacts.iter().map(|a| &a.id), "content.artifacts.id")?;
+    unique(artifacts.iter().map(|a| a.id()), "content.artifacts.id")?;
     unique(
-        artifacts.iter().map(|a| &a.logical_path),
+        artifacts.iter().map(|a| a.logical_path()),
         "content.artifacts.logicalPath",
     )?;
     let mut total_bytes = 0usize;
     for artifact in artifacts {
-        opaque_id(&artifact.id, "content.artifacts.id")?;
-        path(&artifact.logical_path, "content.artifacts.logicalPath")?;
-        name(&artifact.role, "content.artifacts.role")?;
-        digest(&artifact.sha256, "content.artifacts.sha256")?;
-        total_bytes = total_bytes.saturating_add(artifact.utf8.len());
+        let bytes = artifact.validated_bytes()?;
+        total_bytes = total_bytes.saturating_add(bytes.len());
         if total_bytes > MAX_EXCHANGE_BYTES {
             return Err(ContractError::at(
                 ContractErrorCode::LimitExceeded,
                 "content.artifacts",
-            ));
-        }
-        if payload_digest(&artifact.utf8) != artifact.sha256 {
-            return Err(ContractError::at(
-                ContractErrorCode::ResultMismatch,
-                "content.artifacts.sha256",
             ));
         }
     }

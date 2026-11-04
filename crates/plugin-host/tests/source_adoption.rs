@@ -413,7 +413,7 @@ fn official_source_checks_gate_atomic_adoption_revision_updates_and_reopening() 
             .unwrap()
             .source_input()
             .artifacts[0]
-            .utf8,
+            .as_text().unwrap().utf8,
         large_source
     );
     runtime.begin_quiesce(&mut store).unwrap();
@@ -436,7 +436,7 @@ fn official_source_checks_gate_atomic_adoption_revision_updates_and_reopening() 
             .unwrap()
             .source_input()
             .artifacts[0]
-            .utf8,
+            .as_text().unwrap().utf8,
         original
     );
     assert_eq!(

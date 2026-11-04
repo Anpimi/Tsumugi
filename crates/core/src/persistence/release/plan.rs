@@ -133,7 +133,7 @@ impl ReleasePlan {
         let sdk::InvocationOutcome::Succeeded { output } = &evidence.result.outcome else {
             return Err(invalid());
         };
-        if output.schema != sdk::artifact_set_contract() {
+        if output.schema != self.build.binding.builder.declaration.output_schema {
             return Err(invalid());
         }
         let output = sdk::parse_artifact_set(output.utf8.as_bytes()).map_err(|_| invalid())?;
@@ -200,8 +200,8 @@ impl ReleasePlan {
                 .artifacts
                 .iter()
                 .map(|a| BuildSourceFile {
-                    logical_path: a.logical_path.clone(),
-                    sha256: a.sha256.clone(),
+                    logical_path: a.logical_path().into(),
+                    sha256: a.sha256().into(),
                 })
                 .collect(),
             exceptions,
@@ -258,18 +258,41 @@ impl ReleasePlan {
         if input.envelope().plugin.is_some() {
             super::super::ledger::validate_source_link(connection, &input, &result, true)?;
         }
-        let (_, (_,_,output,rows))=super::super::content::snapshot_rows(connection,self.source_snapshot_id,true)?;
-        if output.exchange!=self.source {return Err(invalid());}
-        let version=self.source_mapping_revision.unwrap_or(Revision::new(0)?);
-        if version>super::super::content::lineage_corrections::mapping_revision(connection,self.source_snapshot_id)? {return Err(invalid());}
-        let mut mapping=BTreeMap::new();
+        let (_, (_, _, output, rows)) =
+            super::super::content::snapshot_rows(connection, self.source_snapshot_id, true)?;
+        if output.exchange != self.source {
+            return Err(invalid());
+        }
+        let version = self.source_mapping_revision.unwrap_or(Revision::new(0)?);
+        if version
+            > super::super::content::lineage_corrections::mapping_revision(
+                connection,
+                self.source_snapshot_id,
+            )?
+        {
+            return Err(invalid());
+        }
+        let mut mapping = BTreeMap::new();
         for row in rows {
-            let binding=super::super::content::lineage_corrections::binding_at(connection,row.occurrence_id.ok_or_else(invalid)?,version)?;
-            if mapping.insert(row.occurrence.operation_unit_id,binding).is_some_and(|previous|previous!=binding){return Err(invalid());}
+            let binding = super::super::content::lineage_corrections::binding_at(
+                connection,
+                row.occurrence_id.ok_or_else(invalid)?,
+                version,
+            )?;
+            if mapping
+                .insert(row.occurrence.operation_unit_id, binding)
+                .is_some_and(|previous| previous != binding)
+            {
+                return Err(invalid());
+            }
         }
         for locale in &self.locales {
             for target in &locale.targets {
-                if mapping.get(&target.local_unit_id)!=Some(&(target.review.unit_id,target.review.source_revision_id)){return Err(invalid());}
+                if mapping.get(&target.local_unit_id)
+                    != Some(&(target.review.unit_id, target.review.source_revision_id))
+                {
+                    return Err(invalid());
+                }
             }
         }
         Ok(())
@@ -494,7 +517,7 @@ impl ProjectStore {
             .map_err(|_| failure(ErrorCode::StorageFailed, "build-read"))?;
         let (_, (source_input, result, output, mut rows)) =
             super::super::content::snapshot_rows(connection, source_snapshot_id, true)?;
-        super::super::content::lineage_corrections::effective_rows(connection,&mut rows)?;
+        super::super::content::lineage_corrections::effective_rows(connection, &mut rows)?;
         let mut mapping = BTreeMap::new();
         for row in rows {
             let ids = (
@@ -537,7 +560,12 @@ impl ProjectStore {
             version: 1,
             project_id: project,
             source_snapshot_id,
-            source_mapping_revision: Some(super::super::content::lineage_corrections::mapping_revision(connection,source_snapshot_id)?),
+            source_mapping_revision: Some(
+                super::super::content::lineage_corrections::mapping_revision(
+                    connection,
+                    source_snapshot_id,
+                )?,
+            ),
             source_attempt_id: source_input.envelope().attempt_id,
             source_result_id: result.envelope().result_id,
             source_input_digest: source_input.digest().into(),
@@ -574,7 +602,10 @@ impl ProjectStore {
             return Ok(None);
         };
         let plan = ReleasePlan::from_input(&input)?;
-        plan.validate_source_reference(self.connection().map_err(|_|failure(ErrorCode::StorageFailed,"build-read"))?)?;
+        plan.validate_source_reference(
+            self.connection()
+                .map_err(|_| failure(ErrorCode::StorageFailed, "build-read"))?,
+        )?;
         if plan.project_id != project
             || plan.eligibility_basis != basis
             || plan.choices() != choices
@@ -609,7 +640,11 @@ impl ProjectStore {
 
 fn validate_capture(store: &ProjectStore, input: &FixedInput) -> Result<(), ExecutionError> {
     let plan = ReleasePlan::from_input(input)?;
-    plan.validate_source_reference(store.connection().map_err(|_|failure(ErrorCode::StorageFailed,"build-read"))?)?;
+    plan.validate_source_reference(
+        store
+            .connection()
+            .map_err(|_| failure(ErrorCode::StorageFailed, "build-read"))?,
+    )?;
     // A continuation keeps the already qualified frozen plan. Later review
     // edits do not silently recapture it or discard successful locale results.
     let current = if let Some(previous) = input.envelope().previous_attempt_id {

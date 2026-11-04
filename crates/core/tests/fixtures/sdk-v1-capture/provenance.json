@@ -1,0 +1,8 @@
+{
+  "environmentDigest": "2f95a020864dbac75089b03733c74bf6f2cbd897c6220bba116a6ff587e6fe01",
+  "fixedInputDigest": "0500aebc46566bf0ed1912c11206024237646e983c26f1d3918f620bbb89c89e",
+  "processProtocol": 3,
+  "scope": "Synthetic source capture and frozen plugin input; no worker launch or grant",
+  "sdkVersion": "0.1.0-alpha.1",
+  "sourceCommit": "3477ba401ccf7ce71b62245de3e330d3b5724dfc"
+}

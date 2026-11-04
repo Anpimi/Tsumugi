@@ -805,7 +805,7 @@ fn journey(material: Materials, loss: PackageLoss) {
             .iter()
             .find(|file| file.logical_path == path)
             .unwrap();
-        assert_eq!(file.utf8.as_bytes(), raw.as_bytes());
+        assert_eq!(&*file.bytes().unwrap(), raw.as_bytes());
         assert_eq!(file.sha256, tsumugi_plugin_sdk::payload_digest(raw));
     }
     let source_content = call(

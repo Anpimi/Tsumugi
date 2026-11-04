@@ -6,6 +6,7 @@
 //! The optional `native-worker` feature serves this process through the same
 //! contracts; it does not launch processes, install packages or grant authority.
 
+mod artifact;
 mod binding;
 mod build;
 mod checks;
@@ -30,6 +31,7 @@ mod tool;
 mod translation;
 mod validation;
 
+pub use artifact::*;
 pub use binding::{CapabilityBinding, ProviderSelectionBinding, bind_capability};
 pub use build::*;
 pub use checks::*;

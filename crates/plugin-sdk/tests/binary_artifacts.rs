@@ -1,0 +1,268 @@
+use serde_json::json;
+use tsumugi_plugin_sdk::*;
+
+fn binary(bytes: &[u8]) -> CapturedArtifact {
+    CapturedArtifact::from_bytes(
+        "source-artifact".into(),
+        "FormatProbe.esp".into(),
+        "source".into(),
+        bytes,
+    )
+    .unwrap()
+}
+fn profile() -> ContractRef {
+    ContractRef {
+        id: "example.binary-format".into(),
+        schema_version: 1,
+        behavior_version: 1,
+    }
+}
+fn source() -> SourceExtractionInput {
+    SourceExtractionInput {
+        profile: profile(),
+        source_set_id: "source-set".into(),
+        source_language: "en-US".into(),
+        artifacts: vec![binary(&[0, 255, 128, 10])],
+    }
+}
+fn content(input: &SourceExtractionInput) -> ContentExchange {
+    ContentExchange {
+        profile: input.profile.clone(),
+        source_set_id: input.source_set_id.clone(),
+        source_language: input.source_language.clone(),
+        artifacts: input.artifacts.clone(),
+        units: vec![ContentUnit {
+            id: "unit-1".into(),
+            source_revision_id: "revision-1".into(),
+            text: "Decoded title — 星".into(),
+            occurrences: vec![ContentOccurrence {
+                id: "occurrence-1".into(),
+                source: SourceReference {
+                    artifact_id: "source-artifact".into(),
+                    range: SourceRange::raw_bytes(1, 3),
+                },
+                native_identity: Some(NativeIdentityEvidence {
+                    namespace: "example.record-field".into(),
+                    value: "record-1/FULL".into(),
+                    policy: profile(),
+                    display: NativeIdentityDisplay {
+                        value: "Record title".into(),
+                        source: None,
+                    },
+                }),
+            }],
+            protected_fragments: vec![],
+        }],
+        order: vec!["occurrence-1".into()],
+        relations: vec![],
+        domain_blocks: vec![],
+    }
+}
+
+#[test]
+fn binary_transport_preserves_original_bytes_and_rejects_ambiguous_shapes() {
+    let artifact = binary(&[0, 255, 128, 10]);
+    assert_eq!(
+        artifact.validated_bytes().unwrap().as_ref(),
+        [0, 255, 128, 10]
+    );
+    let value = serde_json::to_value(&artifact).unwrap();
+    assert_eq!(value["base64"], "AP+ACg==");
+    assert!(value.get("utf8").is_none());
+    assert_eq!(
+        serde_json::from_value::<CapturedArtifact>(value.clone()).unwrap(),
+        artifact
+    );
+    let captured: CapturedArtifactData =
+        serde_json::from_slice(&serde_json::to_vec(&artifact.data()).unwrap()).unwrap();
+    assert_eq!(captured.bytes().unwrap().as_ref(), [0, 255, 128, 10]);
+    assert_eq!(
+        captured.into_artifact(
+            artifact.id().into(),
+            artifact.logical_path().into(),
+            artifact.role().into(),
+            artifact.sha256().into()
+        ),
+        artifact
+    );
+    for (field, extra) in [
+        ("utf8", json!("text")),
+        ("utf8", json!(null)),
+        ("unexpected", json!(true)),
+        ("base64", json!(null)),
+    ] {
+        let mut invalid = value.clone();
+        invalid[field] = extra;
+        assert!(
+            serde_json::from_value::<CapturedArtifact>(invalid).is_err(),
+            "{field}"
+        );
+    }
+    let empty = binary(&[]);
+    assert!(empty.validated_bytes().unwrap().is_empty());
+    for encoded in ["AP+ACg", "AP+ACg===", "AP+ACg==\n", "AP+ACg--", "AB=="] {
+        let mut invalid = value.clone();
+        invalid["base64"] = json!(encoded);
+        let invalid: CapturedArtifact = serde_json::from_value(invalid).unwrap();
+        assert!(invalid.validated_bytes().is_err(), "{encoded}");
+    }
+    let mut corrupt = value;
+    corrupt["base64"] = json!("AP+ACw==");
+    assert_eq!(
+        serde_json::from_value::<CapturedArtifact>(corrupt)
+            .unwrap()
+            .validated_bytes()
+            .unwrap_err()
+            .code,
+        ContractErrorCode::ResultMismatch
+    );
+}
+
+#[test]
+fn raw_source_ranges_are_separate_from_unicode_unit_ranges() {
+    let artifact = binary(&[0, 255, 128, 10]);
+    assert_eq!(
+        SourceRange::raw_bytes(1, 3).byte_range(&artifact).unwrap(),
+        [1, 3]
+    );
+    for range in [
+        SourceRange::raw_bytes(3, 2),
+        SourceRange::raw_bytes(0, 5),
+        TextRange {
+            encoding: TextEncoding::Utf8Byte,
+            start: 1,
+            end: 3,
+        }
+        .into(),
+    ] {
+        assert_eq!(
+            range.byte_range(&artifact).unwrap_err().code,
+            ContractErrorCode::InvalidRange
+        );
+    }
+    let text: CapturedArtifact = CapturedTextArtifact {
+        id: "text".into(),
+        logical_path: "text.txt".into(),
+        role: "source".into(),
+        sha256: payload_digest("星"),
+        utf8: "星".into(),
+    }
+    .into();
+    assert!(SourceRange::raw_bytes(0, 3).byte_range(&text).is_err());
+    assert!(
+        SourceRange::from(TextRange {
+            encoding: TextEncoding::Utf8Byte,
+            start: 1,
+            end: 2
+        })
+        .byte_range(&text)
+        .is_err()
+    );
+    assert_eq!(
+        SourceRange::from(TextRange {
+            encoding: TextEncoding::Utf16,
+            start: 0,
+            end: 1
+        })
+        .byte_range(&text)
+        .unwrap(),
+        [0, 3]
+    );
+    assert!(
+        serde_json::from_value::<TextRange>(json!({"encoding":"raw-byte", "start":0, "end":1}))
+            .is_err()
+    );
+}
+
+#[test]
+fn extraction_matches_the_complete_binary_capture_and_original_byte_positions() {
+    let source = source();
+    let exchange = content(&source);
+    validate_source_extraction(&source, &exchange).unwrap();
+    assert_eq!(
+        parse_source_extraction_input(&serde_json::to_vec(&source).unwrap()).unwrap(),
+        source
+    );
+    let mut changed = exchange.clone();
+    changed.artifacts[0] = binary(&[0, 255, 128, 11]);
+    assert!(validate_source_extraction(&source, &changed).is_err());
+    changed = exchange.clone();
+    changed.units[0].occurrences[0].source.range.end = 5;
+    assert!(validate_source_extraction(&source, &changed).is_err());
+    let mut text = exchange;
+    text.units[0].protected_fragments.push(ProtectedFragment {
+        kind: profile(),
+        range: TextRange {
+            encoding: TextEncoding::Utf8Byte,
+            start: 1,
+            end: 2,
+        },
+    });
+    text.validate().unwrap();
+}
+
+#[test]
+fn build_limits_and_artifact_digests_describe_decoded_output_bytes() {
+    let source = source();
+    let mut input = BuildInput {
+        source: content(&source),
+        targets: vec![BuildTarget {
+            unit_id: "unit-1".into(),
+            source_revision_id: "revision-1".into(),
+            text: "译文".into(),
+        }],
+        target_language: "zh-CN".into(),
+        configuration: vec![],
+        output_paths: vec!["FormatProbe.esp".into()],
+        output_limits: BuildOutputLimits {
+            max_artifacts: 1,
+            max_total_bytes: 4,
+        },
+    };
+    let output = ArtifactSet {
+        profile: profile(),
+        source_set_id: "source-set".into(),
+        target_language: "zh-CN".into(),
+        artifacts: vec![binary(&[0, 255, 128, 10])],
+    };
+    validate_build_artifacts(&input, &output).unwrap();
+    assert_eq!(
+        parse_artifact_set(&serde_json::to_vec(&output).unwrap()).unwrap(),
+        output
+    );
+    input.output_limits.max_total_bytes = 3;
+    assert_eq!(
+        validate_build_artifacts(&input, &output).unwrap_err().code,
+        ContractErrorCode::LimitExceeded
+    );
+}
+
+#[test]
+fn binary_input_is_bounded_before_decoding_or_emitting_a_capture() {
+    assert!(
+        CapturedArtifact::from_bytes(
+            "id".into(),
+            "file.bin".into(),
+            "source".into(),
+            &vec![0; MAX_EXCHANGE_BYTES + 1]
+        )
+        .is_err()
+    );
+    let mut value = serde_json::to_value(binary(&[])).unwrap();
+    value["base64"] = json!("A".repeat(MAX_EXCHANGE_BYTES.div_ceil(3) * 4 + 4));
+    assert_eq!(
+        serde_json::from_value::<CapturedArtifact>(value)
+            .unwrap()
+            .bytes()
+            .unwrap_err()
+            .code,
+        ContractErrorCode::LimitExceeded
+    );
+    let mut source = source();
+    source.artifacts[0] = binary(&vec![0; MAX_EXCHANGE_BYTES]);
+    // The existing encoded-envelope ceiling is independent of the raw limit.
+    assert_eq!(
+        source.validate().unwrap_err().code,
+        ContractErrorCode::LimitExceeded
+    );
+}

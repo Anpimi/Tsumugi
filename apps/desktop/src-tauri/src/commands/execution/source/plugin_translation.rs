@@ -478,7 +478,7 @@ pub async fn preflight_plugin_translation(
                     target_language: selected.request.target_locale.clone(),
                     language_evidence: sdk::TranslationLanguageEvidence::UserConfirmed,
                     native_scope: selected.request.native_scope.clone(),
-                    artifacts: vec![artifact],
+                    artifacts: vec![artifact.into()],
                 };
                 let fixed = settings
                     .fixed_input(project, material, execution_binding(&environment, false)?)

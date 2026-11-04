@@ -109,14 +109,14 @@ fn official_smapi_package_extracts_builds_and_checks_through_the_captured_host()
         let manifest = "{\"UniqueID\":\"Example.Mod\",\"Name\":\"Test\",\"Version\":\"1.0.0\",\"EntryDll\":\"Test.dll\"}";
         let raw = "\u{feff}{\r\n // retained 中文 😀\r\n \"MiX\\u0041\": \"Hi {{name}} 👩🏽‍💻 é\",\r\n \"same-a\": \"same\",\r\n \"same-b\": \"same\",\r\n \"empty\": \"\",\r\n \"$schema\": \"schema.json\",\r\n}\r\n";
         let input = SourceExtractionInput { profile: source_binding.declaration.profile.clone(), source_set_id: "synthetic-set".into(), source_language: "en".into(), artifacts: vec![
-            CapturedTextArtifact { id: "manifest".into(), logical_path: "manifest.json".into(), role: "companion".into(), sha256: payload_digest(manifest), utf8: manifest.into() },
-            CapturedTextArtifact { id: "default".into(), logical_path: "i18n/default.json".into(), role: "source".into(), sha256: payload_digest(raw), utf8: raw.into() },
+            CapturedTextArtifact { id: "manifest".into(), logical_path: "manifest.json".into(), role: "companion".into(), sha256: payload_digest(manifest), utf8: manifest.into() }.into(),
+            CapturedTextArtifact { id: "default".into(), logical_path: "i18n/default.json".into(), role: "source".into(), sha256: payload_digest(raw), utf8: raw.into() }.into(),
         ] };
         input.validate().unwrap();
         let mut extractor = launch(&image, "extract-source", temporary.path()).await;
         let extraction_channel = extractor.channel();
         let extracted = success_payload(invoke(&mut extractor, &source_binding.extractor, "extract-good", &serde_json::to_value(&input).unwrap()).await);
-        assert_eq!(extracted.schema, content_exchange_contract());
+        assert_eq!(extracted.schema, ContractRef { schema_version: 2, ..contract("tsumugi.content-exchange") });
         let exchange = parse_content_exchange(extracted.utf8.as_bytes()).unwrap();
         validate_source_extraction(&input, &exchange).unwrap();
         assert_eq!(exchange.artifacts, input.artifacts);
@@ -127,7 +127,7 @@ fn official_smapi_package_extracts_builds_and_checks_through_the_captured_host()
             assert_eq!(block.target, ContentTarget::Snapshot);
             assert_eq!(block.handling, ExtensionHandling::Required);
         }
-        let context = exchange.domain_blocks.iter().find(|block| block.schema == source_context_facts_contract()).unwrap();
+        let context = exchange.domain_blocks.iter().find(|block| block.schema == contract("tsumugi.source-context-facts")).unwrap();
         let facts = parse_source_context_block(context, &exchange.artifacts).unwrap();
         assert_eq!(facts.facts.len(), 1);
         let name = &facts.facts[0];
@@ -139,7 +139,7 @@ fn official_smapi_package_extracts_builds_and_checks_through_the_captured_host()
         assert_eq!(references.len(), 1);
         assert_eq!(references[0].artifact_id, "manifest");
         let range = &references[0].range;
-        assert_eq!(range.encoding, TextEncoding::Utf8Byte);
+        assert_eq!(range.encoding, SourceEncoding::Utf8Byte);
         assert_eq!(serde_json::from_slice::<String>(&manifest.as_bytes()[range.start as usize..range.end as usize]).unwrap(), name.text);
         let basis = exchange.domain_blocks.iter().find(|block| block.schema == contract("smapi.manifest-context-basis")).unwrap();
         assert_eq!(serde_json::from_str::<serde_json::Value>(&basis.payload_utf8).unwrap(), serde_json::json!({"version": 1, "name": "Test"}));
@@ -154,12 +154,12 @@ fn official_smapi_package_extracts_builds_and_checks_through_the_captured_host()
             assert_eq!(identity.policy, contract("smapi-native-key"));
             for (reference, expected) in [(&occurrence.source, unit.text.as_str()), (identity.display.source.as_ref().unwrap(), identity.display.value.as_str())] {
                 assert_eq!(reference.artifact_id, "default");
-                assert_eq!(reference.range.encoding, TextEncoding::Utf8Byte);
+                assert_eq!(reference.range.encoding, SourceEncoding::Utf8Byte);
                 let token = &raw.as_bytes()[reference.range.start as usize..reference.range.end as usize];
                 assert_eq!(serde_json::from_slice::<String>(token).unwrap(), expected);
             }
         }
-        let mut duplicate = input.clone(); duplicate.artifacts[1].utf8 = "{\"A\":\"first\",\"a\":\"second\"}".into(); duplicate.artifacts[1].sha256 = payload_digest(&duplicate.artifacts[1].utf8);
+        let mut duplicate = input.clone(); duplicate.artifacts[1].as_text_mut().unwrap().utf8 = "{\"A\":\"first\",\"a\":\"second\"}".into(); duplicate.artifacts[1].as_text_mut().unwrap().sha256 = payload_digest(&duplicate.artifacts[1].as_text().unwrap().utf8);
         let InvocationOutcome::Failed { error } = invoke(&mut extractor, &source_binding.extractor, "extract-case-conflict", &serde_json::to_value(duplicate).unwrap()).await else { panic!("duplicate native identity must fail"); };
         assert_eq!(error.schema, source_extraction_error_contract());
         assert_eq!(parse_source_extraction_error(error.utf8.as_bytes()).unwrap().code, SourceExtractionErrorCode::UnsupportedStructure);
@@ -190,14 +190,14 @@ fn official_smapi_package_extracts_builds_and_checks_through_the_captured_host()
         build_binding.validate_input(&build).unwrap();
         let mut builder = launch(&image, "build", temporary.path()).await;
         let built = success_payload(invoke(&mut builder, &build_binding.builder, "build-good", &serde_json::to_value(&build).unwrap()).await);
-        assert_eq!(built.schema, artifact_set_contract());
+        assert_eq!(built.schema, contract("tsumugi.artifact-set"));
         let artifacts = parse_artifact_set(built.utf8.as_bytes()).unwrap();
         build_binding.validate_artifacts(&build, &artifacts).unwrap();
         // Independent literal oracle: never derive expected bytes from builder.
         let expected = "{\n  \"MiXA\": \"你好 {{name}} 😀\",\n  \"same-a\": \"同じ\",\n  \"same-b\": \"同じ\",\n  \"empty\": \"\"\n}\n";
-        assert_eq!(artifacts.artifacts[0].utf8, expected);
-        assert_eq!(artifacts.artifacts[0].sha256, payload_digest(expected));
-        assert_eq!(artifacts.artifacts[0].logical_path, "i18n/zh.json");
+        assert_eq!(artifacts.artifacts[0].as_text().unwrap().utf8, expected);
+        assert_eq!(artifacts.artifacts[0].as_text().unwrap().sha256, payload_digest(expected));
+        assert_eq!(artifacts.artifacts[0].as_text().unwrap().logical_path, "i18n/zh.json");
         let mut stale = build.clone(); stale.targets[0].source_revision_id = "stale".into();
         let InvocationOutcome::Failed { error } = invoke(&mut builder, &build_binding.builder, "build-stale", &serde_json::to_value(stale).unwrap()).await else { panic!("stale revision must fail"); };
         assert_eq!(error.schema, build_error_contract());
@@ -213,7 +213,7 @@ fn official_smapi_package_extracts_builds_and_checks_through_the_captured_host()
         assert_ne!(checker.channel().instance.instance_id, extraction_channel.instance.instance_id);
         for (dispatch, replace) in [("artifact-good", None), ("artifact-forged", Some(("你好", "wrong"))), ("artifact-format", Some(("  \"MiXA\"", " \"MiXA\"")))] {
             let mut check = original.clone();
-            if let Some((from, to)) = replace { let artifact = &mut check.output.artifacts[0]; artifact.utf8 = artifact.utf8.replacen(from, to, 1); artifact.sha256 = payload_digest(&artifact.utf8); }
+            if let Some((from, to)) = replace { let artifact = check.output.artifacts[0].as_text_mut().unwrap(); artifact.utf8 = artifact.utf8.replacen(from, to, 1); artifact.sha256 = payload_digest(&artifact.utf8); }
             build_binding.validate_check_input(&check).unwrap();
             let value: Value = serde_json::to_value(check).unwrap();
             let received = invoke_received(&mut checker, &build_binding.checker, dispatch, &value).await;
@@ -243,13 +243,13 @@ fn official_smapi_translation_proposals_and_independent_checks_use_the_captured_
             target_language: "zh-CN".into(), language_evidence: TranslationLanguageEvidence::UserConfirmed,
             native_scope: TranslationNativeScope { namespace: "Example.Mod".into(), policy: contract("smapi-native-key") },
             artifacts: vec![CapturedTextArtifact { id: "translated-file".into(), logical_path: "i18n/zh.json".into(),
-                role: "translation".into(), sha256: payload_digest(raw), utf8: raw.into() }],
+                role: "translation".into(), sha256: payload_digest(raw), utf8: raw.into() }.into()],
         };
         binding.validate_input(&input).unwrap();
         let mut extractor = launch(&image, "import-translations", temporary.path()).await;
         let extraction_channel = extractor.channel();
         let extracted = success_payload(invoke(&mut extractor, &binding.extractor, "translation-good", &serde_json::to_value(&input).unwrap()).await);
-        assert_eq!(extracted.schema, translation_exchange_contract());
+        assert_eq!(extracted.schema, contract("tsumugi.translation-exchange"));
         let proposal = parse_translation_exchange(extracted.utf8.as_bytes()).unwrap();
         validate_translation_extraction(&input, &proposal).unwrap();
         assert_eq!(proposal.source_snapshot_id, input.source_snapshot_id);
@@ -265,7 +265,7 @@ fn official_smapi_translation_proposals_and_independent_checks_use_the_captured_
             assert_eq!(entry.native_identity.display.value, ["MiXA", "same-a", "same-b", "empty"][index]);
             for (source, expected) in [(&entry.source, entry.text.as_str()), (entry.native_identity.display.source.as_ref().unwrap(), entry.native_identity.display.value.as_str())] {
                 assert_eq!(source.artifact_id, "translated-file");
-                assert_eq!(source.range.encoding, TextEncoding::Utf8Byte);
+                assert_eq!(source.range.encoding, SourceEncoding::Utf8Byte);
                 assert_eq!(serde_json::from_slice::<String>(&raw.as_bytes()[source.range.start as usize..source.range.end as usize]).unwrap(), expected);
             }
         }
@@ -273,14 +273,14 @@ fn official_smapi_translation_proposals_and_independent_checks_use_the_captured_
             ("translation-default", "i18n/default.json", raw, SourceExtractionErrorCode::InvalidInput),
             ("translation-case-conflict", "i18n/zh.json", "{\"A\":\"first\",\"a\":\"second\"}", SourceExtractionErrorCode::UnsupportedStructure),
         ] {
-            let mut invalid = input.clone(); invalid.artifacts[0].logical_path = path.into();
-            invalid.artifacts[0].utf8 = text.into(); invalid.artifacts[0].sha256 = payload_digest(text);
+            let mut invalid = input.clone(); invalid.artifacts[0].as_text_mut().unwrap().logical_path = path.into();
+            invalid.artifacts[0].as_text_mut().unwrap().utf8 = text.into(); invalid.artifacts[0].as_text_mut().unwrap().sha256 = payload_digest(text);
             let InvocationOutcome::Failed { error } = invoke(&mut extractor, &binding.extractor, dispatch, &serde_json::to_value(invalid).unwrap()).await else { panic!("unsupported complete translation input must fail"); };
             assert_eq!(error.schema, source_extraction_error_contract());
             let error = parse_source_extraction_error(error.utf8.as_bytes()).unwrap();
             assert_eq!(error.code, expected); assert_eq!(error.artifact_id.as_deref(), Some("translated-file"));
         }
-        let mut empty = input.clone(); empty.artifacts[0].utf8 = "\u{feff}{}\r\n".into(); empty.artifacts[0].sha256 = payload_digest(&empty.artifacts[0].utf8);
+        let mut empty = input.clone(); empty.artifacts[0].as_text_mut().unwrap().utf8 = "\u{feff}{}\r\n".into(); empty.artifacts[0].as_text_mut().unwrap().sha256 = payload_digest(&empty.artifacts[0].as_text().unwrap().utf8);
         let empty_result = success_payload(invoke(&mut extractor, &binding.extractor, "translation-empty", &serde_json::to_value(&empty).unwrap()).await);
         let empty_proposal = parse_translation_exchange(empty_result.utf8.as_bytes()).unwrap();
         validate_translation_extraction(&empty, &empty_proposal).unwrap();

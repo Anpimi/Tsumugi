@@ -7,6 +7,8 @@
 
 Parsers reject unknown profiles, unknown or duplicate JSON fields, missing fields, and unsupported protocol or SDK versions.
 
+SDK `0.1.0-alpha.2` reads the exact environment descriptors of `0.1.0-alpha.1` with the same process protocol 3, preserving their original version and digest. Other SDK versions and process protocols remain unsupported. Reading a historical descriptor does not authorize execution: captured Node trees still require independent approval and digest checks, and native dispatch still requires the actual current Host identity. Contract payload versions are checked separately; an old text-only binding cannot receive binary artifacts.
+
 ## Node Runtime Profile (`node-system-libraries-v1`)
 
 `RuntimeEnvironmentDescriptor` records:

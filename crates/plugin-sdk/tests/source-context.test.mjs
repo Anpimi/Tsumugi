@@ -38,7 +38,7 @@ test('JavaScript limits and contract identity are generated from the exact Rust 
   assert.deepEqual(profile, actual);
   assert.throws(() => { profile.maxBytes++; }, TypeError);
   assert.throws(() => { profile.contract.schemaVersion++; }, TypeError);
-  assert.deepEqual(profile.contract, { id: 'tsumugi.source-context-facts', schemaVersion: 1, behaviorVersion: 1 });
+  assert.deepEqual(profile.contract, { id: 'tsumugi.source-context-facts', schemaVersion: 2, behaviorVersion: 1 });
 });
 
 test('missing origins, manual promotion, unknown fields and missing inference rationale are refused', () => {

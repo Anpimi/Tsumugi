@@ -249,6 +249,7 @@ fn captured_builders_need_each_locale_proof_and_preserve_original_release_after_
                     source_revision_id: row.source_revision_id,
                     expected_selection_id: row.selection_id,
                     text: text.into(),
+                    reuse_origin: None,
                 })
                 .unwrap();
             check_actual_review(
@@ -421,6 +422,7 @@ fn captured_builders_need_each_locale_proof_and_preserve_original_release_after_
             source_revision_id: row.source_revision_id,
             expected_selection_id: row.selection_id,
             text: "Later project edit".into(),
+            reuse_origin: None,
         })
         .unwrap();
     assert_eq!(store.release_view(release).unwrap(), original);

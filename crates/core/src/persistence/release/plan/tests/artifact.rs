@@ -35,10 +35,10 @@ fn saved_build_projection_is_read_only_and_preserves_unchecked_results_after_rev
     let plan = ReleasePlan::from_input(&input).unwrap();
     let actual = plan.artifact_set(&result).unwrap();
     for (summary, artifact) in output.artifacts.iter().zip(&actual.artifacts) {
-        assert_eq!(summary.logical_path, artifact.logical_path);
-        assert_eq!(summary.role, artifact.role);
-        assert_eq!(summary.sha256, artifact.sha256);
-        assert_eq!(summary.byte_length as usize, artifact.utf8.len());
+        assert_eq!(summary.logical_path, artifact.logical_path());
+        assert_eq!(summary.role, artifact.role());
+        assert_eq!(summary.sha256, artifact.sha256());
+        assert_eq!(summary.byte_length as usize, artifact.validated_bytes().unwrap().len());
     }
     assert!(saved.locales.iter().any(|locale| locale.result.is_none()));
     let recovery = store.execution_recovery(attempt, false).unwrap();
@@ -153,7 +153,7 @@ fn saved_build_projection_refuses_an_associated_but_wrong_locale_artifact_set() 
                     role: "deliverable".into(),
                     sha256: codec::digest(utf8.as_bytes()),
                     utf8,
-                }
+                }.into()
             })
             .collect(),
     };
@@ -521,7 +521,7 @@ fn builder_result(store: &mut ProjectStore, input: &FixedInput, item: ExecutionI
                 role: "locale".into(),
                 sha256: codec::digest(utf8.as_bytes()),
                 utf8,
-            }
+            }.into()
         })
         .collect();
     let output = sdk::ArtifactSet {
@@ -613,8 +613,8 @@ fn actual_artifacts_freeze_full_scope_and_need_separate_current_checker_grants()
             .sum::<usize>(),
         3
     );
-    assert!(payload.output.artifacts[0].utf8.starts_with('\u{feff}'));
-    assert!(payload.output.artifacts[0].utf8.ends_with("\r\n"));
+    assert!(payload.output.artifacts[0].as_text().unwrap().utf8.starts_with('\u{feff}'));
+    assert!(payload.output.artifacts[0].as_text().unwrap().utf8.ends_with("\r\n"));
     assert_eq!(payload.requirements.len(), 2);
     for r in &payload.requirements {
         assert_eq!(r.input_digest, input.digest());
@@ -692,7 +692,7 @@ fn generic_validator_and_corrupt_artifact_data_cannot_bypass_required_proof() {
         unreachable!()
     };
     let mut artifacts: sdk::ArtifactSet = serde_json::from_str(&output.utf8).unwrap();
-    artifacts.artifacts[0].utf8.push_str("changed");
+    artifacts.artifacts[0].as_text_mut().unwrap().utf8.push_str("changed");
     *output = sdk::EncodedPayload::capture(
         sdk::artifact_set_contract(),
         serde_json::to_string(&artifacts).unwrap(),

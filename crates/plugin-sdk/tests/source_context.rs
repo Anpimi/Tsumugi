@@ -62,7 +62,7 @@ fn explicit_origins_and_exact_source_bytes_survive_the_content_receiver() {
         facts.facts[1].origin,
         SourceContextFactOrigin::Inferred { .. }
     ));
-    assert_eq!(source_context_facts_contract().schema_version, 1);
+    assert_eq!(source_context_facts_contract().schema_version, 2);
     assert_eq!(source_context_facts_contract().behavior_version, 1);
     assert_eq!(source_context_facts_profile().max_facts, 32);
     assert_eq!(
@@ -217,7 +217,9 @@ fn captured_artifact_scope_and_unicode_coordinates_are_checked() {
     let artifact = source
         .artifacts
         .iter()
-        .find(|artifact| artifact.id == reference.artifact_id)
+        .find(|artifact| artifact.id() == reference.artifact_id)
+        .unwrap()
+        .as_text()
         .unwrap();
     let emoji = artifact.utf8.find('👩').unwrap() as u32;
     for range in [
@@ -235,7 +237,7 @@ fn captured_artifact_scope_and_unicode_coordinates_are_checked() {
         let mut value = original.clone();
         value.facts[0].origin = SourceContextFactOrigin::Extracted {
             sources: vec![SourceReference {
-                range,
+                range: range.into(),
                 ..reference.clone()
             }],
         };
@@ -244,11 +246,16 @@ fn captured_artifact_scope_and_unicode_coordinates_are_checked() {
             ContractErrorCode::InvalidRange
         );
     }
-    let range = convert_text_range(&artifact.utf8, reference.range, TextEncoding::Utf16).unwrap();
+    let range = convert_text_range(
+        &artifact.utf8,
+        reference.range.text_range().unwrap(),
+        TextEncoding::Utf16,
+    )
+    .unwrap();
     let mut value = original;
     value.facts[0].origin = SourceContextFactOrigin::Extracted {
         sources: vec![SourceReference {
-            range,
+            range: range.into(),
             ..reference.clone()
         }],
     };
@@ -264,7 +271,7 @@ fn supported_context_is_validated_without_reinterpreting_unknown_domain_blocks()
     source.domain_blocks.push(block.clone());
     assert!(source.validate().is_err());
     source.domain_blocks.pop();
-    block.schema.schema_version = 2;
+    block.schema.schema_version = source_context_facts_contract().schema_version + 1;
     block.payload_utf8 = "Unknown exact payload 👩🏽‍💻 é".into();
     source.domain_blocks.push(block.clone());
     source.validate().unwrap();

@@ -7,18 +7,18 @@ use crate::{
     execution::{codec, *},
 };
 use rusqlite::{Connection, params};
-pub(in crate::persistence) mod maintenance;
-pub(in crate::persistence) mod maintenance_hook;
 pub(in crate::persistence) mod decision_mappings;
-pub(in crate::persistence) mod validation_history;
-pub(in crate::persistence) mod lineage_corrections;
-mod publication;
-#[cfg(test)]
-mod observation_tests;
-#[cfg(test)]
-mod start_fence_tests;
 #[cfg(test)]
 mod hook_observation_tests;
+pub(in crate::persistence) mod lineage_corrections;
+pub(in crate::persistence) mod maintenance;
+pub(in crate::persistence) mod maintenance_hook;
+#[cfg(test)]
+mod observation_tests;
+mod publication;
+#[cfg(test)]
+mod start_fence_tests;
+pub(in crate::persistence) mod validation_history;
 
 const TABLES:&[(&str,&str)]=&[
     ("source_sets","CREATE TABLE source_sets (
@@ -88,7 +88,11 @@ const LINEAGE_EVIDENCE_TABLE: &str = "CREATE TABLE source_lineage_evidence (
 pub(super) fn maintenance_table_names() -> Vec<String> {
     let mut names = vec!["source_lineage".into(), "source_lineage_evidence".into()];
     names.push(validation_history::TABLE.into());
-    names.extend(lineage_corrections::TABLES.iter().map(|(name,_)|name.to_string()));
+    names.extend(
+        lineage_corrections::TABLES
+            .iter()
+            .map(|(name, _)| name.to_string()),
+    );
     names.extend(
         maintenance_hook::TABLES
             .iter()
@@ -200,11 +204,11 @@ pub(super) fn read_bundle(
     for file in &source.artifacts {
         let (path,role,bytes,digest):(String,String,Vec<u8>,String)=connection.query_row(
             "SELECT logical_path,role,CASE WHEN length(bytes)<=1048576 THEN bytes END,digest FROM source_files WHERE set_id=?1 AND artifact_id=?2",
-            params![set.to_string(),file.id],|r|Ok((r.get(0)?,r.get(1)?,r.get(2)?,r.get(3)?))).map_err(sql_error)?;
-        if path != file.logical_path
-            || role != file.role
-            || bytes != file.utf8.as_bytes()
-            || digest != file.sha256
+            params![set.to_string(),file.id()],|r|Ok((r.get(0)?,r.get(1)?,r.get(2)?,r.get(3)?))).map_err(sql_error)?;
+        if path != file.logical_path()
+            || role != file.role()
+            || bytes != file.validated_bytes().map_err(|_| corrupt())?.as_ref()
+            || digest != file.sha256()
         {
             return Err(corrupt());
         }
@@ -258,7 +262,7 @@ pub(super) fn record_input(
                     bundle.set_id.to_string(),
                     f.logical_path,
                     f.role,
-                    f.utf8.as_bytes(),
+                    f.bytes()?.as_ref(),
                     f.sha256
                 ],
             )
@@ -268,9 +272,15 @@ pub(super) fn record_input(
 }
 pub(super) fn validate(connection: &Connection) -> Result<(), ExecutionError> {
     maintenance_hook::validate(connection)?;
-    let version: i64 = connection.pragma_query_value(None, "user_version", |r| r.get(0)).map_err(sql_error)?;
-    if version >= 69 { validation_history::validate(connection)?; }
-    if version >= 70 { lineage_corrections::validate(connection)?; }
+    let version: i64 = connection
+        .pragma_query_value(None, "user_version", |r| r.get(0))
+        .map_err(sql_error)?;
+    if version >= 69 {
+        validation_history::validate(connection)?;
+    }
+    if version >= 70 {
+        lineage_corrections::validate(connection)?;
+    }
     for (name, sql) in TABLES {
         let actual: String = connection
             .query_row(
@@ -416,8 +426,13 @@ pub(super) fn validate(connection: &Connection) -> Result<(), ExecutionError> {
                 old_basis,
                 old_occurrence,
             ) = row.map_err(sql_error)?;
-            let frozen=lineage_corrections::frozen_predecessor(connection,id(next.clone())?,id(old_occurrence)?)?;
-            let old_unit=frozen.0.to_string();let old_revision=frozen.1.to_string();
+            let frozen = lineage_corrections::frozen_predecessor(
+                connection,
+                id(next.clone())?,
+                id(old_occurrence)?,
+            )?;
+            let old_unit = frozen.0.to_string();
+            let old_revision = frozen.1.to_string();
             if !matches!((snapshot_revisions.get(&id(old)?),snapshot_revisions.get(&id(next)?)), (Some(old),Some(next)) if old < next)
                 || namespace != old_namespace
                 || (relation == "unchanged"
@@ -472,7 +487,10 @@ pub(super) fn validate(connection: &Connection) -> Result<(), ExecutionError> {
             ) = edge.map_err(sql_error)?;
             let next = id(next)?;
             let old = id(old)?;
-            let old_unit=lineage_corrections::frozen_predecessor(connection,next,id(old_occurrence)?)?.0.to_string();
+            let old_unit =
+                lineage_corrections::frozen_predecessor(connection, next, id(old_occurrence)?)?
+                    .0
+                    .to_string();
             if !matches!((snapshot_revisions.get(&old), snapshot_revisions.get(&next)), (Some(old), Some(next)) if old < next)
                 || next_namespace != old_namespace
                 || policy != captured_policy
@@ -503,10 +521,13 @@ pub(super) fn check_result_reference(
 ) -> Result<(), ExecutionError> {
     let (_, (input, result, _, _)) = snapshot_rows(connection, snapshot, true)?;
     let present:bool=connection.query_row("SELECT EXISTS(SELECT 1 FROM source_binding_history WHERE snapshot_id=?1 AND unit_id=?2 AND revision_id=?3)",params![snapshot.to_string(),unit.to_string(),revision.to_string()],|r|r.get(0)).map_err(sql_error)?;
-    if input.envelope().project_id != project || input.envelope().attempt_id != attempt
+    if input.envelope().project_id != project
+        || input.envelope().attempt_id != attempt
         || result.envelope().result_id != result_id
         || !present
-    { return Err(failure(ErrorCode::Unauthorized, "source-result-reference")); }
+    {
+        return Err(failure(ErrorCode::Unauthorized, "source-result-reference"));
+    }
     Ok(())
 }
 
@@ -1018,31 +1039,58 @@ fn compare_rows(old: &[ContentRow], new: &[SourceOccurrence]) -> Vec<SourceChang
 }
 impl ProjectStore {
     pub fn source_import_start_action_read(
-        &self, request: &SourceImportStart,
+        &self,
+        request: &SourceImportStart,
     ) -> Result<Option<SourceImportStartRead>, ExecutionError> {
         let found = self.source_import_start_request_observation(request)?;
-        if self.is_reconciling() { self.reconcile_execution()?; }
+        if self.is_reconciling() {
+            self.reconcile_execution()?;
+        }
         Ok(found)
     }
     pub fn source_import_start_request_observation(
-        &self, request: &SourceImportStart,
+        &self,
+        request: &SourceImportStart,
     ) -> Result<Option<SourceImportStartRead>, ExecutionError> {
         request.validate()?;
         let found = super::review::read_snapshot(
-            self.connection().map_err(|_| failure(ErrorCode::StorageFailed, "source-start-read"))?, |connection| {
-            if super::read_metadata_from(connection).map_err(|_| corrupt())?.project_id().to_string() != request.project_id.to_string() {
-                return Err(failure(ErrorCode::Unauthorized, "source-start-project"));
-            }
-            let exists: bool = connection.query_row("SELECT EXISTS(SELECT 1 FROM execution_attempts WHERE attempt_id=?1)",
-                [request.attempt_id.to_string()], |row| row.get(0)).map_err(sql_error)?;
-            if !exists { return Ok(None); }
-            let input = load_input(connection, request.attempt_id)?;
-            let saved = SourceImportStart::from_input(&input)?;
-            if saved != *request { return Err(failure(ErrorCode::ResultMismatch, "source-start-request")); }
-            let bundle = SourceBundle::from_input(&input)?;
-            if read_bundle(connection, bundle.set_id)? != bundle.source_input() { return Err(corrupt()); }
-            Ok(Some(SourceImportStartRead { request: saved, task_id: input.envelope().task_id, input_digest: input.digest().into() }))
-        })?;
+            self.connection()
+                .map_err(|_| failure(ErrorCode::StorageFailed, "source-start-read"))?,
+            |connection| {
+                if super::read_metadata_from(connection)
+                    .map_err(|_| corrupt())?
+                    .project_id()
+                    .to_string()
+                    != request.project_id.to_string()
+                {
+                    return Err(failure(ErrorCode::Unauthorized, "source-start-project"));
+                }
+                let exists: bool = connection
+                    .query_row(
+                        "SELECT EXISTS(SELECT 1 FROM execution_attempts WHERE attempt_id=?1)",
+                        [request.attempt_id.to_string()],
+                        |row| row.get(0),
+                    )
+                    .map_err(sql_error)?;
+                if !exists {
+                    return Ok(None);
+                }
+                let input = load_input(connection, request.attempt_id)?;
+                let saved = SourceImportStart::from_input(&input)?;
+                if saved != *request {
+                    return Err(failure(ErrorCode::ResultMismatch, "source-start-request"));
+                }
+                let bundle = SourceBundle::from_input(&input)?;
+                if read_bundle(connection, bundle.set_id)? != bundle.source_input() {
+                    return Err(corrupt());
+                }
+                Ok(Some(SourceImportStartRead {
+                    request: saved,
+                    task_id: input.envelope().task_id,
+                    input_digest: input.digest().into(),
+                }))
+            },
+        )?;
         Ok(found)
     }
     pub fn source_bundle(&self, snapshot: ExecutionId) -> Result<SourceBundle, ExecutionError> {
@@ -1116,7 +1164,10 @@ impl ProjectStore {
             output,
             scope(connection)?,
             rows,
-            scope(connection)?.current_snapshot.map(|snapshot|lineage_corrections::mapping_revision(connection,snapshot)).transpose()?,
+            scope(connection)?
+                .current_snapshot
+                .map(|snapshot| lineage_corrections::mapping_revision(connection, snapshot))
+                .transpose()?,
             after,
             limit,
         )
@@ -1132,7 +1183,7 @@ impl ProjectStore {
             .map_err(|_| failure(ErrorCode::StorageFailed, "source-read"))?;
         let (_, (input, result, output, mut rows)) = snapshot_rows(connection, snapshot, true)?;
         if scope(connection)?.current_snapshot == Some(snapshot) {
-            lineage_corrections::effective_rows(connection,&mut rows)?;
+            lineage_corrections::effective_rows(connection, &mut rows)?;
         }
         page(
             Some(snapshot),
@@ -1141,7 +1192,10 @@ impl ProjectStore {
             output,
             scope(connection)?,
             rows,
-            scope(connection)?.current_snapshot.map(|snapshot|lineage_corrections::mapping_revision(connection,snapshot)).transpose()?,
+            scope(connection)?
+                .current_snapshot
+                .map(|snapshot| lineage_corrections::mapping_revision(connection, snapshot))
+                .transpose()?,
             after,
             limit,
         )
@@ -1175,8 +1229,9 @@ impl ProjectStore {
             .current_snapshot
             .ok_or_else(|| failure(ErrorCode::DependencyConflict, "source-missing"))?;
         let previous = base.unwrap_or(current);
-        let (_, (old_input, _, old_output, mut old_rows)) = snapshot_rows(connection, previous, true)?;
-        lineage_corrections::effective_rows(connection,&mut old_rows)?;
+        let (_, (old_input, _, old_output, mut old_rows)) =
+            snapshot_rows(connection, previous, true)?;
+        lineage_corrections::effective_rows(connection, &mut old_rows)?;
         let input = self.execution_input(attempt)?;
         let result = self.execution_result(attempt, result)?;
         let output = validate_output(&input, &result)?;
@@ -1198,7 +1253,9 @@ impl ProjectStore {
             result_id: result.envelope().result_id,
             previous_snapshot_id: previous,
             confirmation: SourceConfirmation {
-                expected_mapping_revision: Some(lineage_corrections::mapping_revision(connection,current)?),
+                expected_mapping_revision: Some(lineage_corrections::mapping_revision(
+                    connection, current,
+                )?),
                 maintenance_hook: None,
                 result_digest: result.digest().into(),
                 identity_policy: output.identity_policy.clone(),
@@ -1276,32 +1333,58 @@ pub(in crate::persistence) fn check_adoption_scope(
     project: ExecutionId,
     confirmation: &SourceConfirmation,
 ) -> Result<(i64, Option<String>), ExecutionError> {
-    let (revision, current): (i64, Option<String>) = c.query_row(
-        "SELECT revision,current_snapshot FROM content_scope WHERE row_id=1", [],
-        |r| Ok((r.get(0)?, r.get(1)?)),
-    ).map_err(sql_error)?;
+    let (revision, current): (i64, Option<String>) = c
+        .query_row(
+            "SELECT revision,current_snapshot FROM content_scope WHERE row_id=1",
+            [],
+            |r| Ok((r.get(0)?, r.get(1)?)),
+        )
+        .map_err(sql_error)?;
     if revision as u64 != confirmation.expected_content_revision.get() {
-        return Err(failure(ErrorCode::DependencyConflict, "stale-preview").with_conflict(
-            ConflictEvidence::ContentRevision {
-                expected: confirmation.expected_content_revision,
-                current: Revision::new(u64::try_from(revision).map_err(|_| corrupt())?)?,
-            },
-        ));
+        return Err(
+            failure(ErrorCode::DependencyConflict, "stale-preview").with_conflict(
+                ConflictEvidence::ContentRevision {
+                    expected: confirmation.expected_content_revision,
+                    current: Revision::new(u64::try_from(revision).map_err(|_| corrupt())?)?,
+                },
+            ),
+        );
     }
-    let actual = current.as_deref().map(|value| id(value.to_owned())).transpose()?;
+    let actual = current
+        .as_deref()
+        .map(|value| id(value.to_owned()))
+        .transpose()?;
     if actual != confirmation.expected_current_snapshot {
-        return Err(failure(ErrorCode::DependencyConflict, "stale-preview").with_conflict(
-            ConflictEvidence::SourceSnapshot { expected: confirmation.expected_current_snapshot, current: actual },
+        return Err(
+            failure(ErrorCode::DependencyConflict, "stale-preview").with_conflict(
+                ConflictEvidence::SourceSnapshot {
+                    expected: confirmation.expected_current_snapshot,
+                    current: actual,
+                },
+            ),
+        );
+    }
+    let mapping = actual
+        .map(|snapshot| lineage_corrections::mapping_revision(c, snapshot))
+        .transpose()?
+        .map_or(0, Revision::get);
+    if confirmation
+        .expected_mapping_revision
+        .map_or(0, Revision::get)
+        != mapping
+    {
+        return Err(failure(
+            ErrorCode::DependencyConflict,
+            "source-mapping-stale",
         ));
     }
-    let mapping = actual.map(|snapshot|lineage_corrections::mapping_revision(c,snapshot)).transpose()?.map_or(0,Revision::get);
-    if confirmation.expected_mapping_revision.map_or(0,Revision::get) != mapping {
-        return Err(failure(ErrorCode::DependencyConflict,"source-mapping-stale"));
-    }
-    let (saved_project, language): (String, String) = c.query_row(
-        "SELECT project_id,source_locale FROM project_metadata WHERE row_id=1", [],
-        |r| Ok((r.get(0)?, r.get(1)?)),
-    ).map_err(sql_error)?;
+    let (saved_project, language): (String, String) = c
+        .query_row(
+            "SELECT project_id,source_locale FROM project_metadata WHERE row_id=1",
+            [],
+            |r| Ok((r.get(0)?, r.get(1)?)),
+        )
+        .map_err(sql_error)?;
     if saved_project != project.to_string() || language != confirmation.source_language {
         return Err(failure(ErrorCode::DependencyConflict, "language-conflict"));
     }
@@ -1519,9 +1602,16 @@ fn apply_update(
         ],
     )?;
     let mut used_units = std::collections::BTreeMap::<String, String>::new();
-    for predecessor in std::collections::BTreeSet::from([previous,base]) {
-        let mapping=lineage_corrections::mapping_revision(tx.connection(),predecessor)?;
-        tx.execute("INSERT INTO source_snapshot_mapping_bases VALUES(?1,?2,?3)",params![snapshot.to_string(),predecessor.to_string(),mapping.get() as i64])?;
+    for predecessor in std::collections::BTreeSet::from([previous, base]) {
+        let mapping = lineage_corrections::mapping_revision(tx.connection(), predecessor)?;
+        tx.execute(
+            "INSERT INTO source_snapshot_mapping_bases VALUES(?1,?2,?3)",
+            params![
+                snapshot.to_string(),
+                predecessor.to_string(),
+                mapping.get() as i64
+            ],
+        )?;
     }
     for sdk_unit in &output.exchange.units {
         let group: Vec<_> = output
@@ -1750,7 +1840,8 @@ impl AdoptionHandler for SourceAdoptionHandler {
             let input = &input;
             let action = &action;
             let result = &result;
-            let (revision, current) = check_adoption_scope(tx.connection(), action.project_id, &confirmation)?;
+            let (revision, current) =
+                check_adoption_scope(tx.connection(), action.project_id, &confirmation)?;
             let project = action.project_id.to_string();
             maintenance_hook::check_available(tx, &confirmation)?;
             let (stored_project,stored,digest):(String,Vec<u8>,String)=tx.query_row("SELECT project_id,CASE WHEN length(payload)<=1048576 THEN payload END,digest FROM source_sets WHERE set_id=?1",[bundle.set_id.to_string()],|r|Ok((r.get(0)?,r.get(1)?,r.get(2)?)))?;
@@ -1775,7 +1866,7 @@ impl AdoptionHandler for SourceAdoptionHandler {
                 let (path,role,bytes,digest):(String,String,Vec<u8>,String)=tx.query_row("SELECT logical_path,role,CASE WHEN length(bytes)<=1048576 THEN bytes END,digest FROM source_files WHERE set_id=?1 AND artifact_id=?2",params![bundle.set_id.to_string(),f.artifact_id.to_string()],|r|Ok((r.get(0)?,r.get(1)?,r.get(2)?,r.get(3)?)))?;
                 if path != f.logical_path
                     || role != f.role
-                    || bytes != f.utf8.as_bytes()
+                    || bytes != f.bytes()?.as_ref()
                     || digest != f.sha256
                 {
                     return Err(corrupt());

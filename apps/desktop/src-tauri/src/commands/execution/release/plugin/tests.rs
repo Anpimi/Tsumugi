@@ -2,6 +2,15 @@ use super::*;
 use serde_json::{Value, json};
 
 #[test]
+fn binary_artifact_review_reports_original_byte_size_and_digest() {
+    let artifact = sdk::CapturedArtifact::from_bytes("output".into(), "records.bin".into(), "translation".into(), &[0, 255, 128, 10]).unwrap();
+    let view = CheckedArtifact::capture(artifact).unwrap();
+    assert_eq!(view.byte_length, 4);
+    assert_eq!(view.logical_path, "records.bin");
+    assert_eq!(view.sha256, sdk::artifact_bytes_digest(&[0, 255, 128, 10]));
+}
+
+#[test]
 fn dropped_prepare_caller_still_releases_its_owned_failed_job() {
     use std::{
         future::Future,

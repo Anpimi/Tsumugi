@@ -3061,6 +3061,16 @@
         ],
         "type": "object"
       },
+      "SourceEncoding": {
+        "description": "Source coordinates are separate from ranges in decoded unit/target text.",
+        "enum": [
+          "utf8-byte",
+          "utf16",
+          "grapheme",
+          "raw-byte"
+        ],
+        "type": "string"
+      },
       "SourceFactBasis": {
         "additionalProperties": false,
         "properties": {
@@ -3085,36 +3095,11 @@
         ],
         "type": "object"
       },
-      "SourceReference": {
+      "SourceRange": {
         "additionalProperties": false,
-        "properties": {
-          "artifactId": {
-            "type": "string"
-          },
-          "range": {
-            "$ref": "#/definitions/TextRange"
-          }
-        },
-        "required": [
-          "artifactId",
-          "range"
-        ],
-        "type": "object"
-      },
-      "TextEncoding": {
-        "enum": [
-          "utf8-byte",
-          "utf16",
-          "grapheme"
-        ],
-        "type": "string"
-      },
-      "TextRange": {
-        "additionalProperties": false,
-        "description": "Half-open offsets into one exact string, never between different strings.",
         "properties": {
           "encoding": {
-            "$ref": "#/definitions/TextEncoding"
+            "$ref": "#/definitions/SourceEncoding"
           },
           "end": {
             "maximum": 4294967295,
@@ -3131,6 +3116,22 @@
           "encoding",
           "start",
           "end"
+        ],
+        "type": "object"
+      },
+      "SourceReference": {
+        "additionalProperties": false,
+        "properties": {
+          "artifactId": {
+            "type": "string"
+          },
+          "range": {
+            "$ref": "#/definitions/SourceRange"
+          }
+        },
+        "required": [
+          "artifactId",
+          "range"
         ],
         "type": "object"
       },

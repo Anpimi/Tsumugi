@@ -1,13 +1,15 @@
 # Existing Translation Import Contracts
 
-The SDK provides four schema/behavior `1/1` contracts for importing and verifying existing translations from domain files:
+The SDK provides these contracts for importing and verifying existing translations from domain files:
 
-- `tsumugi.translation-extraction-input` (`TranslationExtractionInput`)
-- `tsumugi.translation-exchange` (`TranslationExchange`)
-- `tsumugi.translation-extraction-check-input` (`TranslationExtractionCheckInput`)
-- `tsumugi.translation-import-declaration` (`TranslationImportDeclaration`)
+- `tsumugi.translation-extraction-input/2/1` (`TranslationExtractionInput`)
+- `tsumugi.translation-exchange/2/1` (`TranslationExchange`)
+- `tsumugi.translation-extraction-check-input/2/1` (`TranslationExtractionCheckInput`)
+- `tsumugi.translation-import-declaration/1/1` (`TranslationImportDeclaration`)
 
 These contracts share artifact, native identity, text range, provider binding, and check coverage types with [source extraction](source-extraction.md), and reuse `tsumugi.source-extraction-error` for extraction failures.
+
+The supported schema-1 extraction input, translation exchange and checker input remain a complete text-only family. `TranslationImportBinding` accepts those exact schemas without rewriting historical captures, rejects mixed or unknown versions, and refuses binary artifacts under a schema-1 binding. Payload support does not itself grant filesystem access or add a material-selection workflow.
 
 ## Extraction Input and Proposal (`TranslationExtractionInput` & `TranslationExchange`)
 
@@ -17,13 +19,13 @@ These contracts share artifact, native identity, text range, provider binding, a
 - The current project `sourceSetId` and `sourceSnapshotId`.
 - The explicit `targetLanguage` and `languageEvidence` (`user-confirmed`), which the application verifies against the project's registered target languages before invoking the plugin (a locale hint in a filename such as `zh.json` is kept distinct from a canonical project target language such as `zh-CN`).
 - `nativeScope`: the namespace and native-identity policy captured from the project's adopted source.
-- The captured UTF-8 translation source `artifacts` (with SHA-256 digests and relative logical paths).
+- The captured text or binary translation source `artifacts` (with original-byte SHA-256 digests and relative logical paths).
 
 `TranslationExchange` (up to 2 MiB encoded) returns:
 
 - The unmodified input artifacts and metadata, plus the domain file's `declaredLanguage`.
 - `entries` (up to 2,000 `ImportedTranslation` items) and a complete `order` array.
-- Each `ImportedTranslation` contains a unique operation-local ID, decoded translation text (up to 16 KiB; `""` is a valid empty string), a `SourceReference` pointing to a valid Unicode scalar range in the captured artifact, and `NativeIdentityEvidence` (canonical `value` plus original `display` spelling/reference) matching the input's `nativeScope`.
+- Each `ImportedTranslation` contains a unique operation-local ID, decoded translation text (up to 16 KiB; `""` is a valid empty string), a `SourceReference` with representation-appropriate original source coordinates, and `NativeIdentityEvidence` (canonical `value` plus original `display` spelling/reference) matching the input's `nativeScope`.
 
 `validate_translation_extraction` verifies that `TranslationExchange` preserves the input scope and artifacts, that all entry IDs and `order` match 1-to-1, and that all source references and native identities are well-formed.
 

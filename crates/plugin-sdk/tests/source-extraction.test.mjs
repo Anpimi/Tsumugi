@@ -18,6 +18,52 @@ const readJSON = path => JSON.parse(readFileSync(path, 'utf8'));
 const invoke = (...args) => execFileSync(binary, args, { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] });
 const digest = text => createHash('sha256').update(text, 'utf8').digest('hex');
 
+test('binary bytes and raw source ranges cross the generated schema and Rust receiver', () => {
+  const input = readJSON(fixture('source-extraction.input.json'));
+  const content = readJSON(fixture('webvtt.content.json'));
+  const bytes = Buffer.from([0, 255, 128, 10]);
+  const artifact = input.artifacts[0];
+  delete artifact.utf8;
+  artifact.base64 = bytes.toString('base64');
+  artifact.sha256 = createHash('sha256').update(bytes).digest('hex');
+  content.body.data.artifacts = structuredClone(input.artifacts);
+  let mapped = 0;
+  const mapReferences = value => {
+    if (!value || typeof value !== 'object') return;
+    if (value.artifactId && value.range) {
+      value.range = { encoding: 'raw-byte', start: 1, end: 3 };
+      mapped += 1;
+    }
+    for (const child of Object.values(value)) mapReferences(child);
+  };
+  mapReferences(content.body.data);
+  assert.ok(mapped > 0);
+  assert.equal(validateSourceInput(input), true);
+  for (const extra of [{ utf8: 'mixed' }, { utf8: null }, { unknown: true }]) {
+    const invalid = structuredClone(input);
+    Object.assign(invalid.artifacts[0], extra);
+    assert.equal(validateSourceInput(invalid), false);
+  }
+  const temporary = mkdtempSync(join(tmpdir(), 'tsumugi-binary-contract-'));
+  try {
+    const capture = join(temporary, 'input.json');
+    const proposal = join(temporary, 'proposal.json');
+    writeFileSync(capture, JSON.stringify(input));
+    writeFileSync(proposal, JSON.stringify(content));
+    assert.deepEqual(JSON.parse(invoke('validate-source-extraction-input', capture)), input);
+    assert.deepEqual(JSON.parse(invoke('match-source-extraction', capture, proposal)), content);
+    const changed = structuredClone(input);
+    changed.artifacts[0].base64 = Buffer.from([0, 255, 128, 11]).toString('base64');
+    writeFileSync(capture, JSON.stringify(changed));
+    assert.throws(() => invoke('validate-source-extraction-input', capture));
+    changed.artifacts[0].base64 = 'AB=='; // Noncanonical trailing bits.
+    writeFileSync(capture, JSON.stringify(changed));
+    assert.throws(() => invoke('validate-source-extraction-input', capture));
+  } finally {
+    rmSync(temporary, { recursive: true, force: true });
+  }
+});
+
 test('JavaScript source capture retains Unicode bytes through the Rust receiver', () => {
   const input = readJSON(fixture('source-extraction.input.json'));
   const content = readJSON(fixture('webvtt.content.json'));

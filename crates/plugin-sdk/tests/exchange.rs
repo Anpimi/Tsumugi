@@ -86,8 +86,20 @@ fn two_domain_content_frames_preserve_raw_artifacts_and_explicit_order() {
         assert_eq!(original.artifacts.len(), artifacts);
         verify_content_preservation(&original, &content(&bytes), &[]).unwrap();
     }
-    assert!(content(SMAPI).artifacts[1].utf8.starts_with('\u{feff}'));
-    assert!(content(WEBVTT).artifacts[0].utf8.contains("\r\n"));
+    assert!(
+        content(SMAPI).artifacts[1]
+            .as_text()
+            .unwrap()
+            .utf8
+            .starts_with('\u{feff}')
+    );
+    assert!(
+        content(WEBVTT).artifacts[0]
+            .as_text()
+            .unwrap()
+            .utf8
+            .contains("\r\n")
+    );
 }
 
 #[test]
@@ -126,8 +138,9 @@ fn unknown_required_blocks_are_readable_but_interpretation_and_loss_are_rejected
         .push(' ');
     assert!(verify_content_preservation(&original, &edited, &required).is_err());
     edited = original.clone();
-    edited.artifacts[0].utf8.push(' ');
-    edited.artifacts[0].sha256 = payload_digest(&edited.artifacts[0].utf8);
+    edited.artifacts[0].as_text_mut().unwrap().utf8.push(' ');
+    edited.artifacts[0].as_text_mut().unwrap().sha256 =
+        payload_digest(&edited.artifacts[0].as_text().unwrap().utf8);
     assert!(verify_content_preservation(&original, &edited, &required).is_err());
     // Optional interpretation is not a license to discard an unknown payload.
     let mut optional = original.clone();

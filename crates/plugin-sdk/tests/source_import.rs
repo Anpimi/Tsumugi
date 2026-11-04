@@ -10,6 +10,27 @@ fn review() -> ReviewDeclaration {
 fn manifest() -> PluginManifest {
     serde_json::from_slice(include_bytes!("fixtures/source-import.manifest.json")).unwrap()
 }
+
+#[test]
+fn source_import_material_encoding_is_explicit_and_closed() {
+    let mut declared = declaration();
+    declared.materials[0].encoding = SourceMaterialEncoding::Binary;
+    declared
+        .bind(&manifest().validate().unwrap(), &"a".repeat(64), &review())
+        .unwrap();
+    let valid = serde_json::to_value(declared).unwrap();
+    for encoding in [json!(null), json!("latin-1"), json!(false)] {
+        let mut invalid = valid.clone();
+        invalid["materials"][0]["encoding"] = encoding;
+        assert!(parse_source_import_declaration(&serde_json::to_vec(&invalid).unwrap()).is_err());
+    }
+    let mut missing = valid;
+    missing["materials"][0]
+        .as_object_mut()
+        .unwrap()
+        .remove("encoding");
+    assert!(parse_source_import_declaration(&serde_json::to_vec(&missing).unwrap()).is_err());
+}
 #[test]
 fn source_import_binds_both_providers_without_execution_authority() {
     let binding = declaration()
@@ -127,7 +148,7 @@ fn source_import_strict_parser_rejects_duplicates_unknown_fields_and_large_input
 
 #[test]
 fn source_import_requires_the_named_review_resource_and_exact_profile() {
-    assert_eq!(source_import_declaration_contract().schema_version, 2);
+    assert_eq!(source_import_declaration_contract().schema_version, 3);
     assert_eq!(source_import_declaration_contract().behavior_version, 2);
     let mut d = declaration();
     d.review_resource = "missing".into();

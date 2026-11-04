@@ -92,8 +92,8 @@ fn adopted_capture_preserves_original_source_and_exact_identity_without_writes()
     assert_eq!(captured.review_basis(), target.basis);
     assert_ne!(captured.basis(), target.basis);
     let input = captured.domain_input();
-    assert_eq!(input.source.artifacts[0].utf8, "same\nsame");
-    assert_eq!(input.source.artifacts[1].utf8, "opaque companion");
+    assert_eq!(input.source.artifacts[0].as_text().unwrap().utf8, "same\nsame");
+    assert_eq!(input.source.artifacts[1].as_text().unwrap().utf8, "opaque companion");
     assert_eq!(input.source.units.len(), 2);
     assert_eq!(
         input.source.order,

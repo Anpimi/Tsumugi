@@ -1,6 +1,8 @@
 # Source Context Facts
 
-The `tsumugi.source-context-facts/1/1` contract defines a structured `DomainBlock` payload for attaching source-derived contextual facts to a `ContentExchange` snapshot, unit, or occurrence.
+The `tsumugi.source-context-facts/2/1` contract defines a structured `DomainBlock` payload for attaching source-derived contextual facts to a `ContentExchange` snapshot, unit, or occurrence.
+
+The exact `1/1` profile remains readable with its original Unicode source coordinates. `is_source_context_facts_contract` identifies these two supported profiles; `parse_source_context_block` rejects raw-byte coordinates under `1/1` and rejects unknown versions. Historical facts retain their original block schema and payload bytes.
 
 ## Data Model and Origins
 
@@ -15,7 +17,7 @@ Each fact in a `tsumugi.source-context-facts` block includes:
 
 User-authored project context is managed separately by Core's project revision store rather than through `source-context-facts` blocks.
 
-Every `SourceReference` specifies a captured artifact ID and a non-empty half-open `TextRange` (`utf8-byte`, `utf16`, or `grapheme`). When validating a `ContentExchange`, the receiver verifies that every referenced artifact exists in the exchange and that every range aligns with valid Unicode scalar or grapheme boundaries via the SDK's text coordinate converter.
+Every `SourceReference` specifies a captured artifact ID and a non-empty half-open `SourceRange`. Text uses `utf8-byte`, `utf16` or `grapheme` with exact Unicode boundaries. Binary uses `raw-byte` within the original bytes. The shared source-coordinate validator checks the artifact, representation and range together.
 
 ## Constructing and Parsing Context Blocks
 
@@ -50,9 +52,9 @@ In Rust:
 
 - `parse_source_context_facts` validates the standalone JSON payload against the `1/1` schema and byte limits.
 - `parse_source_context_block` additionally verifies the `DomainBlock` contract reference and resolves all `SourceReference` coordinates against the captured source artifacts.
-- `ContentExchange::validate` automatically validates any `tsumugi.source-context-facts/1/1` blocks present in a `ContentExchange` while preserving the original `payloadUtf8` bytes (including whitespace). Malformed `1/1` blocks fail validation rather than falling back to unknown-extension handling. An empty `facts: []` array represents an explicit empty observation.
+- `ContentExchange::validate` automatically validates any `tsumugi.source-context-facts/2/1` blocks present in a `ContentExchange` while preserving the original `payloadUtf8` bytes (including whitespace). Malformed `1/1` blocks fail validation rather than falling back to unknown-extension handling. An empty `facts: []` array represents an explicit empty observation.
 
-If a domain profile treats context facts as part of a unit's semantic revision identity, its `SourceRevisionPolicy.revisionBasis` must list `tsumugi.source-context-facts/1/1`. When forwarding context facts to external model endpoints, the application's execution preview discloses the selected context alongside source text for user consent.
+If a domain profile treats context facts as part of a unit's semantic revision identity, its `SourceRevisionPolicy.revisionBasis` must list `tsumugi.source-context-facts/2/1`. When forwarding context facts to external model endpoints, the application's execution preview discloses the selected context alongside source text for user consent.
 
 ## Limits and Conformance CLI
 

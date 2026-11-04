@@ -182,7 +182,7 @@ fn translation_execution_ipc_runs_independent_workers_proof_projection_and_adopt
             .execution_input(producer)
             .unwrap();
         let (material, _) = content::plugin_translation_input(&input).unwrap();
-        assert_eq!(material.artifacts[0].utf8, raw);
+        assert_eq!(material.artifacts[0].as_text().unwrap().utf8, raw);
         assert_eq!(material.target_language, "zh-CN");
     });
     let projection = ExecutionId::new();
@@ -510,7 +510,7 @@ fn translation_execution_ipc_runs_independent_workers_proof_projection_and_adopt
         let store = &sessions.active.as_ref().unwrap().store;
         let input = store.execution_input(empty_producer).unwrap();
         let (material, _) = content::plugin_translation_input(&input).unwrap();
-        assert_eq!(material.artifacts[0].utf8, empty_raw);
+        assert_eq!(material.artifacts[0].as_text().unwrap().utf8, empty_raw);
         assert!(
             store
                 .execution_attempt(empty_projection, true)

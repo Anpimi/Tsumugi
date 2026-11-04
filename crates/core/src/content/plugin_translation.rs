@@ -155,7 +155,7 @@ pub fn validate_plugin_translation_output(
     };
     if result.envelope().item_id != input.envelope().items[0].item_id
         || result.envelope().outcome != ExecutionState::Succeeded
-        || output.schema != sdk::translation_exchange_contract()
+        || Some(&output.schema) != input.envelope().plugin.as_ref().map(|binding| &binding.capability.declaration.output_schema)
     {
         return Err(invalid("translation-result"));
     }

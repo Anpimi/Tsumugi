@@ -263,7 +263,7 @@ fn checked_source_update_refuses_old_translation_adoption_and_preserves_committe
             role: "translation".into(),
             utf8: raw.into(),
             sha256: sdk::payload_digest(raw),
-        }],
+        }.into()],
     };
     let (input, result, projected) = checked_translation(
         &mut runtime,
@@ -373,10 +373,10 @@ fn checked_source_update_refuses_old_translation_adoption_and_preserves_committe
         .unwrap();
     assert_eq!(
         (
-            comparison.changed,
-            comparison.unchanged,
-            comparison.added,
-            comparison.removed
+            comparison.counts.changed,
+            comparison.counts.unchanged,
+            comparison.counts.added,
+            comparison.counts.removed
         ),
         (1, 2, 0, 1)
     );
@@ -752,7 +752,7 @@ fn webvtt_translation_preserves_captured_cues_and_uses_original_per_entry_adopti
             role: "translation".into(),
             utf8: raw.into(),
             sha256: sdk::payload_digest(raw),
-        }],
+        }.into()],
     };
     resource.validate_input(&material).unwrap();
     let (input, result, projected) = checked_translation(

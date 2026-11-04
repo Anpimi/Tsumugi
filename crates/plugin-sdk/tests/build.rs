@@ -44,14 +44,41 @@ fn output(input: &BuildInput) -> ArtifactSet {
         profile: input.source.profile.clone(),
         source_set_id: input.source.source_set_id.clone(),
         target_language: input.target_language.clone(),
-        artifacts: vec![CapturedTextArtifact {
-            id: "output-1".into(),
-            logical_path: "locales/ja-JP.txt".into(),
-            role: "translation".into(),
-            sha256: payload_digest(&utf8),
-            utf8,
-        }],
+        artifacts: vec![
+            CapturedTextArtifact {
+                id: "output-1".into(),
+                logical_path: "locales/ja-JP.txt".into(),
+                role: "translation".into(),
+                sha256: payload_digest(&utf8),
+                utf8,
+            }
+            .into(),
+        ],
     }
+}
+
+#[test]
+fn supported_text_binding_keeps_its_contract_family_and_refuses_binary_output() {
+    let mut binding = binding();
+    binding.builder.declaration.input_schema.schema_version = 1;
+    binding.builder.declaration.output_schema.schema_version = 1;
+    binding.checker.declaration.input_schema.schema_version = 1;
+    binding.validate().unwrap();
+    let input = input("caption");
+    let mut output = output(&input);
+    binding.validate_artifacts(&input, &output).unwrap();
+    let text = &output.artifacts[0];
+    output.artifacts[0] = CapturedArtifact::from_bytes(
+        text.id().into(),
+        text.logical_path().into(),
+        text.role().into(),
+        &text.bytes().unwrap(),
+    )
+    .unwrap();
+    validate_build_artifacts(&input, &output).unwrap();
+    assert!(binding.validate_artifacts(&input, &output).is_err());
+    binding.checker.declaration.input_schema.schema_version = 2;
+    assert!(binding.validate().is_err());
 }
 fn check_input() -> ArtifactCheckInput {
     let input = input("caption");
@@ -72,7 +99,7 @@ fn check_input() -> ArtifactCheckInput {
                 },
                 input_digest: "b".repeat(64),
                 scope_digest: "c".repeat(64),
-                targets: output.artifacts.iter().map(|a| a.id.clone()).collect(),
+                targets: output.artifacts.iter().map(|a| a.id().to_owned()).collect(),
                 mandatory: true,
                 waivable: false,
                 not_applicable: None,
@@ -95,7 +122,13 @@ fn build_data_keeps_unicode_original_bytes_and_opaque_domain_evidence() {
             parse_artifact_set(&serde_json::to_vec(&output).unwrap()).unwrap(),
             output
         );
-        assert!(output.artifacts[0].utf8.starts_with('\u{feff}'));
+        assert!(
+            output.artifacts[0]
+                .as_text()
+                .unwrap()
+                .utf8
+                .starts_with('\u{feff}')
+        );
         // This generic association intentionally does not parse domain syntax.
         // Actual conformance must be established by the independent checker.
         assert!(!input.source.domain_blocks.is_empty());
@@ -131,14 +164,15 @@ fn artifact_association_checks_actual_bytes_profile_locale_and_fixed_limits() {
     for change in 0..5 {
         let mut output = output(&input);
         match change {
-            0 => output.artifacts[0].utf8.push('X'),
+            0 => output.artifacts[0].as_text_mut().unwrap().utf8.push('X'),
             1 => output.profile.behavior_version += 1,
             2 => output.target_language = "zh-Hans".into(),
             3 => output.source_set_id = "other-source".into(),
             _ => {
-                output.artifacts[0].utf8 =
+                output.artifacts[0].as_text_mut().unwrap().utf8 =
                     "X".repeat(input.output_limits.max_total_bytes as usize + 1);
-                output.artifacts[0].sha256 = payload_digest(&output.artifacts[0].utf8);
+                output.artifacts[0].as_text_mut().unwrap().sha256 =
+                    payload_digest(&output.artifacts[0].as_text().unwrap().utf8);
             }
         }
         assert!(
@@ -147,8 +181,9 @@ fn artifact_association_checks_actual_bytes_profile_locale_and_fixed_limits() {
         );
     }
     let mut output = output(&input);
-    output.artifacts[0].utf8 = "different domain bytes".into();
-    output.artifacts[0].sha256 = payload_digest(&output.artifacts[0].utf8);
+    output.artifacts[0].as_text_mut().unwrap().utf8 = "different domain bytes".into();
+    output.artifacts[0].as_text_mut().unwrap().sha256 =
+        payload_digest(&output.artifacts[0].as_text().unwrap().utf8);
     validate_build_artifacts(&input, &output).unwrap();
 }
 #[test]
@@ -166,7 +201,7 @@ fn build_output_scope_is_fixed_complete_and_uses_one_portable_path_policy() {
         assert!(captured.validate().is_err());
     }
     let mut built = output(&original);
-    built.artifacts[0].logical_path = "other-safe-path.txt".into();
+    built.artifacts[0].as_text_mut().unwrap().logical_path = "other-safe-path.txt".into();
     built.validate().unwrap();
     assert!(validate_build_artifacts(&original, &built).is_err());
     let mut captured = original.clone();
@@ -175,8 +210,8 @@ fn build_output_scope_is_fixed_complete_and_uses_one_portable_path_policy() {
     assert!(validate_build_artifacts(&captured, &output(&original)).is_err());
     let mut built = output(&original);
     let mut second = built.artifacts[0].clone();
-    second.id = "output-2".into();
-    second.logical_path = "second.txt".into();
+    second.as_text_mut().unwrap().id = "output-2".into();
+    second.as_text_mut().unwrap().logical_path = "second.txt".into();
     built.artifacts.push(second);
     validate_build_artifacts(&captured, &built).unwrap();
     built.artifacts.reverse();
@@ -199,14 +234,14 @@ fn artifacts_reject_unsafe_portable_aliases_and_parent_child_collisions() {
         "日本語.txt",
     ] {
         let mut output = output(&input);
-        output.artifacts[0].logical_path = path.into();
+        output.artifacts[0].as_text_mut().unwrap().logical_path = path.into();
         assert!(output.validate().is_err(), "{path}");
     }
     for path in ["LOCALES/JA-jp.TXT", "locales", "locales/ja-JP.txt/child"] {
         let mut output = output(&input);
         let mut second = output.artifacts[0].clone();
-        second.id = "output-2".into();
-        second.logical_path = path.into();
+        second.as_text_mut().unwrap().id = "output-2".into();
+        second.as_text_mut().unwrap().logical_path = path.into();
         output.artifacts.push(second);
         assert!(output.validate().is_err(), "{path}");
     }

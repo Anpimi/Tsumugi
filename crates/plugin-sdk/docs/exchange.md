@@ -21,12 +21,20 @@ Exchange protocol `1` defines the wire envelopes and semantic invariants for pas
 |---|---|---|
 | Generic semantics | Units, source revision references, decoded text, occurrences, order, typed relations, and protected fragments | Translatable text units, structural relationships, and inline protected placeholders |
 | Domain extensions | Target reference, namespaced schema/behavior ID, handling mode (`required`, `preserve`, `optional`), and UTF-8 payload | Format- or domain-specific metadata (such as native identity evidence or source context facts) |
-| Original fidelity | Captured UTF-8 artifacts, logical path, role, SHA-256 digest, and source character/byte ranges | Unmodified original file bytes (including BOMs, line endings, and surrounding syntax) |
+| Original fidelity | Captured text or binary artifacts, logical path, role, SHA-256 digest, and source ranges | Unmodified original file bytes (including BOMs, line endings, and surrounding syntax) |
 
-- **Occurrences vs. Protected Fragments**: Each occurrence references a source artifact and a character/byte range in that artifact's raw string. Protected fragments reference ranges within a unit's decoded text.
+- **Occurrences vs. Protected Fragments**: Each occurrence uses a `SourceRange` in its captured artifact: Unicode coordinates for text or `raw-byte` offsets in original binary bytes. Protected fragments use `TextRange` in decoded unit text and cannot use `raw-byte`.
 - **Native Identity Evidence**: `NativeIdentityEvidence.value` holds the domain's canonical matching key, while `display` preserves the original spelling and source range (or `null` for derived keys). Core matches units using the canonical value directly without re-normalizing it.
 - **Domain Extension Handling**: Domain block payloads are stored as exact UTF-8 strings without parsing and re-serializing their internal fields. Blocks marked `required` must be listed as supported when calling `require_supported_extensions`. Blocks marked `preserve` (and unrecognized `optional` blocks) must be carried through unchanged.
 - **Preservation Helpers**: `verify_content_preservation` checks that immutable source artifacts and preserved domain blocks are untouched. `verify_fixed_content_scope` additionally checks that units, source revisions, native occurrence evidence, ordering, and relations remain identical across fixed-segmentation transformations.
+
+## Captured Artifacts and Source Coordinates
+
+`CapturedArtifact` is a closed union. Both representations carry `id`, `logicalPath`, `role` and `sha256`. Text carries `utf8`; binary carries `base64`, using canonical padded RFC 4648 base64. Digests describe original bytes. Mixed representations, null values, unknown properties, malformed base64 and digest mismatches are rejected. Empty files are valid.
+
+Decoded-byte and complete encoded-payload limits apply independently. Base64 expands the wire payload, so binary material can reach the encoded ceiling before the raw-byte ceiling. Application capture limits remain separate. This bounded inline contract does not introduce filesystem references, streaming or a larger-message exception.
+
+`SourceRange::byte_range` returns half-open positions in the captured original bytes. Binary accepts only `raw-byte` and validates ordering and bounds; offsets never refer to the base64 string. Text rejects `raw-byte` and performs exact Unicode conversion. Source occurrences, native display evidence, imported translations and context facts share this coordinate owner.
 
 ## Unicode Text Coordinates
 

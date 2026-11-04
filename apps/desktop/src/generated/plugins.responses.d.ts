@@ -219,6 +219,7 @@ export type RuntimeAvailability =
   "available" | "unsupported-platform" | "system-too-old" | "system-version-unknown" | "resources-unavailable";
 export type PluginRepositoryState = "pending" | "verified" | "rejected";
 export type PluginRepositoryInstallKind = "install" | "update" | "rollback";
+export type SourceMaterialEncoding = "utf8" | "binary";
 /**
  * Selecting a check is not adopting its resource or requiring its findings.
  * Blocking checks continue to use the original mandatory Review contract.
@@ -1103,6 +1104,7 @@ export interface SourceImportDeclaration {
   semanticRules: ContractRef[];
 }
 export interface SourceMaterialDeclaration {
+  encoding?: SourceMaterialEncoding;
   logicalPath: string;
   maxBytes: number;
   role: string;

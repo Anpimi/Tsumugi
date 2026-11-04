@@ -17,8 +17,48 @@
     "body"
   ],
   "$defs": {
+    "CapturedArtifact": {
+      "description": "Exactly one representation. Text retains its original wire shape; mixed,\nnull and unknown fields are rejected by the two closed representations.",
+      "anyOf": [
+        {
+          "$ref": "#/$defs/CapturedTextArtifact"
+        },
+        {
+          "$ref": "#/$defs/CapturedBinaryArtifact"
+        }
+      ]
+    },
+    "CapturedBinaryArtifact": {
+      "description": "Canonical padded RFC 4648 base64 of the original bytes. The digest describes\nthe decoded bytes, never their transport encoding. Decoding is domain-owned.",
+      "type": "object",
+      "properties": {
+        "base64": {
+          "type": "string"
+        },
+        "id": {
+          "type": "string"
+        },
+        "logicalPath": {
+          "type": "string"
+        },
+        "role": {
+          "type": "string"
+        },
+        "sha256": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "logicalPath",
+        "role",
+        "sha256",
+        "base64"
+      ]
+    },
     "CapturedTextArtifact": {
-      "description": "Captured UTF-8 bytes, including a BOM and original line endings. These are\nimmutable source evidence; logical paths are not local filesystem authority.",
+      "description": "Exact UTF-8 bytes, including BOMs and original line endings.",
       "type": "object",
       "properties": {
         "id": {
@@ -282,7 +322,7 @@
         "artifacts": {
           "type": "array",
           "items": {
-            "$ref": "#/$defs/CapturedTextArtifact"
+            "$ref": "#/$defs/CapturedArtifact"
           }
         },
         "domainBlocks": {
@@ -1027,6 +1067,40 @@
         "requirements"
       ]
     },
+    "SourceEncoding": {
+      "description": "Source coordinates are separate from ranges in decoded unit/target text.",
+      "type": "string",
+      "enum": [
+        "utf8-byte",
+        "utf16",
+        "grapheme",
+        "raw-byte"
+      ]
+    },
+    "SourceRange": {
+      "type": "object",
+      "properties": {
+        "encoding": {
+          "$ref": "#/$defs/SourceEncoding"
+        },
+        "end": {
+          "type": "integer",
+          "maximum": 4294967295,
+          "minimum": 0
+        },
+        "start": {
+          "type": "integer",
+          "maximum": 4294967295,
+          "minimum": 0
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "encoding",
+        "start",
+        "end"
+      ]
+    },
     "SourceReference": {
       "type": "object",
       "properties": {
@@ -1034,7 +1108,7 @@
           "type": "string"
         },
         "range": {
-          "$ref": "#/$defs/TextRange"
+          "$ref": "#/$defs/SourceRange"
         }
       },
       "additionalProperties": false,

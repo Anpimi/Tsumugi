@@ -136,8 +136,8 @@ fn production_source_keeps_original_bytes_ids_proof_and_receipt_after_reopen() {
     let (directory, store, rows, action, receipt) = support::source_fixture_with_receipt();
     let snapshot = store.content_scope().unwrap().current_snapshot.unwrap();
     let bundle = store.source_bundle(snapshot).unwrap();
-    assert_eq!(bundle.files[0].utf8.as_bytes(), b"same\nsame");
-    assert_eq!(bundle.files[1].utf8.as_bytes(), b"opaque companion");
+    assert_eq!(bundle.files[0].text().unwrap().as_bytes(), b"same\nsame");
+    assert_eq!(bundle.files[1].text().unwrap().as_bytes(), b"opaque companion");
     assert_eq!(
         bundle.files[0].sha256,
         tsumugi_plugin_sdk::payload_digest("same\nsame")

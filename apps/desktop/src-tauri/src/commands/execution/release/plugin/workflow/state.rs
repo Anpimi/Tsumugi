@@ -314,14 +314,8 @@ impl WorkflowSession {
                         .output
                         .artifacts
                         .into_iter()
-                        .map(|a| CheckedArtifact {
-                            id: a.id,
-                            role: a.role,
-                            logical_path: a.logical_path,
-                            byte_length: a.utf8.len() as u32,
-                            sha256: a.sha256,
-                        })
-                        .collect(),
+                        .map(CheckedArtifact::capture)
+                        .collect::<Result<Vec<_>, CommandError>>()?,
                     requirements: payload.requirements,
                     build: environment.view()?,
                 };

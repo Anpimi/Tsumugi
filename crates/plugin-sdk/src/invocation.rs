@@ -4,7 +4,6 @@ use crate::{
     *,
 };
 use serde::{Deserialize, Serialize};
-use sha2::{Digest, Sha256};
 
 /// A claimed wire binding. Only the trusted host can compare it to the actual
 /// verified package and channel; constructing this value proves no authority.
@@ -143,7 +142,7 @@ impl EncodedPayload {
     }
 }
 pub fn payload_digest(utf8: &str) -> String {
-    format!("{:x}", Sha256::digest(utf8.as_bytes()))
+    crate::artifact_bytes_digest(utf8.as_bytes())
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]

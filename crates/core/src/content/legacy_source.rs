@@ -147,9 +147,10 @@ impl SourceBundle {
                 .iter()
                 .zip(expected)
                 .any(|(file, (path, role, limit))| {
-                    file.logical_path != path || file.role != role || file.utf8.len() > limit
+                    file.logical_path != path || file.role != role
+                        || file.text().is_err() || file.byte_length as usize > limit
                 })
-            || self.files.iter().map(|file| file.utf8.len()).sum::<usize>() > MAX_SOURCE_BYTES
+            || self.files.iter().map(|file| file.byte_length as usize).sum::<usize>() > MAX_SOURCE_BYTES
         {
             return Err(invalid("builtin-source-files"));
         }
@@ -231,7 +232,7 @@ pub(crate) fn project_builtin(
                 encoding: sdk::TextEncoding::Utf8Byte,
                 start: row.value_byte_range[0],
                 end: row.value_byte_range[1],
-            },
+            }.into(),
         };
         let identity_source = sdk::SourceReference {
             artifact_id: row.artifact_id.to_string(),
@@ -239,7 +240,7 @@ pub(crate) fn project_builtin(
                 encoding: sdk::TextEncoding::Utf8Byte,
                 start: row.key_byte_range[0],
                 end: row.key_byte_range[1],
-            },
+            }.into(),
         };
         exchange.units.push(sdk::ContentUnit {
             id: unit_id,

@@ -1,47 +1,89 @@
 //! Immutable source bundles, native identity evidence and read-only projections.
 mod build;
+mod captured_file;
+pub use captured_file::CapturedFile;
 mod import_start;
-#[cfg(any(test, feature = "execution-test-host", feature = "legacy-desktop-domain"))]
+#[cfg(any(
+    test,
+    feature = "execution-test-host",
+    feature = "legacy-desktop-domain"
+))]
 mod legacy_build;
-#[cfg(any(test, feature = "execution-test-host", feature = "legacy-desktop-domain"))]
+#[cfg(any(
+    test,
+    feature = "execution-test-host",
+    feature = "legacy-desktop-domain"
+))]
 mod legacy_source;
-#[cfg(any(test, feature = "execution-test-host", feature = "legacy-desktop-domain"))]
+#[cfg(any(
+    test,
+    feature = "execution-test-host",
+    feature = "legacy-desktop-domain"
+))]
 mod legacy_translation;
-mod maintenance_hook;
 mod lineage_corrections;
+mod maintenance_hook;
 mod plugin_translation;
-#[cfg(any(test, feature = "execution-test-host", feature = "legacy-desktop-domain"))]
+#[cfg(any(
+    test,
+    feature = "execution-test-host",
+    feature = "legacy-desktop-domain"
+))]
 mod smapi;
 mod translation;
 mod translation_projection;
-pub use maintenance_hook::*;
 pub use lineage_corrections::*;
-#[cfg(any(test, feature = "execution-test-host", feature = "legacy-desktop-domain"))]
+pub use maintenance_hook::*;
+#[cfg(any(
+    test,
+    feature = "execution-test-host",
+    feature = "legacy-desktop-domain"
+))]
 pub mod webvtt;
 pub use crate::persistence::content::SourceAdoptionHandler;
-pub use import_start::*;
 pub use build::{BUILD_OPERATION, BuildSourceFile, artifact_digest};
-#[cfg(any(test, feature = "execution-test-host", feature = "legacy-desktop-domain"))]
+pub use import_start::*;
+#[cfg(any(
+    test,
+    feature = "execution-test-host",
+    feature = "legacy-desktop-domain"
+))]
 pub use legacy_build::{
     BUILD_CAPABILITY, BUILD_CAPABILITY_VERSION, BUILDER_VERSION, BuildEntry, BuildLocale,
     BuildManifest, BuildOutput, BuildRunner, VALIDATOR_VERSION, WebvttBuildRunner, build_locale,
     declared_locale, validate_build_output,
 };
-#[cfg(any(test, feature = "execution-test-host", feature = "legacy-desktop-domain"))]
+#[cfg(any(
+    test,
+    feature = "execution-test-host",
+    feature = "legacy-desktop-domain"
+))]
 use legacy_source::{BuiltinOccurrence, project_builtin};
-#[cfg(any(test, feature = "execution-test-host", feature = "legacy-desktop-domain"))]
+#[cfg(any(
+    test,
+    feature = "execution-test-host",
+    feature = "legacy-desktop-domain"
+))]
 pub use legacy_source::{
     CAPABILITY, CAPABILITY_VERSION, FORMAT, IDENTITY_POLICY, IntegrationDescriptor, MANIFEST_PATH,
     MAX_MANIFEST_BYTES, PLUGIN_ID, PLUGIN_VERSION, SOURCE_PATH, extract, integration_descriptor,
     validate_builtin_output, webvtt_descriptor,
 };
-#[cfg(any(test, feature = "execution-test-host", feature = "legacy-desktop-domain"))]
+#[cfg(any(
+    test,
+    feature = "execution-test-host",
+    feature = "legacy-desktop-domain"
+))]
 pub use legacy_translation::{TranslationBundle, TranslationRunner, extract_translation};
 pub use plugin_translation::{
     MAX_TRANSLATION_INPUT_BYTES, MAX_TRANSLATION_RESULT_BYTES, PluginTranslationSettings,
     TRANSLATION_EXTRACTION_OPERATION, plugin_translation_input, validate_plugin_translation_output,
 };
-#[cfg(any(test, feature = "execution-test-host", feature = "legacy-desktop-domain"))]
+#[cfg(any(
+    test,
+    feature = "execution-test-host",
+    feature = "legacy-desktop-domain"
+))]
 pub use smapi::{SourceRunner, WebvttSourceRunner};
 pub fn supported_identity_policy(policy: &str) -> bool {
     // This is the captured generic revision-policy digest, not a domain allowlist.
@@ -84,6 +126,16 @@ pub(crate) fn failure(code: ErrorCode, reason: &str) -> ExecutionError {
 pub(crate) fn invalid(reason: &str) -> ExecutionError {
     failure(ErrorCode::OutputInvalid, reason)
 }
+fn source_binding_supports_binary(binding: &PluginExecutionBinding, source: &sdk::SourceExtractionInput) -> Result<bool, ExecutionError> {
+    let declaration = &binding.capability.declaration;
+    let binary = sdk::source_extraction_contracts_support_binary(&declaration.input_schema, &declaration.output_schema, &declaration.error_schema)
+        .map_err(source_contract_error)?;
+    if binding.profile.as_ref() != Some(&source.profile)
+        || (!binary && source.artifacts.iter().any(|artifact| artifact.as_text().is_none())) {
+        return Err(invalid("source-binding"));
+    }
+    Ok(binary)
+}
 pub(crate) fn value<T: Serialize>(v: &T) -> Result<serde_json::Value, ExecutionError> {
     serde_json::to_value(v).map_err(|_| invalid("invalid-structure"))
 }
@@ -91,32 +143,6 @@ pub(crate) fn from_value<T: serde::de::DeserializeOwned>(
     v: &serde_json::Value,
 ) -> Result<T, ExecutionError> {
     serde_json::from_value(v.clone()).map_err(|_| invalid("invalid-structure"))
-}
-
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase", deny_unknown_fields)]
-pub struct CapturedFile {
-    pub artifact_id: ExecutionId,
-    pub logical_path: String,
-    pub role: String,
-    pub byte_length: u32,
-    pub sha256: String,
-    pub utf8: String,
-}
-impl CapturedFile {
-    fn new(path: &str, role: &str, bytes: &[u8]) -> Result<Self, ExecutionError> {
-        let utf8 = std::str::from_utf8(bytes)
-            .map_err(|_| invalid("unsupported-encoding"))?
-            .to_owned();
-        Ok(Self {
-            artifact_id: ExecutionId::new(),
-            logical_path: path.into(),
-            role: role.into(),
-            byte_length: bytes.len() as u32,
-            sha256: codec::digest(bytes),
-            utf8,
-        })
-    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -157,7 +183,22 @@ impl SourceBundle {
                 if bytes.len() > declared.max_bytes as usize {
                     return Err(failure(ErrorCode::LimitExceeded, "limit-exceeded"));
                 }
-                CapturedFile::new(&declared.logical_path, &declared.role, &bytes)
+                match declared.encoding {
+                    sdk::SourceMaterialEncoding::Utf8 | sdk::SourceMaterialEncoding::LegacyUtf8 => {
+                        CapturedFile::new(&declared.logical_path, &declared.role, &bytes)
+                    }
+                    sdk::SourceMaterialEncoding::Binary => {
+                        let id = ExecutionId::new();
+                        let artifact = sdk::CapturedArtifact::from_bytes(
+                            id.to_string(),
+                            declared.logical_path.clone(),
+                            declared.role.clone(),
+                            &bytes,
+                        )
+                        .map_err(source_contract_error)?;
+                        CapturedFile::from_artifact(&artifact, id)
+                    }
+                }
             })
             .collect::<Result<Vec<_>, _>>()?;
         let mut bundle = Self {
@@ -214,6 +255,11 @@ impl SourceBundle {
         let source = self.source_input();
         source.validate().map_err(source_contract_error)?;
         let _ = codec::encode(&source, MAX_CAPTURED_SOURCE_INPUT_BYTES)?;
+        for file in &self.files {
+            if file.bytes()?.len() != file.byte_length as usize {
+                return Err(invalid("invalid-structure"));
+            }
+        }
         let locale =
             Locale::parse(&self.source_language).map_err(|_| invalid("language-required"))?;
         if locale.as_str() != self.source_language
@@ -222,10 +268,6 @@ impl SourceBundle {
             || self.format_version != self.profile.schema_version
             || self.language_evidence != "user-declared"
             || self.calculate_digest()? != self.manifest_digest
-            || self
-                .files
-                .iter()
-                .any(|file| file.byte_length as usize != file.utf8.len())
         {
             return Err(invalid("invalid-structure"));
         }
@@ -239,12 +281,13 @@ impl SourceBundle {
             artifacts: self
                 .files
                 .iter()
-                .map(|file| sdk::CapturedTextArtifact {
-                    id: file.artifact_id.to_string(),
-                    logical_path: file.logical_path.clone(),
-                    role: file.role.clone(),
-                    sha256: file.sha256.clone(),
-                    utf8: file.utf8.clone(),
+                .map(|file| {
+                    file.data.clone().into_artifact(
+                        file.artifact_id.to_string(),
+                        file.logical_path.clone(),
+                        file.role.clone(),
+                        file.sha256.clone(),
+                    )
                 })
                 .collect(),
         }
@@ -289,7 +332,11 @@ impl SourceBundle {
     }
     pub fn from_input(input: &FixedInput) -> Result<Self, ExecutionError> {
         let e = input.envelope();
-        #[cfg(not(any(test, feature = "execution-test-host", feature = "legacy-desktop-domain")))]
+        #[cfg(not(any(
+            test,
+            feature = "execution-test-host",
+            feature = "legacy-desktop-domain"
+        )))]
         if e.plugin.is_none() {
             return Err(failure(ErrorCode::InvalidInput, "source-plugin-required"));
         }
@@ -306,13 +353,8 @@ impl SourceBundle {
         let settings = SourceSettings::from_input(input)?;
         let (plugin_id, plugin_version) = if let Some(binding) = &e.plugin {
             binding.validate_project_or_attempt()?;
-            let declaration = &binding.capability.declaration;
-            if binding.profile.as_ref() != Some(&source.profile)
-                || declaration.input_schema != sdk::source_extraction_input_contract()
-                || declaration.output_schema != sdk::content_exchange_contract()
-                || declaration.error_schema != sdk::source_extraction_error_contract()
-                || settings.checker.is_none()
-            {
+            source_binding_supports_binary(binding, &source)?;
+            if settings.checker.is_none() {
                 return Err(invalid("source-binding"));
             }
             (
@@ -320,11 +362,19 @@ impl SourceBundle {
                 binding.capability.provider.plugin.version.clone(),
             )
         } else {
-            #[cfg(any(test, feature = "execution-test-host", feature = "legacy-desktop-domain"))]
+            #[cfg(any(
+                test,
+                feature = "execution-test-host",
+                feature = "legacy-desktop-domain"
+            ))]
             {
                 legacy_source::input_provider(e, &source, &settings)?
             }
-            #[cfg(not(any(test, feature = "execution-test-host", feature = "legacy-desktop-domain")))]
+            #[cfg(not(any(
+                test,
+                feature = "execution-test-host",
+                feature = "legacy-desktop-domain"
+            )))]
             {
                 return Err(failure(ErrorCode::InvalidInput, "source-plugin-required"));
             }
@@ -345,15 +395,7 @@ impl SourceBundle {
             .artifacts
             .iter()
             .map(|artifact| {
-                Ok(CapturedFile {
-                    artifact_id: ExecutionId::parse(&artifact.id)?,
-                    logical_path: artifact.logical_path.clone(),
-                    role: artifact.role.clone(),
-                    byte_length: u32::try_from(artifact.utf8.len())
-                        .map_err(|_| invalid("source-bytes"))?,
-                    sha256: artifact.sha256.clone(),
-                    utf8: artifact.utf8.clone(),
-                })
+                CapturedFile::from_artifact(artifact, ExecutionId::parse(artifact.id())?)
             })
             .collect::<Result<Vec<_>, ExecutionError>>()?;
         let mut bundle = Self {
@@ -371,7 +413,11 @@ impl SourceBundle {
         };
         bundle.manifest_digest = bundle.calculate_digest()?;
         bundle.validate()?;
-        #[cfg(any(test, feature = "execution-test-host", feature = "legacy-desktop-domain"))]
+        #[cfg(any(
+            test,
+            feature = "execution-test-host",
+            feature = "legacy-desktop-domain"
+        ))]
         if e.plugin.is_none() {
             bundle.validate_builtin_capture()?;
         }
@@ -379,7 +425,11 @@ impl SourceBundle {
     }
 }
 
-#[cfg(any(test, feature = "execution-test-host", feature = "legacy-desktop-domain"))]
+#[cfg(any(
+    test,
+    feature = "execution-test-host",
+    feature = "legacy-desktop-domain"
+))]
 pub(crate) fn contract_ref(id: &str) -> sdk::ContractRef {
     sdk::ContractRef {
         id: id.into(),
@@ -438,6 +488,8 @@ impl SourceReviewBinding {
             || self.checker.capability.provider.plugin != producer.capability.provider.plugin
             || self.checker.capability.provider.package_digest
                 != producer.capability.provider.package_digest
+            || (self.checker.capability.declaration.input_schema.schema_version == 1
+                && source.artifacts.iter().any(|artifact| artifact.as_text().is_none()))
         {
             return Err(invalid("source-review-binding"));
         }
@@ -488,14 +540,24 @@ impl SourceSettings {
             if input.envelope().plugin.is_some() {
                 return Err(failure(ErrorCode::InvalidInput, "source-review-required"));
             }
-            #[cfg(not(any(test, feature = "execution-test-host", feature = "legacy-desktop-domain")))]
+            #[cfg(not(any(
+                test,
+                feature = "execution-test-host",
+                feature = "legacy-desktop-domain"
+            )))]
             return Err(failure(ErrorCode::InvalidInput, "source-review-required"));
         }
         if let Some(checker) = &settings.checker {
             checker.validate_project_or_attempt()?;
             let declaration = &checker.capability.declaration;
+            let mut expected_input = sdk::source_extraction_check_input_contract();
+            if let Some(producer) = &input.envelope().plugin {
+                if !source_binding_supports_binary(producer, &source)? {
+                    expected_input.schema_version = 1;
+                }
+            }
             if checker.profile.as_ref() != Some(&source.profile)
-                || declaration.input_schema != sdk::source_extraction_check_input_contract()
+                || declaration.input_schema != expected_input
                 || declaration.output_schema != sdk::check_results_contract()
                 || declaration.error_schema != sdk::source_extraction_error_contract()
                 || settings.semantic_rules.is_empty()
@@ -521,11 +583,19 @@ impl SourceSettings {
             if input.envelope().plugin.is_some() {
                 return Err(failure(ErrorCode::InvalidInput, "source-checker-required"));
             }
-            #[cfg(any(test, feature = "execution-test-host", feature = "legacy-desktop-domain"))]
+            #[cfg(any(
+                test,
+                feature = "execution-test-host",
+                feature = "legacy-desktop-domain"
+            ))]
             if !settings.semantic_rules.is_empty() {
                 return Err(invalid("builtin-source-rules"));
             }
-            #[cfg(not(any(test, feature = "execution-test-host", feature = "legacy-desktop-domain")))]
+            #[cfg(not(any(
+                test,
+                feature = "execution-test-host",
+                feature = "legacy-desktop-domain"
+            )))]
             return Err(failure(ErrorCode::InvalidInput, "source-checker-required"));
         }
         if let Some(request) = &settings.native_start {
@@ -634,14 +704,18 @@ pub fn validate_output(
         let sdk::InvocationOutcome::Succeeded { output } = &evidence.result.outcome else {
             return Err(invalid("source-result"));
         };
-        if output.schema != sdk::content_exchange_contract() {
+        if Some(&output.schema) != input.envelope().plugin.as_ref().map(|binding| &binding.capability.declaration.output_schema) {
             return Err(invalid("source-result-schema"));
         }
         // Typed Serde sees the original bytes; Value is only an independently
         // checked result projection and cannot conceal duplicate typed fields.
         sdk::parse_content_exchange(output.utf8.as_bytes()).map_err(source_contract_error)?
     } else {
-        #[cfg(any(test, feature = "execution-test-host", feature = "legacy-desktop-domain"))]
+        #[cfg(any(
+            test,
+            feature = "execution-test-host",
+            feature = "legacy-desktop-domain"
+        ))]
         {
             from_value(
                 result
@@ -651,7 +725,11 @@ pub fn validate_output(
                     .ok_or_else(|| invalid("source-result"))?,
             )?
         }
-        #[cfg(not(any(test, feature = "execution-test-host", feature = "legacy-desktop-domain")))]
+        #[cfg(not(any(
+            test,
+            feature = "execution-test-host",
+            feature = "legacy-desktop-domain"
+        )))]
         return Err(invalid("source-result-plugin"));
     };
     let output = project_source_output(
@@ -659,9 +737,17 @@ pub fn validate_output(
         exchange,
         SourceSettings::from_input(input)?.revision_policy,
     )?;
-    #[cfg(any(test, feature = "execution-test-host", feature = "legacy-desktop-domain"))]
+    #[cfg(any(
+        test,
+        feature = "execution-test-host",
+        feature = "legacy-desktop-domain"
+    ))]
     let mut output = output;
-    #[cfg(any(test, feature = "execution-test-host", feature = "legacy-desktop-domain"))]
+    #[cfg(any(
+        test,
+        feature = "execution-test-host",
+        feature = "legacy-desktop-domain"
+    ))]
     if input.envelope().plugin.is_none() {
         output.diagnostics = result
             .envelope()
@@ -736,14 +822,13 @@ pub(crate) fn project_source_output(
         let artifact = exchange
             .artifacts
             .iter()
-            .find(|artifact| artifact.id == occurrence.source.artifact_id)
+            .find(|artifact| artifact.id() == occurrence.source.artifact_id)
             .ok_or_else(|| invalid("source-artifact"))?;
-        let source_range = sdk::convert_text_range(
-            &artifact.utf8,
-            occurrence.source.range,
-            sdk::TextEncoding::Utf8Byte,
-        )
-        .map_err(source_contract_error)?;
+        let source_range = occurrence
+            .source
+            .range
+            .byte_range(artifact)
+            .map_err(source_contract_error)?;
         let key_byte_range = occurrence
             .native_identity
             .as_ref()
@@ -752,19 +837,16 @@ pub(crate) fn project_source_output(
                 let artifact = exchange
                     .artifacts
                     .iter()
-                    .find(|artifact| artifact.id == reference.artifact_id)
+                    .find(|artifact| artifact.id() == reference.artifact_id)
                     .ok_or_else(|| invalid("source-display"))?;
-                let range = sdk::convert_text_range(
-                    &artifact.utf8,
-                    reference.range,
-                    sdk::TextEncoding::Utf8Byte,
-                )
-                .map_err(source_contract_error)?;
+                let range = reference
+                    .range
+                    .byte_range(artifact)
+                    .map_err(source_contract_error)?;
                 // The legacy reader's key range has one artifact column. Keep
                 // absence explicit when the display evidence is in another one.
                 Ok::<Option<[u32; 2]>, ExecutionError>(
-                    (reference.artifact_id == occurrence.source.artifact_id)
-                        .then_some([range.start, range.end]),
+                    (reference.artifact_id == occurrence.source.artifact_id).then_some(range),
                 )
             })
             .transpose()?
@@ -787,7 +869,7 @@ pub(crate) fn project_source_output(
             key,
             text: unit.text.clone(),
             key_byte_range,
-            value_byte_range: [source_range.start, source_range.end],
+            value_byte_range: source_range,
             identity_basis,
             operation_unit_id: unit.id.clone(),
             operation_occurrence_id: occurrence.id.clone(),

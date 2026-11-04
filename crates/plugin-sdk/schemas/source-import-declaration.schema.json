@@ -76,6 +76,9 @@
     "SourceMaterialDeclaration": {
       "type": "object",
       "properties": {
+        "encoding": {
+          "$ref": "#/$defs/SourceMaterialEncoding"
+        },
         "logicalPath": {
           "type": "string"
         },
@@ -92,7 +95,15 @@
       "required": [
         "logicalPath",
         "role",
-        "maxBytes"
+        "maxBytes",
+        "encoding"
+      ]
+    },
+    "SourceMaterialEncoding": {
+      "type": "string",
+      "enum": [
+        "utf8",
+        "binary"
       ]
     },
     "SourceRevisionPolicy": {

@@ -215,7 +215,7 @@ fn complete_translation(checks_attempt: Option<bool>) {
             role: "translation".into(),
             utf8: raw.into(),
             sha256: sdk::payload_digest(raw),
-        }],
+        }.into()],
     };
     let settings = PluginTranslationSettings {
         declaration: resource.declaration.clone(),
@@ -530,6 +530,7 @@ fn complete_translation(checks_attempt: Option<bool>) {
             source_revision_id: preview.rows[1].source_revision_id.unwrap(),
             expected_selection_id: None,
             text: "newer user edit".into(),
+            reuse_origin: None,
         })
         .unwrap();
     assert_eq!(
@@ -586,8 +587,8 @@ fn complete_translation(checks_attempt: Option<bool>) {
     let empty_material = {
         let mut material = material.clone();
         material.import_id = ExecutionId::new().to_string();
-        material.artifacts[0].utf8 = "{}".into();
-        material.artifacts[0].sha256 = sdk::payload_digest("{}");
+        material.artifacts[0].as_text_mut().unwrap().utf8 = "{}".into();
+        material.artifacts[0].as_text_mut().unwrap().sha256 = sdk::payload_digest("{}");
         material
     };
     let empty_input = fixed(empty_material);

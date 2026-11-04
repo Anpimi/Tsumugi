@@ -332,7 +332,7 @@ impl SelectedSourceContext {
         let mut sampled_required = 0usize;
         for sample in &self.observations.unknown_samples {
             if sample.schema.id != sdk::SOURCE_CONTEXT_FACTS_SCHEMA_ID
-                || sample.schema == sdk::source_context_facts_contract()
+                || sdk::is_source_context_facts_contract(&sample.schema)
                 || !nonempty_target(&sample.target)
                 || sample.block_index as usize >= sdk::MAX_CONTENT_DOMAIN_BLOCKS
                 || !unknown_block_indices.insert(sample.block_index)
@@ -356,7 +356,7 @@ impl SelectedSourceContext {
                 sdk::SourceContextFactOrigin::Inferred { .. }
             );
             if !((inferred && selection.inferred) || (!inferred && selection.extracted))
-                || selected.schema != sdk::source_context_facts_contract()
+                || !sdk::is_source_context_facts_contract(&selected.schema)
                 || !nonempty_target(&selected.target)
                 || selected.block_index as usize >= sdk::MAX_CONTENT_DOMAIN_BLOCKS
                 || selected.fact_index as usize >= sdk::MAX_SOURCE_CONTEXT_FACTS
@@ -732,7 +732,7 @@ pub(super) fn observe_source_context(
     };
     for block in &view.blocks {
         if block.schema.id != sdk::SOURCE_CONTEXT_FACTS_SCHEMA_ID
-            || (block.schema == sdk::source_context_facts_contract()) != block.facts.is_some()
+            || (sdk::is_source_context_facts_contract(&block.schema)) != block.facts.is_some()
             || block.block_index as usize >= sdk::MAX_CONTENT_DOMAIN_BLOCKS
         {
             return Err(invalid());

@@ -29,6 +29,7 @@ export type PermissionRequest =
       kind: "process";
       program: string;
     };
+export type SourceMaterialEncoding = "utf8" | "binary";
 /**
  * Fixed execution choices for the two actual runtime profiles. Each variant
  * has a strict, distinct profile value and its own data/hash owner. Captured
@@ -61,7 +62,10 @@ export type NativeHostExecutableIdentity =
 export type NativeHostProfile = "native-application-host-v1";
 export type UnsignedDecimal = string;
 export type LineageDecision = "continue" | "reject";
-export type TextEncoding = "utf8-byte" | "utf16" | "grapheme";
+/**
+ * Source coordinates are separate from ranges in decoded unit/target text.
+ */
+export type SourceEncoding = "utf8-byte" | "utf16" | "grapheme" | "raw-byte";
 export type SourceChangeKind =
   "unchanged" | "moved" | "changed" | "added" | "rename-candidate" | "ambiguous" | "removed";
 export type SourceImpactStatus = "preserved" | "reassess" | "unresolved";
@@ -503,6 +507,7 @@ export interface SourceImportDeclaration {
   semanticRules: ContractRef[];
 }
 export interface SourceMaterialDeclaration {
+  encoding?: SourceMaterialEncoding;
   logicalPath: string;
   maxBytes: number;
   role: string;
@@ -710,13 +715,10 @@ export interface NativeIdentityDisplay {
 }
 export interface SourceReference {
   artifactId: string;
-  range: TextRange;
+  range: SourceRange;
 }
-/**
- * Half-open offsets into one exact string, never between different strings.
- */
-export interface TextRange {
-  encoding: TextEncoding;
+export interface SourceRange {
+  encoding: SourceEncoding;
   end: number;
   start: number;
 }

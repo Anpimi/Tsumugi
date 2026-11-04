@@ -205,6 +205,7 @@ fn paired_core_review_scoped(
                     source_revision_id: target.source_revision_id,
                     expected_selection_id: target.selection_id,
                     text: text.into(),
+                    reuse_origin: None,
                 })
                 .unwrap();
         }
@@ -225,7 +226,7 @@ fn paired_core_review_scoped(
                 .source
                 .artifacts
                 .iter()
-                .map(|a| a.utf8.as_str())
+                .map(|a| a.as_text().unwrap().utf8.as_str())
                 .collect::<Vec<_>>(),
             original
         );
@@ -558,6 +559,7 @@ fn paired_core_review_scoped(
                 source_revision_id: target.source_revision_id,
                 expected_selection_id: target.selection_id,
                 text: (*text).into(),
+                reuse_origin: None,
             })
             .unwrap();
         let target = store.review_target(project, unit, locale).unwrap();
@@ -701,6 +703,7 @@ fn paired_core_review_scoped(
             source_revision_id: target.source_revision_id,
             expected_selection_id: target.selection_id,
             text: bad.into(),
+            reuse_origin: None,
         })
         .unwrap();
     assert!(

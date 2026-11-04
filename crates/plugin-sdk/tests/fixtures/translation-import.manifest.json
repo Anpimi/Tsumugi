@@ -50,12 +50,12 @@
           },
           "inputSchema": {
             "id": "tsumugi.translation-extraction-input",
-            "schemaVersion": 1,
+            "schemaVersion": 2,
             "behaviorVersion": 1
           },
           "outputSchema": {
             "id": "tsumugi.translation-exchange",
-            "schemaVersion": 1,
+            "schemaVersion": 2,
             "behaviorVersion": 1
           },
           "errorSchema": {
@@ -98,7 +98,7 @@
           },
           "inputSchema": {
             "id": "tsumugi.translation-extraction-check-input",
-            "schemaVersion": 1,
+            "schemaVersion": 2,
             "behaviorVersion": 1
           },
           "outputSchema": {

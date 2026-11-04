@@ -2,6 +2,8 @@
 //! Pairing checks consume an explicitly selected prebuilt official package.
 //! Domain source stays in its independent repository; this Host test does not
 //! link a parser or treat generic SDK validation as project adoption.
+//! Contract expectations retain the original SDK-v1 text family independently
+//! of the current SDK's binary-capable authoring defaults.
 use serde_json::json;
 use tsumugi_plugin_host::*;
 use tsumugi_plugin_sdk::*;
@@ -24,18 +26,18 @@ fn official_webvtt_package_extracts_builds_and_checks_through_the_captured_host(
             source_language: "en-US".into(), artifacts: vec![CapturedTextArtifact {
                 id: "synthetic-source-artifact".into(), logical_path: "source.vtt".into(), role: "source".into(),
                 sha256: payload_digest(source), utf8: source.into(),
-            }],
+            }.into()],
         };
         input.validate().unwrap();
         let extraction = bind_capability(image.manifest(), "extract-source", image.package_digest()).unwrap();
-        assert_eq!(extraction.declaration.input_schema, source_extraction_input_contract());
-        assert_eq!(extraction.declaration.output_schema, content_exchange_contract());
+        assert_eq!(extraction.declaration.input_schema, contract("tsumugi.source-extraction-input"));
+        assert_eq!(extraction.declaration.output_schema, ContractRef { schema_version: 2, ..contract("tsumugi.content-exchange") });
         assert_eq!(extraction.declaration.output_schema.schema_version, 2);
         assert_eq!(extraction.declaration.output_schema.behavior_version, 1);
         let mut session = launch(&image, "extract-source", temporary.path()).await;
         let extraction_channel = session.channel();
         let extraction_payload = success_payload(invoke(&mut session, &extraction, "extract-good", &serde_json::to_value(&input).unwrap()).await);
-        assert_eq!(extraction_payload.schema, content_exchange_contract());
+        assert_eq!(extraction_payload.schema, ContractRef { schema_version: 2, ..contract("tsumugi.content-exchange") });
         // Parse the original payload bytes, retaining strict SDK unknown-field
         // and duplicate-field rejection instead of first normalizing to Value.
         let exchange = parse_content_exchange(extraction_payload.utf8.as_bytes()).unwrap();
@@ -48,16 +50,16 @@ fn official_webvtt_package_extracts_builds_and_checks_through_the_captured_host(
             let identity = unit.occurrences[0].native_identity.as_ref().unwrap();
             assert_eq!(identity.display.value, ["Cue-A", "Cue-B"][ordinal]);
             let display = identity.display.source.as_ref().unwrap();
-            assert_eq!(display.artifact_id, input.artifacts[0].id);
-            assert_eq!(display.range.encoding, TextEncoding::Utf8Byte);
+            assert_eq!(display.artifact_id, input.artifacts[0].as_text().unwrap().id);
+            assert_eq!(display.range.encoding, SourceEncoding::Utf8Byte);
             assert_eq!(&source[display.range.start as usize..display.range.end as usize], identity.display.value);
         }
         let range = exchange.units[0].occurrences[0].source.range;
-        assert_eq!(range.encoding, TextEncoding::Utf8Byte);
+        assert_eq!(range.encoding, SourceEncoding::Utf8Byte);
         assert_eq!(&source[range.start as usize..range.end as usize], "中文 👩🏽‍💻 é\r\nsecond line");
         let mut invalid = input.clone();
-        invalid.artifacts[0].utf8 = "WEBVTT\n\n00:01.000 --> 00:02.000\nAnonymous\n".into();
-        invalid.artifacts[0].sha256 = payload_digest(&invalid.artifacts[0].utf8);
+        invalid.artifacts[0].as_text_mut().unwrap().utf8 = "WEBVTT\n\n00:01.000 --> 00:02.000\nAnonymous\n".into();
+        invalid.artifacts[0].as_text_mut().unwrap().sha256 = payload_digest(&invalid.artifacts[0].as_text().unwrap().utf8);
         let failed = invoke(&mut session, &extraction, "extract-anonymous", &serde_json::to_value(invalid).unwrap()).await;
         let InvocationOutcome::Failed { error } = failed else { panic!("anonymous cue must fail"); };
         assert_eq!(error.schema, source_extraction_error_contract());
@@ -67,7 +69,7 @@ fn official_webvtt_package_extracts_builds_and_checks_through_the_captured_host(
 
         let semantic = bind_capability(image.manifest(), "source-semantic-check", image.package_digest()).unwrap();
         assert_eq!(semantic.declaration.contract, contract("webvtt.source-check"));
-        assert_eq!(semantic.declaration.input_schema, source_extraction_check_input_contract());
+        assert_eq!(semantic.declaration.input_schema, contract("tsumugi.source-extraction-check-input"));
         assert_eq!(semantic.declaration.output_schema, check_results_contract());
         assert_eq!(semantic.declaration.error_schema, source_extraction_error_contract());
         // Fix source and original proposal bases before dispatching any check.
@@ -236,13 +238,13 @@ async fn assert_build_and_check(
         )
         .await,
     );
-    assert_eq!(payload.schema, artifact_set_contract());
+    assert_eq!(payload.schema, contract("tsumugi.artifact-set"));
     let artifacts = parse_artifact_set(payload.utf8.as_bytes()).unwrap();
     binding.validate_artifacts(&input, &artifacts).unwrap();
     assert_eq!(artifacts.artifacts.len(), 1);
-    assert_eq!(artifacts.artifacts[0].utf8.as_bytes(), expected.as_bytes());
-    assert_eq!(artifacts.artifacts[0].sha256, payload_digest(expected));
-    assert_eq!(artifacts.artifacts[0].logical_path, "zh-CN.vtt");
+    assert_eq!(artifacts.artifacts[0].as_text().unwrap().utf8.as_bytes(), expected.as_bytes());
+    assert_eq!(artifacts.artifacts[0].as_text().unwrap().sha256, payload_digest(expected));
+    assert_eq!(artifacts.artifacts[0].as_text().unwrap().logical_path, "zh-CN.vtt");
     let mut unsafe_target = input.clone();
     unsafe_target.targets[0].text = "<b>markup</b>".into();
     let InvocationOutcome::Failed { error } = invoke(
@@ -301,7 +303,7 @@ async fn assert_build_and_check(
         },
         input_digest: payload_digest(&serde_json::to_value(&input).unwrap().to_string()),
         scope_digest: payload_digest(&payload.utf8),
-        targets: vec![artifacts.artifacts[0].id.clone()],
+        targets: vec![artifacts.artifacts[0].as_text().unwrap().id.clone()],
         mandatory: true,
         waivable: false,
         not_applicable: None,
@@ -325,7 +327,7 @@ async fn assert_build_and_check(
     ] {
         let mut captured = original.clone();
         if !from.is_empty() {
-            let output = &mut captured.output.artifacts[0];
+            let output = captured.output.artifacts[0].as_text_mut().unwrap();
             output.utf8 = output.utf8.replacen(from, to, 1);
             assert_ne!(output.utf8, expected);
             output.sha256 = payload_digest(&output.utf8);

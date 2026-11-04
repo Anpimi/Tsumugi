@@ -160,6 +160,17 @@ pub struct CheckedArtifact {
     pub byte_length: u32,
     pub sha256: String,
 }
+impl CheckedArtifact {
+    fn capture(artifact: sdk::CapturedArtifact) -> Result<Self, CommandError> {
+        let byte_length = artifact.validated_bytes()
+            .map_err(|_| CommandError::unknown(CommandStage::ExecutionRead))?.len() as u32;
+        Ok(Self {
+            id: artifact.id().into(), role: artifact.role().into(),
+            logical_path: artifact.logical_path().into(), byte_length,
+            sha256: artifact.sha256().into(),
+        })
+    }
+}
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 #[cfg_attr(feature = "wire-schema", derive(schemars::JsonSchema))]
@@ -582,14 +593,8 @@ pub async fn prepare_artifact_check(
                         .output
                         .artifacts
                         .into_iter()
-                        .map(|a| CheckedArtifact {
-                            id: a.id,
-                            role: a.role,
-                            logical_path: a.logical_path,
-                            byte_length: a.utf8.len() as u32,
-                            sha256: a.sha256,
-                        })
-                        .collect(),
+                        .map(CheckedArtifact::capture)
+                        .collect::<Result<Vec<_>, CommandError>>()?,
                     requirements: payload.requirements,
                     build: environment.view()?,
                 };

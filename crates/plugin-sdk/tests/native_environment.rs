@@ -23,7 +23,7 @@ fn native_digest_matches_an_independently_calculated_vector() {
     let original = native();
     assert_eq!(
         original.digest().unwrap(),
-        "2f95a020864dbac75089b03733c74bf6f2cbd897c6220bba116a6ff587e6fe01"
+        "f47c1ed385f33000aae0d5a001e2faa4c3b002387e8ae6103da6c598a5640156"
     );
     let execution = ExecutionEnvironmentDescriptor::from(original.clone());
     let bytes = serde_json::to_vec(&original).unwrap();
@@ -63,6 +63,21 @@ fn native_identity_platform_and_application_version_are_fixed_choices() {
     variants[3].executable = NativeHostExecutableIdentity::LinuxExecutableSha256V1("a".repeat(64));
     for value in variants {
         assert_ne!(value.digest().unwrap(), original.digest().unwrap());
+    }
+}
+
+#[test]
+fn historical_native_descriptor_does_not_become_the_current_host() {
+    let mut old = native();
+    old.sdk_version = "0.1.0-alpha.1".into();
+    let bytes = serde_json::to_vec(&old).unwrap();
+    let decoded: NativeHostEnvironmentDescriptor = serde_json::from_slice(&bytes).unwrap();
+    decoded.validate().unwrap();
+    assert_eq!(serde_json::to_vec(&decoded).unwrap(), bytes);
+    assert_ne!(decoded.digest().unwrap(), native().digest().unwrap());
+    for version in ["0.1.0-alpha.0", "0.1.0-alpha.3", "0.1.0"] {
+        old.sdk_version = version.into();
+        assert!(old.validate().is_err());
     }
 }
 

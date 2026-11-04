@@ -9,12 +9,14 @@
     {
       "logicalPath": "materials/raw.txt",
       "role": "source",
-      "maxBytes": 131072
+      "maxBytes": 131072,
+      "encoding": "utf8"
     },
     {
       "logicalPath": "metadata/header.txt",
       "role": "companion",
-      "maxBytes": 16384
+      "maxBytes": 16384,
+      "encoding": "utf8"
     }
   ],
   "extractor": "extract",

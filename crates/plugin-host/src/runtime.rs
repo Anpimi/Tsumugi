@@ -314,7 +314,12 @@ fn capture_sources(
     let descriptor = sdk::RuntimeEnvironmentDescriptor {
         protocol_version: sdk::RUNTIME_ENVIRONMENT_PROTOCOL,
         platform: current_platform,
-        sdk_version: sdk::SDK_VERSION.into(),
+        // The approved descriptor selects a supported Process-3 SDK profile.
+        // Rebuilding it with the inspector's current SDK would change a
+        // historical identity despite identical approved artifact bytes.
+        sdk_version: expected
+            .map_or(sdk::SDK_VERSION, |approval| approval.sdk_version.as_str())
+            .into(),
         process_protocol: sdk::PROCESS_PROTOCOL,
         profile: request.profile,
         tool_version: request.tool_version.clone(),
@@ -452,6 +457,48 @@ mod tests {
                 host_entrypoint: "main.js".into(),
             },
         )
+    }
+
+    #[test]
+    fn supported_text_runtime_capture_keeps_approved_identity_in_both_sources() {
+        let (temporary, request) = inspection_fixture();
+        let tool = temporary.path().join("tool");
+        let host = temporary.path().join("host");
+        let current =
+            CapturedRuntime::inspect_directories(&tool, &host, &request, || true).unwrap();
+        let mut approval = current.environment.clone();
+        approval.sdk_version = "0.1.0-alpha.1".into();
+        approval.validate().unwrap();
+        let saved = serde_json::to_vec(&approval).unwrap();
+        let captured =
+            CapturedRuntime::capture_directories(&tool, &host, &approval, || true).unwrap();
+        assert_eq!(captured.descriptor(), &approval);
+        assert_eq!(serde_json::to_vec(captured.descriptor()).unwrap(), saved);
+        assert_eq!(captured.environment_digest(), approval.digest().unwrap());
+        assert_ne!(captured.environment_digest(), current.environment_digest);
+        let (tool_archive, host_archive) = captured.encode_archives(|| true).unwrap();
+        let mut tool_archive = std::io::Cursor::new(tool_archive);
+        let mut host_archive = std::io::Cursor::new(host_archive);
+        let restored = CapturedRuntime::capture_archives(
+            &mut tool_archive,
+            &mut host_archive,
+            &approval,
+            || true,
+        )
+        .unwrap();
+        assert_eq!(restored.descriptor(), &approval);
+        assert_eq!(restored.environment_digest(), captured.environment_digest());
+        let mut unknown = approval.clone();
+        unknown.sdk_version = "0.1.0-alpha.3".into();
+        assert_eq!(
+            CapturedRuntime::capture_directories(&tool, &host, &unknown, || true).unwrap_err(),
+            HostError::InvalidContract
+        );
+        fs::write(host.join("LICENSE"), b"changed bytes").unwrap();
+        assert_eq!(
+            CapturedRuntime::capture_directories(&tool, &host, &approval, || true).unwrap_err(),
+            HostError::RuntimeMismatch
+        );
     }
 
     #[test]

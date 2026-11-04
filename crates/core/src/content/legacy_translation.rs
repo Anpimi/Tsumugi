@@ -86,6 +86,7 @@ impl TranslationBundle {
     }
 
     pub fn validate(&self) -> Result<(), ExecutionError> {
+        let text = self.file.text()?;
         let declared = declared_locale(&self.file.logical_path)?;
         let target =
             Locale::parse(&self.target_locale).map_err(|_| invalid("language-conflict"))?;
@@ -99,9 +100,9 @@ impl TranslationBundle {
             || target.as_str() != self.target_locale
             || declared.split('-').next() != self.target_locale.split('-').next()
             || self.file.role != "translation"
-            || self.file.byte_length as usize != self.file.utf8.len()
-            || self.file.utf8.len() > MAX_SOURCE_BYTES
-            || codec::digest(self.file.utf8.as_bytes()) != self.file.sha256
+            || self.file.byte_length as usize != text.len()
+            || text.len() > MAX_SOURCE_BYTES
+            || codec::digest(text.as_bytes()) != self.file.sha256
             || self.calculate_digest()? != self.manifest_digest
         {
             return Err(invalid("invalid-structure"));
@@ -240,7 +241,7 @@ fn parsed_translation(
         return Ok(entries.clone());
     }
     let deadline = Instant::now() + Duration::from_secs(60);
-    let (root, offset) = super::smapi::parse(&bundle.file.utf8, cancel, deadline)?;
+    let (root, offset) = super::smapi::parse(bundle.file.text()?, cancel, deadline)?;
     let root = root
         .as_object()
         .ok_or_else(|| invalid("invalid-structure"))?;

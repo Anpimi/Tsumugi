@@ -16,13 +16,22 @@ fn contract(id: &str) -> ContractRef {
     }
 }
 pub fn build_input_contract() -> ContractRef {
-    contract("tsumugi.build-input")
+    ContractRef {
+        schema_version: 2,
+        ..contract("tsumugi.build-input")
+    }
 }
 pub fn artifact_set_contract() -> ContractRef {
-    contract("tsumugi.artifact-set")
+    ContractRef {
+        schema_version: 2,
+        ..contract("tsumugi.artifact-set")
+    }
 }
 pub fn artifact_check_input_contract() -> ContractRef {
-    contract("tsumugi.artifact-check-input")
+    ContractRef {
+        schema_version: 2,
+        ..contract("tsumugi.artifact-check-input")
+    }
 }
 pub fn build_declaration_contract() -> ContractRef {
     contract("tsumugi.build-declaration")
@@ -142,8 +151,8 @@ impl BuildInput {
     }
 }
 
-/// Actual UTF-8 output, including BOM and line endings. This contract deliberately
-/// makes no binary-artifact or domain conformance claim. No local paths are used.
+/// Actual text or binary output. Exact bytes do not establish domain conformance
+/// or release eligibility. Logical paths grant no filesystem authority.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
@@ -151,7 +160,7 @@ pub struct ArtifactSet {
     pub profile: ContractRef,
     pub source_set_id: String,
     pub target_language: String,
-    pub artifacts: Vec<CapturedTextArtifact>,
+    pub artifacts: Vec<CapturedArtifact>,
 }
 impl ArtifactSet {
     pub fn validate(&self) -> Result<(), ContractError> {
@@ -164,7 +173,7 @@ impl ArtifactSet {
         if self.artifacts.len() > MAX_BUILD_ARTIFACTS {
             return Err(invalid("artifactSet.artifacts"));
         }
-        validate_build_output_paths(self.artifacts.iter().map(|a| a.logical_path.as_str()))?;
+        validate_build_output_paths(self.artifacts.iter().map(|a| a.logical_path()))?;
         encoded_limit(self, MAX_EXCHANGE_BYTES, "artifactSet")
     }
 }
@@ -207,12 +216,18 @@ pub fn validate_build_artifacts(
         || input
             .output_paths
             .iter()
+            .map(String::as_str)
             .collect::<std::collections::BTreeSet<_>>()
-            != output.artifacts.iter().map(|a| &a.logical_path).collect()
+            != output.artifacts.iter().map(|a| a.logical_path()).collect()
     {
         return Err(mismatch("artifactSet.input"));
     }
-    let bytes: usize = output.artifacts.iter().map(|a| a.utf8.len()).sum();
+    let bytes = output
+        .artifacts
+        .iter()
+        .try_fold(0usize, |total, artifact| {
+            artifact.bytes().map(|bytes| total + bytes.len())
+        })?;
     if output.artifacts.len() > input.output_limits.max_artifacts as usize
         || bytes > input.output_limits.max_total_bytes as usize
     {
@@ -246,7 +261,7 @@ impl ArtifactCheckInput {
             "artifactCheck.requirements",
         )?;
         let targets: std::collections::BTreeSet<_> =
-            self.output.artifacts.iter().map(|a| &a.id).collect();
+            self.output.artifacts.iter().map(|a| a.id()).collect();
         let mut provider = None;
         let mut basis = None;
         for requirement in &self.requirements {
@@ -266,6 +281,7 @@ impl ArtifactCheckInput {
                 || requirement
                     .targets
                     .iter()
+                    .map(String::as_str)
                     .collect::<std::collections::BTreeSet<_>>()
                     != targets
             {
@@ -343,6 +359,12 @@ impl BuildBinding {
     pub fn validate_input(&self, input: &BuildInput) -> Result<(), ContractError> {
         self.validate()?;
         input.validate()?;
+        if self.builder.declaration.input_schema.schema_version == 1 {
+            crate::artifact::require_text_artifacts(
+                &input.source.artifacts,
+                "buildDeclaration.source.artifacts",
+            )?;
+        }
         if input.source.profile != self.declaration.profile
             || input.output_limits != self.declaration.output_limits
         {
@@ -361,6 +383,12 @@ impl BuildBinding {
     ) -> Result<(), ContractError> {
         self.validate_input(input)?;
         validate_build_artifacts(input, output)?;
+        if self.builder.declaration.input_schema.schema_version == 1 {
+            crate::artifact::require_text_artifacts(
+                &output.artifacts,
+                "buildDeclaration.output.artifacts",
+            )?;
+        }
         encoded_limit(
             output,
             self.builder.declaration.limits.max_output_bytes as usize,
@@ -407,7 +435,12 @@ impl BuildBinding {
         {
             return Err(invalid("buildDeclaration.provider"));
         }
-        for (binding, input, output, effect) in [
+        let version = crate::artifact::artifact_contract_version(
+            &self.builder.declaration.input_schema,
+            build_input_contract(),
+        )
+        .ok_or_else(|| invalid("buildDeclaration.capability"))?;
+        for (binding, mut input, mut output, effect) in [
             (
                 &self.builder,
                 build_input_contract(),
@@ -421,6 +454,10 @@ impl BuildBinding {
                 EffectKind::ReadOnly,
             ),
         ] {
+            if version == 1 {
+                input.schema_version = 1;
+                output.schema_version = 1;
+            }
             let d = &binding.declaration;
             if d.input_schema != input
                 || d.output_schema != output

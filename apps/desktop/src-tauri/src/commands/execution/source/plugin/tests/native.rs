@@ -520,7 +520,7 @@ fn actual_native_desktop_source_translation_review_and_build_use_independent_gra
             .execution_input(producer)
             .unwrap();
         let (material, _) = tsumugi_core::content::plugin_translation_input(&input).unwrap();
-        assert_eq!(material.artifacts[0].utf8, captured_raw);
+        assert_eq!(material.artifacts[0].as_text().unwrap().utf8, captured_raw);
         assert_eq!(
             serde_json::to_value(&input.envelope().plugin.as_ref().unwrap().environment).unwrap(),
             expected_environment

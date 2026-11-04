@@ -1266,10 +1266,25 @@ mod source_import_tests {
             .capture_declared(&binding(), "en-US", &Cancellation::default())
             .unwrap();
         assert_eq!(bundle.files.len(), 2);
-        assert_eq!(bundle.files[0].utf8, "\u{feff}raw 👩🏽‍💻 é\r\n");
-        assert_eq!(bundle.files[1].utf8, "opaque companion");
+        assert_eq!(bundle.files[0].text().unwrap(), "\u{feff}raw 👩🏽‍💻 é\r\n");
+        assert_eq!(bundle.files[1].text().unwrap(), "opaque companion");
         fs::write(root.path().join("materials/raw.txt"), b"new bytes").unwrap();
-        assert_eq!(bundle.files[0].utf8, "\u{feff}raw 👩🏽‍💻 é\r\n");
+        assert_eq!(bundle.files[0].text().unwrap(), "\u{feff}raw 👩🏽‍💻 é\r\n");
+    }
+    #[test]
+    fn source_import_capture_binary_is_explicit_and_keeps_original_invalid_utf8_bytes() {
+        let root = fixture();
+        fs::write(root.path().join("materials/raw.txt"), [0, 255, 128, 10]).unwrap();
+        let selected = Selection::authorize(root.path().into()).unwrap();
+        let mut binding = binding();
+        assert!(selected.capture_declared(&binding, "en-US", &Cancellation::default()).is_err());
+        binding.declaration.materials[0].encoding = tsumugi_plugin_sdk::SourceMaterialEncoding::Binary;
+        let bundle = selected.capture_declared(&binding, "en-US", &Cancellation::default()).unwrap();
+        assert!(bundle.files[0].text().is_err());
+        assert_eq!(bundle.files[0].bytes().unwrap().as_ref(), [0, 255, 128, 10]);
+        bundle.source_input().validate().unwrap();
+        fs::write(root.path().join("materials/raw.txt"), b"changed after capture").unwrap();
+        assert_eq!(bundle.files[0].bytes().unwrap().as_ref(), [0, 255, 128, 10]);
     }
     #[test]
     fn source_preflight_uses_declared_files_detects_change_and_reports_missing_without_interpreting_content() {
@@ -1400,7 +1415,7 @@ mod macos_tests {
                 &Cancellation::default(),
             )
             .unwrap();
-        assert_eq!(bundle.file.utf8, "{\"a\":\"你好 👩🏽‍💻 é\"}");
+        assert_eq!(bundle.file.text().unwrap(), "{\"a\":\"你好 👩🏽‍💻 é\"}");
         let source = root.path().join("i18n/default.json");
         let changed = selected.capture_inner("en", &Cancellation::default(), || {
             fs::write(&source, br#"{"a":"two"}"#).unwrap();
@@ -1457,7 +1472,7 @@ mod macos_tests {
                 .capture("en", &Cancellation::default())
                 .unwrap()
                 .files[0]
-                .utf8
+                .text().unwrap()
                 .as_bytes(),
             bytes
         );

@@ -2,7 +2,7 @@
 const profile = {
   "contract": {
     "id": "tsumugi.source-context-facts",
-    "schemaVersion": 1,
+    "schemaVersion": 2,
     "behaviorVersion": 1
   },
   "maxBytes": 65536,

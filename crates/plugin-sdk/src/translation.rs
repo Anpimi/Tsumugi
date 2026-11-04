@@ -21,13 +21,22 @@ fn contract(id: &str) -> ContractRef {
     }
 }
 pub fn translation_extraction_input_contract() -> ContractRef {
-    contract("tsumugi.translation-extraction-input")
+    ContractRef {
+        schema_version: 2,
+        ..contract("tsumugi.translation-extraction-input")
+    }
 }
 pub fn translation_exchange_contract() -> ContractRef {
-    contract("tsumugi.translation-exchange")
+    ContractRef {
+        schema_version: 2,
+        ..contract("tsumugi.translation-exchange")
+    }
 }
 pub fn translation_extraction_check_input_contract() -> ContractRef {
-    contract("tsumugi.translation-extraction-check-input")
+    ContractRef {
+        schema_version: 2,
+        ..contract("tsumugi.translation-extraction-check-input")
+    }
 }
 pub fn translation_import_declaration_contract() -> ContractRef {
     contract("tsumugi.translation-import-declaration")
@@ -69,7 +78,7 @@ pub struct TranslationExtractionInput {
     pub target_language: String,
     pub language_evidence: TranslationLanguageEvidence,
     pub native_scope: TranslationNativeScope,
-    pub artifacts: Vec<CapturedTextArtifact>,
+    pub artifacts: Vec<CapturedArtifact>,
 }
 impl TranslationExtractionInput {
     pub fn validate(&self) -> Result<(), ContractError> {
@@ -110,7 +119,7 @@ pub struct TranslationExchange {
     pub declared_language: String,
     pub language_evidence: TranslationLanguageEvidence,
     pub native_scope: TranslationNativeScope,
-    pub artifacts: Vec<CapturedTextArtifact>,
+    pub artifacts: Vec<CapturedArtifact>,
     pub entries: Vec<ImportedTranslation>,
     pub order: Vec<String>,
 }
@@ -195,8 +204,8 @@ pub fn validate_translation_extraction(
     {
         return Err(mismatch("translationExtraction.proposal"));
     }
-    let captured: BTreeMap<_, _> = input.artifacts.iter().map(|a| (&a.id, a)).collect();
-    let actual: BTreeMap<_, _> = proposal.artifacts.iter().map(|a| (&a.id, a)).collect();
+    let captured: BTreeMap<_, _> = input.artifacts.iter().map(|a| (a.id(), a)).collect();
+    let actual: BTreeMap<_, _> = proposal.artifacts.iter().map(|a| (a.id(), a)).collect();
     if captured != actual {
         return Err(mismatch("translationExtraction.artifacts"));
     }
@@ -339,7 +348,12 @@ impl TranslationImportBinding {
         {
             return Err(invalid("translationImport.provider"));
         }
-        for (binding, input, output) in [
+        let version = crate::artifact::artifact_contract_version(
+            &self.extractor.declaration.input_schema,
+            translation_extraction_input_contract(),
+        )
+        .ok_or_else(|| invalid("translationImport.capability"))?;
+        for (binding, mut input, mut output) in [
             (
                 &self.extractor,
                 translation_extraction_input_contract(),
@@ -351,6 +365,10 @@ impl TranslationImportBinding {
                 check_results_contract(),
             ),
         ] {
+            if version == 1 {
+                input.schema_version = 1;
+                output.schema_version = 1;
+            }
             let d = &binding.declaration;
             if d.input_schema != input
                 || d.output_schema != output
@@ -372,22 +390,28 @@ impl TranslationImportBinding {
     pub fn validate_input(&self, input: &TranslationExtractionInput) -> Result<(), ContractError> {
         self.validate()?;
         input.validate()?;
+        if self.extractor.declaration.input_schema.schema_version == 1 {
+            crate::artifact::require_text_artifacts(
+                &input.artifacts,
+                "translationImport.artifacts",
+            )?;
+        }
         if input.profile != self.declaration.profile || input.artifacts.len() != 1 {
             return Err(mismatch("translationImport.input"));
         }
         let artifact = &input.artifacts[0];
         let material = &self.declaration.material;
-        validate_portable_package_path(&artifact.logical_path)?;
+        validate_portable_package_path(artifact.logical_path())?;
         let prefix = format!("{}/", material.logical_directory);
         let leaf = artifact
-            .logical_path
+            .logical_path()
             .strip_prefix(&prefix)
             .ok_or_else(|| mismatch("translationImport.path"))?;
         if leaf.contains('/')
             || !leaf.ends_with(&format!(".{}", material.extension))
             || leaf.len() <= material.extension.len() + 1
-            || artifact.role != material.role
-            || artifact.utf8.len() > material.max_bytes as usize
+            || artifact.role() != material.role
+            || artifact.bytes()?.len() > material.max_bytes as usize
         {
             return Err(mismatch("translationImport.material"));
         }

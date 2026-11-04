@@ -1471,7 +1471,7 @@ fn source_failure(
 
 fn parse_public_source_failure(
     error: &sdk::EncodedPayload,
-    artifacts: &[sdk::CapturedTextArtifact],
+    artifacts: &[sdk::CapturedArtifact],
 ) -> Option<sdk::SourceExtractionError> {
     if error.schema != sdk::source_extraction_error_contract() {
         return None;
@@ -1480,7 +1480,7 @@ fn parse_public_source_failure(
     if failure
         .artifact_id
         .as_ref()
-        .is_some_and(|id| !artifacts.iter().any(|artifact| &artifact.id == id))
+        .is_some_and(|id| !artifacts.iter().any(|artifact| artifact.id() == id))
     {
         return None;
     }

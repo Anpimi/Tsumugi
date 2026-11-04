@@ -125,18 +125,13 @@ impl TranslationProjection {
             return Err(invalid());
         }
         let artifact = &proposal.artifacts[0];
-        if artifact.utf8.len() > MAX_SOURCE_BYTES {
+        if artifact.validated_bytes().map_err(|_| invalid())?.len() > MAX_SOURCE_BYTES {
             return Err(ExecutionError::new(
                 ErrorCode::LimitExceeded,
                 "translation-file-budget",
             ));
         }
-        let mut file = CapturedFile::new(
-            &artifact.logical_path,
-            &artifact.role,
-            artifact.utf8.as_bytes(),
-        )?;
-        file.artifact_id = artifact_id;
+        let file = CapturedFile::from_artifact(artifact, artifact_id)?;
         let indexed: std::collections::BTreeMap<_, _> = proposal
             .entries
             .iter()
@@ -145,31 +140,24 @@ impl TranslationProjection {
         let mut entries = Vec::with_capacity(proposal.order.len());
         for id in &proposal.order {
             let imported = indexed.get(id.as_str()).ok_or_else(invalid)?;
-            if imported.source.artifact_id != artifact.id {
+            if imported.source.artifact_id != artifact.id() {
                 return Err(invalid());
             }
-            let range = sdk::convert_text_range(
-                &artifact.utf8,
-                imported.source.range,
-                sdk::TextEncoding::Utf8Byte,
-            )
-            .map_err(|_| invalid())?;
+            let range = imported
+                .source
+                .range
+                .byte_range(artifact)
+                .map_err(|_| invalid())?;
             let key_byte_range = imported
                 .native_identity
                 .display
                 .source
                 .as_ref()
                 .map(|source| {
-                    if source.artifact_id != artifact.id {
+                    if source.artifact_id != artifact.id() {
                         return Err(invalid());
                     }
-                    sdk::convert_text_range(
-                        &artifact.utf8,
-                        source.range,
-                        sdk::TextEncoding::Utf8Byte,
-                    )
-                    .map(|range| [range.start, range.end])
-                    .map_err(|_| invalid())
+                    source.range.byte_range(artifact).map_err(|_| invalid())
                 })
                 .transpose()?;
             entries.push(ProjectedTranslationEntry {
@@ -177,7 +165,7 @@ impl TranslationProjection {
                 native_key: imported.native_identity.display.value.clone(),
                 text: imported.text.clone(),
                 key_byte_range,
-                value_byte_range: [range.start, range.end],
+                value_byte_range: range,
             });
         }
         Ok(Self {
@@ -268,8 +256,8 @@ impl TranslationProjection {
             return Err(invalid());
         }
         let projection: Self = from_value(&envelope.settings)?;
-        if projection.file.byte_length as usize != projection.file.utf8.len()
-            || projection.file.sha256 != codec::digest(projection.file.utf8.as_bytes())
+        if projection.file.byte_length as usize != projection.file.bytes()?.len()
+            || projection.file.sha256 != codec::digest(projection.file.bytes()?.as_ref())
         {
             return Err(invalid());
         }

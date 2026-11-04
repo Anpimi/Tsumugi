@@ -110,36 +110,21 @@
         }
       ]
     },
-    "SourceReference": {
-      "type": "object",
-      "properties": {
-        "artifactId": {
-          "type": "string"
-        },
-        "range": {
-          "$ref": "#/$defs/TextRange"
-        }
-      },
-      "additionalProperties": false,
-      "required": [
-        "artifactId",
-        "range"
-      ]
-    },
-    "TextEncoding": {
+    "SourceEncoding": {
+      "description": "Source coordinates are separate from ranges in decoded unit/target text.",
       "type": "string",
       "enum": [
         "utf8-byte",
         "utf16",
-        "grapheme"
+        "grapheme",
+        "raw-byte"
       ]
     },
-    "TextRange": {
-      "description": "Half-open offsets into one exact string, never between different strings.",
+    "SourceRange": {
       "type": "object",
       "properties": {
         "encoding": {
-          "$ref": "#/$defs/TextEncoding"
+          "$ref": "#/$defs/SourceEncoding"
         },
         "end": {
           "type": "integer",
@@ -157,6 +142,22 @@
         "encoding",
         "start",
         "end"
+      ]
+    },
+    "SourceReference": {
+      "type": "object",
+      "properties": {
+        "artifactId": {
+          "type": "string"
+        },
+        "range": {
+          "$ref": "#/$defs/SourceRange"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "artifactId",
+        "range"
       ]
     }
   }

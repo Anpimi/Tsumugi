@@ -513,7 +513,10 @@ export type SourceContextFactOrigin =
             SourceReference
           ];
     };
-export type TextEncoding = "utf8-byte" | "utf16" | "grapheme";
+/**
+ * Source coordinates are separate from ranges in decoded unit/target text.
+ */
+export type SourceEncoding = "utf8-byte" | "utf16" | "grapheme" | "raw-byte";
 export type ExtensionHandling = "required" | "preserve" | "optional";
 export type ContentTarget =
   | {
@@ -690,6 +693,7 @@ export type SourceDraftObservation =
   | {
       kind: "confirmed-not-applied";
     };
+export type SourceMaterialEncoding = "utf8" | "binary";
 export type SourceDraftResolveTarget =
   | {
       kind: "primary";
@@ -2110,13 +2114,10 @@ export interface SourceContextFact {
 }
 export interface SourceReference {
   artifactId: string;
-  range: TextRange;
+  range: SourceRange;
 }
-/**
- * Half-open offsets into one exact string, never between different strings.
- */
-export interface TextRange {
-  encoding: TextEncoding;
+export interface SourceRange {
+  encoding: SourceEncoding;
   end: number;
   start: number;
 }
@@ -2693,6 +2694,7 @@ export interface SourceImportDeclaration {
   semanticRules: ContractRef[];
 }
 export interface SourceMaterialDeclaration {
+  encoding?: SourceMaterialEncoding;
   logicalPath: string;
   maxBytes: number;
   role: string;

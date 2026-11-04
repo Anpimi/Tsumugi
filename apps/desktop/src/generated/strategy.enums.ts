@@ -17,6 +17,7 @@ export const RuntimeOperatingSystemValues = ["macos","linux","windows"] as const
 export const SourceContextDirectionValues = ["before","after"] as const;
 export const SourceContextFactKindValues = ["speaker","role","scene","time","location","note"] as const;
 export const SourceContextOmissionReasonValues = ["not-selected","byte-budget","item-limit"] as const;
+export const SourceEncodingValues = ["utf8-byte","utf16","grapheme","raw-byte"] as const;
 export const StrategyPreferenceValues = ["candidate-preferred","equivalent","baseline-preferred"] as const;
 export const TermOriginValues = ["manual","external"] as const;
 export const TextEncodingValues = ["utf8-byte","utf16","grapheme"] as const;

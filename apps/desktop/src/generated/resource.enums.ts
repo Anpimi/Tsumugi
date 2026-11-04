@@ -19,6 +19,7 @@ export const RuntimeArchitectureValues = ["aarch64","x86_64"] as const;
 export const RuntimeEnvironmentProfileValues = ["node-system-libraries-v1"] as const;
 export const RuntimeOperatingSystemValues = ["macos","linux","windows"] as const;
 export const SourceContextFactKindValues = ["speaker","role","scene","time","location","note"] as const;
+export const SourceEncodingValues = ["utf8-byte","utf16","grapheme","raw-byte"] as const;
 export const TbxLicenseStatusValues = ["unknown"] as const;
 export const TbxLossKindValues = ["unmapped-metadata","unknown-attribute","unknown-element","unknown-data-category","extra-language","duplicate-concept-id","duplicate-term-id","duplicate-language","duplicate-term-text","invalid-language","missing-term","empty-term","inline-markup","unknown-structure","unknown-usage-status","duplicate-usage-status","schema-hint"] as const;
 export const TbxRowReasonValues = ["missing-source","missing-target","ambiguous-source","ambiguous-target","invalid-language","unknown-structure","invalid-source-term","invalid-target-term"] as const;

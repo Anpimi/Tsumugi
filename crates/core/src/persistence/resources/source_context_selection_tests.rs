@@ -10,7 +10,7 @@ fn reference() -> sdk::SourceReference {
             encoding: sdk::TextEncoding::Utf8Byte,
             start: 0,
             end: 4,
-        },
+        }.into(),
     }
 }
 

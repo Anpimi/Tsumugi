@@ -369,6 +369,7 @@ fn exercise_joint_review_scoped(multiple: bool, reverse: bool, attempt_advisory:
             source_revision_id: current.source_revision_id,
             expected_selection_id: current.selection_id,
             text: "👩🏽‍💻 é 前提".into(),
+            reuse_origin: None,
         })
         .unwrap();
     let target = store.review_target(project, unit, "zh-CN").unwrap();

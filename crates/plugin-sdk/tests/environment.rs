@@ -51,7 +51,7 @@ fn descriptor_digest_matches_the_independent_profile_vector() {
     // field order, rather than from this implementation's returned bytes.
     assert_eq!(
         original.digest().unwrap(),
-        "fb82574603deea27d971fc878cf63fd8563e2c05d98b7ffc7ba29fe362759396"
+        "bd8d7caa03ba7c6470328af6045bec20a3d31310ad0b50d0820212a4864797b1"
     );
     let mut fields: Vec<_> = serde_json::to_value(&original)
         .unwrap()
@@ -85,7 +85,7 @@ fn node_execution_environment_keeps_its_exact_profile_bytes_and_digest() {
     );
     assert_eq!(
         wrapped.digest().unwrap(),
-        "fb82574603deea27d971fc878cf63fd8563e2c05d98b7ffc7ba29fe362759396"
+        "bd8d7caa03ba7c6470328af6045bec20a3d31310ad0b50d0820212a4864797b1"
     );
     assert_eq!(
         serde_json::from_slice::<ExecutionEnvironmentDescriptor>(
@@ -106,7 +106,7 @@ fn windows_descriptor_has_an_independent_vector_without_native_execution_support
     // JSON using Python hashlib, not this SDK's serializer or digest function.
     assert_eq!(
         windows.digest().unwrap(),
-        "2f07f2dc985a20a86a1a1ceeed0738e74cc24f933505d2fd61856056c13b2a6d"
+        "86efb1a9ac358cc33ec970feef6ef6289f47d447429aef167730ac30d2bfea8b"
     );
     let bytes = serde_json::to_vec(&windows).unwrap();
     let decoded: RuntimeEnvironmentDescriptor = serde_json::from_slice(&bytes).unwrap();
@@ -166,6 +166,25 @@ fn unsupported_protocols_and_invalid_bindings_cannot_be_hashed() {
         ContractErrorCode::UnsupportedProtocol
     );
     assert!(old.digest().is_err());
+}
+
+#[test]
+fn supported_pre_binary_descriptor_keeps_its_original_identity() {
+    let mut old = descriptor();
+    old.sdk_version = "0.1.0-alpha.1".into();
+    let bytes = serde_json::to_vec(&old).unwrap();
+    let read: RuntimeEnvironmentDescriptor = serde_json::from_slice(&bytes).unwrap();
+    read.validate().unwrap();
+    assert_eq!(serde_json::to_vec(&read).unwrap(), bytes);
+    assert_eq!(
+        read.digest().unwrap(),
+        "fb82574603deea27d971fc878cf63fd8563e2c05d98b7ffc7ba29fe362759396"
+    );
+    assert_ne!(read.digest().unwrap(), descriptor().digest().unwrap());
+    for version in ["0.1.0-alpha.0", "0.1.0-alpha.3", "0.1.0"] {
+        old.sdk_version = version.into();
+        assert!(old.validate().is_err());
+    }
 }
 
 #[test]

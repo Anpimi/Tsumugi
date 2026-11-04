@@ -319,6 +319,10 @@ export type SourceContextFactOrigin =
             SourceReference
           ];
     };
+/**
+ * Source coordinates are separate from ranges in decoded unit/target text.
+ */
+export type SourceEncoding = "utf8-byte" | "utf16" | "grapheme" | "raw-byte";
 export type ExtensionHandling = "required" | "preserve" | "optional";
 export type ContentTarget =
   | {
@@ -1451,7 +1455,12 @@ export interface SourceContextFact {
 }
 export interface SourceReference {
   artifactId: string;
-  range: TextRange;
+  range: SourceRange;
+}
+export interface SourceRange {
+  encoding: SourceEncoding;
+  end: number;
+  start: number;
 }
 export interface SelectedSourceContext {
   contentRevision: Revision;

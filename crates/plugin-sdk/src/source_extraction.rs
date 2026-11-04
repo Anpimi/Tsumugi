@@ -7,7 +7,7 @@ use std::collections::BTreeMap;
 use serde::{Deserialize, Serialize};
 
 use crate::{
-    CapturedTextArtifact, CheckImplementation, CheckRequirement, CheckResult, ContentExchange,
+    CapturedArtifact, CheckImplementation, CheckRequirement, CheckResult, ContentExchange,
     ContractError, ContractErrorCode, ContractRef, MAX_CONTENT_EXCHANGE_BYTES, MAX_EXCHANGE_BYTES,
     MAX_INVOCATION_PAYLOAD_BYTES,
     checks::validate_check_results,
@@ -21,7 +21,9 @@ pub const SOURCE_EXTRACTION_ERROR_SCHEMA_ID: &str = "tsumugi.source-extraction-e
 pub const SOURCE_EXTRACTION_CHECK_INPUT_SCHEMA_ID: &str = "tsumugi.source-extraction-check-input";
 pub const CHECK_RESULTS_SCHEMA_ID: &str = "tsumugi.check-results";
 pub const SOURCE_EXTRACTION_CONTRACT_VERSION: u32 = 1;
-pub const CONTENT_EXCHANGE_SCHEMA_VERSION: u32 = 2;
+pub const CONTENT_EXCHANGE_SCHEMA_VERSION: u32 = 3;
+pub const SOURCE_EXTRACTION_INPUT_SCHEMA_VERSION: u32 = 2;
+pub const SOURCE_EXTRACTION_CHECK_INPUT_SCHEMA_VERSION: u32 = 2;
 pub const MAX_SOURCE_EXTRACTION_ERROR_DETAIL_BYTES: usize = 4096;
 pub const MAX_SOURCE_EXTRACTION_ERROR_BYTES: usize = 32 * 1024;
 
@@ -33,7 +35,10 @@ fn contract(id: &str) -> ContractRef {
     }
 }
 pub fn source_extraction_input_contract() -> ContractRef {
-    contract(SOURCE_EXTRACTION_INPUT_SCHEMA_ID)
+    ContractRef {
+        schema_version: SOURCE_EXTRACTION_INPUT_SCHEMA_VERSION,
+        ..contract(SOURCE_EXTRACTION_INPUT_SCHEMA_ID)
+    }
 }
 pub fn content_exchange_contract() -> ContractRef {
     ContractRef {
@@ -45,10 +50,46 @@ pub fn source_extraction_error_contract() -> ContractRef {
     contract(SOURCE_EXTRACTION_ERROR_SCHEMA_ID)
 }
 pub fn source_extraction_check_input_contract() -> ContractRef {
-    contract(SOURCE_EXTRACTION_CHECK_INPUT_SCHEMA_ID)
+    ContractRef {
+        schema_version: SOURCE_EXTRACTION_CHECK_INPUT_SCHEMA_VERSION,
+        ..contract(SOURCE_EXTRACTION_CHECK_INPUT_SCHEMA_ID)
+    }
 }
 pub fn check_results_contract() -> ContractRef {
     contract(CHECK_RESULTS_SCHEMA_ID)
+}
+
+/// Recognize the exact supported source contract pair. The original pair is
+/// text-only; callers must keep its artifact representation restriction.
+pub fn source_extraction_contracts_support_binary(
+    input: &ContractRef,
+    output: &ContractRef,
+    error: &ContractRef,
+) -> Result<bool, ContractError> {
+    if error != &source_extraction_error_contract() {
+        return Err(ContractError::at(
+            ContractErrorCode::InvalidDeclaration,
+            "sourceExtraction.contracts",
+        ));
+    }
+    if input == &source_extraction_input_contract() && output == &content_exchange_contract() {
+        return Ok(true);
+    }
+    let old_input = ContractRef {
+        schema_version: 1,
+        ..source_extraction_input_contract()
+    };
+    let old_output = ContractRef {
+        schema_version: 2,
+        ..content_exchange_contract()
+    };
+    if input == &old_input && output == &old_output {
+        return Ok(false);
+    }
+    Err(ContractError::at(
+        ContractErrorCode::InvalidDeclaration,
+        "sourceExtraction.contracts",
+    ))
 }
 
 /// Captured by the trusted policy owner before a proposal is received. Only
@@ -80,7 +121,7 @@ impl SourceRevisionPolicy {
     }
 }
 
-/// Raw captured UTF-8 material supplied for one selected extraction profile.
+/// Raw captured text or binary material for one selected extraction profile.
 /// Logical paths and artifact IDs carry no filesystem or execution authority.
 /// This input contains no authoritative project unit or source revision IDs.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -90,7 +131,7 @@ pub struct SourceExtractionInput {
     pub profile: ContractRef,
     pub source_set_id: String,
     pub source_language: String,
-    pub artifacts: Vec<CapturedTextArtifact>,
+    pub artifacts: Vec<CapturedArtifact>,
 }
 impl SourceExtractionInput {
     pub fn validate(&self) -> Result<(), ContractError> {
@@ -291,8 +332,8 @@ pub fn validate_source_extraction(
     }
     // Artifact collection order does not define occurrence order. IDs are
     // unique after validation; every captured byte and metadata field matches.
-    let captured: BTreeMap<_, _> = input.artifacts.iter().map(|a| (&a.id, a)).collect();
-    let proposed: BTreeMap<_, _> = exchange.artifacts.iter().map(|a| (&a.id, a)).collect();
+    let captured: BTreeMap<_, _> = input.artifacts.iter().map(|a| (a.id(), a)).collect();
+    let proposed: BTreeMap<_, _> = exchange.artifacts.iter().map(|a| (a.id(), a)).collect();
     if captured != proposed {
         return Err(ContractError::at(
             ContractErrorCode::ResultMismatch,

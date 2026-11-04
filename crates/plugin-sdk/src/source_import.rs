@@ -10,13 +10,47 @@ pub const MAX_SOURCE_IMPORT_MATERIALS: usize = 32;
 pub fn source_import_declaration_contract() -> ContractRef {
     ContractRef {
         id: "tsumugi.source-import-declaration".into(),
-        schema_version: 2,
+        schema_version: 3,
         behavior_version: 2,
     }
 }
 #[cfg(feature = "schema")]
 pub fn source_import_declaration_schema() -> schemars::Schema {
-    schemars::schema_for!(SourceImportDeclaration)
+    // Read DTOs retain the exact v2 spelling, while a v3 authoring resource
+    // requires explicit encodings. The fields still come from the one type.
+    let mut schema = schemars::schema_for!(SourceImportDeclaration);
+    let material = schema
+        .as_object_mut()
+        .expect("object schema")
+        .get_mut("$defs")
+        .and_then(serde_json::Value::as_object_mut)
+        .and_then(|defs| defs.get_mut("SourceMaterialDeclaration"))
+        .and_then(serde_json::Value::as_object_mut)
+        .expect("material definition");
+    let required = material
+        .get_mut("required")
+        .and_then(serde_json::Value::as_array_mut)
+        .expect("material required fields");
+    if !required.iter().any(|field| field == "encoding") {
+        required.push(serde_json::json!("encoding"));
+    }
+    schema
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
+pub enum SourceMaterialEncoding {
+    Utf8,
+    Binary,
+    #[serde(skip)]
+    LegacyUtf8,
+}
+fn legacy_utf8() -> SourceMaterialEncoding {
+    SourceMaterialEncoding::LegacyUtf8
+}
+fn is_legacy_utf8(value: &SourceMaterialEncoding) -> bool {
+    *value == SourceMaterialEncoding::LegacyUtf8
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -26,6 +60,8 @@ pub struct SourceMaterialDeclaration {
     pub logical_path: String,
     pub role: String,
     pub max_bytes: u32,
+    #[serde(default = "legacy_utf8", skip_serializing_if = "is_legacy_utf8")]
+    pub encoding: SourceMaterialEncoding,
 }
 
 /// All listed materials are required, relative to one user-selected directory.
@@ -57,6 +93,26 @@ fn invalid(field: &str) -> ContractError {
     ContractError::at(ContractErrorCode::InvalidDeclaration, field)
 }
 impl SourceImportDeclaration {
+    pub fn is_legacy_text(&self) -> bool {
+        !self.materials.is_empty()
+            && self
+                .materials
+                .iter()
+                .all(|material| is_legacy_utf8(&material.encoding))
+    }
+    pub fn declaration_contract(&self) -> ContractRef {
+        ContractRef {
+            schema_version: if self.is_legacy_text() { 2 } else { 3 },
+            ..source_import_declaration_contract()
+        }
+    }
+    fn validate_current(&self) -> Result<(), ContractError> {
+        self.validate()?;
+        if self.is_legacy_text() {
+            return Err(invalid("sourceImport.materials.encoding"));
+        }
+        Ok(())
+    }
     pub fn validate(&self) -> Result<(), ContractError> {
         if self.display_name.trim().is_empty()
             || self.display_name.len() > 128
@@ -77,6 +133,14 @@ impl SourceImportDeclaration {
         }
         if self.materials.is_empty() || self.materials.len() > MAX_SOURCE_IMPORT_MATERIALS {
             return Err(invalid("sourceImport.materials"));
+        }
+        if self
+            .materials
+            .iter()
+            .any(|material| is_legacy_utf8(&material.encoding))
+            && !self.is_legacy_text()
+        {
+            return Err(invalid("sourceImport.materials.encoding"));
         }
         let mut paths: Vec<String> = Vec::new();
         let mut total = 0usize;
@@ -161,7 +225,7 @@ impl SourceImportBinding {
         {
             return Err(invalid("sourceImport.provider"));
         }
-        for (binding, input, output) in [
+        for (binding, mut input, mut output) in [
             (
                 &self.extractor,
                 source_extraction_input_contract(),
@@ -173,6 +237,10 @@ impl SourceImportBinding {
                 check_results_contract(),
             ),
         ] {
+            if self.declaration.is_legacy_text() {
+                input.schema_version = 1;
+                output.schema_version = if binding == &self.extractor { 2 } else { 1 };
+            }
             let d = &binding.declaration;
             if d.input_schema != input
                 || d.output_schema != output
@@ -204,6 +272,36 @@ pub fn parse_source_import_declaration(
     }
     let value: SourceImportDeclaration = serde_json::from_slice(bytes)
         .map_err(|_| ContractError::at(ContractErrorCode::InvalidSchema, "sourceImport"))?;
+    value.validate_current()?;
+    Ok(value)
+}
+
+/// Decode the exact resource profile named by the captured package image.
+pub fn parse_source_import_declaration_for_contract(
+    bytes: &[u8],
+    contract: &ContractRef,
+) -> Result<SourceImportDeclaration, ContractError> {
+    let legacy = ContractRef {
+        schema_version: 2,
+        ..source_import_declaration_contract()
+    };
+    if contract == &source_import_declaration_contract() {
+        return parse_source_import_declaration(bytes);
+    }
+    if contract != &legacy {
+        return Err(invalid("sourceImport.contract"));
+    }
+    if bytes.len() > MAX_SOURCE_IMPORT_DECLARATION_BYTES {
+        return Err(ContractError::at(
+            ContractErrorCode::LimitExceeded,
+            "sourceImport",
+        ));
+    }
+    let value: SourceImportDeclaration = serde_json::from_slice(bytes)
+        .map_err(|_| ContractError::at(ContractErrorCode::InvalidSchema, "sourceImport"))?;
     value.validate()?;
+    if !value.is_legacy_text() {
+        return Err(invalid("sourceImport.materials.encoding"));
+    }
     Ok(value)
 }

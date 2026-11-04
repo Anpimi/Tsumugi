@@ -21,6 +21,29 @@ fn binding() -> TranslationImportBinding {
         )
         .unwrap()
 }
+
+#[test]
+fn supported_text_import_refuses_binary_and_mixed_contract_families() {
+    let mut binding = binding();
+    binding.extractor.declaration.input_schema.schema_version = 1;
+    binding.extractor.declaration.output_schema.schema_version = 1;
+    binding.checker.declaration.input_schema.schema_version = 1;
+    binding.validate().unwrap();
+    let mut input = input();
+    binding.validate_input(&input).unwrap();
+    let text = &input.artifacts[0];
+    input.artifacts[0] = CapturedArtifact::from_bytes(
+        text.id().into(),
+        text.logical_path().into(),
+        text.role().into(),
+        &text.bytes().unwrap(),
+    )
+    .unwrap();
+    input.validate().unwrap();
+    assert!(binding.validate_input(&input).is_err());
+    binding.extractor.declaration.output_schema.schema_version = 2;
+    assert!(binding.validate().is_err());
+}
 fn check() -> TranslationExtractionCheckInput {
     let b = binding();
     let input = input();
@@ -57,11 +80,12 @@ fn translation_carries_fixed_evidence_and_original_unicode_references_without_pr
                 entry.native_identity.display.value.as_str(),
             ),
         ] {
-            assert_eq!(reference.range.encoding, TextEncoding::Utf8Byte);
+            assert_eq!(reference.range.encoding, SourceEncoding::Utf8Byte);
             let range = reference.range;
             assert_eq!(
                 serde_json::from_slice::<String>(
-                    &artifact.utf8.as_bytes()[range.start as usize..range.end as usize]
+                    &artifact.as_text().unwrap().utf8.as_bytes()
+                        [range.start as usize..range.end as usize]
                 )
                 .unwrap(),
                 expected
@@ -100,8 +124,9 @@ fn translation_association_refuses_changed_scope_and_rehashed_replacement_materi
                 }
             }
             5 => {
-                out.artifacts[0].utf8.push(' ');
-                out.artifacts[0].sha256 = payload_digest(&out.artifacts[0].utf8);
+                out.artifacts[0].as_text_mut().unwrap().utf8.push(' ');
+                out.artifacts[0].as_text_mut().unwrap().sha256 =
+                    payload_digest(&out.artifacts[0].as_text().unwrap().utf8);
             }
             _ => out.profile.behavior_version += 1,
         }
@@ -123,7 +148,7 @@ fn translation_structure_refuses_coverage_identity_range_hash_and_unknown_fields
             3 => out.entries[0].source.artifact_id = "absent".into(),
             4 => out.entries[0].source.range.end = u32::MAX,
             5 => out.entries[0].native_identity.policy.behavior_version += 1,
-            _ => out.artifacts[0].sha256 = "0".repeat(64),
+            _ => out.artifacts[0].as_text_mut().unwrap().sha256 = "0".repeat(64),
         }
         assert!(out.validate().is_err(), "case {mutation}");
     }
@@ -171,8 +196,9 @@ fn translation_limits_are_complete_byte_and_entry_limits() {
             .is_err()
     );
     let mut too_large = input();
-    too_large.artifacts[0].utf8 = "x".repeat(MAX_EXCHANGE_BYTES);
-    too_large.artifacts[0].sha256 = payload_digest(&too_large.artifacts[0].utf8);
+    too_large.artifacts[0].as_text_mut().unwrap().utf8 = "x".repeat(MAX_EXCHANGE_BYTES);
+    too_large.artifacts[0].as_text_mut().unwrap().sha256 =
+        payload_digest(&too_large.artifacts[0].as_text().unwrap().utf8);
     assert!(too_large.validate().is_err()); // Exact bytes plus mandatory metadata.
 }
 #[test]
@@ -212,15 +238,17 @@ fn translation_resource_binds_exact_providers_and_bounds_single_material() {
         "i18n/../zh.json",
     ] {
         let mut captured = input();
-        captured.artifacts[0].logical_path = path.into();
+        captured.artifacts[0].as_text_mut().unwrap().logical_path = path.into();
         assert!(original.validate_input(&captured).is_err(), "{path}");
     }
     let mut max = input();
-    max.artifacts[0].utf8 = "x".repeat(131072);
-    max.artifacts[0].sha256 = payload_digest(&max.artifacts[0].utf8);
+    max.artifacts[0].as_text_mut().unwrap().utf8 = "x".repeat(131072);
+    max.artifacts[0].as_text_mut().unwrap().sha256 =
+        payload_digest(&max.artifacts[0].as_text().unwrap().utf8);
     original.validate_input(&max).unwrap();
-    max.artifacts[0].utf8.push('x');
-    max.artifacts[0].sha256 = payload_digest(&max.artifacts[0].utf8);
+    max.artifacts[0].as_text_mut().unwrap().utf8.push('x');
+    max.artifacts[0].as_text_mut().unwrap().sha256 =
+        payload_digest(&max.artifacts[0].as_text().unwrap().utf8);
     assert!(original.validate_input(&max).is_err());
     for change in 0..5 {
         let mut manifest: PluginManifest =

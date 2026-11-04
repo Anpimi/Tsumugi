@@ -108,8 +108,19 @@ impl PackageImage {
     /// Interpret only the explicitly selected SDK resource from this immutable
     /// package. The resource cannot substitute another package's declarations.
     pub fn source_import(&self, contribution_id: &str) -> HostResult<SourceImportBinding> {
-        let declaration = parse_source_import_declaration(
-            self.resource_bytes(contribution_id, &source_import_declaration_contract())?,
+        let contribution = self
+            .manifest
+            .manifest()
+            .contributions
+            .iter()
+            .find(|value| value.id == contribution_id)
+            .ok_or(HostError::InvalidContract)?;
+        let ContributionKind::Resource { schema, .. } = &contribution.contribution else {
+            return Err(HostError::InvalidContract);
+        };
+        let declaration = parse_source_import_declaration_for_contract(
+            self.resource_bytes(contribution_id, schema)?,
+            schema,
         )
         .map_err(|_| HostError::InvalidContract)?;
         let review = self.review_declaration(&declaration.review_resource)?;

@@ -33,6 +33,8 @@ fn public_contracts_have_one_exact_schema_and_behavior_identity() {
         assert_eq!(
             reference.schema_version,
             if id == CONTENT_EXCHANGE_SCHEMA_ID {
+                3
+            } else if id == SOURCE_EXTRACTION_INPUT_SCHEMA_ID {
                 2
             } else {
                 1
@@ -48,10 +50,16 @@ fn source_fixture_preserves_original_unicode_and_line_endings() {
     let input = input();
     let exchange = content(CONTENT);
     validate_source_extraction(&input, &exchange).unwrap();
-    assert!(input.artifacts[0].utf8.contains("👩🏽‍💻 é\r\n"));
+    assert!(
+        input.artifacts[0]
+            .as_text()
+            .unwrap()
+            .utf8
+            .contains("👩🏽‍💻 é\r\n")
+    );
     assert_eq!(
-        input.artifacts[0].sha256,
-        payload_digest(&input.artifacts[0].utf8)
+        input.artifacts[0].as_text().unwrap().sha256,
+        payload_digest(&input.artifacts[0].as_text().unwrap().utf8)
     );
     assert_eq!(
         parse_source_extraction_input(&serde_json::to_vec(&input).unwrap()).unwrap(),
@@ -73,28 +81,32 @@ fn source_material_rejects_invalid_capture_metadata_and_bounds() {
             2 => input.source_language = "not a language".into(),
             3 => input.artifacts.clear(),
             4 => input.artifacts.push(input.artifacts[0].clone()),
-            5 => input.artifacts[0].id.clear(),
-            6 => input.artifacts[0].logical_path = "../source.vtt".into(),
-            7 => input.artifacts[0].role = "invalid role".into(),
-            8 => input.artifacts[0].sha256 = "0".repeat(64),
+            5 => input.artifacts[0].as_text_mut().unwrap().id.clear(),
+            6 => input.artifacts[0].as_text_mut().unwrap().logical_path = "../source.vtt".into(),
+            7 => input.artifacts[0].as_text_mut().unwrap().role = "invalid role".into(),
+            8 => input.artifacts[0].as_text_mut().unwrap().sha256 = "0".repeat(64),
             9 => {
-                input.artifacts[0].utf8 = "x".repeat(MAX_EXCHANGE_BYTES + 1);
-                input.artifacts[0].sha256 = payload_digest(&input.artifacts[0].utf8);
+                input.artifacts[0].as_text_mut().unwrap().utf8 = "x".repeat(MAX_EXCHANGE_BYTES + 1);
+                input.artifacts[0].as_text_mut().unwrap().sha256 =
+                    payload_digest(&input.artifacts[0].as_text().unwrap().utf8);
             }
             10 => {
                 input.artifacts = (0..=MAX_CONTENT_ITEMS)
-                    .map(|index| CapturedTextArtifact {
-                        id: format!("artifact-{index}"),
-                        logical_path: format!("capture-{index}.txt"),
-                        role: "source".into(),
-                        sha256: payload_digest(""),
-                        utf8: String::new(),
+                    .map(|index| {
+                        CapturedTextArtifact {
+                            id: format!("artifact-{index}"),
+                            logical_path: format!("capture-{index}.txt"),
+                            role: "source".into(),
+                            sha256: payload_digest(""),
+                            utf8: String::new(),
+                        }
+                        .into()
                     })
                     .collect();
             }
             _ => {
                 let mut second = input.artifacts[0].clone();
-                second.id = "different-artifact".into();
+                second.as_text_mut().unwrap().id = "different-artifact".into();
                 input.artifacts.push(second); // duplicate logical path
             }
         }
@@ -136,10 +148,10 @@ fn extraction_rejects_other_valid_material_and_recomputed_digests() {
             0 => exchange.profile.behavior_version += 1,
             1 => exchange.source_set_id = "another-set".into(),
             2 => exchange.source_language = "zh-CN".into(),
-            3 => exchange.artifacts[0].logical_path = "another.vtt".into(),
-            4 => exchange.artifacts[0].role = "companion".into(),
+            3 => exchange.artifacts[0].as_text_mut().unwrap().logical_path = "another.vtt".into(),
+            4 => exchange.artifacts[0].as_text_mut().unwrap().role = "companion".into(),
             5 => {
-                exchange.artifacts[0].id = "another-artifact".into();
+                exchange.artifacts[0].as_text_mut().unwrap().id = "another-artifact".into();
                 exchange.units[0].occurrences[0].source.artifact_id = "another-artifact".into();
                 exchange.units[0].occurrences[0]
                     .native_identity
@@ -152,22 +164,31 @@ fn extraction_rejects_other_valid_material_and_recomputed_digests() {
                     .artifact_id = "another-artifact".into();
             }
             6 => {
-                exchange.artifacts[0].utf8.push('\n');
-                exchange.artifacts[0].sha256 = payload_digest(&exchange.artifacts[0].utf8);
+                exchange.artifacts[0].as_text_mut().unwrap().utf8.push('\n');
+                exchange.artifacts[0].as_text_mut().unwrap().sha256 =
+                    payload_digest(&exchange.artifacts[0].as_text().unwrap().utf8);
             }
             7 => {
-                exchange.artifacts[0].utf8.insert(0, '\u{feff}');
-                exchange.artifacts[0].sha256 = payload_digest(&exchange.artifacts[0].utf8);
+                exchange.artifacts[0]
+                    .as_text_mut()
+                    .unwrap()
+                    .utf8
+                    .insert(0, '\u{feff}');
+                exchange.artifacts[0].as_text_mut().unwrap().sha256 =
+                    payload_digest(&exchange.artifacts[0].as_text().unwrap().utf8);
                 exchange.units[0].occurrences[0].source.range.start += 3;
                 exchange.units[0].occurrences[0].source.range.end += 3;
             }
-            _ => exchange.artifacts.push(CapturedTextArtifact {
-                id: "extra-artifact".into(),
-                logical_path: "extra.txt".into(),
-                role: "companion".into(),
-                sha256: payload_digest("extra"),
-                utf8: "extra".into(),
-            }),
+            _ => exchange.artifacts.push(
+                CapturedTextArtifact {
+                    id: "extra-artifact".into(),
+                    logical_path: "extra.txt".into(),
+                    role: "companion".into(),
+                    sha256: payload_digest("extra"),
+                    utf8: "extra".into(),
+                }
+                .into(),
+            ),
         }
         exchange.validate().unwrap();
         assert_eq!(
@@ -389,8 +410,9 @@ fn revision_policy_is_unique_versioned_capture_and_does_not_interpret_payloads()
 #[test]
 fn combined_check_budget_is_distinct_from_each_captured_content_budget() {
     let mut request = semantic_input();
-    request.source.artifacts[0].utf8 = "x".repeat(900_000);
-    request.source.artifacts[0].sha256 = payload_digest(&request.source.artifacts[0].utf8);
+    request.source.artifacts[0].as_text_mut().unwrap().utf8 = "x".repeat(900_000);
+    request.source.artifacts[0].as_text_mut().unwrap().sha256 =
+        payload_digest(&request.source.artifacts[0].as_text().unwrap().utf8);
     request.proposal.artifacts = request.source.artifacts.clone();
     request.proposal.domain_blocks[0].payload_utf8 = "x".repeat(900_000);
     let bytes = serde_json::to_vec(&request).unwrap();

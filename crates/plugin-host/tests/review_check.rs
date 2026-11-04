@@ -42,7 +42,7 @@ fn source_input(profile: ContractRef, caption: bool) -> SourceExtractionInput {
                 role: role.into(),
                 sha256: payload_digest(utf8),
                 utf8: utf8.into(),
-            })
+            }.into())
             .collect(),
     }
 }

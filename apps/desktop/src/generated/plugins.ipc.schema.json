@@ -3321,6 +3321,9 @@
       "SourceMaterialDeclaration": {
         "additionalProperties": false,
         "properties": {
+          "encoding": {
+            "$ref": "#/definitions/SourceMaterialEncoding"
+          },
           "logicalPath": {
             "type": "string"
           },
@@ -3340,6 +3343,13 @@
           "maxBytes"
         ],
         "type": "object"
+      },
+      "SourceMaterialEncoding": {
+        "enum": [
+          "utf8",
+          "binary"
+        ],
+        "type": "string"
       },
       "SourceRevisionPolicy": {
         "additionalProperties": false,

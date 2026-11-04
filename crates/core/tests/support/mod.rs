@@ -113,8 +113,8 @@ pub fn source_input_with_texts(store: &ProjectStore, texts: &[&str]) -> FixedInp
         .unwrap()
 }
 fn proposal(source: &sdk::SourceExtractionInput) -> sdk::ContentExchange {
-    assert_eq!(source.artifacts[1].utf8, "opaque companion");
-    let lines: Vec<_> = source.artifacts[0].utf8.split('\n').collect();
+    assert_eq!(source.artifacts[1].as_text().unwrap().utf8, "opaque companion");
+    let lines: Vec<_> = source.artifacts[0].as_text().unwrap().utf8.split('\n').collect();
     let count = lines.len();
     let mut order = Vec::with_capacity(count);
     let mut start = 0u32;
@@ -135,12 +135,12 @@ fn proposal(source: &sdk::SourceExtractionInput) -> sdk::ContentExchange {
                 occurrences: vec![sdk::ContentOccurrence {
                     id: format!("occurrence-{key}"),
                     source: sdk::SourceReference {
-                        artifact_id: source.artifacts[0].id.clone(),
+                        artifact_id: source.artifacts[0].id().into(),
                         range: sdk::TextRange {
                             encoding: sdk::TextEncoding::Utf8Byte,
                             start: range_start,
                             end,
-                        },
+                        }.into(),
                     },
                     native_identity: Some(sdk::NativeIdentityEvidence {
                         namespace: "Synthetic.Source".into(),

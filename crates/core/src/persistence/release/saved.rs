@@ -154,17 +154,27 @@ impl ProjectStore {
                                     .into_iter()
                                     .map(|artifact| {
                                         Ok(SavedBuildArtifact {
-                                            id: artifact.id,
-                                            role: artifact.role,
-                                            logical_path: artifact.logical_path,
-                                            byte_length: u32::try_from(artifact.utf8.len())
-                                                .map_err(|_| {
-                                                    failure(
-                                                        ErrorCode::OutputInvalid,
-                                                        "saved-build-size",
-                                                    )
-                                                })?,
-                                            sha256: artifact.sha256,
+                                            id: artifact.id().into(),
+                                            role: artifact.role().into(),
+                                            logical_path: artifact.logical_path().into(),
+                                            byte_length: u32::try_from(
+                                                artifact
+                                                    .validated_bytes()
+                                                    .map_err(|_| {
+                                                        failure(
+                                                            ErrorCode::OutputInvalid,
+                                                            "saved-build-bytes",
+                                                        )
+                                                    })?
+                                                    .len(),
+                                            )
+                                            .map_err(|_| {
+                                                failure(
+                                                    ErrorCode::OutputInvalid,
+                                                    "saved-build-size",
+                                                )
+                                            })?,
+                                            sha256: artifact.sha256().into(),
                                         })
                                     })
                                     .collect::<Result<Vec<_>, ExecutionError>>()?

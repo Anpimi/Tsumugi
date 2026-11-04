@@ -84,10 +84,12 @@ export type SourceContextFactOrigin =
           ];
     };
 /**
+ * Source coordinates are separate from ranges in decoded unit/target text.
+ *
  * This interface was referenced by `SourceContextFacts`'s JSON-Schema
- * via the `definition` "TextEncoding".
+ * via the `definition` "SourceEncoding".
  */
-export type TextEncoding = "utf8-byte" | "utf16" | "grapheme";
+export type SourceEncoding = "utf8-byte" | "utf16" | "grapheme" | "raw-byte";
 
 /**
  * The surrounding DomainBlock supplies Snapshot/Unit/Occurrence applicability.
@@ -118,16 +120,14 @@ export interface SourceContextFact {
  */
 export interface SourceReference {
   artifactId: string;
-  range: TextRange;
+  range: SourceRange;
 }
 /**
- * Half-open offsets into one exact string, never between different strings.
- *
  * This interface was referenced by `SourceContextFacts`'s JSON-Schema
- * via the `definition` "TextRange".
+ * via the `definition` "SourceRange".
  */
-export interface TextRange {
-  encoding: TextEncoding;
+export interface SourceRange {
+  encoding: SourceEncoding;
   end: number;
   start: number;
 }

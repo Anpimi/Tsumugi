@@ -19,4 +19,5 @@ export const RuntimeAvailabilityValues = ["available","unsupported-platform","sy
 export const RuntimeEnvironmentProfileValues = ["node-system-libraries-v1"] as const;
 export const RuntimeKindValues = ["data","native-worker","javascript"] as const;
 export const RuntimeOperatingSystemValues = ["macos","linux","windows"] as const;
+export const SourceMaterialEncodingValues = ["utf8","binary"] as const;
 export const TextReviewDispositionValues = ["advisory"] as const;

@@ -113,7 +113,7 @@ fn record_builtin_input(connection: &Connection, input: &FixedInput) -> Result<(
             locale
                 .source_template
                 .as_ref()
-                .is_some_and(|template| template != &bundle.files[0].utf8)
+                .is_some_and(|template| bundle.files[0].text().ok() != Some(template.as_str()))
         })
     {
         return Err(failure(ErrorCode::OutputInvalid, "build-source-template"));
@@ -717,7 +717,7 @@ impl ProjectStore {
                 locale: choice.locale.clone(),
                 file_name: choice.file_name.clone(),
                 entries,
-                source_template: vtt.then(|| source_bundle.files[0].utf8.clone()),
+                source_template: if vtt { Some(source_bundle.files[0].text()?.to_owned()) } else { None },
             });
         }
         // Review pages are read separately. Reject a capture if another writer
