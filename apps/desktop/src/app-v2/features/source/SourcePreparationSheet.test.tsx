@@ -347,3 +347,32 @@ it.each(["en-US", "zh-CN"] as const)("opens saved A through real %s presentation
   const stored = await sourceDraftCommands.read({ sessionToken: project.sessionToken, key: { projectId: project.metadata.projectId } });
   expect(stored.value?.actor).toBe("Retained reviewer B 人工"); expect(stored.value?.attemptId).toBe(attemptB);
 });
+
+
+it("explains file-set choices and shows the returned names before capture or execution", async () => {
+  const view = { ...pluginSourceView, declaration: { ...pluginSourceView.declaration, materials: [], fileSets: [
+    { id: "records", displayName: "Record files", role: "source", encoding: "binary", extensions: ["esp", "esl"], minFiles: 1, maxFiles: 1, maxBytes: 1024 },
+    { id: "tables", displayName: "Companion tables", role: "companion", encoding: "binary", extensions: ["strings"], minFiles: 0, maxFiles: 1, maxBytes: 1024 },
+  ] } };
+  const pkg = structuredClone(pluginSourcePackage);
+  for (const entry of pkg.manifest.contributions) if (entry.contribution.kind === "resource" && entry.contribution.schema.id === "tsumugi.source-import-declaration") entry.contribution.schema.schemaVersion = 4;
+  invoke.mockImplementation(async command => {
+    if (command === "read_plugin_inventory") return pluginSourceInventory;
+    if (command === "read_plugin_package") return pkg;
+    if (command === "read_plugin_source") return view;
+    if (command === "select_plugin_source") return { ...pluginSourceWorkflow.selection, source: view, fileSets: [{ id: "records", logicalPaths: ["Chosen.ESP"] }] };
+    throw new Error(`Unexpected file-set command: ${command}`);
+  });
+  installSourceDraftFixture(); renderWorkbench(<Harness saved={null}/>, project);
+  const user = userEvent.setup();
+  const importer = await screen.findByRole("combobox", { name: i18n.t("source.integration") });
+  await waitFor(() => expect(importer).toBeEnabled());
+  await user.selectOptions(importer, `${pluginSourceRequest.package.packageDigest}:${pluginSourceRequest.resourceId}`);
+  await user.selectOptions(screen.getByRole("combobox", { name: i18n.t("sourcePlugin.runtime") }), pluginSourceRequest.environmentDigest);
+  expect(await screen.findByText(i18n.t("sourceMaintenance.fileSetHelp"))).toBeVisible();
+  expect(screen.getByText(i18n.t("sourceMaintenance.fileSet", { name: "Record files", min: 1, max: 1, extensions: "esp, esl", bytes: 1024 }))).toBeVisible();
+  const folder = screen.getByRole("button", { name: i18n.t("sourceMaintenance.chooseFolder") });
+  await waitFor(() => expect(folder).toBeEnabled()); await user.click(folder);
+  expect(await screen.findByRole("list", { name: i18n.t("sourceMaintenance.selectedFiles") })).toHaveTextContent("Chosen.ESP");
+  expect(invoke.mock.calls.some(([name]) => ["preflight_plugin_source", "start_plugin_source", "start_source_check"].includes(name))).toBe(false);
+});

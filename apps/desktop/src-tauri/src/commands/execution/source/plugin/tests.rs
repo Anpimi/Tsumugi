@@ -14,13 +14,35 @@ fn startup_handoff_cannot_replace_a_newer_source_selection() {
     let selection = Arc::new(capture::Selection::authorize(directory.path().into()).unwrap());
     let a = ExecutionId::new(); let b = ExecutionId::new();
     let active = sessions.active.as_mut().unwrap();
-    accept_startup_selection(active, selection.clone(), a, source.clone(), view.clone()).unwrap();
+    accept_startup_selection(active, selection.clone(), a, source.clone(), view.clone(), vec![]).unwrap();
     {
         let host = active.execution_parts().unwrap().0;
         host.source.selection = Some((b, selection.clone())); host.source.plugin.choice = Some((b, source.clone()));
     }
-    assert!(accept_startup_selection(active, selection, a, source, view).is_err());
+    assert!(accept_startup_selection(active, selection, a, source, view, vec![]).is_err());
     assert_eq!(active.execution_parts().unwrap().0.source.selection.as_ref().unwrap().0, b);
+}
+
+#[cfg(any(windows, target_os = "macos"))]
+#[test]
+fn startup_handoff_keeps_the_selected_file_set_identity() {
+    let directory = tempfile::tempdir().unwrap();
+    let mut sessions = crate::commands::SessionManager::default();
+    sessions.create(crate::commands::CreateProjectRequest { destination: directory.path().join("project").to_string_lossy().into(),
+        display_name: "Selected files".into(), source_locale: "en-US".into(), target_locales: vec!["fr".into()] }).unwrap();
+    let bytes: Value = serde_json::from_str(include_str!("../../../../../../test/fixtures/pluginSourceWorkflow.contract.json")).unwrap();
+    let source: PluginSourceRequest = serde_json::from_value(bytes["select"]["source"].clone()).unwrap();
+    let view: PluginSourceView = serde_json::from_value(bytes["selection"]["source"].clone()).unwrap();
+    let selected = Arc::new(capture::Selection::authorize(directory.path().into()).unwrap());
+    let id = ExecutionId::new();
+    let choices = vec![tsumugi_plugin_sdk::SourceFileSetSelection { id: "records".into(), logical_paths: vec!["Chosen.esp".into()] }];
+    let active = sessions.active.as_mut().unwrap();
+    let first = accept_startup_selection(active, selected.clone(), id, source.clone(), view.clone(), choices.clone()).unwrap();
+    assert_eq!(first.file_sets, choices);
+    assert_eq!(accept_startup_selection(active, selected.clone(), id, source.clone(), view.clone(), choices.clone()).unwrap().selection_id, id);
+    let changed = vec![tsumugi_plugin_sdk::SourceFileSetSelection { id: "records".into(), logical_paths: vec!["Other.esl".into()] }];
+    assert!(accept_startup_selection(active, selected, id, source, view, changed).is_err());
+    assert_eq!(active.execution_parts().unwrap().0.source.plugin.file_sets, choices);
 }
 
 #[test]

@@ -1,4 +1,4 @@
-//! Authorized, bounded reads. No input path from an IPC payload reaches this module.
+//! Authorized, bounded reads. Native pickers and installed declarations own paths.
 #[cfg(windows)]
 use std::fs::OpenOptions;
 use std::{
@@ -33,9 +33,16 @@ impl Selection {
     /// Read only the installed declaration's fixed files. This does not parse
     /// content, choose a language, create a source bundle or execute a component.
     pub(in crate::commands) fn inspect_declared(&self, binding: &tsumugi_plugin_sdk::SourceImportBinding) -> Result<Vec<DeclaredMaterial>, ExecutionError> {
-        self.inspect_declared_inner(binding, || {})
+        self.inspect_selected_inner(binding, &[], || {})
     }
+    pub(in crate::commands) fn inspect_selected(&self, binding: &tsumugi_plugin_sdk::SourceImportBinding, selections: &[tsumugi_plugin_sdk::SourceFileSetSelection]) -> Result<Vec<DeclaredMaterial>, ExecutionError> {
+        self.inspect_selected_inner(binding, selections, || {})
+    }
+    #[cfg(test)]
     fn inspect_declared_inner(&self, binding: &tsumugi_plugin_sdk::SourceImportBinding, observed: impl FnOnce()) -> Result<Vec<DeclaredMaterial>, ExecutionError> {
+        self.inspect_selected_inner(binding, &[], observed)
+    }
+    fn inspect_selected_inner(&self, binding: &tsumugi_plugin_sdk::SourceImportBinding, selections: &[tsumugi_plugin_sdk::SourceFileSetSelection], observed: impl FnOnce()) -> Result<Vec<DeclaredMaterial>, ExecutionError> {
         use sha2::{Digest, Sha256};
         struct Opened {
             path: PathBuf, file: File, bytes: Vec<u8>, max_bytes: usize,
@@ -49,7 +56,7 @@ impl Selection {
         let mut result = Vec::new();
         let mut identities = Vec::new();
         let mut held = Vec::new();
-        for material in &binding.declaration.materials {
+        for material in &binding.declaration.resolve_materials(selections).map_err(|_| error(ErrorCode::InvalidInput, "source-import-binding"))? {
             check()?;
             let path = self.root.join(&material.logical_path);
             let mut item = DeclaredMaterial { logical_path: material.logical_path.clone(), role: material.role.clone(), max_bytes: material.max_bytes, byte_length: None, sha256: None };
@@ -87,6 +94,9 @@ impl Selection {
 
 #[cfg(not(any(windows, target_os = "macos")))]
 impl Selection {
+    pub(in crate::commands) fn inspect_selected(&self, _: &tsumugi_plugin_sdk::SourceImportBinding, _: &[tsumugi_plugin_sdk::SourceFileSetSelection]) -> Result<Vec<DeclaredMaterial>, ExecutionError> {
+        Err(error(ErrorCode::InvalidInput, "native-source-unavailable"))
+    }
     pub(in crate::commands) fn inspect_declared(&self, _: &tsumugi_plugin_sdk::SourceImportBinding) -> Result<Vec<DeclaredMaterial>, ExecutionError> {
         Err(error(ErrorCode::InvalidInput, "native-source-unavailable"))
     }
@@ -247,8 +257,18 @@ impl Selection {
         language: &str,
         cancel: &Cancellation,
     ) -> Result<SourceBundle, ExecutionError> {
-        self.capture_declared_inner(binding, language, cancel, || {})
+        self.capture_selected(binding, &[], language, cancel)
     }
+    pub fn capture_selected(
+        &self,
+        binding: &tsumugi_plugin_sdk::SourceImportBinding,
+        selections: &[tsumugi_plugin_sdk::SourceFileSetSelection],
+        language: &str,
+        cancel: &Cancellation,
+    ) -> Result<SourceBundle, ExecutionError> {
+        self.capture_selected_inner(binding, selections, language, cancel, || {})
+    }
+    #[cfg(test)]
     fn capture_declared_inner(
         &self,
         binding: &tsumugi_plugin_sdk::SourceImportBinding,
@@ -256,9 +276,21 @@ impl Selection {
         cancel: &Cancellation,
         opened: impl FnOnce(),
     ) -> Result<SourceBundle, ExecutionError> {
+        self.capture_selected_inner(binding, &[], language, cancel, opened)
+    }
+    fn capture_selected_inner(
+        &self,
+        binding: &tsumugi_plugin_sdk::SourceImportBinding,
+        selections: &[tsumugi_plugin_sdk::SourceFileSetSelection],
+        language: &str,
+        cancel: &Cancellation,
+        opened: impl FnOnce(),
+    ) -> Result<SourceBundle, ExecutionError> {
         binding
             .validate()
             .map_err(|_| error(ErrorCode::InvalidInput, "source-import-binding"))?;
+        let resolved = binding.declaration.resolve_materials(selections)
+            .map_err(|_| error(ErrorCode::InvalidInput, "source-import-selection"))?;
         self.verify()?;
         let started = Instant::now();
         let check = || {
@@ -272,7 +304,7 @@ impl Selection {
         };
         let mut files = Vec::new();
         let mut identities = Vec::new();
-        for material in &binding.declaration.materials {
+        for material in &resolved {
             check()?;
             let path = self.root.join(&material.logical_path);
             let file = platform::open(&path, false)?;
@@ -306,9 +338,35 @@ impl Selection {
             platform::verify_file(&entry.1, &entry.0, entry.3)?;
         }
         self.verify()?;
-        let bundle = SourceBundle::capture_declared(binding, materials, language)?;
+        let bundle = SourceBundle::capture_selected(binding, selections, materials, language)?;
         check()?;
         Ok(bundle)
+    }
+    pub(in crate::commands) fn native_relative_paths(&self, paths: Vec<PathBuf>) -> Result<Vec<String>, ExecutionError> {
+        self.verify()?;
+        if paths.len() > tsumugi_plugin_sdk::MAX_SOURCE_IMPORT_MATERIALS {
+            return Err(error(ErrorCode::LimitExceeded, "limit-exceeded"));
+        }
+        let result = paths.into_iter().map(|path| {
+            #[cfg(target_os = "macos")]
+            let path = platform::system_path(&path);
+            if !path.is_absolute() || path.components().any(|component| matches!(component, std::path::Component::ParentDir)) {
+                return Err(error(ErrorCode::Unauthorized, "unauthorized-selection"));
+            }
+            // Reject linked ancestors before deriving the physical path.
+            let _held = path.ancestors().skip(1).map(|ancestor| platform::open(ancestor, true)).collect::<Result<Vec<_>, _>>()?;
+            let file = platform::open(&path, false)?;
+            let actual = platform::final_path(&file)?;
+            let relative = actual.strip_prefix(&self.root).map_err(|_| error(ErrorCode::Unauthorized, "unauthorized-selection"))?;
+            let logical = relative.components().map(|part| part.as_os_str().to_str()
+                .ok_or_else(|| error(ErrorCode::InvalidInput, "source-import-selection")))
+                .collect::<Result<Vec<_>, _>>()?.join("/");
+            tsumugi_plugin_sdk::validate_package_path(&logical)
+                .map_err(|_| error(ErrorCode::InvalidInput, "source-import-selection"))?;
+            Ok(logical)
+        }).collect::<Result<Vec<_>, _>>()?;
+        self.verify()?;
+        Ok(result)
     }
     pub(crate) fn destination_root(&self) -> Result<&Path, ExecutionError> {
         self.verify()?;
@@ -899,6 +957,12 @@ impl Selection {
         pub fn capture(&self, _: &str, _: &Cancellation) -> Result<SourceBundle, ExecutionError> {
         Err(error(ErrorCode::InvalidInput, "unsupported-platform"))
     }
+    pub(in crate::commands) fn native_relative_paths(&self, _: Vec<PathBuf>) -> Result<Vec<String>, ExecutionError> {
+        Err(error(ErrorCode::InvalidInput, "unsupported-platform"))
+    }
+    pub fn capture_selected(&self, _: &tsumugi_plugin_sdk::SourceImportBinding, _: &[tsumugi_plugin_sdk::SourceFileSetSelection], _: &str, _: &Cancellation) -> Result<SourceBundle, ExecutionError> {
+        Err(error(ErrorCode::InvalidInput, "unsupported-platform"))
+    }
     pub fn capture_declared(
         &self,
         _: &tsumugi_plugin_sdk::SourceImportBinding,
@@ -1256,6 +1320,74 @@ mod source_import_tests {
         .unwrap();
         fs::write(root.path().join("metadata/header.txt"), b"opaque companion").unwrap();
         root
+    }
+    fn selectable_binding() -> tsumugi_plugin_sdk::SourceImportBinding {
+        use tsumugi_plugin_sdk::{SourceFileSetDeclaration, SourceMaterialEncoding};
+        let mut binding = binding();
+        binding.declaration.materials.clear();
+        binding.declaration.file_sets = Some(vec![SourceFileSetDeclaration {
+            id: "records".into(), display_name: "Record files".into(), role: "source".into(),
+            encoding: SourceMaterialEncoding::Binary, extensions: vec!["esp".into(), "esl".into()],
+            min_files: 1, max_files: 2, max_bytes: 1024,
+        }, SourceFileSetDeclaration {
+            id: "tables".into(), display_name: "Companion tables".into(), role: "companion".into(),
+            encoding: SourceMaterialEncoding::Binary, extensions: vec!["strings".into()],
+            min_files: 0, max_files: 1, max_bytes: 1024,
+        }]);
+        binding
+    }
+    #[test]
+    fn selected_native_files_share_the_authorized_capture_and_keep_original_bytes() {
+        let root = fixture();
+        fs::write(root.path().join("Chosen.ESP"), [0, 255, 128, 10]).unwrap();
+        fs::create_dir(root.path().join("Strings")).unwrap();
+        fs::write(root.path().join("Strings/Chosen_english.strings"), [42, 0, 255]).unwrap();
+        let selected = Selection::authorize(root.path().into()).unwrap();
+        let choices = vec![tsumugi_plugin_sdk::SourceFileSetSelection {
+            id: "records".into(), logical_paths: selected.native_relative_paths(vec![root.path().join("Chosen.ESP")]).unwrap(),
+        }, tsumugi_plugin_sdk::SourceFileSetSelection {
+            id: "tables".into(), logical_paths: selected.native_relative_paths(vec![root.path().join("Strings/Chosen_english.strings")]).unwrap(),
+        }];
+        let binding = selectable_binding();
+        assert!(selected.capture_declared(&binding, "en-US", &Cancellation::default()).is_err());
+        let bundle = selected.capture_selected(&binding, &choices, "en-US", &Cancellation::default()).unwrap();
+        assert_eq!(bundle.files.iter().map(|file| file.logical_path.as_str()).collect::<Vec<_>>(), ["Chosen.ESP", "Strings/Chosen_english.strings"]);
+        assert_eq!(bundle.files[0].bytes().unwrap().as_ref(), [0, 255, 128, 10]);
+        assert_eq!(bundle.files[1].bytes().unwrap().as_ref(), [42, 0, 255]);
+        fs::write(root.path().join("Chosen.ESP"), [1, 2, 3]).unwrap();
+        assert_eq!(bundle.files[0].bytes().unwrap().as_ref(), [0, 255, 128, 10]);
+        assert_eq!(selected.inspect_selected(&binding, &choices[..1]).unwrap().len(), 1);
+        assert_eq!(selected.capture_selected(&binding, &choices[..1], "en-US", &Cancellation::default()).unwrap().files.len(), 1);
+    }
+    #[test]
+    fn selected_native_files_refuse_outside_links_aliases_limits_and_capture_changes() {
+        let root = fixture(); let outside = tempfile::tempdir().unwrap();
+        let selected = Selection::authorize(root.path().into()).unwrap();
+        fs::write(root.path().join("Chosen.esp"), [0, 255]).unwrap();
+        fs::write(outside.path().join("Outside.esp"), [1]).unwrap();
+        assert!(selected.native_relative_paths(vec![outside.path().join("Outside.esp")]).is_err());
+        assert!(selected.native_relative_paths(vec![root.path().join("../Outside.esp")]).is_err());
+        let binding = selectable_binding();
+        let mut choices = vec![tsumugi_plugin_sdk::SourceFileSetSelection { id: "records".into(), logical_paths: vec!["Chosen.esp".into()] }];
+        #[cfg(target_os = "macos")]
+        assert_eq!(selected.capture_selected_inner(&binding, &choices, "en-US", &Cancellation::default(), || {
+            fs::write(root.path().join("Chosen.esp"), [1, 2, 3]).unwrap();
+        }).unwrap_err().stage, "source-changed");
+        fs::write(root.path().join("Chosen.esp"), vec![0; 1025]).unwrap();
+        assert!(selected.capture_selected(&binding, &choices, "en-US", &Cancellation::default()).is_err());
+        fs::write(root.path().join("Chosen.esp"), [0, 255]).unwrap();
+        let cancel = Cancellation::default(); cancel.request();
+        assert!(selected.capture_selected(&binding, &choices, "en-US", &cancel).is_err());
+        fs::hard_link(root.path().join("Chosen.esp"), root.path().join("Alias.esl")).unwrap();
+        choices[0].logical_paths.push("Alias.esl".into());
+        assert!(selected.capture_selected(&binding, &choices, "en-US", &Cancellation::default()).is_err());
+        #[cfg(target_os = "macos")]
+        {
+            std::os::unix::fs::symlink(root.path().join("Chosen.esp"), root.path().join("Linked.esp")).unwrap();
+            assert!(selected.native_relative_paths(vec![root.path().join("Linked.esp")]).is_err());
+            std::os::unix::fs::symlink(root.path(), root.path().join("LinkedDir")).unwrap();
+            assert!(selected.native_relative_paths(vec![root.path().join("LinkedDir/Chosen.esp")]).is_err());
+        }
     }
     #[test]
     fn source_import_capture_reads_only_declared_files_and_retains_original_bytes() {

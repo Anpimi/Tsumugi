@@ -164,11 +164,16 @@ export default function SourcePreparationSheet({ project, owner, open, disabled,
       </Select></Field>
       {unavailable ? <Banner tone="warning" action={<Button size="sm" onClick={() => { void inventory.refetch(); void source.refetch(); }}>{t("retryRead")}</Button>}>{t(unavailable)}</Banner> : null}
       {source.error ? <Banner tone="error" action={<Button onClick={() => void source.refetch()}>{t("retryRead")}</Button>}>{t("importerUnavailable")}<CommandFailureDetails failure={commandFailure(source.error)}/></Banner> : null}
-      {environment ? <><p>{environment.declaration.displayName}</p><ul>{environment.declaration.materials.map(file => <li key={file.logicalPath}>{old("sourcePlugin.material", { path: file.logicalPath, bytes: String(file.maxBytes) })}</li>)}</ul></> : null}
+      {environment ? <><p>{environment.declaration.displayName}</p><ul>
+        {environment.declaration.materials.map(file => <li key={file.logicalPath}>{old("sourcePlugin.material", { path: file.logicalPath, bytes: String(file.maxBytes) })}</li>)}
+        {environment.declaration.fileSets?.map(set => <li key={set.id}>{t(set.minFiles === 0 ? "optionalFileSet" : "fileSet", { name: set.displayName, min: set.minFiles, max: set.maxFiles,
+          extensions: set.extensions.join(", "), bytes: set.maxBytes })}</li>)}
+      </ul>{environment.declaration.fileSets?.length ? <p>{t("fileSetHelp")}</p> : null}</> : null}
       <Button disabled={!canPrepare || configurationLocked} onClick={() => { if (!current()) return; const ticket = drop?.dropTicket; onDropConsumed();
         if (ticket) void owner.selectDropped(ticket); else void owner.select(); }}>{t(drop ? "useDroppedFolder" : "chooseFolder")}</Button>
       {state.selection || state.preflight ? <>
         <p>{state.selection?.folderName ?? state.selectionLabel}</p>
+        {state.selection?.fileSets?.length ? <ul aria-label={t("selectedFiles")}>{state.selection.fileSets.flatMap(set => set.logicalPaths.map(path => <li key={path}>{path}</li>))}</ul> : null}
         <Field label={old("source.language", { language: project.metadata.sourceLocale })}><input type="checkbox" checked={state.declared} disabled={configurationLocked || !canPrepare}
           onChange={event => {
             if (!current() || !canPrepare) return;

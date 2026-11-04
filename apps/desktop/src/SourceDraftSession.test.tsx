@@ -1020,3 +1020,20 @@ it.each([false,true])("ignores a late original Source proof after session replac
   expect(invoke.mock.calls.filter(([name]) => name === "observe_local_source_action")).toHaveLength(1);
   expect(checker?old.current().pendingPlugin:old.current().pendingStart).not.toBeNull();
 });
+
+
+it.each(["cancelled", "rejected"] as const)("retires the old preparation after %s native selection and keeps unrelated draft input", async outcome => {
+  await render(<Probe/>, project);
+  await act(async () => { owner.setSource(pluginSourceRequest); await owner.select(); owner.declare(true); await owner.preflight(); });
+  act(() => { owner.consentProducer(true); owner.edit("filter", "Retained search"); });
+  const original = invoke.getMockImplementation()!;
+  invoke.mockImplementation(withSourceObservations((command: string, payload: unknown) => command === "select_plugin_source"
+    ? outcome === "cancelled" ? Promise.resolve(null) : Promise.reject({ code: "permission-denied", outcome: "rejected", stage: "execution-read" })
+    : original(command, payload)));
+  await act(async () => { await owner.select(); });
+  expect(owner.current().selection).toBeNull(); expect(owner.current().preflight).toBeNull();
+  expect(owner.current().producerConsent).toBeNull(); expect(owner.current().declared).toBe(false);
+  expect(owner.current().preparationExpired).toBe(true); expect(owner.current().filter).toBe("Retained search");
+  expect(owner.current().source).toEqual(pluginSourceRequest);
+  expect(invoke.mock.calls.some(([name]) => name === "start_plugin_source")).toBe(false);
+});

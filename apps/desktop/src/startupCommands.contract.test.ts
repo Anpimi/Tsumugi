@@ -49,3 +49,26 @@ it("accepts only opaque native drop invitations", () => {
   expect(validateResponseStartupDropEvent(event)).toBe(true);
   for (const key of ["path", "paths", "window", "epoch", "approved"]) expect(validateResponseStartupDropEvent({ ...event, [key]: "/untrusted/path" })).toBe(false);
 });
+
+
+it("binds selected file groups and optional omissions to the exact startup materials", async () => {
+  const source = structuredClone(preview.source);
+  source.declaration.materials = [];
+  source.declaration.fileSets = [{ id: "records", displayName: "Record files", role: "source", encoding: "binary",
+    extensions: ["esp", "esl"], minFiles: 1, maxFiles: 1, maxBytes: 1024 },
+    { id: "tables", displayName: "Companion tables", role: "companion", encoding: "binary",
+      extensions: ["strings"], minFiles: 0, maxFiles: 1, maxBytes: 1024 }];
+  const chosen: StartupPreflight = { ...preview, source, fileSets: [{ id: "records", logicalPaths: ["Chosen.esp"] }],
+    materials: [{ logicalPath: "Chosen.esp", role: "source", maxBytes: 1024, byteLength: 2, sha256: "a".repeat(64) }] };
+  invoke.mockResolvedValueOnce(chosen); expect(await startupCommands.preflight(request)).toEqual(chosen);
+  for (const value of [
+    { ...chosen, fileSets: [] },
+    { ...chosen, fileSets: [...chosen.fileSets!, ...chosen.fileSets!] },
+    { ...chosen, fileSets: [{ id: "unknown", logicalPaths: ["Chosen.esp"] }] },
+    { ...chosen, fileSets: [{ id: "records", logicalPaths: ["Other.esl"] }] },
+    { ...chosen, materials: [...chosen.materials, { ...chosen.materials[0], logicalPath: "extra.esp" }] },
+    { ...chosen, complete: false },
+  ]) {
+    invoke.mockResolvedValueOnce(value); await expect(startupCommands.preflight(request)).rejects.toThrow();
+  }
+});

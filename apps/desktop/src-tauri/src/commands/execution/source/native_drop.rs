@@ -179,7 +179,7 @@ pub async fn select_dropped_plugin_source<R: tauri::Runtime>(
     request: PluginSourceDropRequest,
 ) -> Result<plugin::PluginSourceSelection, CommandError> {
     plugin::select_plugin_source_location::<R>(
-        None,
+        Some(window.app_handle().clone()),
         state,
         plugin::PluginSourceSelectRequest {
             session_token: request.session_token,

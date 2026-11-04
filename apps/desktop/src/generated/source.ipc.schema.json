@@ -3716,6 +3716,12 @@
       "PluginSourceSelection": {
         "additionalProperties": false,
         "properties": {
+          "fileSets": {
+            "items": {
+              "$ref": "#/definitions/SourceFileSetSelection"
+            },
+            "type": "array"
+          },
           "folderName": {
             "type": "string"
           },
@@ -4998,6 +5004,25 @@
           "minFiles",
           "maxFiles",
           "maxBytes"
+        ],
+        "type": "object"
+      },
+      "SourceFileSetSelection": {
+        "additionalProperties": false,
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "logicalPaths": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "id",
+          "logicalPaths"
         ],
         "type": "object"
       },
@@ -6296,6 +6321,12 @@
           },
           "directory": {
             "$ref": "#/definitions/StartupDirectory"
+          },
+          "fileSets": {
+            "items": {
+              "$ref": "#/definitions/SourceFileSetSelection"
+            },
+            "type": "array"
           },
           "materials": {
             "items": {

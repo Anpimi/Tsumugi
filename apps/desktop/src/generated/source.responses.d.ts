@@ -741,9 +741,14 @@ export interface ContentScope {
   revision: Revision;
 }
 export interface PluginSourceSelection {
+  fileSets?: SourceFileSetSelection[];
   folderName: string;
   selectionId: ExecutionId;
   source: PluginSourceView;
+}
+export interface SourceFileSetSelection {
+  id: string;
+  logicalPaths: string[];
 }
 export interface SourceImpactSummary {
   locale: string;
@@ -1171,6 +1176,7 @@ export interface StartupDirectory {
 export interface StartupPreflight {
   complete: boolean;
   directory: StartupDirectory;
+  fileSets?: SourceFileSetSelection[];
   materials: DeclaredMaterial[];
   source: PluginSourceView;
 }

@@ -333,11 +333,15 @@ export function SourceDraftSession({ project, children }: { project: ProjectView
       if (!source) return;
       let selection: SourceSelection | null;
       nativeSelectionAttempted.current = true;
+      // The Host retires its old preparation when native selection begins.
+      basisVersion.current++; identity.current = null;
+      update(before => ({ ...before, selection: null, preflight: null, declared: false,
+        preparationExpired: before.preparationExpired || before.selection !== null || before.preflight !== null,
+        pickerUncertain: false, captureRequest: null, producerConsent: null, checkReview: null, checkerConsent: null }));
       try { selection = dropTicket ? await sourceCommands.selectDropped({ ...session, source, dropTicket }) : await sourceCommands.selectPlugin({ ...session, source }); }
       catch (error) { if (hasUnknownOutcome(error)) update(before => ({ ...before, pickerUncertain: true })); throw error; }
       if (!live() || !selection) return;
       if (!sameSourceEnvironment(selection.source, source)) invalidAcknowledgement();
-      basisVersion.current++; identity.current = null;
       update(before => ({ ...before, selection, selectionLabel: selection?.folderName ?? before.selectionLabel, preparationExpired: false,
         pickerUncertain: false, captureRequest: null, checkPrepareRequest: null, comparisonRef: null, sourceLanguage: projectRef.current.metadata.sourceLocale, declared: false,
         preflight: null, producerConsent: null, checkReview: null, checkerConsent: null, checkAttempt: null, confirmed: false,

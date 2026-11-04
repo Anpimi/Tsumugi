@@ -5,11 +5,13 @@ use crate::commands::plugins::{PluginSourceRequest, PluginSourceView, sources::S
 use tsumugi_core::content::SourceSettings;
 use tsumugi_plugin_host::{HostLimits, core::RunnerProxy};
 pub(in crate::commands) mod observations;
+pub(in crate::commands) mod file_sets;
 
 #[derive(Default)]
 pub(super) struct PluginSourceSession {
     pub(super) native_drop: native_drop::NativeDropSession,
     choice: Option<(ExecutionId, PluginSourceRequest)>,
+    file_sets: Vec<tsumugi_plugin_sdk::SourceFileSetSelection>,
     review: Option<Arc<SourceReview>>,
     last_start: Option<PluginStartRequest>,
     check: Option<Arc<CheckReview>>,
@@ -26,6 +28,7 @@ impl PluginSourceSession {
             .is_some_and(|(_, choice)| choice.package == *package);
         if capture {
             self.choice = None;
+            self.file_sets.clear();
         }
         if self
             .review
@@ -46,6 +49,7 @@ impl PluginSourceSession {
     pub(super) fn discard_capture(&mut self) {
         self.native_drop.clear();
         self.choice = None;
+        self.file_sets.clear();
         self.review = None;
         // Accepted execution/check identities remain available for reconciliation.
     }
@@ -70,11 +74,12 @@ pub(in crate::commands) fn accept_startup_selection(
     selection_id: ExecutionId,
     source: PluginSourceRequest,
     view: PluginSourceView,
+    file_sets: Vec<tsumugi_plugin_sdk::SourceFileSetSelection>,
 ) -> Result<PluginSourceSelection, CommandError> {
     let (host, store) = active.execution_parts()?;
     host.allow_mutation()?;
     let same = host.source.selection.as_ref().is_some_and(|(id, _)| *id == selection_id)
-        && host.source.plugin.choice.as_ref().is_some_and(|(id, current)| *id == selection_id && *current == source);
+        && host.source.plugin.choice.as_ref().is_some_and(|(id, current)| *id == selection_id && *current == source) && host.source.plugin.file_sets == file_sets;
     if !same {
         if host.source.selection.is_some() || host.source.picker.is_some() || host.source.is_active()
             || store.content_scope().map_err(map_source)?.current_snapshot.is_some() {
@@ -82,8 +87,9 @@ pub(in crate::commands) fn accept_startup_selection(
         }
         host.source.selection = Some((selection_id, selection.clone()));
         host.source.plugin.choice = Some((selection_id, source));
+        host.source.plugin.file_sets = file_sets.clone();
     }
-    Ok(PluginSourceSelection { selection_id, folder_name: selection.label(), source: view })
+    Ok(PluginSourceSelection { selection_id, folder_name: selection.label(), source: view, file_sets })
 }
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
@@ -92,6 +98,8 @@ pub struct PluginSourceSelection {
     pub selection_id: ExecutionId,
     pub folder_name: String,
     pub source: PluginSourceView,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub file_sets: Vec<tsumugi_plugin_sdk::SourceFileSetSelection>,
 }
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
@@ -317,7 +325,7 @@ pub(super) async fn select_plugin_source_location<R: tauri::Runtime>(
             let path = match dropped_path {
                 Some(path) => Some(path),
                 None => {
-                    let app = app.ok_or_else(stale)?;
+                    let app = app.clone().ok_or_else(stale)?;
                     dialogs
                         .run(CommandStage::ExecutionRead, move || {
                             app.dialog()
@@ -329,14 +337,31 @@ pub(super) async fn select_plugin_source_location<R: tauri::Runtime>(
                         .await?
                 }
             };
-            io.run(CommandStage::ExecutionRead, move || {
-                path.map(|path| {
-                    let selection = capture::Selection::authorize(path).map_err(map_source)?;
-                    Ok((Arc::new(selection), environment.view()?))
-                })
-                .transpose()
-            })
-            .await
+            let Some(path) = path else { return Ok(None); };
+            let selection = io.run(CommandStage::ExecutionRead, move || {
+                capture::Selection::authorize(path).map(Arc::new).map_err(map_source)
+            }).await?;
+            let scope = &lease;
+            let original = request.clone();
+            let scope_work = work.clone();
+            let check_scope = || {
+                let original = original.clone();
+                let scope_work = scope_work.clone();
+                async move {
+                    scope_work.check()?;
+                    scope.run("select_plugin_source.check", CommandStage::ExecutionRead, move |sessions| {
+                        let active = authorized(sessions, &original.session_token, original.project_id, CommandStage::ExecutionRead)?;
+                        let (host, _) = active.execution_parts()?;
+                        host.allow_mutation()?;
+                        if host.source.picker != Some(picker) || host.runtime.generation() != generation { return Err(stale()); }
+                        Ok(())
+                    }).await
+                }
+            };
+            let Some(file_sets) = file_sets::choose(app, &io, &dialogs, selection.clone(), environment.binding.clone(), check_scope).await? else {
+                return Ok(None);
+            };
+            Ok(Some((selection, environment.view()?, file_sets)))
         }
         .await;
         lease
@@ -360,15 +385,17 @@ pub(super) async fn select_plugin_source_location<R: tauri::Runtime>(
                     host.source.picker = None;
                     host.source.plugin.native_drop.finish_selection(picker);
                     work.check()?;
-                    Ok(captured?.map(|(selection, source)| {
+                    Ok(captured?.map(|(selection, source, file_sets)| {
                         let selection_id = ExecutionId::new();
                         let folder_name = selection.label();
                         host.source.selection = Some((selection_id, selection));
                         host.source.plugin.choice = Some((selection_id, request.source));
+                        host.source.plugin.file_sets = file_sets.clone();
                         PluginSourceSelection {
                             selection_id,
                             folder_name,
                             source,
+                            file_sets,
                         }
                     }))
                 },
@@ -435,13 +462,15 @@ pub async fn preflight_plugin_source(
                 initial.selection_id,
                 &initial.source_language,
             )?;
-            Ok(Ok((job, choice, project, generation, work)))
+            let file_sets = sessions.active.as_ref().and_then(|active| active.execution.as_ref())
+                .ok_or_else(stale)?.source.plugin.file_sets.clone();
+            Ok(Ok((job, choice, file_sets, project, generation, work)))
         },
     )?;
     let io = state.io.clone();
     let plugins = state.plugins.clone();
     tauri::async_runtime::spawn(async move {
-        let (job, choice, project, generation, work) = match admitted.await? {
+        let (job, choice, file_sets, project, generation, work) = match admitted.await? {
             Ok(job) => job,
             Err(view) => return Ok(view),
         };
@@ -455,7 +484,7 @@ pub async fn preflight_plugin_source(
                 let environment = plugins.capture_source(&choice)?;
                 let bundle = job
                     .selection
-                    .capture_declared(&environment.binding, &language, &job.cancel)
+                    .capture_selected(&environment.binding, &file_sets, &language, &job.cancel)
                     .map_err(map_source)?;
                 let fixed = bundle
                     .fixed_plugin_input(

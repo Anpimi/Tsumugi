@@ -25,23 +25,30 @@ fn main_window(window: &str) -> Result<(), CommandError> { if window == "main" {
 struct Scope { window: String, epoch: ExecutionId }
 impl native_directory::Scope for Scope { fn window(&self) -> &str { &self.window } }
 
+#[derive(Clone)]
+struct Inspection {
+    source: PluginSourceRequest,
+    materials: Vec<DeclaredMaterial>,
+    file_sets: Vec<tsumugi_plugin_sdk::SourceFileSetSelection>,
+}
 struct Chosen {
     window: String,
     id: ExecutionId,
     selection: Arc<Selection>,
-    inspections: Vec<(PluginSourceRequest, Vec<DeclaredMaterial>)>,
+    inspections: Vec<Inspection>,
 }
 struct Handoff { chosen: Chosen, session_token: String, project_id: ExecutionId }
 
 pub(super) struct StartupSession {
     epoch: ExecutionId,
     picker: Option<(String, ExecutionId)>,
+    inspection: Option<ExecutionId>,
     drop: Option<native_directory::Drop<Scope>>,
     chosen: Option<Chosen>,
     handoff: Option<Handoff>,
 }
 impl Default for StartupSession {
-    fn default() -> Self { Self { epoch: ExecutionId::new(), picker: None, drop: None, chosen: None, handoff: None } }
+    fn default() -> Self { Self { epoch: ExecutionId::new(), picker: None, inspection: None, drop: None, chosen: None, handoff: None } }
 }
 impl StartupSession {
     pub(super) fn epoch(&self) -> ExecutionId { self.epoch }
@@ -55,7 +62,7 @@ impl StartupSession {
         self.chosen.as_ref().filter(|chosen| chosen.id == id && chosen.window == window).ok_or_else(stale)
     }
     fn begin(&mut self, window: String) -> ExecutionId {
-        self.epoch = ExecutionId::new(); self.drop = None;
+        self.epoch = ExecutionId::new(); self.drop = None; self.inspection = None;
         let picker = ExecutionId::new(); self.picker = Some((window, picker)); picker
     }
     fn finish(&mut self, window: &str, picker: ExecutionId, selected: Option<Arc<Selection>>) -> Result<Option<StartupDirectory>, CommandError> {
@@ -103,6 +110,8 @@ pub struct StartupDirectory { pub selection_id: ExecutionId, pub folder_name: St
 #[cfg_attr(feature = "wire-schema", derive(schemars::JsonSchema))]
 pub struct StartupPreflight {
     pub directory: StartupDirectory, pub source: PluginSourceView, pub materials: Vec<DeclaredMaterial>, pub complete: bool,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub file_sets: Vec<tsumugi_plugin_sdk::SourceFileSetSelection>,
 }
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "kebab-case", rename_all_fields = "camelCase", deny_unknown_fields)]
@@ -155,28 +164,56 @@ async fn select_directory<R: tauri::Runtime>(app: Option<tauri::AppHandle<R>>, w
 pub async fn read_startup_source_preflight<R: tauri::Runtime>(
     window: tauri::Window<R>, state: State<'_, AppState>, request: StartupPreflightRequest,
 ) -> Result<StartupPreflight, CommandError> {
+    let app = window.app_handle().clone();
     let window = window.label().to_owned(); main_window(&window)?;
     let lease = state.sessions.lease(CommandStage::ExecutionRead)?; let original = request.clone(); let owner = window.clone();
+    let inspection = ExecutionId::new();
     let admitted = lease.submit("startup.preflight.begin", CommandStage::ExecutionRead, move |sessions| {
         empty(sessions)?;
-        let chosen = sessions.startup.chosen(&owner, original.selection_id)?;
-        Ok((sessions.startup.epoch, chosen.selection.clone()))
+        let selected = sessions.startup.chosen(&owner, original.selection_id)?.selection.clone();
+        sessions.startup.inspection = Some(inspection);
+        let chosen = sessions.startup.chosen.as_mut().expect("checked startup selection");
+        chosen.inspections.retain(|value| value.source != original.source);
+        Ok((sessions.startup.epoch, selected))
     })?;
     let (epoch, selected) = admitted.await?; let plugins = state.plugins.clone(); let source = request.source.clone();
-    let (source_view, materials) = state.io.run(CommandStage::ExecutionRead, move || {
-        let environment = plugins.capture_source(&source)?;
-        Ok((environment.view()?, selected.inspect_declared(&environment.binding).map_err(map_input)?))
-    }).await?;
+    let result = async {
+        let environment = state.io.run(CommandStage::ExecutionRead, move || plugins.capture_source(&source)).await?;
+        let scope = &lease;
+        let owner = window.clone();
+        let selection_id = request.selection_id;
+        let check_scope = || {
+            let owner = owner.clone();
+            async move {
+                scope.run("startup.preflight.check", CommandStage::ExecutionRead, move |sessions| {
+                    empty(sessions)?;
+                    sessions.startup.chosen(&owner, selection_id)?;
+                    if sessions.startup.epoch != epoch || sessions.startup.inspection != Some(inspection) { return Err(stale()); }
+                    Ok(())
+                }).await
+            }
+        };
+        let file_sets = execution::source::plugin::file_sets::choose(Some(app), &state.io, &state.dialogs,
+            selected.clone(), environment.binding.clone(), check_scope).await?
+            .ok_or_else(|| map_input(tsumugi_core::execution::ExecutionError::new(tsumugi_core::execution::ErrorCode::Cancelled, "cancelled")))?;
+        state.io.run(CommandStage::ExecutionRead, move || {
+            let materials = selected.inspect_selected(&environment.binding, &file_sets).map_err(map_input)?;
+            Ok((environment.view()?, materials, file_sets))
+        }).await
+    }.await;
     lease.run("startup.preflight.finish", CommandStage::ExecutionRead, move |sessions| {
-        empty(sessions)?; if sessions.startup.epoch != epoch { return Err(stale()); }
+        empty(sessions)?;
+        if sessions.startup.epoch != epoch || sessions.startup.inspection != Some(inspection) { return Err(stale()); }
+        sessions.startup.inspection = None;
+        let (source_view, materials, file_sets) = result?;
         let chosen = sessions.startup.chosen(&window, request.selection_id)?;
         let directory = StartupDirectory { selection_id: chosen.id, folder_name: chosen.selection.label() };
         let complete = materials.iter().all(|item| item.byte_length.is_some());
         let chosen = sessions.startup.chosen.as_mut().expect("checked startup directory");
-        chosen.inspections.retain(|(source, _)| *source != request.source);
+        chosen.inspections.retain(|value| value.source != request.source);
         if chosen.inspections.len() >= 32 { chosen.inspections.remove(0); }
-        chosen.inspections.push((request.source, materials.clone()));
-        Ok(StartupPreflight { directory, source: source_view, materials, complete })
+        chosen.inspections.push(Inspection { source: request.source, materials: materials.clone(), file_sets: file_sets.clone() });
+        Ok(StartupPreflight { directory, source: source_view, materials, complete, file_sets })
     }).await
 }
 
@@ -190,15 +227,16 @@ pub async fn claim_startup_source_directory<R: tauri::Runtime>(
         execution::authorized(sessions, &original.session_token, original.project_id, CommandStage::ExecutionRead)?;
         let handoff = sessions.startup.handoff.as_ref().filter(|handoff| handoff.chosen.id == original.selection_id
             && handoff.chosen.window == owner && handoff.session_token == original.session_token && handoff.project_id == original.project_id).ok_or_else(stale)?;
-        let expected = handoff.chosen.inspections.iter().find(|(source, _)| *source == original.source).map(|(_, materials)| materials.clone()).ok_or_else(stale)?;
-        if expected.iter().any(|item| item.byte_length.is_none()) { return Err(stale()); }
+        let expected = handoff.chosen.inspections.iter().find(|value| value.source == original.source).cloned().ok_or_else(stale)?;
+        if expected.materials.iter().any(|item| item.byte_length.is_none()) { return Err(stale()); }
         Ok((sessions.startup.epoch, handoff.chosen.selection.clone(), expected))
     })?;
     let (epoch, selection, expected) = admitted.await?; let plugins = state.plugins.clone(); let source = request.source.clone();
     let selected = selection.clone();
+    let file_sets = expected.file_sets.clone();
     let view = state.io.run(CommandStage::ExecutionRead, move || {
         let environment = plugins.capture_source(&source)?;
-        if selected.inspect_declared(&environment.binding).map_err(map_input)? != expected { return Err(stale()); }
+        if selected.inspect_selected(&environment.binding, &expected.file_sets).map_err(map_input)? != expected.materials { return Err(stale()); }
         environment.view()
     }).await?;
     let plugins = state.plugins.clone();
@@ -206,7 +244,7 @@ pub async fn claim_startup_source_directory<R: tauri::Runtime>(
         if sessions.startup.epoch != epoch { return Err(stale()); }
         plugins.with_environment_revision(view.settings_revision, || {
             let active = execution::authorized(sessions, &request.session_token, request.project_id, CommandStage::ExecutionRead)?;
-            execution::source::plugin::accept_startup_selection(active, selection, request.selection_id, request.source, view)
+            execution::source::plugin::accept_startup_selection(active, selection, request.selection_id, request.source, view, file_sets)
         })
     }).await
 }

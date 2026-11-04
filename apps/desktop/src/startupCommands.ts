@@ -10,7 +10,16 @@ export type { StartupClaimRequest, StartupPreflightRequest } from "./generated/s
 export { validateResponseStartupDropEvent };
 
 function declaredFilesMatch(value: StartupPreflight) {
-  const declared = value.source.declaration.materials;
+  const declaration = value.source.declaration;
+  const sets = declaration.fileSets ?? [], selections = value.fileSets ?? [];
+  if (new Set(selections.map(set => set.id)).size !== selections.length
+    || selections.some(selection => !sets.some(set => set.id === selection.id))) return false;
+  const declared = [...declaration.materials];
+  for (const set of sets) {
+    const paths = selections.find(selection => selection.id === set.id)?.logicalPaths ?? [];
+    if (paths.length < set.minFiles || paths.length > set.maxFiles) return false;
+    declared.push(...paths.map(logicalPath => ({ logicalPath, role: set.role, maxBytes: set.maxBytes, encoding: set.encoding })));
+  }
   return declared.length === value.materials.length && value.materials.every((file, index) => {
     const expected = declared[index];
     return file.logicalPath === expected.logicalPath && file.role === expected.role && file.maxBytes === expected.maxBytes
