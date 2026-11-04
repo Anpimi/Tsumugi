@@ -42,5 +42,6 @@
       "behaviorVersion": 1
     }
   ],
-  "reviewResource": "review-profile"
+  "reviewResource": "review-profile",
+  "fileSets": []
 }

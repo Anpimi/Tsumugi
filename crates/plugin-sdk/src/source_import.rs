@@ -10,15 +10,23 @@ pub const MAX_SOURCE_IMPORT_MATERIALS: usize = 32;
 pub fn source_import_declaration_contract() -> ContractRef {
     ContractRef {
         id: "tsumugi.source-import-declaration".into(),
-        schema_version: 3,
+        schema_version: 4,
         behavior_version: 2,
     }
 }
 #[cfg(feature = "schema")]
 pub fn source_import_declaration_schema() -> schemars::Schema {
-    // Read DTOs retain the exact v2 spelling, while a v3 authoring resource
-    // requires explicit encodings. The fields still come from the one type.
+    // Readers preserve v2/v3 spelling. Current authoring requires an explicit
+    // fileSets array (possibly empty) and encodings from the same Rust types.
     let mut schema = schemars::schema_for!(SourceImportDeclaration);
+    schema
+        .as_object_mut()
+        .unwrap()
+        .get_mut("required")
+        .unwrap()
+        .as_array_mut()
+        .unwrap()
+        .push(serde_json::json!("fileSets"));
     let material = schema
         .as_object_mut()
         .expect("object schema")
@@ -64,8 +72,37 @@ pub struct SourceMaterialDeclaration {
     pub encoding: SourceMaterialEncoding,
 }
 
-/// All listed materials are required, relative to one user-selected directory.
-/// This first contract supports fixed files, not globs or discovery programs.
+/// Explicit user choices within one authorized root. No glob, directory scan,
+/// absolute path, or permission is part of this declaration or its resolution.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
+pub struct SourceFileSetDeclaration {
+    pub id: String,
+    pub display_name: String,
+    pub role: String,
+    pub encoding: SourceMaterialEncoding,
+    pub extensions: Vec<String>,
+    pub min_files: u32,
+    pub max_files: u32,
+    pub max_bytes: u32,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
+pub struct SourceFileSetSelection {
+    pub id: String,
+    pub logical_paths: Vec<String>,
+}
+
+fn explicit_file_sets<'de, D: serde::Deserializer<'de>>(
+    deserializer: D,
+) -> Result<Option<Vec<SourceFileSetDeclaration>>, D::Error> {
+    Vec::<SourceFileSetDeclaration>::deserialize(deserializer).map(Some)
+}
+
+/// Fixed materials and explicitly chosen file sets share one captured input.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
@@ -73,6 +110,13 @@ pub struct SourceImportDeclaration {
     pub display_name: String,
     pub profile: ContractRef,
     pub materials: Vec<SourceMaterialDeclaration>,
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "explicit_file_sets"
+    )]
+    #[cfg_attr(feature = "schema", schemars(with = "Vec<SourceFileSetDeclaration>"))]
+    pub file_sets: Option<Vec<SourceFileSetDeclaration>>,
     pub extractor: String,
     pub checker: String,
     /// Exact immutable Resource whose domain rules are adopted with this source.
@@ -92,9 +136,40 @@ pub struct SourceImportBinding {
 fn invalid(field: &str) -> ContractError {
     ContractError::at(ContractErrorCode::InvalidDeclaration, field)
 }
+fn validate_materials(materials: &[SourceMaterialDeclaration]) -> Result<usize, ContractError> {
+    if materials.len() > MAX_SOURCE_IMPORT_MATERIALS {
+        return Err(invalid("sourceImport.materials"));
+    }
+    let mut paths: Vec<String> = Vec::new();
+    let mut total = 0;
+    for material in materials {
+        validate_package_path(&material.logical_path)?;
+        name(&material.role, "sourceImport.materials.role")?;
+        let folded = material.logical_path.to_ascii_lowercase();
+        if folded.split('/').count() > 16
+            || paths.iter().any(|prior| {
+                *prior == folded
+                    || prior.starts_with(&(folded.clone() + "/"))
+                    || folded.starts_with(&(prior.clone() + "/"))
+            })
+        {
+            return Err(invalid("sourceImport.materials.logicalPath"));
+        }
+        paths.push(folded);
+        if material.max_bytes == 0 || material.max_bytes as usize > MAX_EXCHANGE_BYTES {
+            return Err(invalid("sourceImport.materials.maxBytes"));
+        }
+        total += material.max_bytes as usize;
+    }
+    if total > MAX_EXCHANGE_BYTES {
+        return Err(invalid("sourceImport.limits"));
+    }
+    Ok(total)
+}
 impl SourceImportDeclaration {
     pub fn is_legacy_text(&self) -> bool {
-        !self.materials.is_empty()
+        self.file_sets.is_none()
+            && !self.materials.is_empty()
             && self
                 .materials
                 .iter()
@@ -102,14 +177,20 @@ impl SourceImportDeclaration {
     }
     pub fn declaration_contract(&self) -> ContractRef {
         ContractRef {
-            schema_version: if self.is_legacy_text() { 2 } else { 3 },
+            schema_version: if self.file_sets.is_some() {
+                4
+            } else if self.is_legacy_text() {
+                2
+            } else {
+                3
+            },
             ..source_import_declaration_contract()
         }
     }
     fn validate_current(&self) -> Result<(), ContractError> {
         self.validate()?;
-        if self.is_legacy_text() {
-            return Err(invalid("sourceImport.materials.encoding"));
+        if self.file_sets.is_none() {
+            return Err(invalid("sourceImport.fileSets"));
         }
         Ok(())
     }
@@ -131,7 +212,7 @@ impl SourceImportDeclaration {
         if self.revision_policy.profile != self.profile {
             return Err(invalid("sourceImport.revisionPolicy"));
         }
-        if self.materials.is_empty() || self.materials.len() > MAX_SOURCE_IMPORT_MATERIALS {
+        if self.materials.len() > MAX_SOURCE_IMPORT_MATERIALS {
             return Err(invalid("sourceImport.materials"));
         }
         if self
@@ -142,26 +223,48 @@ impl SourceImportDeclaration {
         {
             return Err(invalid("sourceImport.materials.encoding"));
         }
-        let mut paths: Vec<String> = Vec::new();
-        let mut total = 0usize;
-        for material in &self.materials {
-            validate_package_path(&material.logical_path)?;
-            name(&material.role, "sourceImport.materials.role")?;
-            let folded = material.logical_path.to_ascii_lowercase();
-            if folded.split('/').count() > 16
-                || paths.iter().any(|prior| {
-                    *prior == folded
-                        || prior.starts_with(&(folded.clone() + "/"))
-                        || folded.starts_with(&(prior.clone() + "/"))
-                })
-            {
-                return Err(invalid("sourceImport.materials.logicalPath"));
+        let mut total = validate_materials(&self.materials)?;
+        let mut maximum = self.materials.len();
+        let mut minimum = self.materials.len();
+        if let Some(sets) = &self.file_sets {
+            if sets.len() > MAX_SOURCE_IMPORT_MATERIALS {
+                return Err(invalid("sourceImport.fileSets"));
             }
-            paths.push(folded);
-            if material.max_bytes == 0 || material.max_bytes as usize > MAX_EXCHANGE_BYTES {
-                return Err(invalid("sourceImport.materials.maxBytes"));
+            unique(sets.iter().map(|set| &set.id), "sourceImport.fileSets.id")?;
+            for set in sets {
+                name(&set.id, "sourceImport.fileSets.id")?;
+                name(&set.role, "sourceImport.fileSets.role")?;
+                if set.display_name.trim().is_empty()
+                    || set.display_name.len() > 128
+                    || set.display_name.chars().any(char::is_control)
+                    || is_legacy_utf8(&set.encoding)
+                    || set.max_files == 0
+                    || set.max_files as usize > MAX_SOURCE_IMPORT_MATERIALS
+                    || set.min_files > set.max_files
+                    || set.max_bytes == 0
+                    || set.max_bytes as usize > MAX_EXCHANGE_BYTES
+                    || set.extensions.is_empty()
+                    || set.extensions.len() > 16
+                {
+                    return Err(invalid("sourceImport.fileSets"));
+                }
+                unique(set.extensions.iter(), "sourceImport.fileSets.extensions")?;
+                if set.extensions.iter().any(|ext| {
+                    ext.is_empty()
+                        || ext.len() > 16
+                        || !ext
+                            .bytes()
+                            .all(|byte| byte.is_ascii_lowercase() || byte.is_ascii_digit())
+                }) {
+                    return Err(invalid("sourceImport.fileSets.extensions"));
+                }
+                maximum += set.max_files as usize;
+                minimum += set.min_files as usize;
+                total += set.max_bytes as usize * set.max_files as usize;
             }
-            total += material.max_bytes as usize;
+        }
+        if minimum == 0 || maximum > MAX_SOURCE_IMPORT_MATERIALS {
+            return Err(invalid("sourceImport.materials"));
         }
         if total > MAX_EXCHANGE_BYTES
             || self.semantic_rules.is_empty()
@@ -174,6 +277,65 @@ impl SourceImportDeclaration {
             reference(rule, "sourceImport.semanticRules")?;
         }
         encoded_limit(self, MAX_SOURCE_IMPORT_DECLARATION_BYTES, "sourceImport")
+    }
+
+    /// Resolve typed choices into the one ordered capture recipe. The caller
+    /// separately authorizes and reads those relative files as one snapshot.
+    pub fn resolve_materials(
+        &self,
+        selections: &[SourceFileSetSelection],
+    ) -> Result<Vec<SourceMaterialDeclaration>, ContractError> {
+        self.validate()?;
+        let sets = self.file_sets.as_deref().unwrap_or(&[]);
+        if selections.len() > sets.len() {
+            return Err(invalid("sourceImport.selection"));
+        }
+        unique(
+            selections.iter().map(|selection| &selection.id),
+            "sourceImport.selection.id",
+        )?;
+        if selections
+            .iter()
+            .any(|selection| !sets.iter().any(|set| set.id == selection.id))
+        {
+            return Err(invalid("sourceImport.selection.id"));
+        }
+        let mut materials = self.materials.clone();
+        for set in sets {
+            let paths = selections
+                .iter()
+                .find(|selection| selection.id == set.id)
+                .map(|selection| selection.logical_paths.as_slice())
+                .unwrap_or(&[]);
+            if paths.len() < set.min_files as usize || paths.len() > set.max_files as usize {
+                return Err(invalid("sourceImport.selection.count"));
+            }
+            for path in paths {
+                validate_package_path(path)?;
+                let (stem, extension) = path
+                    .rsplit('/')
+                    .next()
+                    .unwrap()
+                    .rsplit_once('.')
+                    .ok_or_else(|| invalid("sourceImport.selection.extension"))?;
+                if stem.is_empty()
+                    || !set
+                        .extensions
+                        .iter()
+                        .any(|allowed| extension.eq_ignore_ascii_case(allowed))
+                {
+                    return Err(invalid("sourceImport.selection.extension"));
+                }
+                materials.push(SourceMaterialDeclaration {
+                    logical_path: path.clone(),
+                    role: set.role.clone(),
+                    max_bytes: set.max_bytes,
+                    encoding: set.encoding.clone(),
+                });
+            }
+        }
+        validate_materials(&materials)?;
+        Ok(materials)
     }
 
     /// Bind source and Review providers from the same captured manifest. The application
@@ -281,14 +443,16 @@ pub fn parse_source_import_declaration_for_contract(
     bytes: &[u8],
     contract: &ContractRef,
 ) -> Result<SourceImportDeclaration, ContractError> {
-    let legacy = ContractRef {
-        schema_version: 2,
-        ..source_import_declaration_contract()
-    };
     if contract == &source_import_declaration_contract() {
         return parse_source_import_declaration(bytes);
     }
-    if contract != &legacy {
+    if ![2, 3].iter().any(|version| {
+        *contract
+            == ContractRef {
+                schema_version: *version,
+                ..source_import_declaration_contract()
+            }
+    }) {
         return Err(invalid("sourceImport.contract"));
     }
     if bytes.len() > MAX_SOURCE_IMPORT_DECLARATION_BYTES {
@@ -300,8 +464,8 @@ pub fn parse_source_import_declaration_for_contract(
     let value: SourceImportDeclaration = serde_json::from_slice(bytes)
         .map_err(|_| ContractError::at(ContractErrorCode::InvalidSchema, "sourceImport"))?;
     value.validate()?;
-    if !value.is_legacy_text() {
-        return Err(invalid("sourceImport.materials.encoding"));
+    if value.declaration_contract() != *contract {
+        return Err(invalid("sourceImport.contract"));
     }
     Ok(value)
 }

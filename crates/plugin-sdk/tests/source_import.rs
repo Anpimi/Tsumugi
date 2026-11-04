@@ -11,6 +11,176 @@ fn manifest() -> PluginManifest {
     serde_json::from_slice(include_bytes!("fixtures/source-import.manifest.json")).unwrap()
 }
 
+fn selectable() -> SourceImportDeclaration {
+    let mut value = declaration();
+    value.materials.clear();
+    value.file_sets = Some(vec![
+        SourceFileSetDeclaration {
+            id: "plugin".into(),
+            display_name: "Plugin file".into(),
+            role: "source".into(),
+            encoding: SourceMaterialEncoding::Binary,
+            extensions: vec!["esp".into(), "esm".into(), "esl".into()],
+            min_files: 1,
+            max_files: 1,
+            max_bytes: 262144,
+        },
+        SourceFileSetDeclaration {
+            id: "tables".into(),
+            display_name: "Companion tables".into(),
+            role: "companion".into(),
+            encoding: SourceMaterialEncoding::Binary,
+            extensions: vec!["strings".into(), "dlstrings".into(), "ilstrings".into()],
+            min_files: 0,
+            max_files: 3,
+            max_bytes: 131072,
+        },
+    ]);
+    value
+}
+fn selected(id: &str, paths: &[&str]) -> SourceFileSetSelection {
+    SourceFileSetSelection {
+        id: id.into(),
+        logical_paths: paths.iter().map(|path| (*path).into()).collect(),
+    }
+}
+
+#[test]
+fn file_sets_resolve_explicit_names_roles_and_encodings_without_discovery() {
+    let declaration = selectable();
+    declaration.validate().unwrap();
+    let resolved = declaration
+        .resolve_materials(&[
+            selected(
+                "tables",
+                &[
+                    "Strings/Chosen_english.STRINGS",
+                    "Strings/Chosen_english.DLSTRINGS",
+                ],
+            ),
+            selected("plugin", &["Chosen.ESP"]),
+        ])
+        .unwrap();
+    assert_eq!(
+        resolved
+            .iter()
+            .map(|material| (material.logical_path.as_str(), material.role.as_str()))
+            .collect::<Vec<_>>(),
+        [
+            ("Chosen.ESP", "source"),
+            ("Strings/Chosen_english.STRINGS", "companion"),
+            ("Strings/Chosen_english.DLSTRINGS", "companion")
+        ]
+    );
+    assert!(
+        resolved
+            .iter()
+            .all(|material| material.encoding == SourceMaterialEncoding::Binary)
+    );
+    assert_eq!(
+        declaration
+            .resolve_materials(&[selected("plugin", &["Other.esl"])])
+            .unwrap()
+            .len(),
+        1
+    );
+    assert!(declaration.resolve_materials(&[]).is_err());
+    declaration
+        .bind(&manifest().validate().unwrap(), &"a".repeat(64), &review())
+        .unwrap();
+}
+
+#[test]
+fn file_set_selections_refuse_unknown_duplicate_unsafe_and_excess_files() {
+    let declaration = selectable();
+    for paths in [
+        vec!["../Chosen.esp"],
+        vec!["/Chosen.esp"],
+        vec!["Chosen.exe"],
+        vec![".esp"],
+        vec!["dir\\Chosen.esp"],
+        vec!["Chosen.esp", "Other.esm"],
+    ] {
+        assert!(
+            declaration
+                .resolve_materials(&[selected("plugin", &paths)])
+                .is_err(),
+            "{paths:?}"
+        );
+    }
+    let good = selected("plugin", &["Chosen.esp"]);
+    for selections in [
+        vec![good.clone(), good.clone()],
+        vec![good.clone(), selected("unknown", &["extra.strings"])],
+        vec![
+            good.clone(),
+            selected("tables", &["a.strings", "A.STRINGS"]),
+        ],
+        vec![
+            good,
+            selected("tables", &["a.strings", "a.strings/nested.strings"]),
+        ],
+    ] {
+        assert!(declaration.resolve_materials(&selections).is_err());
+    }
+    let mut with_fixed = selectable();
+    with_fixed.materials = vec![SourceMaterialDeclaration {
+        logical_path: "chosen.esp".into(),
+        role: "companion".into(),
+        max_bytes: 16,
+        encoding: SourceMaterialEncoding::Binary,
+    }];
+    assert!(
+        with_fixed
+            .resolve_materials(&[selected("plugin", &["CHOSEN.ESP"])])
+            .is_err()
+    );
+}
+
+#[test]
+fn file_set_declarations_keep_complete_count_and_byte_budgets() {
+    for scenario in 0..8 {
+        let mut declaration = selectable();
+        let sets = declaration.file_sets.as_mut().unwrap();
+        match scenario {
+            0 => sets[0].min_files = 0,
+            1 => sets[0].max_files = 0,
+            2 => sets[0].max_files = 33,
+            3 => sets[0].max_bytes = MAX_EXCHANGE_BYTES as u32,
+            4 => sets[0].encoding = SourceMaterialEncoding::LegacyUtf8,
+            5 => sets[0].extensions = vec!["*.esp".into()],
+            6 => sets[0].extensions = vec!["esp".into(), "esp".into()],
+            _ => sets[1].id = sets[0].id.clone(),
+        }
+        assert!(declaration.validate().is_err(), "{scenario}");
+    }
+}
+
+#[test]
+fn fixed_v3_resources_keep_their_original_shape_and_cannot_claim_v4() {
+    let bytes = include_bytes!("fixtures/source-import-v3.declaration.json");
+    let contract = ContractRef {
+        schema_version: 3,
+        ..source_import_declaration_contract()
+    };
+    let old = parse_source_import_declaration_for_contract(bytes, &contract).unwrap();
+    assert!(old.file_sets.is_none());
+    assert_eq!(old.declaration_contract(), contract);
+    assert_eq!(
+        serde_json::to_value(&old).unwrap(),
+        serde_json::from_slice::<Value>(bytes).unwrap()
+    );
+    assert!(parse_source_import_declaration(bytes).is_err());
+    let mut null = serde_json::to_value(declaration()).unwrap();
+    null["fileSets"] = Value::Null;
+    assert!(serde_json::from_value::<SourceImportDeclaration>(null).is_err());
+    let unknown = ContractRef {
+        schema_version: 5,
+        ..contract
+    };
+    assert!(parse_source_import_declaration_for_contract(bytes, &unknown).is_err());
+}
+
 #[test]
 fn source_import_material_encoding_is_explicit_and_closed() {
     let mut declared = declaration();
@@ -148,7 +318,7 @@ fn source_import_strict_parser_rejects_duplicates_unknown_fields_and_large_input
 
 #[test]
 fn source_import_requires_the_named_review_resource_and_exact_profile() {
-    assert_eq!(source_import_declaration_contract().schema_version, 3);
+    assert_eq!(source_import_declaration_contract().schema_version, 4);
     assert_eq!(source_import_declaration_contract().behavior_version, 2);
     let mut d = declaration();
     d.review_resource = "missing".into();

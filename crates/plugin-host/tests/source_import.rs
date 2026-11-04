@@ -72,6 +72,33 @@ fn source_import_resource_resolves_exact_captured_bytes_and_providers() {
 }
 
 #[test]
+fn fixed_binary_capable_v3_resource_keeps_its_profile_and_recipe() {
+    let captured = image(|manifest, files| {
+        for entry in &mut manifest.contributions {
+            if let sdk::ContributionKind::Resource { schema, .. } = &mut entry.contribution {
+                if schema.id == "tsumugi.source-import-declaration" {
+                    schema.schema_version = 3;
+                }
+            }
+        }
+        files.get_mut("source-profile.json").unwrap().bytes =
+            include_bytes!("../../plugin-sdk/tests/fixtures/source-import-v3.declaration.json")
+                .to_vec();
+    });
+    let binding = captured.source_import("source-profile").unwrap();
+    assert_eq!(binding.declaration.declaration_contract().schema_version, 3);
+    assert!(binding.declaration.file_sets.is_none());
+    assert_eq!(
+        binding.declaration.resolve_materials(&[]).unwrap(),
+        binding.declaration.materials
+    );
+    assert_eq!(
+        binding.extractor.provider.package_digest,
+        captured.package_digest()
+    );
+}
+
+#[test]
 fn historical_source_recipe_requires_its_exact_immutable_resource_version() {
     for schema_version in [2, 3, 4] {
         let captured = image(|manifest, files| {
@@ -101,6 +128,7 @@ fn historical_source_recipe_requires_its_exact_immutable_resource_version() {
             }
             let file = files.get_mut("source-profile.json").unwrap();
             let mut value: serde_json::Value = serde_json::from_slice(&file.bytes).unwrap();
+            value.as_object_mut().unwrap().remove("fileSets");
             for material in value["materials"].as_array_mut().unwrap() {
                 material.as_object_mut().unwrap().remove("encoding");
             }

@@ -40,12 +40,13 @@ Unit IDs and `sourceRevisionId` values in an extraction output are operation-loc
 
 Before running extraction, the policy owner captures a `SourceRevisionPolicy` specifying which `DomainBlock` schema/behavior IDs contribute their opaque UTF-8 payload bytes to semantic source revision hashing alongside decoded unit text and protected fragments.
 
-## Package-Owned Source Import Declarations (`tsumugi.source-import-declaration/3/2`)
+## Package-Owned Source Import Declarations (`tsumugi.source-import-declaration/4/2`)
 
-A plugin package can bundle a non-executable JSON resource with schema `tsumugi.source-import-declaration/3/2` (`SourceImportDeclaration`, up to 32 KiB) to declare a self-contained source import pipeline:
+A plugin package can bundle a non-executable JSON resource with schema `tsumugi.source-import-declaration/4/2` (`SourceImportDeclaration`, up to 32 KiB) to declare a self-contained source import pipeline:
 
 - `displayName` and exact domain `profile`.
-- `materials`: an ordered list of 1 to 32 fixed relative files (each with a literal `logicalPath` up to 16 segments, `role`, explicit `encoding` (`utf8` or `binary`), and `maxBytes`, up to 2 MiB aggregate across all materials). No globs, optional files, or discovery scripts are permitted, and case-insensitive path aliases or file/directory overlaps are rejected.
+- `materials`: an ordered list of required fixed relative files, each with a literal `logicalPath` up to 16 segments, `role`, explicit `encoding` (`utf8` or `binary`), and `maxBytes`.
+- `fileSets`: an explicit array, empty for a fixed-only recipe. Each set has an exact `id`, readable `displayName`, `role`, explicit encoding, 1 to 16 distinct lowercase alphanumeric `extensions` (without dots or globs), `minFiles`, `maxFiles`, and per-file `maxBytes`. A zero minimum makes the set optional. Fixed files plus the sets' maximum counts must fit 32 files; their combined maximum byte budgets must fit 2 MiB. At least one file is required across the complete recipe. No discovery script or filesystem permission is included.
 - `extractor` and `checker`: distinct capability contribution IDs in the same package.
 - `reviewResource`: the contribution ID of a [`ReviewDeclaration`](review.md) resource (`tsumugi.review-declaration/1/1`) in the same package.
 - `revisionPolicy` (`SourceRevisionPolicy`) and a non-empty list of mandatory `semanticRules`.
@@ -56,7 +57,11 @@ A plugin package can bundle a non-executable JSON resource with schema `tsumugi.
 - The `checker` capability must be `read-only` and distinct from `extractor`.
 - The referenced `reviewResource` is bound into a `ReviewBinding` fixed to the same package and profile (earlier `1/1` source-import resources without `reviewResource` are rejected).
 
-`parse_source_import_declaration_for_contract` also reads the supported resource `2/2` when selected by that exact immutable manifest reference. Its materials omit `encoding` and retain the original UTF-8 interpretation and serialization. They bind only to the original text-only capability family. Current `3/2` authoring requires explicit encodings and cannot claim an old resource body; unknown resource versions and mixed legacy/current materials are rejected. The same reader preserves source declarations saved in existing desktop drafts without rewriting those records.
+`parse_source_import_declaration_for_contract` also reads the exact supported `2/2` and `3/2` resources. Version 2 omits material encodings and keeps its original UTF-8 interpretation and text-only capability family. Version 3 has explicit encodings and fixed materials. Both omit `fileSets` and retain their original serialization. Current `4/2` authoring requires an explicit, non-null `fileSets` array; an older body cannot claim that profile. Unknown versions, mixed legacy/current encodings and unknown fields are rejected. Saved desktop declarations keep their existing shape.
+
+`SourceImportDeclaration::resolve_materials` resolves `SourceFileSetSelection { id, logicalPaths }` without reading files. It orders fixed materials first, then sets in declaration order and paths in the supplied order. It rejects missing required choices, unknown or repeated set IDs, excess files, unsafe paths, unsupported extensions, and case aliases or file/directory overlaps across the complete fixed/selected set. Extension matching ignores ASCII case while preserving the original path spelling. Optional sets may be omitted.
+
+The filesystem owner separately authorizes the root and reads only the resolved paths. Core's `SourceBundle::capture_selected` takes byte buffers in that resolved order and uses the existing immutable capture, byte digest and input limits. `capture_declared` resolves an empty selection, so it cannot silently ignore a required set. These data APIs do not by themselves provide a native file picker, installed format worker, or execution permission.
 
 The Host reads `SourceImportDeclaration` directly from the immutable `PackageImage` without executing plugin code.
 

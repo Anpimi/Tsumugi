@@ -4948,6 +4948,59 @@
         ],
         "type": "string"
       },
+      "SourceFileSetDeclaration": {
+        "additionalProperties": false,
+        "description": "Explicit user choices within one authorized root. No glob, directory scan,\nabsolute path, or permission is part of this declaration or its resolution.",
+        "properties": {
+          "displayName": {
+            "type": "string"
+          },
+          "encoding": {
+            "$ref": "#/definitions/SourceMaterialEncoding"
+          },
+          "extensions": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "id": {
+            "type": "string"
+          },
+          "maxBytes": {
+            "format": "uint32",
+            "maximum": 4294967295,
+            "minimum": 0,
+            "type": "integer"
+          },
+          "maxFiles": {
+            "format": "uint32",
+            "maximum": 4294967295,
+            "minimum": 0,
+            "type": "integer"
+          },
+          "minFiles": {
+            "format": "uint32",
+            "maximum": 4294967295,
+            "minimum": 0,
+            "type": "integer"
+          },
+          "role": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "displayName",
+          "role",
+          "encoding",
+          "extensions",
+          "minFiles",
+          "maxFiles",
+          "maxBytes"
+        ],
+        "type": "object"
+      },
       "SourceHistory": {
         "additionalProperties": false,
         "properties": {
@@ -5214,7 +5267,7 @@
       },
       "SourceImportDeclaration": {
         "additionalProperties": false,
-        "description": "All listed materials are required, relative to one user-selected directory.\nThis first contract supports fixed files, not globs or discovery programs.",
+        "description": "Fixed materials and explicitly chosen file sets share one captured input.",
         "properties": {
           "checker": {
             "type": "string"
@@ -5224,6 +5277,12 @@
           },
           "extractor": {
             "type": "string"
+          },
+          "fileSets": {
+            "items": {
+              "$ref": "#/definitions/SourceFileSetDeclaration"
+            },
+            "type": "array"
           },
           "materials": {
             "items": {

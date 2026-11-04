@@ -2677,13 +2677,13 @@ export interface PluginSourceView {
   settingsRevision: UnsignedDecimal;
 }
 /**
- * All listed materials are required, relative to one user-selected directory.
- * This first contract supports fixed files, not globs or discovery programs.
+ * Fixed materials and explicitly chosen file sets share one captured input.
  */
 export interface SourceImportDeclaration {
   checker: string;
   displayName: string;
   extractor: string;
+  fileSets?: SourceFileSetDeclaration[];
   materials: SourceMaterialDeclaration[];
   profile: ContractRef;
   /**
@@ -2692,6 +2692,20 @@ export interface SourceImportDeclaration {
   reviewResource: string;
   revisionPolicy: SourceRevisionPolicy;
   semanticRules: ContractRef[];
+}
+/**
+ * Explicit user choices within one authorized root. No glob, directory scan,
+ * absolute path, or permission is part of this declaration or its resolution.
+ */
+export interface SourceFileSetDeclaration {
+  displayName: string;
+  encoding: SourceMaterialEncoding;
+  extensions: string[];
+  id: string;
+  maxBytes: number;
+  maxFiles: number;
+  minFiles: number;
+  role: string;
 }
 export interface SourceMaterialDeclaration {
   encoding?: SourceMaterialEncoding;

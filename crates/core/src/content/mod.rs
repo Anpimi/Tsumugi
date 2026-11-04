@@ -169,14 +169,28 @@ impl SourceBundle {
         materials: Vec<Vec<u8>>,
         language: &str,
     ) -> Result<Self, ExecutionError> {
+        Self::capture_selected(binding, &[], materials, language)
+    }
+
+    /// Fixed and selected files use the same byte capture and immutable bundle.
+    /// Byte buffers follow `resolve_materials` order. Selections are data;
+    /// the filesystem owner separately authorizes access.
+    pub fn capture_selected(
+        binding: &sdk::SourceImportBinding,
+        selections: &[sdk::SourceFileSetSelection],
+        materials: Vec<Vec<u8>>,
+        language: &str,
+    ) -> Result<Self, ExecutionError> {
         let declaration = &binding.declaration;
         binding.validate().map_err(source_contract_error)?;
-        if materials.len() != declaration.materials.len() {
+        let resolved = declaration
+            .resolve_materials(selections)
+            .map_err(source_contract_error)?;
+        if materials.len() != resolved.len() {
             return Err(invalid("source-import-binding"));
         }
         let locale = Locale::parse(language).map_err(|_| invalid("language-required"))?;
-        let files = declaration
-            .materials
+        let files = resolved
             .iter()
             .zip(materials)
             .map(|(declared, bytes)| {

@@ -68,7 +68,7 @@ fn supported_bindings_and_context_keep_their_exact_baseline_meaning() {
 }
 
 #[test]
-fn saved_source_resource_v2_is_readable_but_cannot_claim_the_v3_profile() {
+fn saved_source_resource_v2_keeps_its_profile_when_authoring_advances() {
     use tsumugi_plugin_sdk as sdk;
     let bytes = include_bytes!("fixtures/sdk-v1-capture/source-import-declaration.json");
     let contract = sdk::ContractRef {
@@ -85,7 +85,7 @@ fn saved_source_resource_v2_is_readable_but_cannot_claim_the_v3_profile() {
     assert_eq!(serde_json::to_vec(&saved).unwrap(), bytes);
     assert!(sdk::parse_source_import_declaration(bytes).is_err());
     let unknown = sdk::ContractRef {
-        schema_version: 4,
+        schema_version: 5,
         ..contract
     };
     assert!(sdk::parse_source_import_declaration_for_contract(bytes, &unknown).is_err());

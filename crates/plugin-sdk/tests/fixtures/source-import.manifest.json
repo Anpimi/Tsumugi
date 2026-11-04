@@ -31,7 +31,7 @@
         "kind": "resource",
         "schema": {
           "id": "tsumugi.source-import-declaration",
-          "schemaVersion": 3,
+          "schemaVersion": 4,
           "behaviorVersion": 2
         },
         "path": "source-profile.json"

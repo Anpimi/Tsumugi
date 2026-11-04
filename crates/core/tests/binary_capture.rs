@@ -75,3 +75,43 @@ fn a_declared_utf8_material_rejects_binary_instead_of_guessing_an_encoding() {
     assert!(bundle.files[0].bytes().unwrap().is_empty());
     bundle.validate().unwrap();
 }
+
+#[test]
+fn selected_files_use_one_bundle_and_required_sets_cannot_be_ignored() {
+    let mut binding = binding(true);
+    binding.declaration.materials.clear();
+    binding.declaration.file_sets = Some(vec![sdk::SourceFileSetDeclaration {
+        id: "records".into(),
+        display_name: "Record files".into(),
+        role: "source".into(),
+        encoding: sdk::SourceMaterialEncoding::Binary,
+        extensions: vec!["esp".into(), "esm".into(), "esl".into()],
+        min_files: 1,
+        max_files: 2,
+        max_bytes: 131072,
+    }]);
+    assert!(SourceBundle::capture_declared(&binding, vec![], "en-US").is_err());
+    let selections = vec![sdk::SourceFileSetSelection {
+        id: "records".into(),
+        logical_paths: vec!["Chosen.esl".into(), "Companion.esm".into()],
+    }];
+    let mut originals = vec![vec![0, 255, 128, 10], vec![42, 0, 255]];
+    let bundle =
+        SourceBundle::capture_selected(&binding, &selections, originals.clone(), "en-US").unwrap();
+    originals[0].fill(0);
+    assert_eq!(
+        bundle
+            .files
+            .iter()
+            .map(|file| file.logical_path.as_str())
+            .collect::<Vec<_>>(),
+        ["Chosen.esl", "Companion.esm"]
+    );
+    assert_eq!(bundle.files[0].bytes().unwrap().as_ref(), [0, 255, 128, 10]);
+    assert_eq!(bundle.files[1].bytes().unwrap().as_ref(), [42, 0, 255]);
+    bundle.source_input().validate().unwrap();
+    let reopened: SourceBundle =
+        serde_json::from_slice(&serde_json::to_vec(&bundle).unwrap()).unwrap();
+    assert_eq!(reopened, bundle);
+    assert!(SourceBundle::capture_selected(&binding, &selections, vec![vec![0]], "en-US").is_err());
+}
