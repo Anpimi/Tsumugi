@@ -1007,6 +1007,17 @@ fn validate_existing_connection(
     connection: &mut Connection,
     directory: &Path,
 ) -> Result<(), PersistenceError> {
+    validate_existing_database(connection, &directory.join(DATABASE_FILENAME), directory)
+}
+
+// Restoration validates an unpublished database copy. The migration owner
+// reads that exact copy while retaining its original-schema snapshot beside
+// the eventual project, using the same checks and transaction as normal open.
+fn validate_existing_database(
+    connection: &mut Connection,
+    database_path: &Path,
+    directory: &Path,
+) -> Result<(), PersistenceError> {
     connection
         .pragma_update(None, "foreign_keys", true)
         .map_err(|error| map_sqlite(error, PersistenceStage::Open))?;
@@ -1066,7 +1077,7 @@ fn validate_existing_connection(
         // separate read-only connection captures the pre-migration database.
         // A SQLite backup cannot use a source holding a write transaction.
         let source = Connection::open_with_flags(
-            directory.join(DATABASE_FILENAME),
+            database_path,
             OpenFlags::SQLITE_OPEN_READ_ONLY,
         )
         .map_err(|error| map_sqlite(error, PersistenceStage::UpgradeSnapshot))?;

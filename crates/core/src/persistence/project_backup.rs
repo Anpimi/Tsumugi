@@ -29,16 +29,25 @@ impl ProjectStore {
         sync_directory(parent, stage)
     }
 
-    /// Restore a current-schema backup into a new directory. The project lock
-    /// file is published only after the restored database passes normal validation.
+    /// Restore a supported backup into a new directory, upgrading only its
+    /// unpublished copy. The project lock is published after normal validation.
     pub fn restore_backup(backup: &Path, destination: &Path) -> Result<(), PersistenceError> {
         let stage = PersistenceStage::Create;
         let source = Connection::open_with_flags(backup, OpenFlags::SQLITE_OPEN_READ_ONLY)
             .map_err(|error| map_sqlite(error, stage))?;
+        let source_version = source
+            .pragma_query_value(None, "user_version", |row| row.get::<_, i64>(0))
+            .map_err(|error| map_sqlite(error, stage))?;
         fs::create_dir(destination).map_err(map_create_io)?;
         let result = (|| {
-            let database = capture(&source, destination, SCHEMA_VERSION, stage)?;
-            validate_current_snapshot(&database, destination, stage)?;
+            let database = capture(&source, destination, source_version, stage)?;
+            {
+                let mut validation =
+                    Connection::open_with_flags(database.path(), OpenFlags::SQLITE_OPEN_READ_WRITE)
+                        .map_err(|error| map_sqlite(error, stage))?;
+                validate_existing_database(&mut validation, database.path(), destination)?;
+                require_idle(&validation, stage)?;
+            }
             let mut lock = tempfile::NamedTempFile::new_in(destination)
                 .map_err(|error| map_io(error, stage))?;
             write!(lock, "{RESTORED_PREFIX}{}", ExecutionId::new())
@@ -90,7 +99,7 @@ fn validate_current_snapshot(
     let mut validation =
         Connection::open_with_flags(database.path(), OpenFlags::SQLITE_OPEN_READ_ONLY)
             .map_err(|error| map_sqlite(error, stage))?;
-    validate_existing_connection(&mut validation, directory)?;
+    validate_existing_database(&mut validation, database.path(), directory)?;
     require_idle(&validation, stage)
 }
 
