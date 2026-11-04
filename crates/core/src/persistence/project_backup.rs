@@ -128,7 +128,7 @@ pub(super) fn write_schema_snapshot(
     directory: &Path,
     version: i64,
 ) -> Result<(), PersistenceError> {
-    let stage = PersistenceStage::Open;
+    let stage = PersistenceStage::UpgradeSnapshot;
     let temporary = capture(connection, directory, version, stage)?;
     let path = directory.join(format!(
         "{DATABASE_FILENAME}.pre-v{version}-{}.backup",

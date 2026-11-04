@@ -303,6 +303,7 @@ pub enum PersistenceStage {
     Reconcile,
     Close,
     Ownership,
+    UpgradeSnapshot,
 }
 
 /// A bounded failure that can be surfaced without exposing SQLite or OS text.
@@ -1068,7 +1069,7 @@ fn validate_existing_connection(
             directory.join(DATABASE_FILENAME),
             OpenFlags::SQLITE_OPEN_READ_ONLY,
         )
-        .map_err(|error| map_sqlite(error, PersistenceStage::Open))?;
+        .map_err(|error| map_sqlite(error, PersistenceStage::UpgradeSnapshot))?;
         project_backup::write_schema_snapshot(&source, directory, user_version)?;
         drop(source);
         #[cfg(test)]
@@ -1556,7 +1557,9 @@ mod tests {
         fs::set_permissions(&path, fs::Permissions::from_mode(0o500)).unwrap();
         let refused = ProjectStore::open(&path);
         fs::set_permissions(&path, permissions).unwrap();
-        assert_eq!(refused.unwrap_err().code(), PersistenceErrorCode::PermissionDenied);
+        let error = refused.unwrap_err();
+        assert_eq!(error.code(), PersistenceErrorCode::PermissionDenied);
+        assert_eq!(error.stage(), PersistenceStage::UpgradeSnapshot);
 
         let legacy = Connection::open_with_flags(&database, OpenFlags::SQLITE_OPEN_READ_ONLY).unwrap();
         assert_eq!(legacy.pragma_query_value(None, "user_version", |row| row.get::<_, i64>(0)).unwrap(), 73);

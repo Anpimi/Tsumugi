@@ -1699,6 +1699,7 @@ export default function WorkbenchApp({ controller: suppliedController, native = 
   const [locator, setLocator] = useState(""), [openPanel, setOpenPanel] = useState(false), [discard, setDiscard] = useState(false);
   const [createPanel, setCreatePanel] = useState(false);
   const [restorePanel, setRestorePanel] = useState(false), [restoreName, setRestoreName] = useState("");
+  const [restoredSession, setRestoredSession] = useState<string | null>(null);
   const [restoreFailure, setRestoreFailure] = useState<"restoreFailed" | "restoreUnknown" | null>(null);
   const [recent, setRecent] = useState<RecentProject[]>(readRecentProjects), [pickerFailed, setPickerFailed] = useState(false);
   const [closeActionFailed, setCloseActionFailed] = useState(false);
@@ -1753,6 +1754,7 @@ export default function WorkbenchApp({ controller: suppliedController, native = 
     if (!appMounted.current) return;
     const result = controller.getSnapshot();
     if (opened || result.session) {
+      setRestoredSession(result.session?.project.sessionToken ?? null);
       setRestorePanel(false);
       setRestoreName("");
     } else if (result.failure) {
@@ -1781,7 +1783,8 @@ export default function WorkbenchApp({ controller: suppliedController, native = 
     <div className={styles.actions}><Button disabled={!native || blocked} onClick={() => void chooseFolder()}>{t("chooseFolder")}</Button><Button variant="primary" type="submit" pending={busy} disabled={!native || blocked || !locator.trim()}>{t("openProject")}</Button></div>
   </form>;
   const error = state.failure;
-  const errorText = error?.code === "unknown-lifecycle" || error?.code === "recovery-unavailable" ? t("unknown") : error?.code === "leave-blocked" ? t("leaveBlocked") : error?.code === "leave-changed" ? t("leaveChanged")
+  const upgradeSnapshotFailed = failureReason(commandFailure(error?.cause)) === "upgrade-snapshot-failed";
+  const errorText = upgradeSnapshotFailed ? startup("upgradeSnapshotFailed") : error?.code === "unknown-lifecycle" || error?.code === "recovery-unavailable" ? t("unknown") : error?.code === "leave-blocked" ? t("leaveBlocked") : error?.code === "leave-changed" ? t("leaveChanged")
     : error?.code === "application-stopping" || error?.code === "application-unknown" || error?.code === "runtime-pending" ? t("cleanupPending") : error?.code === "read-failed" ? t("readFailed") : error?.code === "destroy-failed" ? t("windowCloseFailed") : t("actionFailed");
   return <ApplicationReadProvider><ApplicationSettingsProvider lifecycle={controller} gate={gate} native={native}>
     <div className={appStyles.app}>
@@ -1792,6 +1795,8 @@ export default function WorkbenchApp({ controller: suppliedController, native = 
       {state.cleanup?.state === "stopped" ? <Banner action={<Button disabled={busy || !!state.pending || !!state.retainedSession} onClick={() => void controller.resumeApplication()}>{t("resumeWork")}</Button>}>{t("workStopped")}</Banner> : null}
       {state.cleanup?.state === "stopping" ? <Banner action={<Button disabled={busy || !!state.pending || !!state.retainedSession || !native} onClick={() => void continueClosing().catch(() => setCloseActionFailed(true))}>{t("continueClosing")}</Button>}>{t("cleanupPending")}</Banner> : null}
       {error && !restorePanel ? <Banner tone="error" action={state.pending?.kind === "runtime" || state.pending?.session && (state.pending.kind === "open" || state.pending.kind === "close") ? <Button disabled={busy} onClick={() => void controller.checkPending()}>{t("checkResult")}</Button> : undefined}>{errorText}</Banner> : null}
+      {restoredSession && state.session?.project.sessionToken === restoredSession
+        ? <Banner role="status" action={<Button onClick={() => setRestoredSession(null)}>{startup("close")}</Button>}>{startup("restoredExternalFiles")}</Banner> : null}
       {state.retainedSession ? <Banner tone="warning" action={<Button onClick={() => setDiscard(true)}>{t("discardRetained")}</Button>}>{t("retained")}</Banner> : null}
       {presentation ? <SessionReadProvider key={`${presentation.project.metadata.projectId}:${presentation.project.sessionToken}`} context={executionContext(presentation.project)} reads={presentation.reads} bridge={!presentation.reads.retired}>
         <ProjectWorkspace session={presentation} lifecycle={controller} gate={gate} readOnly={presentation !== state.session || !!state.retainedSession} requestOpen={() => setOpenPanel(true)} requestCreate={() => { setOpenPanel(false); setCreatePanel(true); }} onRecentProjectsChange={setRecent}

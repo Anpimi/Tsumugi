@@ -1,4 +1,6 @@
 export const startupEn = {
+  upgradeSnapshotFailed: "The project upgrade stopped before changing the database because its safety snapshot could not be saved. Check free space and write access to the project folder, then open it again.",
+  restoredExternalFiles: "The restored project is open. Files previously exported to other folders were not copied or checked. In Delivery, choose a saved release and its original folder, then select Check folder. Files marked New file are missing there. You can export the saved release again.",
   restoreBackup: "Restore a backup…", restoreTitle: "Restore a project", restoreChoose: "Choose backup and destination…",
   restoreHelp: "Choose a backup file and a parent folder. The app creates and opens a new project folder. Local drafts, external files and machine credentials are separate. Missing plugins or connections can be set up in Extensions or Model connections.",
   restoreFailed: "Could not restore the project. Check the backup and choose a new folder name and destination.",
@@ -28,6 +30,8 @@ export const startupEn = {
 } as const;
 
 export const startupZh = {
+  upgradeSnapshotFailed: "升级前无法保存安全快照，工程数据库未升级。请检查磁盘空间和工程文件夹的写入权限，然后重新打开。",
+  restoredExternalFiles: "恢复副本已打开。之前导出到其他目录的文件没有复制或核对。可在交付中选择已保存的发布和原目录，再选择检查文件夹。标为「新文件」的文件在该目录中缺失，可重新导出已保存的发布。",
   restoreBackup: "从备份恢复…", restoreTitle: "恢复工程", restoreChoose: "选择备份和存放位置…",
   restoreHelp: "选择备份文件和父文件夹，应用会创建并打开新的工程目录。本机草稿、外部文件和本机凭据另行保留。缺少插件或连接时，可在扩展或模型连接中准备。",
   restoreFailed: "无法恢复工程。请检查备份，并选择新的文件夹名称和存放位置。",

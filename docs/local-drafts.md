@@ -6,7 +6,7 @@ The desktop workspace uses a local journal for unconfirmed translation, conversa
 
 Open **Project settings → Save project backup** to save the committed project database to a new local file. Finish or check unresolved work before backing up. The backup includes committed content, decisions and saved delivery history. Local drafts, external files, machine credentials, extension approvals and runtime caches stay separate.
 
-With no project open, choose **Restore a backup**. Enter a new folder name, choose the backup and then its destination parent. The restored project opens separately. Use Extensions or Model connections to set up any missing dependencies. If the restore result is uncertain, use **Open a project** to check the destination folder before restoring again.
+With no project open, choose **Restore a backup**. Enter a new folder name, choose the backup and then its destination parent. The restored project opens separately. Use Extensions or Model connections to set up any missing dependencies. To check an earlier export, select its saved release and original folder in Delivery, then choose **Check folder**. **New file** means the file is missing there. Files that match or differ are marked separately. If the restore result is uncertain, use **Open a project** to check the destination folder before restoring again.
 
 ## Rescue local draft text
 

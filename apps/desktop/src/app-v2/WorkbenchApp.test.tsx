@@ -262,6 +262,26 @@ it("restores from Welcome, keeps the folder name on cancellation, and installs t
   fireEvent.click(submit);
   await waitFor(() => expect(controller.getSnapshot().session?.project).toEqual(restored));
   expect(restore.mock.calls).toEqual([[{ directoryName: "Restored" }], [{ directoryName: "Restored" }]]);
+  expect(await screen.findByText(i18n.t("startup.restoredExternalFiles"))).toBeVisible();
+});
+
+it("explains an upgrade snapshot failure and keeps the folder available for retry", async () => {
+  const open = vi.fn<ProjectLifecyclePorts["open"]>().mockRejectedValueOnce({
+    code: "permission-denied", stage: "open", outcome: "rejected", recoveryRequired: false,
+    reason: "upgrade-snapshot-failed",
+  }).mockResolvedValueOnce(project);
+  controller = new ProjectLifecycle({ open });
+  render(<WorkbenchApp controller={controller} native/>);
+  fireEvent.click(screen.getByRole("button", { name: i18n.t("startup.openExisting") }));
+  const folder = screen.getByRole("textbox", { name: i18n.t("workbenchV2.projectFolder") });
+  fireEvent.change(folder, { target: { value: project.locator } });
+  fireEvent.click(screen.getByRole("button", { name: i18n.t("workbenchV2.openProject") }));
+  expect(await screen.findByText(i18n.t("startup.upgradeSnapshotFailed"))).toBeVisible();
+  expect(folder).toHaveValue(project.locator);
+  expect(controller.getSnapshot().pending).toBeNull();
+  fireEvent.click(screen.getByRole("button", { name: i18n.t("workbenchV2.openProject") }));
+  await waitFor(() => expect(controller.getSnapshot().session?.project).toEqual(project));
+  expect(open).toHaveBeenCalledTimes(2);
 });
 
 it("keeps an uncertain restore from repeating and offers opening the destination", async () => {
