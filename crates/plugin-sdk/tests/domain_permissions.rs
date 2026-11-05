@@ -113,6 +113,7 @@ fn process_programs_keep_the_existing_safe_relative_path_boundary() {
 fn historical_text_bindings_keep_their_capture_only_permission_boundary() {
     let mut source = source();
     source.declaration.file_sets = None;
+    source.declaration.max_total_bytes = None;
     for material in &mut source.declaration.materials {
         material.encoding = SourceMaterialEncoding::LegacyUtf8;
     }
