@@ -4,6 +4,19 @@ use serde::{Deserialize, Serialize};
 
 use crate::*;
 
+/// Current artifact-capable domains may delegate to an explicitly declared
+/// format process. Program paths retain ordinary permission validation; this
+/// does not grant execution or permit network, services or staged file access.
+pub(crate) fn domain_permissions_are_allowed(
+    permissions: &[PermissionRequest],
+    current_artifacts: bool,
+) -> bool {
+    permissions.iter().all(|permission| {
+        matches!(permission, PermissionRequest::CapturedInput)
+            || (current_artifacts && matches!(permission, PermissionRequest::Process { .. }))
+    })
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
 pub enum ContractErrorCode {

@@ -211,9 +211,10 @@ impl ReviewBinding {
             || d.error_schema != review_check_error_contract()
             || !d.profiles.contains(&self.declaration.profile)
             || d.effect != EffectKind::ReadOnly
-            || d.permissions
-                .iter()
-                .any(|p| *p != PermissionRequest::CapturedInput)
+            || !crate::validation::domain_permissions_are_allowed(
+                &d.permissions,
+                d.input_schema.schema_version == 2,
+            )
         {
             return Err(invalid("reviewDeclaration.capability"));
         }

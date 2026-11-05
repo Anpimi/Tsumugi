@@ -53,7 +53,7 @@ A plugin package can bundle a non-executable JSON resource with schema `tsumugi.
 
 `SourceImportDeclaration::bind` (using `parse_source_import_declaration`) validates the declaration against the package's `ValidatedManifest`, package digest, and captured `ReviewDeclaration`:
 
-- Both `extractor` and `checker` must support the declared `profile` and the SDK's source extraction input/output/error contracts, and may request only `captured-input` permissions.
+- Both `extractor` and `checker` must support the declared `profile` and the SDK's source extraction input/output/error contracts. Artifact-capable input contracts (schema 2) may declare `captured-input` and explicit `process` permissions for format programs with safe relative paths. Historical text-only inputs (schema 1) retain capture-only permissions. These declarations do not grant execution, filesystem, network or project-service authority.
 - The `checker` capability must be `read-only` and distinct from `extractor`.
 - The referenced `reviewResource` is bound into a `ReviewBinding` fixed to the same package and profile (earlier `1/1` source-import resources without `reviewResource` are rejected).
 

@@ -409,9 +409,10 @@ impl SourceImportBinding {
                 || d.error_schema != source_extraction_error_contract()
                 || !d.profiles.contains(&self.declaration.profile)
                 || !matches!(d.effect, EffectKind::ReadOnly | EffectKind::Proposal)
-                || d.permissions
-                    .iter()
-                    .any(|p| *p != PermissionRequest::CapturedInput)
+                || !crate::validation::domain_permissions_are_allowed(
+                    &d.permissions,
+                    d.input_schema.schema_version == 2,
+                )
             {
                 return Err(invalid("sourceImport.capability"));
             }

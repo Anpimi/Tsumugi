@@ -66,7 +66,7 @@ A package can declare its build pipeline in a non-executable JSON resource with 
 
 - The builder capability must accept `BuildInput`, return `ArtifactSet`, declare a `proposal` effect, and use `BuildError`.
 - The checker capability must accept `ArtifactCheckInput`, return `tsumugi.check-results`, declare a `read-only` effect, and use `BuildError`.
-- Both capabilities may request only `captured-input` permissions and must accommodate the declared payload ceilings.
+- Both capabilities must accommodate the declared payload ceilings. Artifact-capable input contracts (schema 2) may request `captured-input` and an explicit `process` permission naming a safe relative format-program path. Historical text-only input contracts (schema 1) retain capture-only permissions. Binding neither grants process execution nor permits network, project-service or staged-output access; approval and process lifecycle remain with the Host/application and component.
 
 `PackageImage` reads the `BuildDeclaration` resource directly from the package archive without executing plugin code.
 

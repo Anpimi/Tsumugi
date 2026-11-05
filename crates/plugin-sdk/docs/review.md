@@ -47,7 +47,7 @@ A plugin declares its mandatory review rules in a non-executable JSON resource (
 ```
 
 - A declaration lists 1 to 32 distinct rules with exact `schemaVersion` and `behaviorVersion` numbers.
-- The referenced `checker` capability must support the declared `profile`, use the `ReviewCheckInput` / `tsumugi.check-results` / `ReviewCheckError` schemas, have a `read-only` effect, and request only `captured-input` permission.
+- The referenced `checker` capability must support the declared `profile`, use the `ReviewCheckInput` / `tsumugi.check-results` / `ReviewCheckError` schemas, and have a `read-only` effect. Artifact-capable inputs (schema 2) may declare `captured-input` and an explicit `process` permission for a safe relative format-program path. Historical text-only inputs retain capture-only permissions. Binding does not grant child execution, network, services or staged file access; actual authorization and lifecycle remain separate.
 - `ReviewDeclaration::bind` binds the resource to the package's `ValidatedManifest` and digest (`PackageImage::review_declaration` reads and binds this resource from an archive).
 - `ReviewBinding::validate_input` verifies that a `ReviewCheckInput` includes every declared rule at its exact version for that checker.
 
