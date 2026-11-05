@@ -96,8 +96,9 @@ pub const MAX_INVOCATION_PAYLOAD_BYTES: usize = 4 * 1024 * 1024;
 pub const MAX_PROCESS_FRAME_BYTES: usize = 6 * MAX_INVOCATION_PAYLOAD_BYTES + 64 * 1024;
 pub const MAX_CONTENT_ITEMS: usize = 2000;
 /// Separate identity and context extensions can accompany each content item.
-/// The complete exchange still has its independent encoded-byte ceiling.
-pub const MAX_CONTENT_DOMAIN_BLOCKS: usize = 4000;
+/// One additional block carries snapshot-wide metadata. The complete exchange
+/// still has its independent encoded-byte ceiling.
+pub const MAX_CONTENT_DOMAIN_BLOCKS: usize = 2 * MAX_CONTENT_ITEMS + 1;
 pub const MAX_TEXT_BYTES: usize = 16 * 1024;
 
 /// Length-prefixed local process messages, independent of content protocols.

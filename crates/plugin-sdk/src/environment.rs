@@ -18,11 +18,12 @@ pub const MAX_RUNTIME_ARTIFACT_BYTES: usize = 256 * 1024 * 1024;
 
 pub const NATIVE_HOST_ENVIRONMENT_PROTOCOL: u32 = 1;
 
-// The two supported historical SDKs use the same Process-3 transport. Their exact
+// The supported historical SDKs use the same Process-3 transport. Their exact
 // descriptors and digests remain readable; capture/dispatch still require the
 // independently approved runtime bytes and the actual current Host identity.
 fn supported_sdk(version: &str) -> bool {
-    version == crate::SDK_VERSION || matches!(version, "0.1.0-alpha.1" | "0.1.0-alpha.2")
+    version == crate::SDK_VERSION
+        || matches!(version, "0.1.0-alpha.1" | "0.1.0-alpha.2" | "0.1.0-alpha.3")
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]

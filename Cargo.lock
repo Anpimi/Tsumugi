@@ -5148,7 +5148,7 @@ dependencies = [
 
 [[package]]
 name = "tsumugi-plugin-sdk"
-version = "0.1.0-alpha.3"
+version = "0.1.0-alpha.4"
 dependencies = [
  "base64 0.22.1",
  "schemars 1.2.2",

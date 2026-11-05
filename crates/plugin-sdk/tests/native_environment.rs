@@ -76,10 +76,21 @@ fn historical_native_descriptor_does_not_become_the_current_host() {
     decoded.validate().unwrap();
     assert_eq!(serde_json::to_vec(&decoded).unwrap(), bytes);
     assert_ne!(decoded.digest().unwrap(), native().digest().unwrap());
-    for version in ["0.1.0-alpha.0", "0.1.0-alpha.4", "0.1.0"] {
+    for version in ["0.1.0-alpha.0", "0.1.0-alpha.99", "0.1.0"] {
         old.sdk_version = version.into();
         assert!(old.validate().is_err());
     }
+}
+
+#[test]
+fn alpha3_native_descriptor_remains_exact_and_distinct_from_current_host() {
+    let mut old = native();
+    old.sdk_version = "0.1.0-alpha.3".into();
+    let bytes = serde_json::to_vec(&old).unwrap();
+    let decoded: NativeHostEnvironmentDescriptor = serde_json::from_slice(&bytes).unwrap();
+    decoded.validate().unwrap();
+    assert_eq!(serde_json::to_vec(&decoded).unwrap(), bytes);
+    assert_ne!(decoded.digest().unwrap(), native().digest().unwrap());
 }
 
 #[test]

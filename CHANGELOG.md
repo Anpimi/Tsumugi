@@ -152,6 +152,8 @@ Current workspace version metadata: **`0.2.0-alpha.1`**. Because the published `
 
 ### Changed
 
+- Experimental SDK `0.1.0-alpha.4` reserves one snapshot metadata block alongside identity and context blocks for all 2,000 content items (4,001 blocks total). The independent encoded exchange limit, item count and Process3 contracts are unchanged; use a matching SDK consumer and Host snapshot.
+
 - Artifact-capable source, build and mandatory review bindings can declare a format-process permission with a safe relative program path. Historical text-only bindings retain capture-only permissions; network, project-service and staged-output permissions remain outside these domain bindings. Process approval and execution stay with the existing Host and application boundaries.
 
 - Build resource `2/1` adds bounded, explicitly selected output settings to the existing build configuration payloads. Delivery shows per-language choices and the fixed or saved values, clears stale readiness when choices change, and keeps settings tied to their exact builder. Missing or unknown choices are rejected at the SDK/Core boundary; exact historical `1/1` resources retain their original opaque configuration semantics.

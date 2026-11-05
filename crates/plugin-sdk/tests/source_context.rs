@@ -375,6 +375,17 @@ fn full_content_capacity_keeps_identity_and_context_blocks_with_independent_limi
     }
     assert_eq!(source.units.len(), 2000);
     assert_eq!(source.domain_blocks.len(), 4000);
+    source.domain_blocks.push(DomainBlock {
+        target: ContentTarget::Snapshot,
+        schema: ContractRef {
+            id: "example.capture-summary".into(),
+            schema_version: 1,
+            behavior_version: 1,
+        },
+        handling: ExtensionHandling::Preserve,
+        payload_utf8: "{}".into(),
+    });
+    assert_eq!(source.domain_blocks.len(), 4001);
     source.validate().unwrap();
     assert!(serde_json::to_vec(&source).unwrap().len() < 2 * 1024 * 1024);
 
