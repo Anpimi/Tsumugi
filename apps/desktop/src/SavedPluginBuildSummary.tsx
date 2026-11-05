@@ -1,4 +1,5 @@
 import { useTranslation } from "react-i18next";
+import { CapturedBuildOptions } from "./PluginBuildOptions";
 import type { SavedPluginBuildView } from "./releaseCommands";
 
 /** Metadata from the Core's original plan/result projection, never execution consent. */
@@ -29,6 +30,7 @@ export function SavedPluginBuildSummary({ build, itemId }: { build: SavedPluginB
         </dl></details>
         {locale.artifactCheck.checks === null ? null : <details><summary>{t("execution.diagnostic")}</summary><pre>{JSON.stringify(locale.artifactCheck.checks, null, 2)}</pre></details>}
       </section> : null}
+      <CapturedBuildOptions declarations={build.build.binding.declaration.configuration ?? []} configuration={locale.choice.configuration}/>
       <p>{t("releasePlugin.savedPaths")}</p><ul>{locale.choice.outputPaths.map(path => <li key={path}>{path}</li>)}</ul>
       {!locale.result ? <p>{t("releasePlugin.savedNoResult")}</p>
         : locale.result.outcome !== "succeeded" ? <p>{t("releasePlugin.savedFailed")}</p>

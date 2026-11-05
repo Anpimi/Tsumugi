@@ -78,5 +78,79 @@ pub async fn read_plugin_build(
         .await
 }
 
+#[derive(Clone, Debug, PartialEq, Eq, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+#[cfg_attr(feature = "wire-schema", derive(schemars::JsonSchema))]
+pub struct PluginBuildLocaleOptions {
+    pub locale: String,
+    pub configuration: Vec<sdk::BuildConfigurationSelection>,
+}
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+#[cfg_attr(feature = "wire-schema", derive(schemars::JsonSchema))]
+pub struct PluginBuildConfigurationRequest {
+    pub build: PluginBuildRequest,
+    pub locales: Vec<PluginBuildLocaleOptions>,
+}
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+#[cfg_attr(feature = "wire-schema", derive(schemars::JsonSchema))]
+pub struct PluginBuildLocaleConfiguration {
+    pub locale: String,
+    pub configuration: Vec<sdk::EncodedPayload>,
+}
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+#[cfg_attr(feature = "wire-schema", derive(schemars::JsonSchema))]
+pub struct PluginBuildConfigurations {
+    pub build: PluginBuildView,
+    pub locales: Vec<PluginBuildLocaleConfiguration>,
+}
+fn capture_configuration(
+    declaration: &sdk::BuildDeclaration,
+    locales: &[PluginBuildLocaleOptions],
+) -> Result<Vec<PluginBuildLocaleConfiguration>, CommandError> {
+    if locales.is_empty() || locales.len() > 16 {
+        return Err(invalid());
+    }
+    let mut seen = std::collections::BTreeSet::new();
+    locales
+        .iter()
+        .map(|locale| {
+            tsumugi_core::Locale::parse(&locale.locale).map_err(|_| invalid())?;
+            if !seen.insert(&locale.locale) {
+                return Err(invalid());
+            }
+            Ok(PluginBuildLocaleConfiguration {
+                locale: locale.locale.clone(),
+                configuration: declaration
+                    .capture_configuration(&locale.configuration)
+                    .map_err(|_| invalid())?,
+            })
+        })
+        .collect()
+}
+/// Pure preparation from an installed recipe. This does not persist settings,
+/// create an execution Host, grant permission or start a component.
+#[tauri::command]
+pub async fn prepare_plugin_build_configuration(
+    state: State<'_, AppState>,
+    request: PluginBuildConfigurationRequest,
+) -> Result<PluginBuildConfigurations, CommandError> {
+    let plugins = state.plugins.clone();
+    state
+        .io
+        .run(CommandStage::Read, move || {
+            let environment = plugins.capture_build(&request.build)?;
+            let locales =
+                capture_configuration(&environment.binding.declaration, &request.locales)?;
+            Ok(PluginBuildConfigurations {
+                build: environment.view()?,
+                locales,
+            })
+        })
+        .await
+}
+
 #[cfg(test)]
 mod tests;

@@ -9,6 +9,12 @@
     "check_input": {
       "$ref": "#/$defs/ArtifactCheckInput"
     },
+    "configuration_selection": {
+      "$ref": "#/$defs/BuildConfigurationSelection"
+    },
+    "configuration_values": {
+      "$ref": "#/$defs/BuildConfigurationValues"
+    },
     "declaration": {
       "$ref": "#/$defs/BuildDeclaration"
     },
@@ -24,6 +30,8 @@
     "artifacts",
     "check_input",
     "declaration",
+    "configuration_values",
+    "configuration_selection",
     "error"
   ],
   "$defs": {
@@ -78,6 +86,65 @@
         "artifacts"
       ]
     },
+    "BuildConfigurationDeclaration": {
+      "description": "All options require an explicit selection; neither source nor target locale\nsupplies a default. Values carry no file access or execution authority.",
+      "type": "object",
+      "properties": {
+        "displayName": {
+          "type": "string"
+        },
+        "options": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/BuildOptionDeclaration"
+          }
+        },
+        "schema": {
+          "$ref": "#/$defs/ContractRef"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "schema",
+        "displayName",
+        "options"
+      ]
+    },
+    "BuildConfigurationSelection": {
+      "type": "object",
+      "properties": {
+        "schema": {
+          "$ref": "#/$defs/ContractRef"
+        },
+        "selections": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/BuildOptionSelection"
+          }
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "schema",
+        "selections"
+      ]
+    },
+    "BuildConfigurationValues": {
+      "description": "JSON body of one declared EncodedPayload. IDs are package-owned opaque choices.",
+      "type": "object",
+      "properties": {
+        "selections": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/BuildOptionSelection"
+          }
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "selections"
+      ]
+    },
     "BuildDeclaration": {
       "type": "object",
       "properties": {
@@ -92,6 +159,12 @@
         },
         "checker": {
           "type": "string"
+        },
+        "configuration": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/BuildConfigurationDeclaration"
+          }
         },
         "displayName": {
           "type": "string"
@@ -188,6 +261,61 @@
         "configuration",
         "outputPaths",
         "outputLimits"
+      ]
+    },
+    "BuildOptionChoice": {
+      "type": "object",
+      "properties": {
+        "displayName": {
+          "type": "string"
+        },
+        "id": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "displayName"
+      ]
+    },
+    "BuildOptionDeclaration": {
+      "type": "object",
+      "properties": {
+        "choices": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/BuildOptionChoice"
+          }
+        },
+        "displayName": {
+          "type": "string"
+        },
+        "id": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "displayName",
+        "choices"
+      ]
+    },
+    "BuildOptionSelection": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "value": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "value"
       ]
     },
     "BuildOutputLimits": {

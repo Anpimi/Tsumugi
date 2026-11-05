@@ -5,7 +5,7 @@ The SDK defines these contracts for building target files and verifying the resu
 - `tsumugi.build-input/2/1` (`BuildInput`)
 - `tsumugi.artifact-set/2/1` (`ArtifactSet`)
 - `tsumugi.artifact-check-input/2/1` (`ArtifactCheckInput`)
-- `tsumugi.build-declaration/1/1` (`BuildDeclaration`)
+- `tsumugi.build-declaration/2/1` (`BuildDeclaration`)
 - `tsumugi.build-error/1/1` (`BuildError`)
 
 These contracts define the data payloads exchanged between Core and build/check plugins; release qualification and file writing remain handled by Core and the Host.
@@ -42,7 +42,7 @@ Size limits enforced by the receivers:
 | Path depth | 16 segments |
 | Decided unit text | 16 KiB per unit |
 | Distinct configuration schemas | 32 |
-| Original `ContentExchange` | 2 MiB encoded |
+| Original `ContentExchange` | 4 MiB encoded (also bounded by the enclosing invocation) |
 | `ArtifactSet` output | 2 MiB encoded (or smaller raw-byte ceiling set in `BuildInput`) |
 | `BuildInput` / `ArtifactCheckInput` | 4 MiB encoded each |
 
@@ -52,14 +52,15 @@ Size limits enforced by the receivers:
 
 `ArtifactCheckInput` bundles the original `BuildInput`, the generated `ArtifactSet`, and mandatory, nonwaivable domain check requirements covering every generated artifact ID. Checker results use the standard `tsumugi.check-results` contract and are evaluated against Core's `FixedCheckSet`.
 
-### `BuildDeclaration` Resource (`tsumugi.build-declaration/1/1`)
+### `BuildDeclaration` Resource (`tsumugi.build-declaration/2/1`)
 
-A package can declare its build pipeline in a non-executable JSON resource with schema `tsumugi.build-declaration/1/1`. The resource specifies:
+A package can declare its build pipeline in a non-executable JSON resource with schema `tsumugi.build-declaration/2/1`. The resource specifies:
 
 - The domain `profile`.
 - Separate `builder` and `checker` contribution IDs within the same package.
 - Output count and byte ceilings.
 - The required artifact check rules.
+- `configuration`, an explicit array (empty for a recipe without choices). Each configuration declares an exact payload schema, a readable name and 1–32 named options. Each option has 1–32 uniquely identified, readable choices. No default is inferred from a source or target locale. Configuration schemas and option IDs must be unique within their owning collection; names are bounded and the complete declaration still fits 32 KiB.
 
 `BuildDeclaration::bind` (producing a `BuildBinding`) validates the resource against the package's `ValidatedManifest` and package digest:
 
@@ -68,6 +69,10 @@ A package can declare its build pipeline in a non-executable JSON resource with 
 - Both capabilities may request only `captured-input` permissions and must accommodate the declared payload ceilings.
 
 `PackageImage` reads the `BuildDeclaration` resource directly from the package archive without executing plugin code.
+
+`BuildDeclaration::capture_configuration` resolves complete `BuildConfigurationSelection` values against those declarations and returns the existing `EncodedPayload` objects in declaration order. Each payload uses `BuildConfigurationValues` JSON, for example `{"selections":[{"id":"loading-language","value":"english"}]}`, and the ordinary payload digest. The setting's meaning and supported IDs belong to the package; a loading-language choice can differ from the translation locale. Missing, duplicate, unknown or extra selections, changed schema versions, invalid payloads and undeclared configuration payloads are rejected by `BuildBinding::validate_input` before dispatch. The selected values, paths and original bytes become part of the same fixed build input; capturing choices neither changes application settings nor grants execution permission.
+
+`parse_build_declaration_for_contract` also reads resource `1/1` when selected by that exact immutable manifest reference. Its body omits `configuration` and retains its original serialization and opaque configuration semantics. Current `2/1` authoring requires a non-null array; an older body cannot claim the new profile, and unknown resource generations are rejected. This resource version is independent of the build input and artifact payload family.
 
 ## CLI and Code Generation
 

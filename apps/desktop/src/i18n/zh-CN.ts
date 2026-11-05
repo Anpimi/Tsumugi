@@ -1791,6 +1791,12 @@ ai: {
       step: { prepared: "等待确认", "not-selected": "本次未选择", waiting: "已确认，排队等待中", enqueued: "排队或运行中", recording: "正在保存检查结果", proved: "检查通过并已记录", failed: "检查未通过", unknown: "检查结果未知，不会自动重试", cancelled: "检查已取消", "not-started": "尚未开始" },
     },
     releasePlugin: {
+      configurationHeading: "{{locale}} 的输出设置",
+      configurationHelp: "请逐项选择输出设置。这些选择会随构建保存，不会更改项目语言设置。",
+      configurationMissing: "请选好全部输出设置，再检查构建条件。",
+      configurationUnavailable: "无法显示这项已保存的输出设置，请查看已保存构建详情。",
+      configurationValue: "{{name}}：{{value}}",
+      chooseOption: "请选择",
       "savedOpen": "在构建与导出中查看已保存构建",
       "savedView": "已保存构建详情",
       "savedTitle": "已保存构建计划与输出文件",

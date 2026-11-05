@@ -7,6 +7,7 @@ export type PluginRepositoryInstallKind = "install" | "update" | "rollback";
 export interface Requests {
   approvalRemoval: PluginApprovalRemovalRequest;
   build: PluginBuildRequest;
+  buildConfiguration: PluginBuildConfigurationRequest;
   defaultsInstall: PluginDefaultsInstallRequest;
   enable: PluginEnableRequest;
   generationComponent: PluginGenerationComponentRequest;
@@ -55,6 +56,31 @@ export interface PluginBuildRequest {
   package: PluginPackageRequest;
   resourceId: string;
 }
+export interface PluginBuildConfigurationRequest {
+  build: PluginBuildRequest;
+  locales: PluginBuildLocaleOptions[];
+}
+export interface PluginBuildLocaleOptions {
+  configuration: BuildConfigurationSelection[];
+  locale: string;
+}
+export interface BuildConfigurationSelection {
+  schema: ContractRef;
+  selections: BuildOptionSelection[];
+}
+/**
+ * Schema and behavior are separate exact-match compatibility identities.
+ * Matching JSON field types or a package SemVer is not behavioral compatibility.
+ */
+export interface ContractRef {
+  behaviorVersion: number;
+  id: string;
+  schemaVersion: number;
+}
+export interface BuildOptionSelection {
+  id: string;
+  value: string;
+}
 export interface PluginDefaultsInstallRequest {
   actionId: ExecutionId;
   expectedRevision: UnsignedDecimal;
@@ -71,15 +97,6 @@ export interface PluginGenerationComponentRequest {
   environmentDigest: string;
   profile: ContractRef | null;
   provider: ProviderSelectionBinding;
-}
-/**
- * Schema and behavior are separate exact-match compatibility identities.
- * Matching JSON field types or a package SemVer is not behavioral compatibility.
- */
-export interface ContractRef {
-  behaviorVersion: number;
-  id: string;
-  schemaVersion: number;
 }
 /**
  * A fixed package/contribution choice, independent of any active instance.

@@ -341,9 +341,28 @@ export interface BuildDeclaration {
   artifactRules: ContractRef[];
   builder: string;
   checker: string;
+  configuration?: BuildConfigurationDeclaration[];
   displayName: string;
   outputLimits: BuildOutputLimits;
   profile: ContractRef;
+}
+/**
+ * All options require an explicit selection; neither source nor target locale
+ * supplies a default. Values carry no file access or execution authority.
+ */
+export interface BuildConfigurationDeclaration {
+  displayName: string;
+  options: BuildOptionDeclaration[];
+  schema: ContractRef;
+}
+export interface BuildOptionDeclaration {
+  choices: BuildOptionChoice[];
+  displayName: string;
+  id: string;
+}
+export interface BuildOptionChoice {
+  displayName: string;
+  id: string;
 }
 export interface BuildOutputLimits {
   maxArtifacts: number;

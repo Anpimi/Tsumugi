@@ -1438,6 +1438,30 @@
         ],
         "type": "object"
       },
+      "BuildConfigurationDeclaration": {
+        "additionalProperties": false,
+        "description": "All options require an explicit selection; neither source nor target locale\nsupplies a default. Values carry no file access or execution authority.",
+        "properties": {
+          "displayName": {
+            "type": "string"
+          },
+          "options": {
+            "items": {
+              "$ref": "#/definitions/BuildOptionDeclaration"
+            },
+            "type": "array"
+          },
+          "schema": {
+            "$ref": "#/definitions/ContractRef"
+          }
+        },
+        "required": [
+          "schema",
+          "displayName",
+          "options"
+        ],
+        "type": "object"
+      },
       "BuildDeclaration": {
         "additionalProperties": false,
         "properties": {
@@ -1452,6 +1476,12 @@
           },
           "checker": {
             "type": "string"
+          },
+          "configuration": {
+            "items": {
+              "$ref": "#/definitions/BuildConfigurationDeclaration"
+            },
+            "type": "array"
           },
           "displayName": {
             "type": "string"
@@ -1486,6 +1516,45 @@
         "required": [
           "locale",
           "fileName"
+        ],
+        "type": "object"
+      },
+      "BuildOptionChoice": {
+        "additionalProperties": false,
+        "properties": {
+          "displayName": {
+            "type": "string"
+          },
+          "id": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "displayName"
+        ],
+        "type": "object"
+      },
+      "BuildOptionDeclaration": {
+        "additionalProperties": false,
+        "properties": {
+          "choices": {
+            "items": {
+              "$ref": "#/definitions/BuildOptionChoice"
+            },
+            "type": "array"
+          },
+          "displayName": {
+            "type": "string"
+          },
+          "id": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "displayName",
+          "choices"
         ],
         "type": "object"
       },

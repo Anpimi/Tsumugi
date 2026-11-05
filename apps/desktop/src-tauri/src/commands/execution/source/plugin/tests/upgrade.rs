@@ -155,7 +155,7 @@ pub(super) fn image_files(
         (
             "build-profile.json",
             json!({"displayName":"Synthetic exact CRLF record","profile":profile(),"builder":"build","checker":"artifact-check",
-            "outputLimits":{"maxArtifacts":1,"maxTotalBytes":131072},"artifactRules":[contract("example.upgrade.artifact",behavior)]}),
+            "configuration":[],"outputLimits":{"maxArtifacts":1,"maxTotalBytes":131072},"artifactRules":[contract("example.upgrade.artifact",behavior)]}),
         ),
     ] {
         files.insert(

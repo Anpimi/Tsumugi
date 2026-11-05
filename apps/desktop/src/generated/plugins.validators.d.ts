@@ -3,6 +3,7 @@ import type { Requests } from "./plugins.requests";
 import type { Responses } from "./plugins.responses";
 export declare function validateRequestApprovalRemoval(value: unknown): value is Requests["approvalRemoval"];
 export declare function validateRequestBuild(value: unknown): value is Requests["build"];
+export declare function validateRequestBuildConfiguration(value: unknown): value is Requests["buildConfiguration"];
 export declare function validateRequestDefaultsInstall(value: unknown): value is Requests["defaultsInstall"];
 export declare function validateRequestEnable(value: unknown): value is Requests["enable"];
 export declare function validateRequestGenerationComponent(value: unknown): value is Requests["generationComponent"];
@@ -25,6 +26,8 @@ export declare function validateRequestUi(value: unknown): value is Requests["ui
 export declare function validateRequestUninstall(value: unknown): value is Requests["uninstall"];
 export declare function validateResponseBinding(value: unknown): value is Responses["binding"];
 export declare function validateResponseBuild(value: unknown): value is Responses["build"];
+export declare function validateResponseBuildConfigurationValues(value: unknown): value is Responses["buildConfigurationValues"];
+export declare function validateResponseBuildConfigurations(value: unknown): value is Responses["buildConfigurations"];
 export declare function validateResponseCandidate(value: unknown): value is Responses["candidate"];
 export declare function validateResponseError(value: unknown): value is Responses["error"];
 export declare function validateResponseGenerationComponent(value: unknown): value is Responses["generationComponent"];

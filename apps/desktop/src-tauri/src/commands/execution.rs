@@ -76,7 +76,7 @@ macro_rules! handlers {
         super::plugins::packages::cleanup::remove_plugin_approval, super::plugins::packages::cleanup::uninstall_plugin_package,
         super::plugins::packages::set_plugin_enabled, super::plugins::packages::read_plugin_package,
         super::plugins::packages::lookup_plugin_capability,
-        super::plugins::sources::read_plugin_source, super::plugins::builds::read_plugin_build,
+        super::plugins::sources::read_plugin_source, super::plugins::builds::read_plugin_build, super::plugins::builds::prepare_plugin_build_configuration,
         super::plugins::translations::read_plugin_translation,
         super::plugins::tools::read_plugin_tool,
         super::plugins::ui::read_plugin_ui,

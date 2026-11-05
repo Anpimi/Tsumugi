@@ -2,6 +2,7 @@ import { expect, it, vi } from "vitest";
 import fixture from "../test/fixtures/pluginInventory.contract.json";
 import candidate from "../test/fixtures/pluginPackage.contract.json";
 import { validateRequestApprovalRemoval, validateRequestUninstall, validateRequestNativeHostApproval, validateRequestInventory, validateResponseInventory, validateResponseCandidate, validateRequestInstall, validateRequestEnable, validateRequestRuntimeInstall, validateRequestRuntimeLookup, validateRequestSource, validateResponseSource, validateRequestBuild, validateResponseBuild, validateRequestTranslation, validateResponseTranslation } from "./generated/plugins.validators";
+import { buildOptionsView, buildOptionPayload, buildOptionSelections } from "./testSupport/pluginBuildOptionsFixture";
 import { pluginCommands } from "./pluginCommands";
 import runtime from "../test/fixtures/pluginRuntime.contract.json";
 import source from "../test/fixtures/pluginSource.contract.json";
@@ -298,5 +299,22 @@ it("confirms approval withdrawal separately from installation removal", async ()
   ]) {
     invoke.mockResolvedValueOnce(wrong);
     await expect(pluginCommands.removeApproval(request)).rejects.toThrow("Invalid IPC acknowledgement: approval removal");
+  }
+});
+
+
+it("captures build settings against the exact environment and ordered locale request", async () => {
+  const view = buildOptionsView(), request = { build: build.request, locales: [{ locale: "zh-CN", configuration: buildOptionSelections("english") }] };
+  const captured = { build: view, locales: [{ locale: "zh-CN", configuration: [buildOptionPayload("english")] }] };
+  invoke.mockResolvedValueOnce(captured); expect(await pluginCommands.configureBuild(request)).toEqual(captured);
+  expect(invoke).toHaveBeenLastCalledWith("prepare_plugin_build_configuration", { request });
+  for (const value of [
+    { ...captured, build: { ...view, resourceId: "another-resource" } },
+    { ...captured, build: { ...view, environmentDigest: "b".repeat(64) } },
+    { ...captured, locales: [] },
+    { ...captured, locales: [{ ...captured.locales[0], locale: "fr-FR" }] },
+    { ...captured, approved: true },
+  ]) {
+    invoke.mockResolvedValueOnce(value); await expect(pluginCommands.configureBuild(request)).rejects.toThrow();
   }
 });

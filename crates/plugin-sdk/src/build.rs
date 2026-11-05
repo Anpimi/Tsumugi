@@ -1,9 +1,11 @@
-//! Fixed build data and actual UTF-8 artifact checks. Release eligibility,
+//! Fixed build data, explicit options and actual artifact checks. Release eligibility,
 //! execution permission, filesystem access and publication remain host-owned.
 use crate::validation::{encoded_limit, name, opaque_id, reference, unique};
 use crate::*;
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
+mod configuration;
+pub use configuration::*;
 
 pub const MAX_BUILD_ARTIFACTS: usize = 32;
 pub const MAX_BUILD_DECLARATION_BYTES: usize = 32 * 1024;
@@ -34,7 +36,10 @@ pub fn artifact_check_input_contract() -> ContractRef {
     }
 }
 pub fn build_declaration_contract() -> ContractRef {
-    contract("tsumugi.build-declaration")
+    ContractRef {
+        schema_version: 2,
+        ..contract("tsumugi.build-declaration")
+    }
 }
 pub fn build_error_contract() -> ContractRef {
     contract("tsumugi.build-error")
@@ -307,6 +312,16 @@ pub struct BuildDeclaration {
     pub checker: String,
     pub output_limits: BuildOutputLimits,
     pub artifact_rules: Vec<ContractRef>,
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "explicit_configuration"
+    )]
+    #[cfg_attr(
+        feature = "schema",
+        schemars(with = "Vec<BuildConfigurationDeclaration>")
+    )]
+    pub configuration: Option<Vec<BuildConfigurationDeclaration>>,
 }
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
@@ -316,7 +331,18 @@ pub struct BuildBinding {
     pub builder: CapabilityBinding,
     pub checker: CapabilityBinding,
 }
+fn explicit_configuration<'de, D: serde::Deserializer<'de>>(
+    deserializer: D,
+) -> Result<Option<Vec<BuildConfigurationDeclaration>>, D::Error> {
+    Vec::<BuildConfigurationDeclaration>::deserialize(deserializer).map(Some)
+}
 impl BuildDeclaration {
+    pub fn declaration_contract(&self) -> ContractRef {
+        ContractRef {
+            schema_version: if self.configuration.is_some() { 2 } else { 1 },
+            ..build_declaration_contract()
+        }
+    }
     pub fn validate(&self) -> Result<(), ContractError> {
         if self.display_name.trim().is_empty()
             || self.display_name.len() > 128
@@ -337,6 +363,18 @@ impl BuildDeclaration {
         unique(self.artifact_rules.iter(), "buildDeclaration.artifactRules")?;
         for rule in &self.artifact_rules {
             reference(rule, "buildDeclaration.artifactRules")?;
+        }
+        if let Some(configuration) = &self.configuration {
+            if configuration.len() > 32 {
+                return Err(invalid("build.configuration"));
+            }
+            unique(
+                configuration.iter().map(|entry| &entry.schema),
+                "build.configuration.schema",
+            )?;
+            for declaration in configuration {
+                declaration.validate()?;
+            }
         }
         encoded_limit(self, MAX_BUILD_DECLARATION_BYTES, "buildDeclaration")
     }
@@ -359,6 +397,8 @@ impl BuildBinding {
     pub fn validate_input(&self, input: &BuildInput) -> Result<(), ContractError> {
         self.validate()?;
         input.validate()?;
+        self.declaration
+            .validate_configuration(&input.configuration)?;
         if self.builder.declaration.input_schema.schema_version == 1 {
             crate::artifact::require_text_artifacts(
                 &input.source.artifacts,
@@ -545,12 +585,49 @@ receiver!(
     ArtifactCheckInput,
     MAX_INVOCATION_PAYLOAD_BYTES
 );
-receiver!(
-    parse_build_declaration,
-    build_declaration_schema,
-    BuildDeclaration,
-    MAX_BUILD_DECLARATION_BYTES
-);
+pub fn parse_build_declaration(bytes: &[u8]) -> Result<BuildDeclaration, ContractError> {
+    parse_build_declaration_for_contract(bytes, &build_declaration_contract())
+}
+pub fn parse_build_declaration_for_contract(
+    bytes: &[u8],
+    contract: &ContractRef,
+) -> Result<BuildDeclaration, ContractError> {
+    if ![1, 2].iter().any(|version| {
+        *contract
+            == ContractRef {
+                schema_version: *version,
+                ..build_declaration_contract()
+            }
+    }) {
+        return Err(invalid("buildDeclaration.contract"));
+    }
+    if bytes.len() > MAX_BUILD_DECLARATION_BYTES {
+        return Err(ContractError::at(
+            ContractErrorCode::LimitExceeded,
+            "buildDeclaration",
+        ));
+    }
+    let value: BuildDeclaration = serde_json::from_slice(bytes)
+        .map_err(|_| ContractError::at(ContractErrorCode::InvalidSchema, "buildDeclaration"))?;
+    value.validate()?;
+    if value.declaration_contract() != *contract {
+        return Err(invalid("buildDeclaration.contract"));
+    }
+    Ok(value)
+}
+#[cfg(feature = "schema")]
+pub fn build_declaration_schema() -> schemars::Schema {
+    let mut schema = schemars::schema_for!(BuildDeclaration);
+    schema
+        .as_object_mut()
+        .unwrap()
+        .get_mut("required")
+        .unwrap()
+        .as_array_mut()
+        .unwrap()
+        .push(serde_json::json!("configuration"));
+    schema
+}
 receiver!(
     parse_build_error,
     build_error_schema,
@@ -566,6 +643,8 @@ pub fn build_types_schema() -> schemars::Schema {
         artifacts: ArtifactSet,
         check_input: ArtifactCheckInput,
         declaration: BuildDeclaration,
+        configuration_values: BuildConfigurationValues,
+        configuration_selection: BuildConfigurationSelection,
         error: BuildError,
     }
     schemars::schema_for!(BuildTypes)

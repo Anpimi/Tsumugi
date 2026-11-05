@@ -15,6 +15,12 @@
     "checker": {
       "type": "string"
     },
+    "configuration": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/BuildConfigurationDeclaration"
+      }
+    },
     "displayName": {
       "type": "string"
     },
@@ -32,9 +38,73 @@
     "builder",
     "checker",
     "outputLimits",
-    "artifactRules"
+    "artifactRules",
+    "configuration"
   ],
   "$defs": {
+    "BuildConfigurationDeclaration": {
+      "description": "All options require an explicit selection; neither source nor target locale\nsupplies a default. Values carry no file access or execution authority.",
+      "type": "object",
+      "properties": {
+        "displayName": {
+          "type": "string"
+        },
+        "options": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/BuildOptionDeclaration"
+          }
+        },
+        "schema": {
+          "$ref": "#/$defs/ContractRef"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "schema",
+        "displayName",
+        "options"
+      ]
+    },
+    "BuildOptionChoice": {
+      "type": "object",
+      "properties": {
+        "displayName": {
+          "type": "string"
+        },
+        "id": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "displayName"
+      ]
+    },
+    "BuildOptionDeclaration": {
+      "type": "object",
+      "properties": {
+        "choices": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/BuildOptionChoice"
+          }
+        },
+        "displayName": {
+          "type": "string"
+        },
+        "id": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "displayName",
+        "choices"
+      ]
+    },
     "BuildOutputLimits": {
       "type": "object",
       "properties": {

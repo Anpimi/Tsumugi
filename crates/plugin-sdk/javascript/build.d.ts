@@ -64,6 +64,8 @@ export type BuildErrorCode =
 export interface BuildTypes {
   artifacts: ArtifactSet;
   check_input: ArtifactCheckInput;
+  configuration_selection: BuildConfigurationSelection;
+  configuration_values: BuildConfigurationValues;
   declaration: BuildDeclaration;
   error: BuildError;
   input: BuildInput;
@@ -363,15 +365,70 @@ export interface NotApplicableBasis {
 }
 /**
  * This interface was referenced by `BuildTypes`'s JSON-Schema
+ * via the `definition` "BuildConfigurationSelection".
+ */
+export interface BuildConfigurationSelection {
+  schema: ContractRef;
+  selections: BuildOptionSelection[];
+}
+/**
+ * This interface was referenced by `BuildTypes`'s JSON-Schema
+ * via the `definition` "BuildOptionSelection".
+ */
+export interface BuildOptionSelection {
+  id: string;
+  value: string;
+}
+/**
+ * JSON body of one declared EncodedPayload. IDs are package-owned opaque choices.
+ *
+ * This interface was referenced by `BuildTypes`'s JSON-Schema
+ * via the `definition` "BuildConfigurationValues".
+ */
+export interface BuildConfigurationValues {
+  selections: BuildOptionSelection[];
+}
+/**
+ * This interface was referenced by `BuildTypes`'s JSON-Schema
  * via the `definition` "BuildDeclaration".
  */
 export interface BuildDeclaration {
   artifactRules: ContractRef[];
   builder: string;
   checker: string;
+  configuration?: BuildConfigurationDeclaration[];
   displayName: string;
   outputLimits: BuildOutputLimits1;
   profile: ContractRef;
+}
+/**
+ * All options require an explicit selection; neither source nor target locale
+ * supplies a default. Values carry no file access or execution authority.
+ *
+ * This interface was referenced by `BuildTypes`'s JSON-Schema
+ * via the `definition` "BuildConfigurationDeclaration".
+ */
+export interface BuildConfigurationDeclaration {
+  displayName: string;
+  options: BuildOptionDeclaration[];
+  schema: ContractRef;
+}
+/**
+ * This interface was referenced by `BuildTypes`'s JSON-Schema
+ * via the `definition` "BuildOptionDeclaration".
+ */
+export interface BuildOptionDeclaration {
+  choices: BuildOptionChoice[];
+  displayName: string;
+  id: string;
+}
+/**
+ * This interface was referenced by `BuildTypes`'s JSON-Schema
+ * via the `definition` "BuildOptionChoice".
+ */
+export interface BuildOptionChoice {
+  displayName: string;
+  id: string;
 }
 /**
  * This interface was referenced by `BuildTypes`'s JSON-Schema

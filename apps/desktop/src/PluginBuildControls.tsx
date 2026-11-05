@@ -15,6 +15,7 @@ import { useReleaseDraftSession } from "./ReleaseDraftSession";
 import { TaskCancellationFeedback, useExecutionTaskSession } from "./ExecutionTaskSession";
 import { SavedPluginBuildSummary } from "./SavedPluginBuildSummary";
 import { Button } from "./design-system/Button";
+import { PluginBuildOptions, CapturedBuildOptions, buildOptionsReady } from "./PluginBuildOptions";
 import { Field, TextArea } from "./design-system/Field";
 import { Banner } from "./design-system/Feedback";
 import styles from "./PluginBuildControls.module.css";
@@ -68,7 +69,7 @@ export function PluginBuildControls({ project, open, disabled, onRecorded, onOpe
       if (!current()) throw new Error("Build inventory read cancelled");
       const choices: BuildChoice[] = packages.flatMap(item => item.manifest.contributions.flatMap(contribution =>
         contribution.contribution.kind === "resource" && contribution.contribution.schema.id === "tsumugi.build-declaration"
-          && contribution.contribution.schema.schemaVersion === 1 && contribution.contribution.schema.behaviorVersion === 1
+          && [1, 2].includes(contribution.contribution.schema.schemaVersion) && contribution.contribution.schema.behaviorVersion === 1
           ? [{ key: `${item.packageDigest}:${contribution.id}`, label: `${item.manifest.plugin.id} ${item.manifest.plugin.version} · ${contribution.id}`,
             package: { plugin: item.manifest.plugin,packageDigest:item.packageDigest },resourceId:contribution.id,runtimeKinds:item.manifest.components.map(component=>component.runtime) }] : []));
       return { choices,environments:approvedPluginEnvironments(inventory) };
@@ -101,6 +102,7 @@ export function PluginBuildControls({ project, open, disabled, onRecorded, onOpe
       return value;
     } });
   const environment = fresh<PluginBuildView>(environmentKey);
+  const configurationReady = !environment?.declaration.configuration || languages.every(locale => buildOptionsReady(environment.declaration.configuration ?? [], owner.optionSelections(locale)));
   const capturedBuild = prepared?.review.build;
   const displayedChoiceKey = capturedBuild ? `${capturedBuild.builder.provider.packageDigest}:${capturedBuild.resourceId}` : choiceKey;
   const displayedRuntimeDigest = capturedBuild?.environmentDigest ?? runtimeDigest;
@@ -156,7 +158,7 @@ export function PluginBuildControls({ project, open, disabled, onRecorded, onOpe
   }
   function preparationAvailability(payload?:ReleasePreparationCommandPayload,prepare=false):CommandAvailability {
     const allowed=gate();if(!allowed.enabled)return allowed;const value=owner.current();
-    return payload&&same(payload,preparationPayload())&&same(value.buildChoice,selectedBuild)&&!!fresh(inventoryKey)&&!!fresh(environmentKey)&&owner.available()&&owner.choices().every(choice=>choice.outputPaths.length>0)
+    return payload&&same(payload,preparationPayload())&&same(value.buildChoice,selectedBuild)&&!!fresh(inventoryKey)&&!!fresh(environmentKey)&&owner.available()&&configurationReady&&owner.choices().every(choice=>choice.outputPaths.length>0)
       &&!value.prepared&&!value.attempt&&(!prepare||!!value.eligibility?.ready&&!!value.assessment&&!value.stale)?{enabled:true}:no;
   }
   function startPayload(checker=false,approved=checker?!!owner.current().checkConsent:!!owner.current().buildConsent):ReleasePluginStartCommandPayload|undefined {
@@ -293,6 +295,12 @@ export function PluginBuildControls({ project, open, disabled, onRecorded, onOpe
         {languages.map(locale => <Field key={locale} label={t("releasePlugin.paths", { locale })}>
           <TextArea value={paths[locale] ?? ""} aria-describedby={pathsHelpId} disabled={mappingLocked} onChange={event => { if (!mappingLocked && canInteract?.("input") !== false) owner.setName(locale, event.target.value); }}/>
         </Field>)}
+        {environment?.declaration.configuration?.length && !prepared ? languages.map(locale => <section key={locale} aria-label={t("releasePlugin.configurationHeading", { locale })}>
+          <h3>{t("releasePlugin.configurationHeading", { locale })}</h3><p>{t("releasePlugin.configurationHelp")}</p>
+          <PluginBuildOptions declarations={environment.declaration.configuration ?? []} selections={owner.optionSelections(locale)} disabled={mappingLocked || owner.reserved()}
+            onChange={(schema, id, value) => { if (!mappingLocked && selectedBuild && canInteract?.("input") !== false) owner.setBuildOption(selectedBuild, locale, schema, id, value); }}/>
+        </section>) : null}
+        {!configurationReady && !prepared ? <Banner tone="warning">{t("releasePlugin.configurationMissing")}</Banner> : null}
       </div>
       {languages.filter(locale => !project.metadata.targetLocales.includes(locale)).map(locale => <Banner tone="warning" role="status" key={locale} action={<Button variant="secondary" disabled={locked} onClick={() => { if (!locked && canInteract?.("input") !== false) owner.setLanguage(locale, false); }}>{t("release.removeLocale", { locale })}</Button>}>{t("release.removedLocale", { locale })}</Banner>)}
       {owner.stale ? <Banner tone="warning" role="status">{t("release.readinessStale")}</Banner> : null}
@@ -321,7 +329,8 @@ export function PluginBuildControls({ project, open, disabled, onRecorded, onOpe
       {prepared && !attempt && owner.earlierBuild ? <Banner tone="warning" role="status">{t("release.earlierPreparation")}</Banner> : null}
       {prepared ? <section className={styles.review}>
         <h4>{t("deliveryWorkbench.fixedHelp")}</h4><details><summary>{t("deliveryWorkbench.diagnostics")}</summary><p>{t("release.source", { id: prepared.review.sourceSnapshotId })}</p></details>
-        <ul>{prepared.review.choices.map(({ locale, outputPaths }) => <li key={locale}>{locale}<ul>{outputPaths.map(path => <li key={path}><code>{path}</code></li>)}</ul></li>)}</ul>
+        <ul>{prepared.review.choices.map(({ locale, outputPaths, configuration }) => <li key={locale}>{locale}<ul>{outputPaths.map(path => <li key={path}><code>{path}</code></li>)}</ul>
+          <CapturedBuildOptions declarations={prepared.review.build.declaration.configuration ?? []} configuration={configuration}/></li>)}</ul>
         {!attempt ? <>
           <BuildExecutionReview build={prepared.review.build} checker={false}/>
           <Field className={styles.checkbox} label={t("releasePlugin.builderConsent")}><input type="checkbox" checked={buildConsent === prepared.review.inputDigest} disabled={!startAvailability(startPayload()).enabled} onChange={event => { const payload = startPayload(false, event.target.checked); if (payload) registry.dispatch("release.confirm-builder", scope, payload); }}/></Field>

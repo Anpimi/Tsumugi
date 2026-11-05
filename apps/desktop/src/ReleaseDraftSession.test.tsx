@@ -7,6 +7,7 @@ import { useReleaseDraftSession } from "./ReleaseDraftSession";
 import { useSessionReads } from "./SessionReadProvider";
 import { renderWorkbench as render } from "./testSupport/WorkbenchTestShell";
 import { pluginBuildRequest, pluginBuildView, pluginBuildWorkflow } from "./testSupport/pluginBuildFixture";
+import { buildOptionsView, buildOptionSchema, buildOptionPayload, buildOptionSelections } from "./testSupport/pluginBuildOptionsFixture";
 import { fixtureIdentity } from "./testSupport/executionFixture";
 import type { ProjectView } from "./projectCommands";
 import type { PluginBuildPrepareRequest, DeliveryPreview, DeliverySelection, DeliveryView, ExportRequest, ReleaseExceptionKind, ReleaseView } from "./releaseCommands";
@@ -589,4 +590,56 @@ it.each([false,true])("ignores a late original Release proof after session repla
   view.rerender(<Probe/>,{...project,sessionToken:"replacement-session"});
   await act(async()=>{response.resolve({projectId:read.projectId,taskId:fixtureIdentity(888),attemptId:read.attemptId,operation:read.operation,inputDigest:read.inputDigest});await running;});
   expect(owner.attempt).toBeNull();expect(owner.checkAttempt).toBeNull();expect(owner.pending).toBeNull();expect(old.current().pending).not.toBeNull();
+});
+
+
+it("captures explicit per-locale options and dispatches only their fixed configuration", async () => {
+  mount(); const view = buildOptionsView(), original = invoke.getMockImplementation()!;
+  invoke.mockImplementation((command, args) => command === "prepare_plugin_build_configuration"
+    ? Promise.resolve({ build: view, locales: args.request.locales.map((choice: { locale: string; configuration: ReturnType<typeof buildOptionSelections> }) => ({ locale: choice.locale, configuration: [buildOptionPayload(choice.configuration[0].selections[0].value)] })) })
+    : command === "read_plugin_build" ? Promise.resolve(view)
+    : command === "prepare_plugin_build" ? Promise.resolve({ ...pluginBuildWorkflow.review, build: view, attemptId: args.request.attemptId, choices: args.request.choices, eligibilityBasis: args.request.expectedEligibilityBasis, sourceSnapshotId: release.sourceSnapshotId })
+    : original(command, args));
+  act(() => { owner.setLanguage("zh-CN", true); owner.setName("zh-CN", "Chosen.esp"); owner.setBuildOption(pluginBuildRequest, "zh-CN", buildOptionSchema, "loading-language", "english"); });
+  expect(owner.optionSelections("zh-CN")).toEqual(buildOptionSelections("english"));
+  await act(async () => owner.assess(view));
+  expect(owner.eligibility?.ready).toBe(true);
+  expect(owner.choices()[0].configuration).toEqual([buildOptionPayload("english")]);
+  await act(async () => owner.build());
+  expect(payloads<PluginBuildPrepareRequest>("prepare_plugin_build")[0].choices).toEqual([
+    { locale: "zh-CN", outputPaths: ["Chosen.esp"], configuration: [buildOptionPayload("english")] },
+  ]);
+  expect(calls("start_plugin_build")).toHaveLength(0);
+});
+
+it("keeps option drafts bound to the exact builder and does not transfer captured settings", async () => {
+  mount(); const view = buildOptionsView(), original = invoke.getMockImplementation()!;
+  invoke.mockImplementation((command, args) => command === "prepare_plugin_build_configuration"
+    ? Promise.resolve({ build: view, locales: [{ locale: "zh-CN", configuration: [buildOptionPayload("english")] }] }) : original(command, args));
+  act(() => { owner.setLanguage("zh-CN", true); owner.setName("zh-CN", "Chosen.esp"); owner.setBuildOption(pluginBuildRequest, "zh-CN", buildOptionSchema, "loading-language", "english"); });
+  await act(async () => owner.assess(view));
+  const another = { ...pluginBuildRequest, resourceId: "another-builder" };
+  act(() => owner.setBuildSelection(another, "another", another.environmentDigest));
+  expect(owner.optionSelections("zh-CN")).toEqual([]); expect(owner.choices()[0].configuration).toEqual([]);
+  act(() => owner.setBuildOption(pluginBuildRequest, "zh-CN", buildOptionSchema, "loading-language", "french"));
+  expect(owner.optionSelections("zh-CN")).toEqual([]);
+  act(() => owner.setBuildSelection(pluginBuildRequest, "fixture", pluginBuildRequest.environmentDigest));
+  expect(owner.optionSelections("zh-CN")).toEqual(buildOptionSelections("english"));
+  expect(owner.eligibility).toBeNull();
+});
+
+it.each([false, true])("does not apply a late option capture over newer input or a replaced session (%s)", async replace => {
+  const mounted = mount(), view = buildOptionsView(), waiting = deferred<unknown>(), original = invoke.getMockImplementation()!;
+  invoke.mockImplementation((command, args) => command === "prepare_plugin_build_configuration" ? waiting.promise : original(command, args));
+  act(() => { owner.setLanguage("zh-CN", true); owner.setName("zh-CN", "Chosen.esp"); owner.setBuildOption(pluginBuildRequest, "zh-CN", buildOptionSchema, "loading-language", "english"); });
+  let running!: Promise<void>;
+  act(() => { running = owner.assess(view); });
+  await waitFor(() => expect(calls("prepare_plugin_build_configuration")).toHaveLength(1));
+  if (replace) mounted.rerender(<Probe/>, { ...project, sessionToken: "replaced-session" });
+  else act(() => owner.setName("zh-CN", "Newer.esp"));
+  await act(async () => { waiting.resolve({ build: view, locales: [{ locale: "zh-CN", configuration: [buildOptionPayload("english")] }] }); await running; });
+  expect(owner.eligibility).toBeNull();
+  if (replace) { expect(owner.names["zh-CN"]).toBeUndefined(); expect(owner.optionSelections("zh-CN")).toEqual([]); }
+  else { expect(owner.names["zh-CN"]).toBe("Newer.esp"); expect(owner.choices()[0].configuration).toEqual([]); }
+  expect(calls("read_review_eligibility")).toHaveLength(0);
 });

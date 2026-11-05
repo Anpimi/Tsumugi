@@ -33,7 +33,7 @@ pub(super) mod sources;
 pub(super) mod tools;
 pub(super) mod translations;
 pub(super) mod ui;
-pub use builds::{PluginBuildRequest, PluginBuildView};
+pub use builds::{PluginBuildRequest, PluginBuildView, PluginBuildConfigurationRequest, PluginBuildConfigurations};
 pub use defaults::{PluginDefaultsInstallRequest, PluginDefaultsOfferView};
 #[cfg(all(test, any(target_os = "macos", target_os = "linux")))]
 pub(in crate::commands) use environment::test_support::Fixture as InstalledPluginFixture;

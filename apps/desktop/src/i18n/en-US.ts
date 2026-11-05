@@ -1802,6 +1802,12 @@ ai: {
       step: { prepared: "Awaiting confirmation", "not-selected": "Not selected for this run", waiting: "Confirmed; waiting in queue", enqueued: "Queued or running", recording: "Saving check result", proved: "Check passed and recorded", failed: "Check failed", unknown: "Check result unknown; will not retry automatically", cancelled: "Check cancelled", "not-started": "Not started" },
     },
     releasePlugin: {
+      configurationHeading: "Output settings for {{locale}}",
+      configurationHelp: "Choose each output setting. These choices are saved with the build and do not change the project's language settings.",
+      configurationMissing: "Choose all output settings before checking readiness.",
+      configurationUnavailable: "The saved output setting cannot be displayed. Check the saved build details.",
+      configurationValue: "{{name}}: {{value}}",
+      chooseOption: "Choose an option",
       "savedOpen": "View saved build in Build and export",
       "savedView": "Saved build details",
       "savedTitle": "Saved build plan and output",

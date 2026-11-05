@@ -131,11 +131,19 @@ impl PackageImage {
     /// Bind the selected immutable SDK build resource without executing a
     /// component, reading user material or granting publication authority.
     pub fn build_declaration(&self, contribution_id: &str) -> HostResult<BuildBinding> {
-        parse_build_declaration(
-            self.resource_bytes(contribution_id, &build_declaration_contract())?,
-        )
-        .and_then(|declaration| declaration.bind(&self.manifest, &self.digest))
-        .map_err(|_| HostError::InvalidContract)
+        let contribution = self
+            .manifest
+            .manifest()
+            .contributions
+            .iter()
+            .find(|entry| entry.id == contribution_id)
+            .ok_or(HostError::InvalidContract)?;
+        let ContributionKind::Resource { schema, .. } = &contribution.contribution else {
+            return Err(HostError::InvalidContract);
+        };
+        parse_build_declaration_for_contract(self.resource_bytes(contribution_id, schema)?, schema)
+            .and_then(|declaration| declaration.bind(&self.manifest, &self.digest))
+            .map_err(|_| HostError::InvalidContract)
     }
     /// Select immutable translation metadata; interpretation and current project
     /// adoption are separate from resource inspection and execution consent.

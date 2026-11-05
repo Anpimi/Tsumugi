@@ -1,14 +1,16 @@
 import { useLayoutEffect, useState } from "react";
-import { act, cleanup, screen, waitFor, within } from "@testing-library/react";
+import { act, cleanup, screen, waitFor, within, render as renderView } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
+import { SavedPluginBuildSummary } from "./SavedPluginBuildSummary";
 import Delivery from "./app-v2/features/delivery/DeliveryView";
 import { InteractionGate } from "./app-v2/workspace/interactionGate";
 import { useReleaseDraftSession } from "./ReleaseDraftSession";
 import { useExecutionTaskSession } from "./ExecutionTaskSession";
 import { useWorkbenchCommands } from "./workbenchCommands";
 import { renderWorkbench as render, refreshWorkbenchReads } from "./testSupport/WorkbenchTestShell";
-import { pluginBuildInventory, pluginBuildPackage, pluginBuildView, pluginBuildWorkflow } from "./testSupport/pluginBuildFixture";
+import { pluginBuildInventory, pluginBuildPackage, pluginBuildView, pluginBuildWorkflow, savedPluginBuild } from "./testSupport/pluginBuildFixture";
+import { buildOptionsView, buildOptionPayload } from "./testSupport/pluginBuildOptionsFixture";
 import { fixtureIdentity } from "./testSupport/executionFixture";
 import executionFixture from "../test/fixtures/executionCommands.contract.json";
 import type { ProjectView } from "./projectCommands";
@@ -260,4 +262,39 @@ it.each([null, "ja-JP"] as const)("does not offer an artifact check for a result
   expect(within(results).getAllByRole("button")).toEqual([within(results).getByRole("button", { name: i18n.t("execution.refresh") })]);
   expect(invoke.mock.calls.filter(([command]) => command === "prepare_artifact_check")).toHaveLength(0);
   expect(invoke.mock.calls.filter(([command]) => command === "create_execution_identity")).toHaveLength(2);
+});
+
+
+it("requires an explicit output setting and shows the fixed value before separate build consent", async () => {
+  const view = buildOptionsView(), pkg = structuredClone(pluginBuildPackage), original = invoke.getMockImplementation()!;
+  for (const entry of pkg.manifest.contributions) if (entry.contribution.kind === "resource" && entry.contribution.schema.id === "tsumugi.build-declaration") entry.contribution.schema.schemaVersion = 2;
+  invoke.mockImplementation((command, args) => command === "read_plugin_package" ? Promise.resolve(pkg)
+    : command === "read_plugin_build" ? Promise.resolve(view)
+    : command === "prepare_plugin_build_configuration" ? Promise.resolve({ build: view, locales: [{ locale: "zh-CN", configuration: [buildOptionPayload("english")] }] })
+    : command === "prepare_plugin_build" ? Promise.resolve({ ...pluginBuildWorkflow.review, build: view, attemptId: args.request.attemptId, choices: args.request.choices, eligibilityBasis: args.request.expectedEligibilityBasis, sourceSnapshotId: fixtureIdentity(707) })
+    : original(command, args));
+  const user = userEvent.setup(); render(<DeliveryConsumer/>, project);
+  await waitFor(() => expect(primary()).toBeEnabled()); await user.click(primary());
+  await waitFor(() => expect(screen.getByRole("combobox", { name: i18n.t("deliveryWorkbench.builder") })).toBeEnabled());
+  await user.click(screen.getByRole("checkbox", { name: "zh-CN" }));
+  await user.type(screen.getByRole("textbox", { name: i18n.t("releasePlugin.paths", { locale: "zh-CN" }) }), "Chosen.esp");
+  const option = await screen.findByRole("combobox", { name: "Loading language" });
+  expect(option).toHaveValue(""); expect(primary()).toBeDisabled();
+  expect(screen.getByText(i18n.t("releasePlugin.configurationMissing"))).toBeVisible();
+  await user.selectOptions(option, "english");
+  await waitFor(() => expect(primary()).toBeEnabled()); await user.click(primary());
+  await screen.findByText(i18n.t("release.ready", { count: 0 })); await user.click(primary());
+  expect(await screen.findByText(i18n.t("releasePlugin.configurationValue", { name: "Loading language", value: "English" }))).toBeVisible();
+  expect(invoke.mock.calls.some(([command]) => command === "start_plugin_build")).toBe(false);
+});
+
+
+it("reads output settings from the saved plan without consulting a live builder", () => {
+  const saved = structuredClone(savedPluginBuild), declaration = buildOptionsView().declaration;
+  saved.build.binding.declaration = declaration;
+  for (const locale of saved.locales) locale.choice.configuration = [buildOptionPayload("english")];
+  invoke.mockClear(); invoke.mockImplementation(async command => { throw new Error(`Saved settings must not query: ${command}`); });
+  renderView(<SavedPluginBuildSummary build={saved} itemId={saved.locales[0].itemId}/>);
+  expect(screen.getByText(i18n.t("releasePlugin.configurationValue", { name: "Loading language", value: "English" }))).toBeVisible();
+  expect(invoke).not.toHaveBeenCalled();
 });

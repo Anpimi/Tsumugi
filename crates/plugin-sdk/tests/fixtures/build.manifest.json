@@ -31,7 +31,7 @@
         "kind": "resource",
         "schema": {
           "id": "tsumugi.build-declaration",
-          "schemaVersion": 1,
+          "schemaVersion": 2,
           "behaviorVersion": 1
         },
         "path": "build-profile.json"

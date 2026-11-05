@@ -83,3 +83,33 @@ fn build_resource_refuses_wrong_schema_executable_bytes_and_self_checking() {
         );
     }
 }
+
+#[test]
+fn historical_build_resource_requires_its_exact_immutable_contract() {
+    for schema_version in [1, 2, 3] {
+        let captured = image(|manifest, files| {
+            for entry in &mut manifest.contributions {
+                if let sdk::ContributionKind::Resource { schema, .. } = &mut entry.contribution {
+                    if schema.id == "tsumugi.build-declaration" {
+                        schema.schema_version = schema_version;
+                    }
+                }
+            }
+            files.get_mut("build-profile.json").unwrap().bytes =
+                include_bytes!("../../plugin-sdk/tests/fixtures/build-v1.declaration.json")
+                    .to_vec();
+        });
+        let result = captured.build_declaration("build-profile");
+        if schema_version == 1 {
+            let binding = result.unwrap();
+            assert!(binding.declaration.configuration.is_none());
+            assert_eq!(binding.declaration.declaration_contract().schema_version, 1);
+            assert_eq!(
+                binding.builder.provider.package_digest,
+                captured.package_digest()
+            );
+        } else {
+            assert_eq!(result, Err(HostError::InvalidContract));
+        }
+    }
+}

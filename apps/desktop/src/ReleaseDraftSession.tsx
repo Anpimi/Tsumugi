@@ -7,7 +7,7 @@ import { hasUnknownOutcome, projectCommands, type ProjectView } from "./projectC
 import { useSessionReads, useSessionAlive } from "./SessionReadProvider";
 import { reviewCommands, type Eligibility } from "./reviewCommands";
 import { sourceCommands } from "./sourceCommands";
-import { pluginCommands, type PluginBuildRequest, type PluginBuildView } from "./pluginCommands";
+import { pluginCommands, type PluginBuildRequest, type PluginBuildView, type PluginBuildConfigurationRequest } from "./pluginCommands";
 import type { ContentScope } from "./generated/source.responses";
 import type { ReconcileRequest } from "./generated/release.requests";
 import { releaseCommands, confirmReleasePreview, confirmReleaseDelivery, sameArtifactWorkflowMaterialization, type ReleasePluginIntent,
@@ -42,8 +42,15 @@ interface WorkflowCapture {
   safety: Pick<ArtifactCheckWorkflowStopReceipt, "admissionClosed" | "callbacksDrained" | "currentTask"> | null;
   observed: string | null;
 }
+type BuildOptionSelections = PluginBuildConfigurationRequest["locales"][number]["configuration"];
+const configurationKey = (build: PluginBuildRequest | null, locale: string) => JSON.stringify([
+  build?.package.plugin.id, build?.package.plugin.version, build?.package.packageDigest, build?.resourceId, build?.environmentDigest, locale,
+]);
+const sameSchema = (left: BuildOptionSelections[number]["schema"], right: BuildOptionSelections[number]["schema"]) => left.id === right.id && left.schemaVersion === right.schemaVersion && left.behaviorVersion === right.behaviorVersion;
 interface State {
   languages: string[]; names: Record<string, string>; configuration: Record<string, PluginBuildPrepareRequest["choices"][number]["configuration"]>;
+  optionDrafts: Record<string, BuildOptionSelections>;
+  configurationBuild: PluginBuildRequest | null;
   choiceKey: string; runtimeDigest: string; buildChoice: PluginBuildRequest | null;
   editSeq: number; buildDirty: boolean; deliveryDirty: boolean; stale: boolean;
   eligibility: Eligibility | null; assessment: Assessment | null;
@@ -61,7 +68,7 @@ function freeze<T>(value: T): T {
 }
 function fixed<T>(value: T): T { return freeze(structuredClone(value)); }
 function initial(): State {
-  return { languages: [], names: {}, configuration: {}, choiceKey: "", runtimeDigest: "", buildChoice: null,
+  return { languages: [], names: {}, configuration: {}, optionDrafts: {}, configurationBuild: null, choiceKey: "", runtimeDigest: "", buildChoice: null,
     editSeq: 0, buildDirty: false, deliveryDirty: false, stale: false, eligibility: null, assessment: null,
     prepared: null, buildConsent: null, checkReview: null, checkConsent: null, checkAttempt: null, savedAttempt: null, buildReceipt: null, workflow: null, workflowControlBusy: false, workflowStopBusy: false,
     chosen: null, selection: null, preview: null, overwrite: false, attempt: null, result: null, pending: null, busy: false, checkingDelivery: false, checkingStart: false,
@@ -126,11 +133,28 @@ function useReleaseOwner(project: ProjectView) {
       buildDirty: true, eligibility: null, assessment: null, earlierBuild: false }));
   }
   function setConfiguration(locale: string, value: PluginBuildPrepareRequest["choices"][number]["configuration"]) {
-    update(before => ({ ...before, configuration: { ...before.configuration, [locale]: fixed(value) }, editSeq: before.editSeq + 1,
+    update(before => ({ ...before, configurationBuild: before.buildChoice,
+      configuration: { ...(same(before.configurationBuild, before.buildChoice) ? before.configuration : {}), [locale]: fixed(value) }, editSeq: before.editSeq + 1,
       buildDirty: true, eligibility: null, assessment: null, earlierBuild: false }));
   }
+  function optionSelections(locale: string): BuildOptionSelections {
+    const before = current(); return before.optionDrafts[configurationKey(before.buildChoice, locale)] ?? [];
+  }
+  function setBuildOption(build: PluginBuildRequest, locale: string, schema: BuildOptionSelections[number]["schema"], id: string, value: string) {
+    const before = current();
+    if (!live() || reserved() || before.prepared || before.attempt || !same(before.buildChoice, build)
+      || !before.languages.includes(locale)) return;
+    const key = configurationKey(build, locale), groups = before.optionDrafts[key] ?? [];
+    const previous = groups.find(group => sameSchema(group.schema, schema));
+    const selections = (previous?.selections ?? []).filter(selection => selection.id !== id);
+    if (value) selections.push({ id, value });
+    const updated = [...groups.filter(group => !sameSchema(group.schema, schema)), { schema, selections }];
+    update(state => ({ ...state, optionDrafts: { ...state.optionDrafts, [key]: fixed(updated) },
+      configuration: same(state.configurationBuild, build) ? { ...state.configuration, [locale]: [] } : state.configuration, editSeq: state.editSeq + 1,
+      buildDirty: true, eligibility: null, assessment: null, stale: true, buildConsent: null, earlierBuild: false }));
+  }
   function choices() { const before = current(); return before.languages.map(locale => ({ locale,
-    outputPaths: (before.names[locale] ?? "").split(/\r?\n/).filter(path => path.length > 0), configuration: before.configuration[locale] ?? [] })); }
+    outputPaths: (before.names[locale] ?? "").split(/\r?\n/).filter(path => path.length > 0), configuration: same(before.configurationBuild, before.buildChoice) ? before.configuration[locale] ?? [] : [] })); }
   async function run(work: () => Promise<void>, recovery = false, area: "build" | "delivery" = "delivery") {
     if (!live() || flight.current || (!recovery && current().pending)) return;
     const ticket = {}; flight.current = ticket;
@@ -152,11 +176,21 @@ function useReleaseOwner(project: ProjectView) {
     finally { dispose(); if (readCleanup.current === dispose) readCleanup.current = null; }
   }
   async function assess(build: PluginBuildView, proof?: ReleaseReadProof) {
-    const before = current(), generation = version.current, sourceLocale = projectRef.current.metadata.sourceLocale,
+    const before = current(), buildSelection = before.buildChoice, generation = version.current, sourceLocale = projectRef.current.metadata.sourceLocale,
       targetLocales = [...projectRef.current.metadata.targetLocales];
-    if (!available() || !before.buildChoice || !matchesBuild(before.buildChoice,build)) { proof?.dispose(); return; }
+    if (!available() || !buildSelection || !matchesBuild(buildSelection,build)) { proof?.dispose(); return; }
     await withReadProof(proof, () => runBuild(async () => {
       update(value => ({ ...value, eligibility: null, assessment: null }));
+      let configuration: State["configuration"] | null = null;
+      if (build.declaration.configuration !== undefined) {
+        const result = await pluginCommands.configureBuild({ build: buildSelection, locales: before.languages.map(locale => ({ locale,
+          configuration: before.optionDrafts[configurationKey(before.buildChoice, locale)] ?? [] })) });
+        if (!live() || proof?.current() === false || current().editSeq !== before.editSeq || generation !== version.current) return;
+        if (!matchesBuild(buildSelection, result.build) || result.build.settingsRevision !== build.settingsRevision
+          || !same(result.build.declaration, build.declaration) || result.locales.length !== before.languages.length
+          || result.locales.some((value, index) => value.locale !== before.languages[index])) invalidAck();
+        configuration = Object.fromEntries(result.locales.map(value => [value.locale, value.configuration]));
+      }
       const scope = await sourceCommands.scope(session);
       if (!live() || proof?.current() === false) return;
       const eligibility = await reviewCommands.eligibility({ ...session, locales: [...before.languages] });
@@ -165,7 +199,8 @@ function useReleaseOwner(project: ProjectView) {
       if (scope.currentSnapshot !== eligibility.sourceSnapshotId || eligibility.locales.length !== before.languages.length
         || new Set(eligibility.locales.map(value => value.locale)).size !== before.languages.length
         || eligibility.locales.some(value => !before.languages.includes(value.locale))) invalidAck();
-      update(value => ({ ...value, eligibility: fixed(eligibility), assessment: fixed({ editSeq: before.editSeq, version: generation,
+      update(value => ({ ...value, ...(configuration ? { configurationBuild: buildSelection, configuration: { ...(same(value.configurationBuild, buildSelection) ? value.configuration : {}), ...fixed(configuration) } } : {}),
+        eligibility: fixed(eligibility), assessment: fixed({ editSeq: before.editSeq, version: generation,
         scope, build, sourceLocale, targetLocales }), stale: false }));
     }));
   }
@@ -532,7 +567,7 @@ function useReleaseOwner(project: ProjectView) {
       const sameDraft = current().editSeq === before.editSeq && version.current === generation;
       update(value => ({ ...value, prepared:null,buildConsent:null,attempt:null,checkReview:null,checkConsent:null,checkAttempt:null,
         eligibility:null,assessment:null,buildReceipt:null,pending:null,savedAttempt:null,
-        ...(clearDraft && sameDraft ? {languages:[],names:{},configuration:{},buildDirty:false} : {buildDirty:value.languages.length > 0}) })); accepted = !clearDraft || sameDraft;
+        ...(clearDraft && sameDraft ? {languages:[],names:{},configuration:{},optionDrafts:{},configurationBuild:null,buildDirty:false} : {buildDirty:value.languages.length > 0}) })); accepted = !clearDraft || sameDraft;
     },true); return accepted;
   }
   function canShowSavedBuild(attemptId: string) {
@@ -701,7 +736,7 @@ function useReleaseOwner(project: ProjectView) {
     if (!live() || reserved() || current().prepared || current().checkReview || current().attempt || current().checkAttempt || current().workflow) return false;
     version.current++; update(() => initial()); return true;
   }
-  return { ...state, current, reserved, available, choices, setBuildSelection, setLanguage, setName, setConfiguration, assess, build,
+  return { ...state, current, reserved, available, choices, optionSelections, setBuildOption, setBuildSelection, setLanguage, setName, setConfiguration, assess, build,
     setConsent, startBuild, prepareCheck, finishCheck, recordBuild, checkBuild, retryBuild, discardBuild, canShowSavedBuild, showSavedBuild, closeSavedBuild,
     workflowWorking, workflowReadRequest, workflowReadKey, prepareWorkflow, setWorkflowConsent, startWorkflow, stopWorkflow,
     observeWorkflow, reconcileWorkflow, closeWorkflow,

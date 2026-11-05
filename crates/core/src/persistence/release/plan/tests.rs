@@ -646,3 +646,92 @@ fn build_composition_rejects_valid_application_basis_for_either_role() {
         );
     }
 }
+
+#[test]
+fn declared_build_configuration_is_frozen_and_checked_before_execution() {
+    let (_directory, mut store, project, units) = fixture();
+    let basis = ready(&mut store, project, &units, "zh-CN");
+    let mut build = environment(&store);
+    let configuration = sdk::BuildConfigurationDeclaration {
+        schema: sdk::ContractRef {
+            id: "example.output-language".into(),
+            schema_version: 1,
+            behavior_version: 1,
+        },
+        display_name: "Output settings".into(),
+        options: vec![sdk::BuildOptionDeclaration {
+            id: "loading-language".into(),
+            display_name: "Loading language".into(),
+            choices: vec![
+                sdk::BuildOptionChoice {
+                    id: "english".into(),
+                    display_name: "English".into(),
+                },
+                sdk::BuildOptionChoice {
+                    id: "french".into(),
+                    display_name: "French".into(),
+                },
+            ],
+        }],
+    };
+    build.binding.declaration.configuration = Some(vec![configuration.clone()]);
+    let original_changes = store.connection().unwrap().total_changes();
+    assert!(
+        store
+            .prepare_plugin_build(project, ExecutionId::new(), &choices(), &basis, &build)
+            .is_err()
+    );
+    assert_eq!(
+        store.connection().unwrap().total_changes(),
+        original_changes
+    );
+    let payload = configuration
+        .capture(&[sdk::BuildOptionSelection {
+            id: "loading-language".into(),
+            value: "english".into(),
+        }])
+        .unwrap();
+    let mut choices = choices();
+    choices[0].configuration = vec![payload.clone()];
+    let attempt = ExecutionId::new();
+    let fixed = store
+        .prepare_plugin_build(project, attempt, &choices, &basis, &build)
+        .unwrap();
+    let minimal = ReleasePlan::from_input(&fixed)
+        .unwrap()
+        .plugin_input("zh-CN")
+        .unwrap();
+    assert_eq!(minimal.configuration, [payload]);
+    assert_eq!(minimal.target_language, "zh-CN");
+    enqueue_fixture(&mut store, &fixed);
+    let mut changed = choices.clone();
+    changed[0].configuration = vec![
+        configuration
+            .capture(&[sdk::BuildOptionSelection {
+                id: "loading-language".into(),
+                value: "french".into(),
+            }])
+            .unwrap(),
+    ];
+    assert!(
+        store
+            .find_plugin_build(project, attempt, &changed, &basis, &build)
+            .is_err()
+    );
+    let path = store.directory().to_path_buf();
+    store.close().unwrap();
+    let reopened = ProjectStore::open(path).unwrap();
+    let saved = reopened
+        .find_plugin_build(project, attempt, &choices, &basis, &build)
+        .unwrap()
+        .unwrap();
+    assert_eq!(saved.bytes(), fixed.bytes());
+    assert_eq!(
+        ReleasePlan::from_input(&saved)
+            .unwrap()
+            .plugin_input("zh-CN")
+            .unwrap()
+            .configuration,
+        choices[0].configuration
+    );
+}

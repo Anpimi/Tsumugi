@@ -2,6 +2,41 @@
   "requests": {
     "$schema": "http://json-schema.org/draft-07/schema#",
     "definitions": {
+      "BuildConfigurationSelection": {
+        "additionalProperties": false,
+        "properties": {
+          "schema": {
+            "$ref": "#/definitions/ContractRef"
+          },
+          "selections": {
+            "items": {
+              "$ref": "#/definitions/BuildOptionSelection"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "schema",
+          "selections"
+        ],
+        "type": "object"
+      },
+      "BuildOptionSelection": {
+        "additionalProperties": false,
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "value": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "value"
+        ],
+        "type": "object"
+      },
       "ContractRef": {
         "additionalProperties": false,
         "description": "Schema and behavior are separate exact-match compatibility identities.\nMatching JSON field types or a package SemVer is not behavioral compatibility.",
@@ -51,6 +86,44 @@
           "origin",
           "expectedRevision",
           "actionId"
+        ],
+        "type": "object"
+      },
+      "PluginBuildConfigurationRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "build": {
+            "$ref": "#/definitions/PluginBuildRequest"
+          },
+          "locales": {
+            "items": {
+              "$ref": "#/definitions/PluginBuildLocaleOptions"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "build",
+          "locales"
+        ],
+        "type": "object"
+      },
+      "PluginBuildLocaleOptions": {
+        "additionalProperties": false,
+        "properties": {
+          "configuration": {
+            "items": {
+              "$ref": "#/definitions/BuildConfigurationSelection"
+            },
+            "type": "array"
+          },
+          "locale": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "locale",
+          "configuration"
         ],
         "type": "object"
       },
@@ -582,6 +655,9 @@
       "build": {
         "$ref": "#/definitions/PluginBuildRequest"
       },
+      "buildConfiguration": {
+        "$ref": "#/definitions/PluginBuildConfigurationRequest"
+      },
       "defaultsInstall": {
         "$ref": "#/definitions/PluginDefaultsInstallRequest"
       },
@@ -662,6 +738,7 @@
       "source",
       "translation",
       "build",
+      "buildConfiguration",
       "tool",
       "ui",
       "generationComponent",
@@ -675,6 +752,46 @@
   "responses": {
     "$schema": "http://json-schema.org/draft-07/schema#",
     "definitions": {
+      "BuildConfigurationDeclaration": {
+        "additionalProperties": false,
+        "description": "All options require an explicit selection; neither source nor target locale\nsupplies a default. Values carry no file access or execution authority.",
+        "properties": {
+          "displayName": {
+            "type": "string"
+          },
+          "options": {
+            "items": {
+              "$ref": "#/definitions/BuildOptionDeclaration"
+            },
+            "type": "array"
+          },
+          "schema": {
+            "$ref": "#/definitions/ContractRef"
+          }
+        },
+        "required": [
+          "schema",
+          "displayName",
+          "options"
+        ],
+        "type": "object"
+      },
+      "BuildConfigurationValues": {
+        "additionalProperties": false,
+        "description": "JSON body of one declared EncodedPayload. IDs are package-owned opaque choices.",
+        "properties": {
+          "selections": {
+            "items": {
+              "$ref": "#/definitions/BuildOptionSelection"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "selections"
+        ],
+        "type": "object"
+      },
       "BuildDeclaration": {
         "additionalProperties": false,
         "properties": {
@@ -689,6 +806,12 @@
           },
           "checker": {
             "type": "string"
+          },
+          "configuration": {
+            "items": {
+              "$ref": "#/definitions/BuildConfigurationDeclaration"
+            },
+            "type": "array"
           },
           "displayName": {
             "type": "string"
@@ -707,6 +830,61 @@
           "checker",
           "outputLimits",
           "artifactRules"
+        ],
+        "type": "object"
+      },
+      "BuildOptionChoice": {
+        "additionalProperties": false,
+        "properties": {
+          "displayName": {
+            "type": "string"
+          },
+          "id": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "displayName"
+        ],
+        "type": "object"
+      },
+      "BuildOptionDeclaration": {
+        "additionalProperties": false,
+        "properties": {
+          "choices": {
+            "items": {
+              "$ref": "#/definitions/BuildOptionChoice"
+            },
+            "type": "array"
+          },
+          "displayName": {
+            "type": "string"
+          },
+          "id": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "displayName",
+          "choices"
+        ],
+        "type": "object"
+      },
+      "BuildOptionSelection": {
+        "additionalProperties": false,
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "value": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "value"
         ],
         "type": "object"
       },
@@ -1636,6 +1814,27 @@
         ],
         "type": "string"
       },
+      "EncodedPayload": {
+        "additionalProperties": false,
+        "description": "Exact UTF-8 schema payload. The SDK verifies its byte digest but does not\nsubstitute a generic parser for that schema's actual semantic validator.",
+        "properties": {
+          "schema": {
+            "$ref": "#/definitions/ContractRef"
+          },
+          "sha256": {
+            "type": "string"
+          },
+          "utf8": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "schema",
+          "utf8",
+          "sha256"
+        ],
+        "type": "object"
+      },
       "ExecutionEnvironmentDescriptor": {
         "anyOf": [
           {
@@ -1854,6 +2053,44 @@
             "type": "object"
           }
         ]
+      },
+      "PluginBuildConfigurations": {
+        "additionalProperties": false,
+        "properties": {
+          "build": {
+            "$ref": "#/definitions/PluginBuildView"
+          },
+          "locales": {
+            "items": {
+              "$ref": "#/definitions/PluginBuildLocaleConfiguration"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "build",
+          "locales"
+        ],
+        "type": "object"
+      },
+      "PluginBuildLocaleConfiguration": {
+        "additionalProperties": false,
+        "properties": {
+          "configuration": {
+            "items": {
+              "$ref": "#/definitions/EncodedPayload"
+            },
+            "type": "array"
+          },
+          "locale": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "locale",
+          "configuration"
+        ],
+        "type": "object"
       },
       "PluginBuildView": {
         "additionalProperties": false,
@@ -3826,6 +4063,12 @@
       "build": {
         "$ref": "#/definitions/PluginBuildView"
       },
+      "buildConfigurationValues": {
+        "$ref": "#/definitions/BuildConfigurationValues"
+      },
+      "buildConfigurations": {
+        "$ref": "#/definitions/PluginBuildConfigurations"
+      },
       "candidate": {
         "anyOf": [
           {
@@ -3909,6 +4152,8 @@
       "source",
       "translation",
       "build",
+      "buildConfigurations",
+      "buildConfigurationValues",
       "tool",
       "ui",
       "generationComponent",

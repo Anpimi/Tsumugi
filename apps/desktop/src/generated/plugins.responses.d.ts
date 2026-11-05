@@ -239,6 +239,8 @@ export type ToolQueryPathPart = string | number;
 export interface Responses {
   binding: CapabilityBinding;
   build: PluginBuildView;
+  buildConfigurationValues: BuildConfigurationValues;
+  buildConfigurations: PluginBuildConfigurations;
   candidate: PluginCandidateView | null;
   error: CommandError;
   generationComponent: PluginGenerationComponentView;
@@ -327,9 +329,28 @@ export interface BuildDeclaration {
   artifactRules: ContractRef[];
   builder: string;
   checker: string;
+  configuration?: BuildConfigurationDeclaration[];
   displayName: string;
   outputLimits: BuildOutputLimits;
   profile: ContractRef;
+}
+/**
+ * All options require an explicit selection; neither source nor target locale
+ * supplies a default. Values carry no file access or execution authority.
+ */
+export interface BuildConfigurationDeclaration {
+  displayName: string;
+  options: BuildOptionDeclaration[];
+  schema: ContractRef;
+}
+export interface BuildOptionDeclaration {
+  choices: BuildOptionChoice[];
+  displayName: string;
+  id: string;
+}
+export interface BuildOptionChoice {
+  displayName: string;
+  id: string;
 }
 export interface BuildOutputLimits {
   maxArtifacts: number;
@@ -380,6 +401,33 @@ export interface NativeHostEnvironmentDescriptor {
 export interface PluginOriginView {
   publisherId: string;
   sourceId: string;
+}
+/**
+ * JSON body of one declared EncodedPayload. IDs are package-owned opaque choices.
+ */
+export interface BuildConfigurationValues {
+  selections: BuildOptionSelection[];
+}
+export interface BuildOptionSelection {
+  id: string;
+  value: string;
+}
+export interface PluginBuildConfigurations {
+  build: PluginBuildView;
+  locales: PluginBuildLocaleConfiguration[];
+}
+export interface PluginBuildLocaleConfiguration {
+  configuration: EncodedPayload[];
+  locale: string;
+}
+/**
+ * Exact UTF-8 schema payload. The SDK verifies its byte digest but does not
+ * substitute a generic parser for that schema's actual semantic validator.
+ */
+export interface EncodedPayload {
+  schema: ContractRef;
+  sha256: string;
+  utf8: string;
 }
 export interface PluginCandidateView {
   byteCount: UnsignedDecimal;

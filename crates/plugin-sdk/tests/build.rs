@@ -437,3 +437,230 @@ fn build_limits_errors_and_multirule_basis_remain_bounded() {
     value["authorization"] = json!(true);
     assert!(parse_build_error(&serde_json::to_vec(&value).unwrap()).is_err());
 }
+
+fn configurable() -> BuildDeclaration {
+    let mut declaration = declaration();
+    declaration.configuration = Some(vec![BuildConfigurationDeclaration {
+        schema: ContractRef {
+            id: "example.output-options".into(),
+            schema_version: 1,
+            behavior_version: 1,
+        },
+        display_name: "Output settings".into(),
+        options: vec![BuildOptionDeclaration {
+            id: "loading-language".into(),
+            display_name: "Loading language".into(),
+            choices: vec![
+                BuildOptionChoice {
+                    id: "english".into(),
+                    display_name: "English".into(),
+                },
+                BuildOptionChoice {
+                    id: "french".into(),
+                    display_name: "French".into(),
+                },
+            ],
+        }],
+    }]);
+    declaration
+}
+fn configured_selection(
+    declaration: &BuildDeclaration,
+    value: &str,
+) -> BuildConfigurationSelection {
+    BuildConfigurationSelection {
+        schema: declaration.configuration.as_ref().unwrap()[0]
+            .schema
+            .clone(),
+        selections: vec![BuildOptionSelection {
+            id: "loading-language".into(),
+            value: value.into(),
+        }],
+    }
+}
+#[test]
+fn declared_configuration_captures_explicit_values_without_inferring_a_locale() {
+    let declaration = configurable();
+    let selections = vec![configured_selection(&declaration, "french")];
+    let captured = declaration.capture_configuration(&selections).unwrap();
+    let mut input = input("caption");
+    input.configuration = captured.clone();
+    let binding = declaration
+        .bind(&manifest().validate().unwrap(), &"a".repeat(64))
+        .unwrap();
+    binding.validate_input(&input).unwrap();
+    assert_eq!(input.target_language, "ja-JP");
+    assert_eq!(
+        declaration.configuration.as_ref().unwrap()[0]
+            .read(&captured[0])
+            .unwrap()
+            .selections,
+        selections[0].selections
+    );
+    assert_eq!(
+        captured[0].utf8,
+        r#"{"selections":[{"id":"loading-language","value":"french"}]}"#
+    );
+    assert_eq!(captured[0].sha256, payload_digest(&captured[0].utf8));
+    assert!(declaration.capture_configuration(&[]).is_err());
+    assert!(declaration.validate_configuration(&[]).is_err());
+}
+#[test]
+fn configuration_refuses_missing_duplicate_unknown_and_changed_choices() {
+    let declaration = configurable();
+    let good = configured_selection(&declaration, "english");
+    for scenario in 0..6 {
+        let mut selections = vec![good.clone()];
+        match scenario {
+            0 => selections[0].selections.clear(),
+            1 => {
+                let duplicate = selections[0].selections[0].clone();
+                selections[0].selections.push(duplicate);
+            }
+            2 => selections[0].selections[0].id = "unknown-option".into(),
+            3 => selections[0].selections[0].value = "unknown-choice".into(),
+            4 => selections[0].schema.schema_version += 1,
+            _ => selections.push(good.clone()),
+        }
+        assert!(
+            declaration.capture_configuration(&selections).is_err(),
+            "{scenario}"
+        );
+    }
+    let captured = declaration.capture_configuration(&[good]).unwrap();
+    for utf8 in [
+        r#"{"selections":[{"id":"loading-language","value":"english","approved":true}]}"#,
+        r#"{"selections":[{"id":"loading-language","value":"english","value":"french"}]}"#,
+        r#"{"selections":[{"id":"loading-language","value":"english"}],"selections":[]}"#,
+        r#"{"selections":null}"#,
+    ] {
+        let changed = EncodedPayload::capture(captured[0].schema.clone(), utf8.into()).unwrap();
+        assert!(declaration.validate_configuration(&[changed]).is_err());
+    }
+    let mut changed = captured.clone();
+    changed[0].utf8.push(' ');
+    assert!(declaration.validate_configuration(&changed).is_err());
+    let mut changed = captured;
+    changed[0].schema.behavior_version += 1;
+    assert!(declaration.validate_configuration(&changed).is_err());
+}
+#[test]
+fn configuration_declarations_are_bounded_and_do_not_enable_hidden_defaults() {
+    for scenario in 0..8 {
+        let mut declaration = configurable();
+        let configurations = declaration.configuration.as_mut().unwrap();
+        let original = configurations[0].clone();
+        match scenario {
+            0 => configurations.push(original),
+            1 => configurations[0].options.clear(),
+            2 => configurations[0].options.push(original.options[0].clone()),
+            3 => configurations[0].options[0].choices.clear(),
+            4 => configurations[0].options[0]
+                .choices
+                .push(original.options[0].choices[0].clone()),
+            5 => configurations[0].display_name = "\n".into(),
+            6 => configurations[0].options[0].id = "Invalid option".into(),
+            _ => {
+                configurations[0].options[0].choices = (0..33)
+                    .map(|i| BuildOptionChoice {
+                        id: format!("choice-{i}"),
+                        display_name: format!("Choice {i}"),
+                    })
+                    .collect()
+            }
+        }
+        assert!(declaration.validate().is_err(), "{scenario}");
+    }
+    let mut value = serde_json::to_value(configurable()).unwrap();
+    value["configuration"][0]["options"][0]["default"] = json!("english");
+    assert!(parse_build_declaration(&serde_json::to_vec(&value).unwrap()).is_err());
+}
+#[test]
+fn historical_build_resources_preserve_their_shape_and_opaque_configuration() {
+    let bytes = include_bytes!("fixtures/build-v1.declaration.json");
+    let contract = ContractRef {
+        schema_version: 1,
+        ..build_declaration_contract()
+    };
+    let old = parse_build_declaration_for_contract(bytes, &contract).unwrap();
+    assert!(old.configuration.is_none());
+    assert_eq!(old.declaration_contract(), contract);
+    assert_eq!(
+        serde_json::to_value(&old).unwrap(),
+        serde_json::from_slice::<Value>(bytes).unwrap()
+    );
+    assert!(parse_build_declaration(bytes).is_err());
+    assert!(
+        parse_build_declaration_for_contract(
+            bytes,
+            &ContractRef {
+                schema_version: 3,
+                ..contract
+            }
+        )
+        .is_err()
+    );
+    let mut value = serde_json::to_value(declaration()).unwrap();
+    value["configuration"] = Value::Null;
+    assert!(serde_json::from_value::<BuildDeclaration>(value).is_err());
+    let opaque =
+        EncodedPayload::capture(build_input_contract(), r#"{"old":"opaque"}"#.into()).unwrap();
+    old.validate_configuration(&[opaque.clone()]).unwrap();
+    assert!(declaration().validate_configuration(&[opaque]).is_err());
+}
+
+#[test]
+fn configuration_capture_uses_declaration_order_for_groups_and_options() {
+    let mut declaration = configurable();
+    let first = declaration
+        .configuration
+        .as_mut()
+        .unwrap()
+        .first_mut()
+        .unwrap();
+    let mut another_option = first.options[0].clone();
+    another_option.id = "output-mode".into();
+    first.options.push(another_option);
+    let mut second = first.clone();
+    second.schema.id = "example.second-options".into();
+    declaration.configuration.as_mut().unwrap().push(second);
+    let selections = declaration
+        .configuration
+        .as_ref()
+        .unwrap()
+        .iter()
+        .rev()
+        .map(|group| BuildConfigurationSelection {
+            schema: group.schema.clone(),
+            selections: group
+                .options
+                .iter()
+                .rev()
+                .map(|option| BuildOptionSelection {
+                    id: option.id.clone(),
+                    value: "french".into(),
+                })
+                .collect(),
+        })
+        .collect::<Vec<_>>();
+    let captured = declaration.capture_configuration(&selections).unwrap();
+    for (group, payload) in declaration
+        .configuration
+        .as_ref()
+        .unwrap()
+        .iter()
+        .zip(&captured)
+    {
+        assert_eq!(group.schema, payload.schema);
+        assert_eq!(
+            group
+                .read(payload)
+                .unwrap()
+                .selections
+                .iter()
+                .map(|choice| choice.id.as_str())
+                .collect::<Vec<_>>(),
+            ["loading-language", "output-mode"]
+        );
+    }
+}

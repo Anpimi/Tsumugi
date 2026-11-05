@@ -273,7 +273,10 @@ mod unix {
             fixture.approval.package_digest
         );
         assert_eq!(view.environment, approval.environment);
-        assert!(matches!(view.environment, sdk::ExecutionEnvironmentDescriptor::Captured(_)));
+        assert!(matches!(
+            view.environment,
+            sdk::ExecutionEnvironmentDescriptor::Captured(_)
+        ));
         assert_eq!(view.settings_revision.get(), 1);
         assert_eq!(
             fs::read(fixture.root().join("settings.json")).unwrap(),
@@ -360,4 +363,56 @@ mod unix {
         reopened.manager.lock().unwrap().store = None;
         assert!(!fixture.directory.path().join("project").exists());
     }
+}
+
+#[test]
+fn declared_configuration_capture_is_pure_bounded_and_keeps_locale_identity() {
+    let declaration = sdk::parse_build_declaration(include_bytes!(
+        "../../../../../../../crates/plugin-sdk/tests/fixtures/build.declaration.json"
+    ))
+    .unwrap();
+    let original = vec![
+        PluginBuildLocaleOptions {
+            locale: "zh-CN".into(),
+            configuration: vec![],
+        },
+        PluginBuildLocaleOptions {
+            locale: "fr-FR".into(),
+            configuration: vec![],
+        },
+    ];
+    let captured = capture_configuration(&declaration, &original).unwrap();
+    assert_eq!(
+        captured
+            .iter()
+            .map(|locale| locale.locale.as_str())
+            .collect::<Vec<_>>(),
+        ["zh-CN", "fr-FR"]
+    );
+    assert!(
+        captured
+            .iter()
+            .all(|locale| locale.configuration.is_empty())
+    );
+    assert!(capture_configuration(&declaration, &[]).is_err());
+    assert!(
+        capture_configuration(&declaration, &[original[0].clone(), original[0].clone()]).is_err()
+    );
+    assert!(
+        capture_configuration(
+            &declaration,
+            &[PluginBuildLocaleOptions {
+                locale: "not a locale".into(),
+                configuration: vec![]
+            }]
+        )
+        .is_err()
+    );
+    let mut forged = serde_json::to_value(PluginBuildConfigurationRequest {
+        build: request(),
+        locales: original,
+    })
+    .unwrap();
+    forged["grantId"] = serde_json::json!("forged");
+    assert!(serde_json::from_value::<PluginBuildConfigurationRequest>(forged).is_err());
 }
