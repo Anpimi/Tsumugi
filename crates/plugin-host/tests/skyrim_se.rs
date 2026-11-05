@@ -225,6 +225,27 @@ fn success(outcome: sdk::InvocationOutcome) -> sdk::EncodedPayload {
     };
     output
 }
+fn capture_summary(content: &sdk::ContentExchange) -> sdk::SourceCaptureSummary {
+    let block = content
+        .domain_blocks
+        .iter()
+        .find(|block| block.schema == sdk::source_capture_summary_contract())
+        .expect("the installed worker must emit the shared summary");
+    sdk::parse_source_capture_summary_block(block, &content.artifacts).unwrap()
+}
+fn assert_capture_page(
+    page: &tsumugi_core::content::ContentPage,
+    summary: &sdk::SourceCaptureSummary,
+) {
+    assert_eq!(page.capture_summary.as_ref(), Some(summary));
+    assert_eq!(page.coverage.len(), 1);
+    assert_eq!(summary.materials.len(), 1);
+    assert_eq!(page.coverage[0].logical_path, "FormatProbe.esp");
+    assert_eq!(
+        summary.materials[0].source.artifact_id,
+        page.coverage[0].artifact_id.to_string()
+    );
+}
 fn check_output(
     payload: sdk::EncodedPayload,
     required: &[sdk::CheckRequirement],
@@ -277,6 +298,32 @@ async fn installed_skyrim_package_runs_mixed_and_capacity_material_through_all_f
         let content = sdk::parse_content_exchange(extracted.utf8.as_bytes()).unwrap();
         sdk::validate_source_extraction(&captured, &content).unwrap();
         assert_eq!(content.units.len(), units);
+        let summary = capture_summary(&content);
+        assert_eq!(summary.materials.len(), if mcm { 2 } else { 1 });
+        for material in &summary.materials {
+            let source = captured
+                .artifacts
+                .iter()
+                .find(|artifact| artifact.id() == material.source.artifact_id)
+                .unwrap();
+            assert_eq!(material.source.range.encoding, sdk::SourceEncoding::RawByte);
+            assert_eq!(material.source.range.start, 0);
+            assert_eq!(
+                material.source.range.end as usize,
+                source.validated_bytes().unwrap().len()
+            );
+            if source.role() == "mcm" {
+                assert_eq!(
+                    material.counts,
+                    sdk::SourceCaptureCounts {
+                        items: 2,
+                        items_with_fields: 2,
+                        declared_fields: 2,
+                        non_empty_fields: 2,
+                    }
+                );
+            }
+        }
         let required = vec![requirement(
             source_binding.declaration.semantic_rules[0].clone(),
             &source_binding.checker,
@@ -521,6 +568,7 @@ struct AdoptedSource {
     grants: Vec<ExecutionId>,
     extracted: FixedResult,
     check_input_bytes: usize,
+    preview_summary: sdk::SourceCaptureSummary,
 }
 fn adopt_source(
     store: &mut ProjectStore,
@@ -549,6 +597,11 @@ fn adopt_source(
             100,
         )
         .unwrap();
+    let preview_summary = preview
+        .capture_summary
+        .clone()
+        .expect("Core must project the captured worker summary before adoption");
+    assert_capture_page(&preview, &preview_summary);
     let action = store
         .prepare_adoption(
             input.envelope().attempt_id,
@@ -582,6 +635,7 @@ fn adopt_source(
         grants,
         extracted,
         check_input_bytes,
+        preview_summary,
     }
 }
 
@@ -646,9 +700,32 @@ fn skyrim_normal_core_keeps_binary_source_review_release_and_reopen_evidence() {
     let AdoptedSource {
         snapshot,
         mut grants,
+        extracted,
+        preview_summary,
         ..
     } = adopt_source(&mut store, &mut runtime, &input);
-    let rows = store.source_content(snapshot, 0, 100).unwrap().rows;
+    let sdk::InvocationOutcome::Succeeded { output } =
+        &extracted.envelope().plugin.as_ref().unwrap().result.outcome
+    else {
+        panic!("expected captured domain content")
+    };
+    let content = sdk::parse_content_exchange(output.utf8.as_bytes()).unwrap();
+    let summary = capture_summary(&content);
+    assert_eq!(preview_summary, summary);
+    assert_eq!(
+        summary.materials[0].counts,
+        sdk::SourceCaptureCounts {
+            items: 1,
+            items_with_fields: 1,
+            declared_fields: 1,
+            non_empty_fields: 1,
+        }
+    );
+    assert_eq!(summary.materials[0].source.range.end as usize, original.len());
+    let page = store.source_content(snapshot, 0, 100).unwrap();
+    assert_capture_page(&page, &summary);
+    let coverage = page.coverage;
+    let rows = page.rows;
     assert_eq!(rows.len(), 1);
     assert_eq!(rows[0].occurrence.text, "Original token");
     let project = ExecutionId::parse(&store.metadata().unwrap().project_id().to_string()).unwrap();
@@ -805,6 +882,10 @@ fn skyrim_normal_core_keeps_binary_source_review_release_and_reopen_evidence() {
     drop(runtime);
     store.close().unwrap();
     let mut reopened = ProjectStore::open(&path).unwrap();
+    let source_page = reopened.source_content(snapshot, 0, 100).unwrap();
+    assert_capture_page(&source_page, &summary);
+    assert_eq!(source_page.coverage, coverage);
+    assert_eq!(source_page.rows, rows);
     assert_eq!(reopened.release_view(release).unwrap(), released);
     assert_eq!(
         reopened
@@ -923,6 +1004,7 @@ fn skyrim_normal_core_adopts_maximum_escaped_capture_and_reopens_every_field() {
         grants,
         extracted,
         check_input_bytes,
+        preview_summary,
     } = adopt_source(&mut store, &mut runtime, &input);
     eprintln!("capacity Core adoption returned in {:?}", started.elapsed());
     assert!(extracted.bytes().len() > 8 * 1024 * 1024);
@@ -934,6 +1016,35 @@ fn skyrim_normal_core_adopts_maximum_escaped_capture_and_reopens_every_field() {
     };
     let expected = sdk::parse_content_exchange(output.utf8.as_bytes()).unwrap();
     assert_eq!(expected.units.len(), 476);
+    let summary = capture_summary(&expected);
+    assert_eq!(preview_summary, summary);
+    assert_eq!(
+        summary.materials[0].counts,
+        sdk::SourceCaptureCounts {
+            items: 238,
+            items_with_fields: 238,
+            declared_fields: 476,
+            non_empty_fields: 476,
+        }
+    );
+    assert_eq!(summary.materials[0].source.range.end as usize, original.len());
+    assert_eq!(
+        summary.materials[0]
+            .properties
+            .iter()
+            .find(|property| property.label == "Required masters")
+            .unwrap()
+            .values,
+        Vec::<String>::new()
+    );
+    assert_eq!(
+        summary.materials[0]
+            .groups
+            .iter()
+            .map(|group| group.counts.declared_fields)
+            .sum::<u32>(),
+        476
+    );
     let saved_result = extracted.bytes().to_vec();
     let read_rows = |store: &ProjectStore| {
         let mut rows = Vec::new();
@@ -941,6 +1052,7 @@ fn skyrim_normal_core_adopts_maximum_escaped_capture_and_reopens_every_field() {
         loop {
             let page = store.source_content(snapshot, after, 100).unwrap();
             assert_eq!(page.total, 476);
+            assert_capture_page(&page, &summary);
             rows.extend(page.rows);
             match page.next_ordinal {
                 Some(next) => {
