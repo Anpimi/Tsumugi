@@ -1,12 +1,12 @@
 # `tsumugi-plugin-sdk`
 
-`tsumugi-plugin-sdk` (`0.1.0-alpha.5`) is the experimental Rust contract library, conformance CLI, and JavaScript codegen package for Tsumugi plugins. It defines data schemas, semantic validators, and an optional native Rust worker entrypoint without depending on Core, SQLite, or the desktop application.
+`tsumugi-plugin-sdk` (`0.1.0-alpha.6`) is the experimental Rust contract library, conformance CLI, and JavaScript codegen package for Tsumugi plugins. It defines data schemas, semantic validators, and an optional native Rust worker entrypoint without depending on Core, SQLite, or the desktop application.
 
 By default, the crate is data-only: it validates manifests and payloads and computes digests, while package installation, process management, and runtime authorization belong to the Host and application layers. Building this crate requires Rust 1.98 or newer.
 
 ## Contract Documentation
 
-Protocol versions (`1` for manifests, exchange envelopes, and runtime environments; `3` for the local process transport) are versioned independently of the crate's SemVer (`0.1.0-alpha.5`).
+Protocol versions (`1` for manifests, exchange envelopes, and runtime environments; `3` for the local process transport) are versioned independently of the crate's SemVer (`0.1.0-alpha.6`).
 
 - **[Plugin Declarations](docs/declarations.md)**: `PluginManifest` structure, component scopes (`application`, `project`, `attempt`), capability compatibility predicates (`ValidatedManifest::diagnose_capability`), provider bindings (`bind_capability`, `ProviderSelectionBinding`, `ProviderBinding`), and [component dependency closure diagnostics](docs/declarations.md#component-dependency-closure-diagnostics).
 - **[Content & Invocation Exchange](docs/exchange.md)**: `ExchangeDocument` envelopes, the three-layer `ContentExchange` model, Unicode text range conversions (`utf8-byte`, `utf16`, `grapheme`), `InvocationRequest` / `receive_invocation_result` channel matching, and `FixedCheckSet` coverage evaluation.
@@ -43,10 +43,10 @@ To depend on a verified SDK directory or an unpacked `cargo package -p tsumugi-p
 
 ```toml
 [dependencies]
-tsumugi-plugin-sdk = { path = "/absolute/path/to/verified/tsumugi-plugin-sdk", version = "=0.1.0-alpha.5" }
+tsumugi-plugin-sdk = { path = "/absolute/path/to/verified/tsumugi-plugin-sdk", version = "=0.1.0-alpha.6" }
 ```
 
-Consumers pin the exact producer commit and archive digest in addition to the SDK version. The `0.1.0-alpha.1` archives retain their original text-only contracts; `0.1.0-alpha.2` introduces typed text/binary artifacts and separate source ranges. `0.1.0-alpha.3` adds the source-import `5/2` shared actual-byte budget and preserves exact `2/2` through `4/2` resources and historical Process-3 environment identities. `0.1.0-alpha.4` allows one additional snapshot metadata block alongside the two per-occurrence blocks for all 2,000 content items (4,001 blocks total); the independent exchange byte ceiling still applies. `0.1.0-alpha.5` separates 2 MiB decoded material from 4 MiB source/artifact JSON, 8 MiB content, and 16 MiB compound invocation ceilings; older artifacts and environment identities remain immutable. Rebuild consumers against the matching generated bindings and payload schema versions. When packaging with `cargo package -p tsumugi-plugin-sdk --locked`, Cargo normalizes workspace-inherited fields so the unpacked crate builds standalone with its own lockfile (use `--offline` only when a Cargo registry cache is already populated).
+Consumers pin the exact producer commit and archive digest in addition to the SDK version. The `0.1.0-alpha.1` archives retain their original text-only contracts; `0.1.0-alpha.2` introduces typed text/binary artifacts and separate source ranges. `0.1.0-alpha.3` adds the source-import `5/2` shared actual-byte budget and preserves exact `2/2` through `4/2` resources and historical Process-3 environment identities. `0.1.0-alpha.4` allows one additional snapshot metadata block alongside the two per-occurrence blocks for all 2,000 content items (4,001 blocks total); the independent exchange byte ceiling still applies. `0.1.0-alpha.5` separates 2 MiB decoded material from 4 MiB source/artifact JSON, 8 MiB content, and 16 MiB compound invocation ceilings; older artifacts and environment identities remain immutable. `0.1.0-alpha.6` reuses decoded binary lengths only within one immutable source-reference validation, avoiding repeated base64 decoding for every field and context fact while retaining exact range and material checks. Rebuild consumers against the matching generated bindings and payload schema versions. When packaging with `cargo package -p tsumugi-plugin-sdk --locked`, Cargo normalizes workspace-inherited fields so the unpacked crate builds standalone with its own lockfile (use `--offline` only when a Cargo registry cache is already populated).
 
 Minimal manifest validation example:
 

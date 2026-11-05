@@ -60,6 +60,90 @@ fn content(input: &SourceExtractionInput) -> ContentExchange {
 }
 
 #[test]
+fn source_ranges_stay_bound_to_each_material_and_recheck_later_validation_calls() {
+    let mut input = source();
+    let mut companion = binary(&[0xff; 16]);
+    let CapturedArtifact::Binary(ref mut companion_data) = companion else {
+        unreachable!()
+    };
+    companion_data.id = "companion".into();
+    companion_data.logical_path = "Strings/FormatProbe_English.STRINGS".into();
+    input.artifacts.push(companion);
+    let mut proposal = content(&input);
+    let companion_source = SourceReference {
+        artifact_id: "companion".into(),
+        range: SourceRange::raw_bytes(0, 16),
+    };
+    proposal.units[0].occurrences[0]
+        .native_identity
+        .as_mut()
+        .unwrap()
+        .display
+        .source = Some(companion_source.clone());
+    let mut facts = SourceContextFacts {
+        facts: vec![SourceContextFact {
+            id: "captured-label".into(),
+            kind: SourceContextFactKind::Note,
+            text: "Captured record label".into(),
+            origin: SourceContextFactOrigin::Extracted {
+                sources: vec![
+                    proposal.units[0].occurrences[0].source.clone(),
+                    companion_source,
+                ],
+            },
+        }],
+    };
+    proposal.domain_blocks.push(DomainBlock {
+        target: ContentTarget::Snapshot,
+        schema: source_context_facts_contract(),
+        handling: ExtensionHandling::Required,
+        payload_utf8: serde_json::to_string(&facts).unwrap(),
+    });
+    proposal.validate().unwrap();
+    facts.validate_sources(&proposal.artifacts).unwrap();
+
+    proposal.units[0].occurrences[0].source.range.end = 5;
+    assert_eq!(
+        proposal.validate().unwrap_err().code,
+        ContractErrorCode::InvalidRange
+    );
+    proposal.units[0].occurrences[0].source.range.end = 3;
+    let SourceContextFactOrigin::Extracted { ref mut sources } = facts.facts[0].origin else {
+        unreachable!()
+    };
+    sources[1].range.end = 17;
+    proposal.domain_blocks[0].payload_utf8 = serde_json::to_string(&facts).unwrap();
+    assert_eq!(
+        proposal.validate().unwrap_err().code,
+        ContractErrorCode::InvalidRange
+    );
+
+    let SourceContextFactOrigin::Extracted { ref mut sources } = facts.facts[0].origin else {
+        unreachable!()
+    };
+    sources[1].range.end = 16;
+    proposal.domain_blocks[0].payload_utf8 = serde_json::to_string(&facts).unwrap();
+    proposal.artifacts[1] = CapturedArtifact::from_bytes(
+        "companion".into(),
+        "Strings/FormatProbe_English.STRINGS".into(),
+        "source".into(),
+        &[0xff; 8],
+    )
+    .unwrap();
+    assert_eq!(
+        proposal.validate().unwrap_err().code,
+        ContractErrorCode::InvalidRange
+    );
+    assert_eq!(
+        facts
+            .validate_sources(&proposal.artifacts)
+            .unwrap_err()
+            .code,
+        ContractErrorCode::InvalidRange
+    );
+}
+
+#[test]
 fn maximum_raw_binary_survives_source_content_checker_and_artifact_receivers() {
     let mut input = source();
     input.artifacts = vec![binary(&vec![0xff; MAX_EXCHANGE_BYTES])];

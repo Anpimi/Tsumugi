@@ -149,6 +149,7 @@ impl ContentExchange {
             &self.source_language,
             &self.artifacts,
         )?;
+        let mut sources = SourceReferences::new(&self.artifacts);
         for (len, field) in [
             (self.units.len(), "content.units"),
             (self.order.len(), "content.order"),
@@ -190,9 +191,9 @@ impl ContentExchange {
                     ));
                 }
                 count(occurrences.len(), "content.occurrences")?;
-                validate_source_reference(&self.artifacts, &occurrence.source)?;
+                sources.validate(&occurrence.source)?;
                 if let Some(identity) = &occurrence.native_identity {
-                    validate_native_identity(&self.artifacts, identity)?;
+                    validate_native_identity(&mut sources, identity)?;
                 }
             }
             for fragment in &unit.protected_fragments {
@@ -248,7 +249,7 @@ impl ContentExchange {
                 ));
             }
             if is_source_context_facts_contract(&block.schema) {
-                parse_source_context_block(block, &self.artifacts)?;
+                crate::source_context::parse_block_with_sources(block, &mut sources)?;
             }
         }
         encoded_limit(self, MAX_CONTENT_EXCHANGE_BYTES, "contentExchange")
@@ -275,21 +276,36 @@ impl ContentExchange {
     }
 }
 
-pub(crate) fn validate_source_reference(
-    artifacts: &[CapturedArtifact],
-    source: &SourceReference,
-) -> Result<(), ContractError> {
-    let artifact = artifacts
-        .iter()
-        .find(|artifact| artifact.id() == source.artifact_id)
-        .ok_or_else(|| {
-            ContractError::at(
-                ContractErrorCode::InvalidDeclaration,
-                "content.source.artifactId",
-            )
-        })?;
-    source.range.byte_range(artifact)?;
-    Ok(())
+/// Only decoded lengths are reused, bound to borrowed immutable materials. Each
+/// public validation starts a fresh scope; digests and every range still check.
+pub(crate) struct SourceReferences<'a> {
+    artifacts: &'a [CapturedArtifact],
+    binary_sizes: Vec<Option<usize>>,
+}
+impl<'a> SourceReferences<'a> {
+    pub(crate) fn new(artifacts: &'a [CapturedArtifact]) -> Self {
+        Self {
+            artifacts,
+            binary_sizes: vec![None; artifacts.len()],
+        }
+    }
+    pub(crate) fn validate(&mut self, source: &SourceReference) -> Result<(), ContractError> {
+        let (index, artifact) = self
+            .artifacts
+            .iter()
+            .enumerate()
+            .find(|(_, artifact)| artifact.id() == source.artifact_id)
+            .ok_or_else(|| {
+                ContractError::at(
+                    ContractErrorCode::InvalidDeclaration,
+                    "content.source.artifactId",
+                )
+            })?;
+        source
+            .range
+            .byte_range_with_cached_size(artifact, &mut self.binary_sizes[index])?;
+        Ok(())
+    }
 }
 
 pub(crate) fn validate_native_scope(
@@ -306,7 +322,7 @@ pub(crate) fn validate_native_scope(
 }
 
 pub(crate) fn validate_native_identity(
-    artifacts: &[CapturedArtifact],
+    sources: &mut SourceReferences<'_>,
     identity: &NativeIdentityEvidence,
 ) -> Result<(), ContractError> {
     validate_native_scope(&identity.namespace, &identity.policy)?;
@@ -323,7 +339,7 @@ pub(crate) fn validate_native_identity(
         ));
     }
     if let Some(source) = &identity.display.source {
-        validate_source_reference(artifacts, source)?;
+        sources.validate(source)?;
     }
     Ok(())
 }

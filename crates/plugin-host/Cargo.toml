@@ -9,7 +9,7 @@ description = "Experimental bounded process channels for Tsumugi plugin contract
 
 [dependencies]
 tsumugi-core = { path = "../core", optional = true }
-tsumugi-plugin-sdk = { path = "../plugin-sdk", version = "=0.1.0-alpha.5" }
+tsumugi-plugin-sdk = { path = "../plugin-sdk", version = "=0.1.0-alpha.6" }
 serde_json = "=1.0.151"
 sha2 = "=0.10.9"
 tempfile = "=3.27.0"

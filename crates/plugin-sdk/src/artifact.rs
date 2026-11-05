@@ -315,13 +315,29 @@ impl SourceRange {
     /// Return half-open offsets in the captured original bytes. Raw byte ranges
     /// never pass through Unicode conversion or point into the base64 string.
     pub fn byte_range(&self, artifact: &CapturedArtifact) -> Result<[u32; 2], ContractError> {
+        self.byte_range_with_cached_size(artifact, &mut None)
+    }
+    /// The cache belongs to this exact immutable artifact, within one validation.
+    pub(crate) fn byte_range_with_cached_size(
+        &self,
+        artifact: &CapturedArtifact,
+        binary_size: &mut Option<usize>,
+    ) -> Result<[u32; 2], ContractError> {
         let invalid = || ContractError::at(ContractErrorCode::InvalidRange, "content.source.range");
         match artifact {
             CapturedArtifact::Binary(_) => {
-                if self.encoding != SourceEncoding::RawByte
-                    || self.start > self.end
-                    || self.end as usize > artifact.bytes()?.len()
-                {
+                if self.encoding != SourceEncoding::RawByte || self.start > self.end {
+                    return Err(invalid());
+                }
+                let size = match *binary_size {
+                    Some(size) => size,
+                    None => {
+                        let size = artifact.bytes()?.len();
+                        *binary_size = Some(size);
+                        size
+                    }
+                };
+                if self.end as usize > size {
                     return Err(invalid());
                 }
                 Ok([self.start, self.end])

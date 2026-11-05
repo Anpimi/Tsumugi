@@ -6,7 +6,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::{
     CapturedArtifact, ContractError, ContractErrorCode, ContractRef, DomainBlock, SourceReference,
-    content::validate_source_reference,
+    content::SourceReferences,
     validation::{encoded_limit, opaque_id, unique},
 };
 
@@ -156,10 +156,16 @@ impl SourceContextFacts {
     /// The material must come from the caller's captured source scope. Checking
     /// coordinates does not authenticate that material or establish fact truth.
     pub fn validate_sources(&self, artifacts: &[CapturedArtifact]) -> Result<(), ContractError> {
+        self.validate_with_sources(&mut SourceReferences::new(artifacts))
+    }
+    fn validate_with_sources(
+        &self,
+        sources: &mut SourceReferences<'_>,
+    ) -> Result<(), ContractError> {
         self.validate()?;
         for fact in &self.facts {
             for source in fact.origin.sources() {
-                validate_source_reference(artifacts, source)?;
+                sources.validate(source)?;
             }
         }
         Ok(())
@@ -193,6 +199,13 @@ pub fn parse_source_context_block(
     block: &DomainBlock,
     artifacts: &[CapturedArtifact],
 ) -> Result<SourceContextFacts, ContractError> {
+    parse_block_with_sources(block, &mut SourceReferences::new(artifacts))
+}
+
+pub(crate) fn parse_block_with_sources(
+    block: &DomainBlock,
+    sources: &mut SourceReferences<'_>,
+) -> Result<SourceContextFacts, ContractError> {
     if !is_source_context_facts_contract(&block.schema) {
         return Err(invalid(ContractErrorCode::UnsupportedExtension));
     }
@@ -206,7 +219,7 @@ pub fn parse_source_context_block(
     {
         return Err(invalid(ContractErrorCode::InvalidRange));
     }
-    facts.validate_sources(artifacts)?;
+    facts.validate_with_sources(sources)?;
     Ok(facts)
 }
 

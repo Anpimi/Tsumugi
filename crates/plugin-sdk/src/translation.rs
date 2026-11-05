@@ -3,8 +3,8 @@
 //! application owns current-source matching, locale consent and checked adoption.
 use crate::{
     content::{
-        count, validate_native_identity, validate_native_scope, validate_source_material,
-        validate_source_reference,
+        SourceReferences, count, validate_native_identity, validate_native_scope,
+        validate_source_material,
     },
     validation::{encoded_limit, name, opaque_id, reference, unique},
     *,
@@ -166,6 +166,7 @@ impl TranslationExchange {
                 "translation.order",
             ));
         }
+        let mut sources = SourceReferences::new(&self.artifacts);
         for entry in &self.entries {
             opaque_id(&entry.id, "translation.entries.id")?;
             if entry.text.len() > MAX_TEXT_BYTES {
@@ -174,8 +175,8 @@ impl TranslationExchange {
                     "translation.entries.text",
                 ));
             }
-            validate_source_reference(&self.artifacts, &entry.source)?;
-            validate_native_identity(&self.artifacts, &entry.native_identity)?;
+            sources.validate(&entry.source)?;
+            validate_native_identity(&mut sources, &entry.native_identity)?;
             if entry.native_identity.namespace != self.native_scope.namespace
                 || entry.native_identity.policy != self.native_scope.policy
             {
