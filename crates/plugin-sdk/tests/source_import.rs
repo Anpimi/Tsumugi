@@ -138,9 +138,10 @@ fn file_set_selections_refuse_unknown_duplicate_unsafe_and_excess_files() {
 }
 
 #[test]
-fn file_set_declarations_keep_complete_count_and_byte_budgets() {
+fn legacy_file_set_declarations_keep_reserved_count_and_byte_budgets() {
     for scenario in 0..8 {
         let mut declaration = selectable();
+        declaration.max_total_bytes = None;
         let sets = declaration.file_sets.as_mut().unwrap();
         match scenario {
             0 => sets[0].min_files = 0,
@@ -175,7 +176,7 @@ fn fixed_v3_resources_keep_their_original_shape_and_cannot_claim_v4() {
     null["fileSets"] = Value::Null;
     assert!(serde_json::from_value::<SourceImportDeclaration>(null).is_err());
     let unknown = ContractRef {
-        schema_version: 5,
+        schema_version: 6,
         ..contract
     };
     assert!(parse_source_import_declaration_for_contract(bytes, &unknown).is_err());
@@ -273,6 +274,11 @@ fn source_import_paths_are_fixed_bounded_unique_and_nonoverlapping() {
     d.materials[0].max_bytes = 0;
     assert!(d.validate().is_err());
     d.materials[0].max_bytes = MAX_EXCHANGE_BYTES as u32;
+    assert!(d.validate().is_ok());
+    d.max_total_bytes = None;
+    assert!(d.validate().is_err());
+    d = declaration();
+    d.materials[0].max_bytes = MAX_EXCHANGE_BYTES as u32 + 1;
     assert!(d.validate().is_err());
     d = declaration();
     d.materials.clear();
@@ -318,7 +324,7 @@ fn source_import_strict_parser_rejects_duplicates_unknown_fields_and_large_input
 
 #[test]
 fn source_import_requires_the_named_review_resource_and_exact_profile() {
-    assert_eq!(source_import_declaration_contract().schema_version, 4);
+    assert_eq!(source_import_declaration_contract().schema_version, 5);
     assert_eq!(source_import_declaration_contract().behavior_version, 2);
     let mut d = declaration();
     d.review_resource = "missing".into();
@@ -390,5 +396,91 @@ fn source_import_generated_schema_is_current() {
     assert_eq!(
         actual,
         serde_json::to_value(source_import_declaration_schema()).unwrap()
+    );
+}
+
+#[test]
+fn v5_shares_actual_capture_bytes_without_reserving_all_per_file_maxima() {
+    let mut value = selectable();
+    let sets = value.file_sets.as_mut().unwrap();
+    sets[0].max_bytes = MAX_EXCHANGE_BYTES as u32;
+    sets[1].max_bytes = MAX_EXCHANGE_BYTES as u32;
+    value.validate().unwrap();
+    let choices = [
+        selected("plugin", &["Chosen.esp"]),
+        selected("tables", &["Strings/Chosen_english.strings"]),
+    ];
+    assert_eq!(value.resolve_materials(&choices).unwrap().len(), 2);
+    value
+        .validate_capture_sizes(&choices, &[MAX_EXCHANGE_BYTES - 1, 1])
+        .unwrap();
+    assert_eq!(
+        value
+            .validate_capture_sizes(&choices, &[MAX_EXCHANGE_BYTES, 1])
+            .unwrap_err()
+            .code,
+        ContractErrorCode::LimitExceeded
+    );
+    assert_eq!(
+        value
+            .validate_capture_sizes(&choices, &[MAX_EXCHANGE_BYTES + 1, 0])
+            .unwrap_err()
+            .code,
+        ContractErrorCode::LimitExceeded
+    );
+    assert!(value.validate_capture_sizes(&choices, &[1]).is_err());
+    let mut old = value.clone();
+    old.max_total_bytes = None;
+    assert!(old.validate().is_err());
+}
+
+#[test]
+fn v5_optional_groups_still_require_one_captured_material_and_closed_byte_limits() {
+    let mut value = selectable();
+    value.file_sets.as_mut().unwrap()[0].min_files = 0;
+    value.validate().unwrap();
+    assert!(value.resolve_materials(&[]).is_err());
+    assert_eq!(
+        value
+            .resolve_materials(&[selected("tables", &["Strings/Chosen_english.strings"])])
+            .unwrap()
+            .len(),
+        1
+    );
+    for bytes in [0, MAX_EXCHANGE_BYTES as u32 + 1] {
+        let mut invalid = value.clone();
+        invalid.max_total_bytes = Some(bytes);
+        assert!(invalid.validate().is_err());
+    }
+    let mut invalid = value.clone();
+    invalid.file_sets = None;
+    assert!(invalid.validate().is_err());
+    let mut null = serde_json::to_value(&value).unwrap();
+    null["maxTotalBytes"] = Value::Null;
+    assert!(serde_json::from_value::<SourceImportDeclaration>(null).is_err());
+}
+
+#[test]
+fn v4_recipe_shape_and_reserved_budget_remain_exact_and_do_not_claim_v5() {
+    let bytes = include_bytes!("fixtures/source-import-v4.declaration.json");
+    let contract = ContractRef {
+        schema_version: 4,
+        ..source_import_declaration_contract()
+    };
+    let old = parse_source_import_declaration_for_contract(bytes, &contract).unwrap();
+    assert!(old.max_total_bytes.is_none());
+    assert!(old.file_sets.is_some());
+    assert_eq!(old.declaration_contract(), contract);
+    assert_eq!(
+        serde_json::to_value(old).unwrap(),
+        serde_json::from_slice::<Value>(bytes).unwrap()
+    );
+    assert!(parse_source_import_declaration(bytes).is_err());
+    assert!(
+        parse_source_import_declaration_for_contract(
+            include_bytes!("fixtures/source-import.declaration.json"),
+            &contract
+        )
+        .is_err()
     );
 }

@@ -20,7 +20,8 @@ fn native() -> NativeHostEnvironmentDescriptor {
 fn native_digest_matches_an_independently_calculated_vector() {
     // Python hashlib over the documented tag, u64 big-endian JSON length and
     // explicitly ordered JSON, independently of SDK serialization/hash code.
-    let original = native();
+    let mut original = native();
+    original.sdk_version = "0.1.0-alpha.2".into();
     assert_eq!(
         original.digest().unwrap(),
         "f47c1ed385f33000aae0d5a001e2faa4c3b002387e8ae6103da6c598a5640156"
@@ -75,10 +76,26 @@ fn historical_native_descriptor_does_not_become_the_current_host() {
     decoded.validate().unwrap();
     assert_eq!(serde_json::to_vec(&decoded).unwrap(), bytes);
     assert_ne!(decoded.digest().unwrap(), native().digest().unwrap());
-    for version in ["0.1.0-alpha.0", "0.1.0-alpha.3", "0.1.0"] {
+    for version in ["0.1.0-alpha.0", "0.1.0-alpha.4", "0.1.0"] {
         old.sdk_version = version.into();
         assert!(old.validate().is_err());
     }
+}
+
+#[test]
+fn alpha2_native_descriptor_remains_exact_and_distinct_from_current_host() {
+    let mut old = native();
+    old.sdk_version = "0.1.0-alpha.2".into();
+    let bytes = serde_json::to_vec(&old).unwrap();
+    let decoded: NativeHostEnvironmentDescriptor = serde_json::from_slice(&bytes).unwrap();
+    decoded.validate().unwrap();
+    assert_eq!(serde_json::to_vec(&decoded).unwrap(), bytes);
+    assert_eq!(
+        decoded.digest().unwrap(),
+        "f47c1ed385f33000aae0d5a001e2faa4c3b002387e8ae6103da6c598a5640156"
+    );
+    assert_ne!(decoded.digest().unwrap(), native().digest().unwrap());
+    native().validate().unwrap();
 }
 
 #[test]

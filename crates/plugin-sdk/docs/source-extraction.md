@@ -40,13 +40,14 @@ Unit IDs and `sourceRevisionId` values in an extraction output are operation-loc
 
 Before running extraction, the policy owner captures a `SourceRevisionPolicy` specifying which `DomainBlock` schema/behavior IDs contribute their opaque UTF-8 payload bytes to semantic source revision hashing alongside decoded unit text and protected fragments.
 
-## Package-Owned Source Import Declarations (`tsumugi.source-import-declaration/4/2`)
+## Package-Owned Source Import Declarations (`tsumugi.source-import-declaration/5/2`)
 
-A plugin package can bundle a non-executable JSON resource with schema `tsumugi.source-import-declaration/4/2` (`SourceImportDeclaration`, up to 32 KiB) to declare a self-contained source import pipeline:
+A plugin package can bundle a non-executable JSON resource with schema `tsumugi.source-import-declaration/5/2` (`SourceImportDeclaration`, up to 32 KiB) to declare a self-contained source import pipeline:
 
 - `displayName` and exact domain `profile`.
 - `materials`: an ordered list of required fixed relative files, each with a literal `logicalPath` up to 16 segments, `role`, explicit `encoding` (`utf8` or `binary`), and `maxBytes`.
-- `fileSets`: an explicit array, empty for a fixed-only recipe. Each set has an exact `id`, readable `displayName`, `role`, explicit encoding, 1 to 16 distinct lowercase alphanumeric `extensions` (without dots or globs), `minFiles`, `maxFiles`, and per-file `maxBytes`. A zero minimum makes the set optional. Fixed files plus the sets' maximum counts must fit 32 files; their combined maximum byte budgets must fit 2 MiB. At least one file is required across the complete recipe. No discovery script or filesystem permission is included.
+- `fileSets`: an explicit array, empty for a fixed-only recipe. Each set has an exact `id`, readable `displayName`, `role`, explicit encoding, 1 to 16 distinct lowercase alphanumeric `extensions` (without dots or globs), `minFiles`, `maxFiles`, and per-file `maxBytes`. A zero minimum makes the set optional. Fixed files plus the sets' maximum counts must fit 32 files. All groups may be optional, but a resolved selection must contain at least one file. No discovery script or filesystem permission is included.
+- `maxTotalBytes`: an explicit, non-null positive integer up to 2 MiB. It caps the sum of actual captured raw bytes across fixed and selected files, independently of their per-file ceilings. Every per-file ceiling must fit this total, but the sum of all per-file maxima need not fit. This is a capture budget; encoded exchange, execution and persistence limits are still enforced separately.
 - `extractor` and `checker`: distinct capability contribution IDs in the same package.
 - `reviewResource`: the contribution ID of a [`ReviewDeclaration`](review.md) resource (`tsumugi.review-declaration/1/1`) in the same package.
 - `revisionPolicy` (`SourceRevisionPolicy`) and a non-empty list of mandatory `semanticRules`.
@@ -57,11 +58,11 @@ A plugin package can bundle a non-executable JSON resource with schema `tsumugi.
 - The `checker` capability must be `read-only` and distinct from `extractor`.
 - The referenced `reviewResource` is bound into a `ReviewBinding` fixed to the same package and profile (earlier `1/1` source-import resources without `reviewResource` are rejected).
 
-`parse_source_import_declaration_for_contract` also reads the exact supported `2/2` and `3/2` resources. Version 2 omits material encodings and keeps its original UTF-8 interpretation and text-only capability family. Version 3 has explicit encodings and fixed materials. Both omit `fileSets` and retain their original serialization. Current `4/2` authoring requires an explicit, non-null `fileSets` array; an older body cannot claim that profile. Unknown versions, mixed legacy/current encodings and unknown fields are rejected. Saved desktop declarations keep their existing shape.
+`parse_source_import_declaration_for_contract` also reads the exact supported `2/2`, `3/2` and `4/2` resources. Version 2 omits material encodings and keeps its original UTF-8 interpretation and text-only capability family. Version 3 has explicit encodings and fixed materials. Both omit `fileSets`; version 4 requires that array. All three omit `maxTotalBytes`, retain their original serialization, and reserve the sum of per-file maximum budgets (including each set's maximum count) within 2 MiB. Their recipes require at least one fixed or mandatory file. Current `5/2` authoring requires both explicit, non-null `fileSets` and `maxTotalBytes`; an older body cannot claim that profile. Unknown versions, mixed legacy/current encodings and unknown fields are rejected.
 
 `SourceImportDeclaration::resolve_materials` resolves `SourceFileSetSelection { id, logicalPaths }` without reading files. It orders fixed materials first, then sets in declaration order and paths in the supplied order. It rejects missing required choices, unknown or repeated set IDs, excess files, unsafe paths, unsupported extensions, and case aliases or file/directory overlaps across the complete fixed/selected set. Extension matching ignores ASCII case while preserving the original path spelling. Optional sets may be omitted.
 
-The filesystem owner separately authorizes the root and reads only the resolved paths. Core's `SourceBundle::capture_selected` takes byte buffers in that resolved order and uses the existing immutable capture, byte digest and input limits. `capture_declared` resolves an empty selection, so it cannot silently ignore a required set. These data APIs do not by themselves provide a native file picker, installed format worker, or execution permission.
+The filesystem owner separately authorizes the root and reads only the resolved paths, bounding each read by the remaining shared budget as well as its per-file ceiling. `validate_capture_sizes` checks actual sizes in the resolved order; Core's `SourceBundle::capture_selected` delegates to it before creating the existing immutable capture. `capture_declared` resolves an empty selection, so it cannot silently ignore a required set or accept an empty all-optional selection. These data APIs do not by themselves provide a native file picker, installed format worker, or execution permission.
 
 The Host reads `SourceImportDeclaration` directly from the immutable `PackageImage` without executing plugin code.
 

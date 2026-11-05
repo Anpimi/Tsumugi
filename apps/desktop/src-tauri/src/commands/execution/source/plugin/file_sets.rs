@@ -74,6 +74,9 @@ where
             logical_paths,
         });
     }
+    if binding.declaration.materials.is_empty() && choices.iter().all(|choice| choice.logical_paths.is_empty()) {
+        return Ok(None);
+    }
     binding
         .declaration
         .resolve_materials(&choices)

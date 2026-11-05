@@ -142,14 +142,16 @@ async function checkedSource(user: ReturnType<typeof userEvent.setup>) {
 }
 
 it.each(["en-US", "zh-CN"] as const)("checks declared native files without execution and hands the exact source to the new project in %s", async language => {
-  await i18n.changeLanguage(language); nativeSourceReads(); const { controller, ports, onCreated } = fixture(), user = await fill();
+  const preview = structuredClone(sourcePreview);
+  preview.source.declaration.fileSets = [];
+  preview.source.declaration.maxTotalBytes = 131072;
+  await i18n.changeLanguage(language); nativeSourceReads({ preview }); const { controller, ports, onCreated } = fixture(), user = await fill();
   await checkedSource(user);
-  expect(screen.getByText(language === "en-US"
-    ? "This check reads only the files declared by the selected source format. It does not run a plugin, contact a model, or import content."
-    : "这里只读取所选源格式声明的文件，不运行插件、不联系模型，也不导入内容。")).toBeVisible();
+  expect(screen.getByText(i18n.t("startup.sourceFixedOnly"))).toBeVisible();
   expect(screen.getByRole("combobox", { name: t("source") })).toHaveValue("en-US");
   expect(screen.getByText(language === "en-US" ? "Present: materials/raw.txt" : "已找到：materials/raw.txt")).toBeVisible();
   expect(screen.getByText(language === "en-US" ? "Up to 131,072 bytes" : "最多 131,072 字节")).toBeVisible();
+  expect(screen.getByText(i18n.t("startup.sourceTotalMaterialLimit", { bytes: 131072 }))).toBeVisible();
   expect(invoke).toHaveBeenCalledWith("read_startup_source_preflight", { request: { selectionId: directory.selectionId, source: pluginSourceRequest } });
   expect(ports.create).not.toHaveBeenCalled(); await user.click(screen.getByRole("button", { name: t("create") }));
   await waitFor(() => expect(onCreated).toHaveBeenCalledExactlyOnceWith({ selectionId: directory.selectionId, source: pluginSourceRequest,

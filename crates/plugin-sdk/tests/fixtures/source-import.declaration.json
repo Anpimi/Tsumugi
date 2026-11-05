@@ -43,5 +43,6 @@
     }
   ],
   "reviewResource": "review-profile",
-  "fileSets": []
+  "fileSets": [],
+  "maxTotalBytes": 2097152
 }

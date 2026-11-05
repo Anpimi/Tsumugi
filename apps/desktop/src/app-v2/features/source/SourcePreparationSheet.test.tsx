@@ -349,13 +349,13 @@ it.each(["en-US", "zh-CN"] as const)("opens saved A through real %s presentation
 });
 
 
-it("explains file-set choices and shows the returned names before capture or execution", async () => {
-  const view = { ...pluginSourceView, declaration: { ...pluginSourceView.declaration, materials: [], fileSets: [
-    { id: "records", displayName: "Record files", role: "source", encoding: "binary", extensions: ["esp", "esl"], minFiles: 1, maxFiles: 1, maxBytes: 1024 },
+it.each([false, true])("explains file-set choices and shows the returned names before capture or execution (shared budget: %s)", async shared => {
+  const view = { ...pluginSourceView, declaration: { ...pluginSourceView.declaration, materials: [], ...(shared ? { maxTotalBytes: 1024 } : {}), fileSets: [
+    { id: "records", displayName: "Record files", role: "source", encoding: "binary", extensions: ["esp", "esl"], minFiles: shared ? 0 : 1, maxFiles: 1, maxBytes: 1024 },
     { id: "tables", displayName: "Companion tables", role: "companion", encoding: "binary", extensions: ["strings"], minFiles: 0, maxFiles: 1, maxBytes: 1024 },
   ] } };
   const pkg = structuredClone(pluginSourcePackage);
-  for (const entry of pkg.manifest.contributions) if (entry.contribution.kind === "resource" && entry.contribution.schema.id === "tsumugi.source-import-declaration") entry.contribution.schema.schemaVersion = 4;
+  for (const entry of pkg.manifest.contributions) if (entry.contribution.kind === "resource" && entry.contribution.schema.id === "tsumugi.source-import-declaration") entry.contribution.schema.schemaVersion = shared ? 5 : 4;
   invoke.mockImplementation(async command => {
     if (command === "read_plugin_inventory") return pluginSourceInventory;
     if (command === "read_plugin_package") return pkg;
@@ -370,7 +370,11 @@ it("explains file-set choices and shows the returned names before capture or exe
   await user.selectOptions(importer, `${pluginSourceRequest.package.packageDigest}:${pluginSourceRequest.resourceId}`);
   await user.selectOptions(screen.getByRole("combobox", { name: i18n.t("sourcePlugin.runtime") }), pluginSourceRequest.environmentDigest);
   expect(await screen.findByText(i18n.t("sourceMaintenance.fileSetHelp"))).toBeVisible();
-  expect(screen.getByText(i18n.t("sourceMaintenance.fileSet", { name: "Record files", min: 1, max: 1, extensions: "esp, esl", bytes: 1024 }))).toBeVisible();
+  expect(screen.getByText(i18n.t(shared ? "sourceMaintenance.optionalFileSet" : "sourceMaintenance.fileSet", { name: "Record files", min: shared ? 0 : 1, max: 1, extensions: "esp, esl", bytes: 1024 }))).toBeVisible();
+  if (shared) {
+    expect(screen.getByText(i18n.t("sourceMaintenance.totalMaterialLimit", { bytes: 1024 }))).toBeVisible();
+    expect(screen.getByText(i18n.t("sourceMaintenance.fileSetMinimum"))).toBeVisible();
+  }
   const folder = screen.getByRole("button", { name: i18n.t("sourceMaintenance.chooseFolder") });
   await waitFor(() => expect(folder).toBeEnabled()); await user.click(folder);
   expect(await screen.findByRole("list", { name: i18n.t("sourceMaintenance.selectedFiles") })).toHaveTextContent("Chosen.ESP");

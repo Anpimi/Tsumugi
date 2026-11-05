@@ -99,8 +99,32 @@ fn fixed_binary_capable_v3_resource_keeps_its_profile_and_recipe() {
 }
 
 #[test]
+fn v4_file_sets_keep_the_original_recipe_without_a_shared_budget() {
+    let captured = image(|manifest, files| {
+        for entry in &mut manifest.contributions {
+            if let sdk::ContributionKind::Resource { schema, .. } = &mut entry.contribution {
+                if schema.id == "tsumugi.source-import-declaration" {
+                    schema.schema_version = 4;
+                }
+            }
+        }
+        files.get_mut("source-profile.json").unwrap().bytes =
+            include_bytes!("../../plugin-sdk/tests/fixtures/source-import-v4.declaration.json")
+                .to_vec();
+    });
+    let binding = captured.source_import("source-profile").unwrap();
+    assert_eq!(binding.declaration.declaration_contract().schema_version, 4);
+    assert!(binding.declaration.file_sets.is_some());
+    assert_eq!(binding.declaration.max_total_bytes, None);
+    assert_eq!(
+        binding.declaration.resolve_materials(&[]).unwrap(),
+        binding.declaration.materials
+    );
+}
+
+#[test]
 fn historical_source_recipe_requires_its_exact_immutable_resource_version() {
-    for schema_version in [2, 3, 4] {
+    for schema_version in [2, 3, 4, 5] {
         let captured = image(|manifest, files| {
             for entry in &mut manifest.contributions {
                 match &mut entry.contribution {
@@ -129,6 +153,7 @@ fn historical_source_recipe_requires_its_exact_immutable_resource_version() {
             let file = files.get_mut("source-profile.json").unwrap();
             let mut value: serde_json::Value = serde_json::from_slice(&file.bytes).unwrap();
             value.as_object_mut().unwrap().remove("fileSets");
+            value.as_object_mut().unwrap().remove("maxTotalBytes");
             for material in value["materials"].as_array_mut().unwrap() {
                 material.as_object_mut().unwrap().remove("encoding");
             }

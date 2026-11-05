@@ -2685,6 +2685,11 @@ export interface SourceImportDeclaration {
   extractor: string;
   fileSets?: SourceFileSetDeclaration[];
   materials: SourceMaterialDeclaration[];
+  /**
+   * v5 caps the sum of actual captured bytes, independently of the per-file
+   * ceilings. Absence retains the exact v2/v3/v4 reservation semantics.
+   */
+  maxTotalBytes?: number;
   profile: ContractRef;
   /**
    * Exact immutable Resource whose domain rules are adopted with this source.

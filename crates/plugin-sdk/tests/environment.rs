@@ -46,7 +46,8 @@ fn artifact() -> BTreeMap<String, RuntimeArtifactFile> {
 
 #[test]
 fn descriptor_digest_matches_the_independent_profile_vector() {
-    let original = descriptor();
+    let mut original = descriptor();
+    original.sdk_version = "0.1.0-alpha.2".into();
     // Independently calculated from the documented domain tag, length and JSON
     // field order, rather than from this implementation's returned bytes.
     assert_eq!(
@@ -77,7 +78,8 @@ fn descriptor_digest_matches_the_independent_profile_vector() {
 
 #[test]
 fn node_execution_environment_keeps_its_exact_profile_bytes_and_digest() {
-    let node = descriptor();
+    let mut node = descriptor();
+    node.sdk_version = "0.1.0-alpha.2".into();
     let wrapped = ExecutionEnvironmentDescriptor::from(node.clone());
     assert_eq!(
         serde_json::to_vec(&wrapped).unwrap(),
@@ -99,6 +101,7 @@ fn node_execution_environment_keeps_its_exact_profile_bytes_and_digest() {
 #[test]
 fn windows_descriptor_has_an_independent_vector_without_native_execution_support() {
     let mut windows = descriptor();
+    windows.sdk_version = "0.1.0-alpha.2".into();
     windows.platform.operating_system = RuntimeOperatingSystem::Windows;
     windows.platform.architecture = RuntimeArchitecture::X86_64;
     windows.tool.entrypoint = "node.exe".into();
@@ -181,10 +184,26 @@ fn supported_pre_binary_descriptor_keeps_its_original_identity() {
         "fb82574603deea27d971fc878cf63fd8563e2c05d98b7ffc7ba29fe362759396"
     );
     assert_ne!(read.digest().unwrap(), descriptor().digest().unwrap());
-    for version in ["0.1.0-alpha.0", "0.1.0-alpha.3", "0.1.0"] {
+    for version in ["0.1.0-alpha.0", "0.1.0-alpha.4", "0.1.0"] {
         old.sdk_version = version.into();
         assert!(old.validate().is_err());
     }
+}
+
+#[test]
+fn alpha2_node_descriptor_remains_exact_and_distinct_from_current() {
+    let mut old = descriptor();
+    old.sdk_version = "0.1.0-alpha.2".into();
+    let bytes = serde_json::to_vec(&old).unwrap();
+    let decoded: RuntimeEnvironmentDescriptor = serde_json::from_slice(&bytes).unwrap();
+    decoded.validate().unwrap();
+    assert_eq!(serde_json::to_vec(&decoded).unwrap(), bytes);
+    assert_eq!(
+        decoded.digest().unwrap(),
+        "bd8d7caa03ba7c6470328af6045bec20a3d31310ad0b50d0820212a4864797b1"
+    );
+    assert_ne!(decoded.digest().unwrap(), descriptor().digest().unwrap());
+    descriptor().validate().unwrap();
 }
 
 #[test]

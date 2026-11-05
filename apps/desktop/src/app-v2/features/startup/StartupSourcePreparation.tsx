@@ -60,6 +60,7 @@ export default function StartupSourcePreparation({ plan, inventory, loading, inv
       {plan.preflight ? <>
         <Banner tone={ready ? "success" : "warning"}>{t(ready ? "sourceReady" : plan.preflight.complete ? "sourceNeedsCheck" : "sourceMissing")}</Banner>
         <p className={styles.destination}>{plan.preflight.source.declaration.displayName}</p>
+        {plan.preflight.source.declaration.maxTotalBytes !== undefined ? <p className={styles.destination}>{t("sourceTotalMaterialLimit", { bytes: plan.preflight.source.declaration.maxTotalBytes })}</p> : null}
         <ul className={styles.materials}>{plan.preflight.materials.map(file => <li key={file.logicalPath}>
           <span>{t(file.byteLength === null ? "sourceMaterialMissing" : "sourceMaterialPresent", { path: file.logicalPath })}</span>
           <span className={styles.materialLimit}>{t("sourceMaterialLimit", { bytes: file.maxBytes.toLocaleString(i18n.language) })}</span>

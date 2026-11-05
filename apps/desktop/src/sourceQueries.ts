@@ -32,7 +32,7 @@ export const sourceReads = {
     const value = await pluginCommands.inventory();
     const packages = await readEnabledPluginPackages(value);
     return { settingsRevision: value.settingsRevision, choices: packages.flatMap(item => item.manifest.contributions.flatMap(contribution => contribution.contribution.kind === "resource"
-      && contribution.contribution.schema.id === "tsumugi.source-import-declaration" && [2, 3, 4].includes(contribution.contribution.schema.schemaVersion) && contribution.contribution.schema.behaviorVersion === 2
+      && contribution.contribution.schema.id === "tsumugi.source-import-declaration" && [2, 3, 4, 5].includes(contribution.contribution.schema.schemaVersion) && contribution.contribution.schema.behaviorVersion === 2
       ? [{ key: `${item.packageDigest}:${contribution.id}`, label: `${item.manifest.plugin.id} ${item.manifest.plugin.version} · ${contribution.id}`,
         package: { plugin: item.manifest.plugin, packageDigest: item.packageDigest }, resourceId: contribution.id, runtimeKinds: item.manifest.components.map(component => component.runtime) }] : [])),
       environments: approvedPluginEnvironments(value) };

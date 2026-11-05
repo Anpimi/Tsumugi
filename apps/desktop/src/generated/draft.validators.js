@@ -97432,7 +97432,7 @@ const schema1622 = {"additionalProperties":false,"properties":{"attemptId":{"$re
 const schema1624 = {"additionalProperties":false,"properties":{"byteLength":{"format":"uint32","maximum":4294967295,"minimum":0,"type":"integer"},"logicalPath":{"type":"string"},"role":{"type":"string"},"sha256":{"type":"string"}},"required":["logicalPath","role","byteLength","sha256"],"type":"object"};
 const schema1625 = {"additionalProperties":false,"properties":{"checker":{"$ref":"#/definitions/CapabilityBinding"},"declaration":{"$ref":"#/definitions/SourceImportDeclaration"},"environment":{"$ref":"#/definitions/ExecutionEnvironmentDescriptor"},"environmentDigest":{"type":"string"},"extractor":{"$ref":"#/definitions/CapabilityBinding"},"packageOrigin":{"$ref":"#/definitions/PluginOriginView"},"resourceId":{"type":"string"},"review":{"$ref":"#/definitions/ReviewBinding"},"runtimeOrigin":{"$ref":"#/definitions/PluginOriginView"},"settingsRevision":{"$ref":"#/definitions/UnsignedDecimal"}},"required":["settingsRevision","resourceId","declaration","extractor","checker","review","packageOrigin","environment","environmentDigest","runtimeOrigin"],"type":"object"};
 const schema1636 = {"additionalProperties":false,"properties":{"publisherId":{"type":"string"},"sourceId":{"type":"string"}},"required":["sourceId","publisherId"],"type":"object"};
-const schema1626 = {"additionalProperties":false,"description":"Fixed materials and explicitly chosen file sets share one captured input.","properties":{"checker":{"type":"string"},"displayName":{"type":"string"},"extractor":{"type":"string"},"fileSets":{"items":{"$ref":"#/definitions/SourceFileSetDeclaration"},"type":"array"},"materials":{"items":{"$ref":"#/definitions/SourceMaterialDeclaration"},"type":"array"},"profile":{"$ref":"#/definitions/ContractRef"},"reviewResource":{"description":"Exact immutable Resource whose domain rules are adopted with this source.","type":"string"},"revisionPolicy":{"$ref":"#/definitions/SourceRevisionPolicy"},"semanticRules":{"items":{"$ref":"#/definitions/ContractRef"},"type":"array"}},"required":["displayName","profile","materials","extractor","checker","reviewResource","revisionPolicy","semanticRules"],"type":"object"};
+const schema1626 = {"additionalProperties":false,"description":"Fixed materials and explicitly chosen file sets share one captured input.","properties":{"checker":{"type":"string"},"displayName":{"type":"string"},"extractor":{"type":"string"},"fileSets":{"items":{"$ref":"#/definitions/SourceFileSetDeclaration"},"type":"array"},"materials":{"items":{"$ref":"#/definitions/SourceMaterialDeclaration"},"type":"array"},"maxTotalBytes":{"description":"v5 caps the sum of actual captured bytes, independently of the per-file\nceilings. Absence retains the exact v2/v3/v4 reservation semantics.","maximum":2097152,"minimum":1,"type":"integer"},"profile":{"$ref":"#/definitions/ContractRef"},"reviewResource":{"description":"Exact immutable Resource whose domain rules are adopted with this source.","type":"string"},"revisionPolicy":{"$ref":"#/definitions/SourceRevisionPolicy"},"semanticRules":{"items":{"$ref":"#/definitions/ContractRef"},"type":"array"}},"required":["displayName","profile","materials","extractor","checker","reviewResource","revisionPolicy","semanticRules"],"type":"object"};
 const schema1627 = {"additionalProperties":false,"description":"Explicit user choices within one authorized root. No glob, directory scan,\nabsolute path, or permission is part of this declaration or its resolution.","properties":{"displayName":{"type":"string"},"encoding":{"$ref":"#/definitions/SourceMaterialEncoding"},"extensions":{"items":{"type":"string"},"type":"array"},"id":{"type":"string"},"maxBytes":{"format":"uint32","maximum":4294967295,"minimum":0,"type":"integer"},"maxFiles":{"format":"uint32","maximum":4294967295,"minimum":0,"type":"integer"},"minFiles":{"format":"uint32","maximum":4294967295,"minimum":0,"type":"integer"},"role":{"type":"string"}},"required":["id","displayName","role","encoding","extensions","minFiles","maxFiles","maxBytes"],"type":"object"};
 const schema1628 = {"enum":["utf8","binary"],"type":"string"};
 
@@ -98115,59 +98115,74 @@ else {
 var valid0 = true;
 }
 if(valid0){
-if(data.profile !== undefined){
-let data7 = data.profile;
+if(data.maxTotalBytes !== undefined){
+let data7 = data.maxTotalBytes;
 const _errs14 = errors;
-const _errs15 = errors;
-if(errors === _errs15){
-if(data7 && typeof data7 == "object" && !Array.isArray(data7)){
+if(!(((typeof data7 == "number") && (!(data7 % 1) && !isNaN(data7))) && (isFinite(data7)))){
+validate1163.errors = [{instancePath:instancePath+"/maxTotalBytes",schemaPath:"#/properties/maxTotalBytes/type",keyword:"type",params:{type: "integer"},message:"must be integer"}];
+return false;
+}
+if(errors === _errs14){
+if((typeof data7 == "number") && (isFinite(data7))){
+if(data7 > 2097152 || isNaN(data7)){
+validate1163.errors = [{instancePath:instancePath+"/maxTotalBytes",schemaPath:"#/properties/maxTotalBytes/maximum",keyword:"maximum",params:{comparison: "<=", limit: 2097152},message:"must be <= 2097152"}];
+return false;
+}
+else {
+if(data7 < 1 || isNaN(data7)){
+validate1163.errors = [{instancePath:instancePath+"/maxTotalBytes",schemaPath:"#/properties/maxTotalBytes/minimum",keyword:"minimum",params:{comparison: ">=", limit: 1},message:"must be >= 1"}];
+return false;
+}
+}
+}
+}
+var valid0 = _errs14 === errors;
+}
+else {
+var valid0 = true;
+}
+if(valid0){
+if(data.profile !== undefined){
+let data8 = data.profile;
+const _errs16 = errors;
+const _errs17 = errors;
+if(errors === _errs17){
+if(data8 && typeof data8 == "object" && !Array.isArray(data8)){
 let missing1;
-if((((data7.id === undefined) && (missing1 = "id")) || ((data7.schemaVersion === undefined) && (missing1 = "schemaVersion"))) || ((data7.behaviorVersion === undefined) && (missing1 = "behaviorVersion"))){
+if((((data8.id === undefined) && (missing1 = "id")) || ((data8.schemaVersion === undefined) && (missing1 = "schemaVersion"))) || ((data8.behaviorVersion === undefined) && (missing1 = "behaviorVersion"))){
 validate1163.errors = [{instancePath:instancePath+"/profile",schemaPath:"#/definitions/ContractRef/required",keyword:"required",params:{missingProperty: missing1},message:"must have required property '"+missing1+"'"}];
 return false;
 }
 else {
-const _errs17 = errors;
-for(const key1 in data7){
+const _errs19 = errors;
+for(const key1 in data8){
 if(!(((key1 === "behaviorVersion") || (key1 === "id")) || (key1 === "schemaVersion"))){
 validate1163.errors = [{instancePath:instancePath+"/profile",schemaPath:"#/definitions/ContractRef/additionalProperties",keyword:"additionalProperties",params:{additionalProperty: key1},message:"must NOT have additional properties"}];
 return false;
 break;
 }
 }
-if(_errs17 === errors){
-if(data7.behaviorVersion !== undefined){
-let data8 = data7.behaviorVersion;
-const _errs18 = errors;
-if(!(((typeof data8 == "number") && (!(data8 % 1) && !isNaN(data8))) && (isFinite(data8)))){
+if(_errs19 === errors){
+if(data8.behaviorVersion !== undefined){
+let data9 = data8.behaviorVersion;
+const _errs20 = errors;
+if(!(((typeof data9 == "number") && (!(data9 % 1) && !isNaN(data9))) && (isFinite(data9)))){
 validate1163.errors = [{instancePath:instancePath+"/profile/behaviorVersion",schemaPath:"#/definitions/ContractRef/properties/behaviorVersion/type",keyword:"type",params:{type: "integer"},message:"must be integer"}];
 return false;
 }
-if(errors === _errs18){
-if((typeof data8 == "number") && (isFinite(data8))){
-if(data8 > 4294967295 || isNaN(data8)){
+if(errors === _errs20){
+if((typeof data9 == "number") && (isFinite(data9))){
+if(data9 > 4294967295 || isNaN(data9)){
 validate1163.errors = [{instancePath:instancePath+"/profile/behaviorVersion",schemaPath:"#/definitions/ContractRef/properties/behaviorVersion/maximum",keyword:"maximum",params:{comparison: "<=", limit: 4294967295},message:"must be <= 4294967295"}];
 return false;
 }
 else {
-if(data8 < 1 || isNaN(data8)){
+if(data9 < 1 || isNaN(data9)){
 validate1163.errors = [{instancePath:instancePath+"/profile/behaviorVersion",schemaPath:"#/definitions/ContractRef/properties/behaviorVersion/minimum",keyword:"minimum",params:{comparison: ">=", limit: 1},message:"must be >= 1"}];
 return false;
 }
 }
 }
-}
-var valid4 = _errs18 === errors;
-}
-else {
-var valid4 = true;
-}
-if(valid4){
-if(data7.id !== undefined){
-const _errs20 = errors;
-if(typeof data7.id !== "string"){
-validate1163.errors = [{instancePath:instancePath+"/profile/id",schemaPath:"#/definitions/ContractRef/properties/id/type",keyword:"type",params:{type: "string"},message:"must be string"}];
-return false;
 }
 var valid4 = _errs20 === errors;
 }
@@ -98175,28 +98190,40 @@ else {
 var valid4 = true;
 }
 if(valid4){
-if(data7.schemaVersion !== undefined){
-let data10 = data7.schemaVersion;
+if(data8.id !== undefined){
 const _errs22 = errors;
-if(!(((typeof data10 == "number") && (!(data10 % 1) && !isNaN(data10))) && (isFinite(data10)))){
+if(typeof data8.id !== "string"){
+validate1163.errors = [{instancePath:instancePath+"/profile/id",schemaPath:"#/definitions/ContractRef/properties/id/type",keyword:"type",params:{type: "string"},message:"must be string"}];
+return false;
+}
+var valid4 = _errs22 === errors;
+}
+else {
+var valid4 = true;
+}
+if(valid4){
+if(data8.schemaVersion !== undefined){
+let data11 = data8.schemaVersion;
+const _errs24 = errors;
+if(!(((typeof data11 == "number") && (!(data11 % 1) && !isNaN(data11))) && (isFinite(data11)))){
 validate1163.errors = [{instancePath:instancePath+"/profile/schemaVersion",schemaPath:"#/definitions/ContractRef/properties/schemaVersion/type",keyword:"type",params:{type: "integer"},message:"must be integer"}];
 return false;
 }
-if(errors === _errs22){
-if((typeof data10 == "number") && (isFinite(data10))){
-if(data10 > 4294967295 || isNaN(data10)){
+if(errors === _errs24){
+if((typeof data11 == "number") && (isFinite(data11))){
+if(data11 > 4294967295 || isNaN(data11)){
 validate1163.errors = [{instancePath:instancePath+"/profile/schemaVersion",schemaPath:"#/definitions/ContractRef/properties/schemaVersion/maximum",keyword:"maximum",params:{comparison: "<=", limit: 4294967295},message:"must be <= 4294967295"}];
 return false;
 }
 else {
-if(data10 < 1 || isNaN(data10)){
+if(data11 < 1 || isNaN(data11)){
 validate1163.errors = [{instancePath:instancePath+"/profile/schemaVersion",schemaPath:"#/definitions/ContractRef/properties/schemaVersion/minimum",keyword:"minimum",params:{comparison: ">=", limit: 1},message:"must be >= 1"}];
 return false;
 }
 }
 }
 }
-var valid4 = _errs22 === errors;
+var valid4 = _errs24 === errors;
 }
 else {
 var valid4 = true;
@@ -98211,29 +98238,17 @@ validate1163.errors = [{instancePath:instancePath+"/profile",schemaPath:"#/defin
 return false;
 }
 }
-var valid0 = _errs14 === errors;
+var valid0 = _errs16 === errors;
 }
 else {
 var valid0 = true;
 }
 if(valid0){
 if(data.reviewResource !== undefined){
-const _errs24 = errors;
+const _errs26 = errors;
 if(typeof data.reviewResource !== "string"){
 validate1163.errors = [{instancePath:instancePath+"/reviewResource",schemaPath:"#/properties/reviewResource/type",keyword:"type",params:{type: "string"},message:"must be string"}];
 return false;
-}
-var valid0 = _errs24 === errors;
-}
-else {
-var valid0 = true;
-}
-if(valid0){
-if(data.revisionPolicy !== undefined){
-const _errs26 = errors;
-if(!(validate1168(data.revisionPolicy, {instancePath:instancePath+"/revisionPolicy",parentData:data,parentDataProperty:"revisionPolicy",rootData}))){
-vErrors = vErrors === null ? validate1168.errors : vErrors.concat(validate1168.errors);
-errors = vErrors.length;
 }
 var valid0 = _errs26 === errors;
 }
@@ -98241,66 +98256,66 @@ else {
 var valid0 = true;
 }
 if(valid0){
+if(data.revisionPolicy !== undefined){
+const _errs28 = errors;
+if(!(validate1168(data.revisionPolicy, {instancePath:instancePath+"/revisionPolicy",parentData:data,parentDataProperty:"revisionPolicy",rootData}))){
+vErrors = vErrors === null ? validate1168.errors : vErrors.concat(validate1168.errors);
+errors = vErrors.length;
+}
+var valid0 = _errs28 === errors;
+}
+else {
+var valid0 = true;
+}
+if(valid0){
 if(data.semanticRules !== undefined){
-let data13 = data.semanticRules;
-const _errs27 = errors;
-if(errors === _errs27){
-if(Array.isArray(data13)){
-var valid5 = true;
-const len2 = data13.length;
-for(let i2=0; i2<len2; i2++){
-let data14 = data13[i2];
+let data14 = data.semanticRules;
 const _errs29 = errors;
-const _errs30 = errors;
-if(errors === _errs30){
-if(data14 && typeof data14 == "object" && !Array.isArray(data14)){
+if(errors === _errs29){
+if(Array.isArray(data14)){
+var valid5 = true;
+const len2 = data14.length;
+for(let i2=0; i2<len2; i2++){
+let data15 = data14[i2];
+const _errs31 = errors;
+const _errs32 = errors;
+if(errors === _errs32){
+if(data15 && typeof data15 == "object" && !Array.isArray(data15)){
 let missing2;
-if((((data14.id === undefined) && (missing2 = "id")) || ((data14.schemaVersion === undefined) && (missing2 = "schemaVersion"))) || ((data14.behaviorVersion === undefined) && (missing2 = "behaviorVersion"))){
+if((((data15.id === undefined) && (missing2 = "id")) || ((data15.schemaVersion === undefined) && (missing2 = "schemaVersion"))) || ((data15.behaviorVersion === undefined) && (missing2 = "behaviorVersion"))){
 validate1163.errors = [{instancePath:instancePath+"/semanticRules/" + i2,schemaPath:"#/definitions/ContractRef/required",keyword:"required",params:{missingProperty: missing2},message:"must have required property '"+missing2+"'"}];
 return false;
 }
 else {
-const _errs32 = errors;
-for(const key2 in data14){
+const _errs34 = errors;
+for(const key2 in data15){
 if(!(((key2 === "behaviorVersion") || (key2 === "id")) || (key2 === "schemaVersion"))){
 validate1163.errors = [{instancePath:instancePath+"/semanticRules/" + i2,schemaPath:"#/definitions/ContractRef/additionalProperties",keyword:"additionalProperties",params:{additionalProperty: key2},message:"must NOT have additional properties"}];
 return false;
 break;
 }
 }
-if(_errs32 === errors){
-if(data14.behaviorVersion !== undefined){
-let data15 = data14.behaviorVersion;
-const _errs33 = errors;
-if(!(((typeof data15 == "number") && (!(data15 % 1) && !isNaN(data15))) && (isFinite(data15)))){
+if(_errs34 === errors){
+if(data15.behaviorVersion !== undefined){
+let data16 = data15.behaviorVersion;
+const _errs35 = errors;
+if(!(((typeof data16 == "number") && (!(data16 % 1) && !isNaN(data16))) && (isFinite(data16)))){
 validate1163.errors = [{instancePath:instancePath+"/semanticRules/" + i2+"/behaviorVersion",schemaPath:"#/definitions/ContractRef/properties/behaviorVersion/type",keyword:"type",params:{type: "integer"},message:"must be integer"}];
 return false;
 }
-if(errors === _errs33){
-if((typeof data15 == "number") && (isFinite(data15))){
-if(data15 > 4294967295 || isNaN(data15)){
+if(errors === _errs35){
+if((typeof data16 == "number") && (isFinite(data16))){
+if(data16 > 4294967295 || isNaN(data16)){
 validate1163.errors = [{instancePath:instancePath+"/semanticRules/" + i2+"/behaviorVersion",schemaPath:"#/definitions/ContractRef/properties/behaviorVersion/maximum",keyword:"maximum",params:{comparison: "<=", limit: 4294967295},message:"must be <= 4294967295"}];
 return false;
 }
 else {
-if(data15 < 1 || isNaN(data15)){
+if(data16 < 1 || isNaN(data16)){
 validate1163.errors = [{instancePath:instancePath+"/semanticRules/" + i2+"/behaviorVersion",schemaPath:"#/definitions/ContractRef/properties/behaviorVersion/minimum",keyword:"minimum",params:{comparison: ">=", limit: 1},message:"must be >= 1"}];
 return false;
 }
 }
 }
-}
-var valid7 = _errs33 === errors;
-}
-else {
-var valid7 = true;
-}
-if(valid7){
-if(data14.id !== undefined){
-const _errs35 = errors;
-if(typeof data14.id !== "string"){
-validate1163.errors = [{instancePath:instancePath+"/semanticRules/" + i2+"/id",schemaPath:"#/definitions/ContractRef/properties/id/type",keyword:"type",params:{type: "string"},message:"must be string"}];
-return false;
 }
 var valid7 = _errs35 === errors;
 }
@@ -98308,28 +98323,40 @@ else {
 var valid7 = true;
 }
 if(valid7){
-if(data14.schemaVersion !== undefined){
-let data17 = data14.schemaVersion;
+if(data15.id !== undefined){
 const _errs37 = errors;
-if(!(((typeof data17 == "number") && (!(data17 % 1) && !isNaN(data17))) && (isFinite(data17)))){
+if(typeof data15.id !== "string"){
+validate1163.errors = [{instancePath:instancePath+"/semanticRules/" + i2+"/id",schemaPath:"#/definitions/ContractRef/properties/id/type",keyword:"type",params:{type: "string"},message:"must be string"}];
+return false;
+}
+var valid7 = _errs37 === errors;
+}
+else {
+var valid7 = true;
+}
+if(valid7){
+if(data15.schemaVersion !== undefined){
+let data18 = data15.schemaVersion;
+const _errs39 = errors;
+if(!(((typeof data18 == "number") && (!(data18 % 1) && !isNaN(data18))) && (isFinite(data18)))){
 validate1163.errors = [{instancePath:instancePath+"/semanticRules/" + i2+"/schemaVersion",schemaPath:"#/definitions/ContractRef/properties/schemaVersion/type",keyword:"type",params:{type: "integer"},message:"must be integer"}];
 return false;
 }
-if(errors === _errs37){
-if((typeof data17 == "number") && (isFinite(data17))){
-if(data17 > 4294967295 || isNaN(data17)){
+if(errors === _errs39){
+if((typeof data18 == "number") && (isFinite(data18))){
+if(data18 > 4294967295 || isNaN(data18)){
 validate1163.errors = [{instancePath:instancePath+"/semanticRules/" + i2+"/schemaVersion",schemaPath:"#/definitions/ContractRef/properties/schemaVersion/maximum",keyword:"maximum",params:{comparison: "<=", limit: 4294967295},message:"must be <= 4294967295"}];
 return false;
 }
 else {
-if(data17 < 1 || isNaN(data17)){
+if(data18 < 1 || isNaN(data18)){
 validate1163.errors = [{instancePath:instancePath+"/semanticRules/" + i2+"/schemaVersion",schemaPath:"#/definitions/ContractRef/properties/schemaVersion/minimum",keyword:"minimum",params:{comparison: ">=", limit: 1},message:"must be >= 1"}];
 return false;
 }
 }
 }
 }
-var valid7 = _errs37 === errors;
+var valid7 = _errs39 === errors;
 }
 else {
 var valid7 = true;
@@ -98344,7 +98371,7 @@ validate1163.errors = [{instancePath:instancePath+"/semanticRules/" + i2,schemaP
 return false;
 }
 }
-var valid5 = _errs29 === errors;
+var valid5 = _errs31 === errors;
 if(!valid5){
 break;
 }
@@ -98355,10 +98382,11 @@ validate1163.errors = [{instancePath:instancePath+"/semanticRules",schemaPath:"#
 return false;
 }
 }
-var valid0 = _errs27 === errors;
+var valid0 = _errs29 === errors;
 }
 else {
 var valid0 = true;
+}
 }
 }
 }

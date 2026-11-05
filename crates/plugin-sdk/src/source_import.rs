@@ -10,14 +10,14 @@ pub const MAX_SOURCE_IMPORT_MATERIALS: usize = 32;
 pub fn source_import_declaration_contract() -> ContractRef {
     ContractRef {
         id: "tsumugi.source-import-declaration".into(),
-        schema_version: 4,
+        schema_version: 5,
         behavior_version: 2,
     }
 }
 #[cfg(feature = "schema")]
 pub fn source_import_declaration_schema() -> schemars::Schema {
-    // Readers preserve v2/v3 spelling. Current authoring requires an explicit
-    // fileSets array (possibly empty) and encodings from the same Rust types.
+    // Readers preserve v2/v3/v4 spelling. Current authoring states both the
+    // selected sets and the actual shared byte budget explicitly.
     let mut schema = schemars::schema_for!(SourceImportDeclaration);
     schema
         .as_object_mut()
@@ -27,6 +27,14 @@ pub fn source_import_declaration_schema() -> schemars::Schema {
         .as_array_mut()
         .unwrap()
         .push(serde_json::json!("fileSets"));
+    schema
+        .as_object_mut()
+        .unwrap()
+        .get_mut("required")
+        .unwrap()
+        .as_array_mut()
+        .unwrap()
+        .push(serde_json::json!("maxTotalBytes"));
     let material = schema
         .as_object_mut()
         .expect("object schema")
@@ -101,6 +109,15 @@ fn explicit_file_sets<'de, D: serde::Deserializer<'de>>(
 ) -> Result<Option<Vec<SourceFileSetDeclaration>>, D::Error> {
     Vec::<SourceFileSetDeclaration>::deserialize(deserializer).map(Some)
 }
+fn explicit_total_bytes<'de, D: serde::Deserializer<'de>>(
+    deserializer: D,
+) -> Result<Option<u32>, D::Error> {
+    u32::deserialize(deserializer).map(Some)
+}
+#[cfg(feature = "schema")]
+fn total_bytes_schema(_: &mut schemars::SchemaGenerator) -> schemars::Schema {
+    schemars::json_schema!({"type":"integer", "minimum":1, "maximum":MAX_EXCHANGE_BYTES})
+}
 
 /// Fixed materials and explicitly chosen file sets share one captured input.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -117,6 +134,15 @@ pub struct SourceImportDeclaration {
     )]
     #[cfg_attr(feature = "schema", schemars(with = "Vec<SourceFileSetDeclaration>"))]
     pub file_sets: Option<Vec<SourceFileSetDeclaration>>,
+    /// v5 caps the sum of actual captured bytes, independently of the per-file
+    /// ceilings. Absence retains the exact v2/v3/v4 reservation semantics.
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "explicit_total_bytes"
+    )]
+    #[cfg_attr(feature = "schema", schemars(schema_with = "total_bytes_schema"))]
+    pub max_total_bytes: Option<u32>,
     pub extractor: String,
     pub checker: String,
     /// Exact immutable Resource whose domain rules are adopted with this source.
@@ -136,7 +162,11 @@ pub struct SourceImportBinding {
 fn invalid(field: &str) -> ContractError {
     ContractError::at(ContractErrorCode::InvalidDeclaration, field)
 }
-fn validate_materials(materials: &[SourceMaterialDeclaration]) -> Result<usize, ContractError> {
+fn validate_materials(
+    materials: &[SourceMaterialDeclaration],
+    limit: usize,
+    reserve_maximum: bool,
+) -> Result<usize, ContractError> {
     if materials.len() > MAX_SOURCE_IMPORT_MATERIALS {
         return Err(invalid("sourceImport.materials"));
     }
@@ -156,12 +186,12 @@ fn validate_materials(materials: &[SourceMaterialDeclaration]) -> Result<usize, 
             return Err(invalid("sourceImport.materials.logicalPath"));
         }
         paths.push(folded);
-        if material.max_bytes == 0 || material.max_bytes as usize > MAX_EXCHANGE_BYTES {
+        if material.max_bytes == 0 || material.max_bytes as usize > limit {
             return Err(invalid("sourceImport.materials.maxBytes"));
         }
         total += material.max_bytes as usize;
     }
-    if total > MAX_EXCHANGE_BYTES {
+    if reserve_maximum && total > limit {
         return Err(invalid("sourceImport.limits"));
     }
     Ok(total)
@@ -177,7 +207,9 @@ impl SourceImportDeclaration {
     }
     pub fn declaration_contract(&self) -> ContractRef {
         ContractRef {
-            schema_version: if self.file_sets.is_some() {
+            schema_version: if self.max_total_bytes.is_some() {
+                5
+            } else if self.file_sets.is_some() {
                 4
             } else if self.is_legacy_text() {
                 2
@@ -191,6 +223,9 @@ impl SourceImportDeclaration {
         self.validate()?;
         if self.file_sets.is_none() {
             return Err(invalid("sourceImport.fileSets"));
+        }
+        if self.max_total_bytes.is_none() {
+            return Err(invalid("sourceImport.maxTotalBytes"));
         }
         Ok(())
     }
@@ -223,7 +258,16 @@ impl SourceImportDeclaration {
         {
             return Err(invalid("sourceImport.materials.encoding"));
         }
-        let mut total = validate_materials(&self.materials)?;
+        if self
+            .max_total_bytes
+            .is_some_and(|bytes| bytes == 0 || bytes as usize > MAX_EXCHANGE_BYTES)
+            || (self.max_total_bytes.is_some() && self.file_sets.is_none())
+        {
+            return Err(invalid("sourceImport.maxTotalBytes"));
+        }
+        let limit = self.capture_byte_limit();
+        let reserve_maximum = self.max_total_bytes.is_none();
+        let mut total = validate_materials(&self.materials, limit, reserve_maximum)?;
         let mut maximum = self.materials.len();
         let mut minimum = self.materials.len();
         if let Some(sets) = &self.file_sets {
@@ -242,7 +286,7 @@ impl SourceImportDeclaration {
                     || set.max_files as usize > MAX_SOURCE_IMPORT_MATERIALS
                     || set.min_files > set.max_files
                     || set.max_bytes == 0
-                    || set.max_bytes as usize > MAX_EXCHANGE_BYTES
+                    || set.max_bytes as usize > limit
                     || set.extensions.is_empty()
                     || set.extensions.len() > 16
                 {
@@ -263,10 +307,13 @@ impl SourceImportDeclaration {
                 total += set.max_bytes as usize * set.max_files as usize;
             }
         }
-        if minimum == 0 || maximum > MAX_SOURCE_IMPORT_MATERIALS {
+        if maximum == 0
+            || (reserve_maximum && minimum == 0)
+            || maximum > MAX_SOURCE_IMPORT_MATERIALS
+        {
             return Err(invalid("sourceImport.materials"));
         }
-        if total > MAX_EXCHANGE_BYTES
+        if (reserve_maximum && total > limit)
             || self.semantic_rules.is_empty()
             || self.semantic_rules.len() > 32
         {
@@ -334,8 +381,50 @@ impl SourceImportDeclaration {
                 });
             }
         }
-        validate_materials(&materials)?;
+        if materials.is_empty() {
+            return Err(invalid("sourceImport.selection.count"));
+        }
+        validate_materials(
+            &materials,
+            self.capture_byte_limit(),
+            self.max_total_bytes.is_none(),
+        )?;
         Ok(materials)
+    }
+
+    pub fn capture_byte_limit(&self) -> usize {
+        self.max_total_bytes
+            .map(|bytes| bytes as usize)
+            .unwrap_or(MAX_EXCHANGE_BYTES)
+    }
+
+    /// Validate measured bytes in the exact resolved order. Resolution is pure;
+    /// it cannot reserve the per-file maxima as though they were observed sizes.
+    pub fn validate_capture_sizes(
+        &self,
+        selections: &[SourceFileSetSelection],
+        sizes: &[usize],
+    ) -> Result<(), ContractError> {
+        let resolved = self.resolve_materials(selections)?;
+        if resolved.len() != sizes.len() {
+            return Err(invalid("sourceImport.capture.count"));
+        }
+        let mut total = 0usize;
+        for (material, size) in resolved.iter().zip(sizes) {
+            total = total.checked_add(*size).ok_or_else(|| {
+                ContractError::at(
+                    ContractErrorCode::LimitExceeded,
+                    "sourceImport.capture.bytes",
+                )
+            })?;
+            if *size > material.max_bytes as usize || total > self.capture_byte_limit() {
+                return Err(ContractError::at(
+                    ContractErrorCode::LimitExceeded,
+                    "sourceImport.capture.bytes",
+                ));
+            }
+        }
+        Ok(())
     }
 
     /// Bind source and Review providers from the same captured manifest. The application
@@ -447,7 +536,7 @@ pub fn parse_source_import_declaration_for_contract(
     if contract == &source_import_declaration_contract() {
         return parse_source_import_declaration(bytes);
     }
-    if ![2, 3].iter().any(|version| {
+    if ![2, 3, 4].iter().any(|version| {
         *contract
             == ContractRef {
                 schema_version: *version,

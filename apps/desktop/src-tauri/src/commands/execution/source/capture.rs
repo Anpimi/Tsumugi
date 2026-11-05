@@ -56,6 +56,8 @@ impl Selection {
         let mut result = Vec::new();
         let mut identities = Vec::new();
         let mut held = Vec::new();
+        let mut total = 0;
+        let limit = binding.declaration.capture_byte_limit();
         for material in &binding.declaration.resolve_materials(selections).map_err(|_| error(ErrorCode::InvalidInput, "source-import-binding"))? {
             check()?;
             let path = self.root.join(&material.logical_path);
@@ -70,11 +72,13 @@ impl Selection {
             identities.push(identity);
             #[cfg(target_os = "macos")]
             let stamp = platform::stamp(&file)?;
-            let bytes = read(&mut file, material.max_bytes as usize, &check)?;
+            let max_bytes = (material.max_bytes as usize).min(limit - total);
+            let bytes = read(&mut file, max_bytes, &check)?;
+            total += bytes.len();
             item.byte_length = Some(u32::try_from(bytes.len()).map_err(|_| error(ErrorCode::LimitExceeded, "limit-exceeded"))?);
             item.sha256 = Some(format!("{:x}", Sha256::digest(&bytes)));
             result.push(item);
-            held.push(Opened { path, file, bytes, max_bytes: material.max_bytes as usize,
+            held.push(Opened { path, file, bytes, max_bytes,
                 #[cfg(target_os = "macos")]
                 stamp,
             });
@@ -325,8 +329,13 @@ impl Selection {
         }
         opened();
         let mut materials = Vec::new();
+        let mut total = 0;
+        let limit = binding.declaration.capture_byte_limit();
         for entry in &mut files {
-            materials.push(read(&mut entry.1, entry.2, &check)?);
+            entry.2 = entry.2.min(limit - total);
+            let bytes = read(&mut entry.1, entry.2, &check)?;
+            total += bytes.len();
+            materials.push(bytes);
         }
         for (entry, bytes) in files.iter_mut().zip(&materials) {
             if *bytes != read(&mut entry.1, entry.2, &check)?
@@ -1358,6 +1367,29 @@ mod source_import_tests {
         assert_eq!(bundle.files[0].bytes().unwrap().as_ref(), [0, 255, 128, 10]);
         assert_eq!(selected.inspect_selected(&binding, &choices[..1]).unwrap().len(), 1);
         assert_eq!(selected.capture_selected(&binding, &choices[..1], "en-US", &Cancellation::default()).unwrap().files.len(), 1);
+    }
+    #[test]
+    fn selected_native_files_enforce_the_shared_actual_byte_budget() {
+        let root = fixture();
+        fs::write(root.path().join("First.esp"), [1, 2, 3, 4]).unwrap();
+        fs::write(root.path().join("Second.esl"), [5, 6, 7, 8]).unwrap();
+        let selected = Selection::authorize(root.path().into()).unwrap();
+        let mut binding = selectable_binding();
+        binding.declaration.max_total_bytes = Some(8);
+        for set in binding.declaration.file_sets.as_mut().unwrap() {
+            set.max_bytes = 8;
+        }
+        let choices = vec![tsumugi_plugin_sdk::SourceFileSetSelection {
+            id: "records".into(), logical_paths: vec!["First.esp".into(), "Second.esl".into()],
+        }];
+        let inspected = selected.inspect_selected(&binding, &choices).unwrap();
+        assert_eq!(inspected.iter().map(|item| item.byte_length.unwrap()).sum::<u32>(), 8);
+        assert!(inspected.iter().all(|item| item.max_bytes == 8));
+        let captured = selected.capture_selected(&binding, &choices, "en-US", &Cancellation::default()).unwrap();
+        assert_eq!(captured.files.len(), 2);
+        fs::write(root.path().join("Second.esl"), [5, 6, 7, 8, 9]).unwrap();
+        assert_eq!(selected.inspect_selected(&binding, &choices).unwrap_err().code, ErrorCode::LimitExceeded);
+        assert_eq!(selected.capture_selected(&binding, &choices, "en-US", &Cancellation::default()).unwrap_err().code, ErrorCode::LimitExceeded);
     }
     #[test]
     fn selected_native_files_refuse_outside_links_aliases_limits_and_capture_changes() {

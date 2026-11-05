@@ -72,3 +72,21 @@ it("binds selected file groups and optional omissions to the exact startup mater
     invoke.mockResolvedValueOnce(value); await expect(startupCommands.preflight(request)).rejects.toThrow();
   }
 });
+
+it("checks shared captured bytes and requires a file even when every group is optional", async () => {
+  const source = structuredClone(preview.source);
+  source.declaration.materials = [];
+  source.declaration.maxTotalBytes = 8;
+  source.declaration.fileSets = [{ id: "records", displayName: "Record files", role: "source", encoding: "binary",
+    extensions: ["esp"], minFiles: 0, maxFiles: 2, maxBytes: 8 }];
+  const chosen: StartupPreflight = { ...preview, source,
+    fileSets: [{ id: "records", logicalPaths: ["One.esp", "Two.esp"] }],
+    materials: ["One.esp", "Two.esp"].map(logicalPath => ({ logicalPath, role: "source", maxBytes: 8, byteLength: 4, sha256: "a".repeat(64) })) };
+  invoke.mockResolvedValueOnce(chosen); expect(await startupCommands.preflight(request)).toEqual(chosen);
+  for (const value of [
+    { ...chosen, materials: chosen.materials.map((file, index) => ({ ...file, byteLength: index ? 5 : 4 })) },
+    { ...chosen, fileSets: [], materials: [] },
+  ]) {
+    invoke.mockResolvedValueOnce(value); await expect(startupCommands.preflight(request)).rejects.toThrow();
+  }
+});

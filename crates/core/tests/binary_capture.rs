@@ -115,3 +115,54 @@ fn selected_files_use_one_bundle_and_required_sets_cannot_be_ignored() {
     assert_eq!(reopened, bundle);
     assert!(SourceBundle::capture_selected(&binding, &selections, vec![vec![0]], "en-US").is_err());
 }
+
+#[test]
+fn shared_capture_budget_checks_actual_bytes_before_creating_an_immutable_bundle() {
+    let mut binding = binding(true);
+    binding.declaration.materials.clear();
+    binding.declaration.max_total_bytes = Some(8);
+    binding.declaration.file_sets = Some(vec![sdk::SourceFileSetDeclaration {
+        id: "files".into(),
+        display_name: "Captured files".into(),
+        role: "source".into(),
+        encoding: sdk::SourceMaterialEncoding::Binary,
+        extensions: vec!["esp".into()],
+        min_files: 0,
+        max_files: 2,
+        max_bytes: 8,
+    }]);
+    let selections = [sdk::SourceFileSetSelection {
+        id: "files".into(),
+        logical_paths: vec!["First.esp".into(), "Second.esp".into()],
+    }];
+    let bundle = SourceBundle::capture_selected(
+        &binding,
+        &selections,
+        vec![vec![255; 4], vec![128; 4]],
+        "en-US",
+    )
+    .unwrap();
+    assert_eq!(
+        bundle
+            .files
+            .iter()
+            .map(|file| file.byte_length)
+            .sum::<u32>(),
+        8
+    );
+    let failure = SourceBundle::capture_selected(
+        &binding,
+        &selections,
+        vec![vec![255; 5], vec![128; 4]],
+        "en-US",
+    )
+    .unwrap_err();
+    assert_eq!(
+        failure.code,
+        tsumugi_core::execution::ErrorCode::LimitExceeded
+    );
+    assert!(SourceBundle::capture_selected(&binding, &[], vec![], "en-US").is_err());
+    let reopened: SourceBundle =
+        serde_json::from_slice(&serde_json::to_vec(&bundle).unwrap()).unwrap();
+    assert_eq!(bundle, reopened);
+}

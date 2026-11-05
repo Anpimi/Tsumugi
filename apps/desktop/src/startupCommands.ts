@@ -20,7 +20,9 @@ function declaredFilesMatch(value: StartupPreflight) {
     if (paths.length < set.minFiles || paths.length > set.maxFiles) return false;
     declared.push(...paths.map(logicalPath => ({ logicalPath, role: set.role, maxBytes: set.maxBytes, encoding: set.encoding })));
   }
-  return declared.length === value.materials.length && value.materials.every((file, index) => {
+  if (declaration.maxTotalBytes !== undefined
+    && value.materials.reduce((total, file) => total + (file.byteLength ?? 0), 0) > declaration.maxTotalBytes) return false;
+  return declared.length > 0 && declared.length === value.materials.length && value.materials.every((file, index) => {
     const expected = declared[index];
     return file.logicalPath === expected.logicalPath && file.role === expected.role && file.maxBytes === expected.maxBytes
       && (file.byteLength === null ? file.sha256 === null : file.sha256 !== null && file.byteLength <= file.maxBytes);

@@ -189,14 +189,13 @@ impl SourceBundle {
         if materials.len() != resolved.len() {
             return Err(invalid("source-import-binding"));
         }
+        declaration.validate_capture_sizes(selections, &materials.iter().map(Vec::len).collect::<Vec<_>>())
+            .map_err(source_contract_error)?;
         let locale = Locale::parse(language).map_err(|_| invalid("language-required"))?;
         let files = resolved
             .iter()
             .zip(materials)
             .map(|(declared, bytes)| {
-                if bytes.len() > declared.max_bytes as usize {
-                    return Err(failure(ErrorCode::LimitExceeded, "limit-exceeded"));
-                }
                 match declared.encoding {
                     sdk::SourceMaterialEncoding::Utf8 | sdk::SourceMaterialEncoding::LegacyUtf8 => {
                         CapturedFile::new(&declared.logical_path, &declared.role, &bytes)
