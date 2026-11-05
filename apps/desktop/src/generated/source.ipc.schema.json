@@ -2637,6 +2637,16 @@
           "attemptId": {
             "$ref": "#/definitions/ExecutionId"
           },
+          "captureSummary": {
+            "anyOf": [
+              {
+                "$ref": "#/definitions/SourceCaptureSummary"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "confirmation": {
             "$ref": "#/definitions/SourceConfirmation"
           },
@@ -2695,6 +2705,7 @@
         },
         "required": [
           "snapshotId",
+          "captureSummary",
           "attemptId",
           "resultId",
           "scope",
@@ -4087,6 +4098,125 @@
         ],
         "type": "object"
       },
+      "SourceCaptureCounts": {
+        "additionalProperties": false,
+        "properties": {
+          "declaredFields": {
+            "maximum": 4294967295,
+            "minimum": 0,
+            "type": "integer"
+          },
+          "items": {
+            "maximum": 4294967295,
+            "minimum": 0,
+            "type": "integer"
+          },
+          "itemsWithFields": {
+            "maximum": 4294967295,
+            "minimum": 0,
+            "type": "integer"
+          },
+          "nonEmptyFields": {
+            "maximum": 4294967295,
+            "minimum": 0,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "items",
+          "itemsWithFields",
+          "declaredFields",
+          "nonEmptyFields"
+        ],
+        "type": "object"
+      },
+      "SourceCaptureGroup": {
+        "additionalProperties": false,
+        "properties": {
+          "counts": {
+            "$ref": "#/definitions/SourceCaptureCounts"
+          },
+          "label": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "label",
+          "counts"
+        ],
+        "type": "object"
+      },
+      "SourceCaptureMaterial": {
+        "additionalProperties": false,
+        "properties": {
+          "counts": {
+            "$ref": "#/definitions/SourceCaptureCounts"
+          },
+          "groups": {
+            "description": "When supplied, the disjoint groups must sum to the material counts.",
+            "items": {
+              "$ref": "#/definitions/SourceCaptureGroup"
+            },
+            "type": "array"
+          },
+          "properties": {
+            "items": {
+              "$ref": "#/definitions/SourceCaptureProperty"
+            },
+            "type": "array"
+          },
+          "source": {
+            "allOf": [
+              {
+                "$ref": "#/definitions/SourceReference"
+              }
+            ],
+            "description": "Captured parse-input evidence, not a filesystem path or read permission."
+          }
+        },
+        "required": [
+          "source",
+          "properties",
+          "counts",
+          "groups"
+        ],
+        "type": "object"
+      },
+      "SourceCaptureProperty": {
+        "additionalProperties": false,
+        "description": "Labels and values are literal plugin-authored data, rendered as plain text.\nAn empty values list explicitly reports no values, rather than missing data.",
+        "properties": {
+          "label": {
+            "type": "string"
+          },
+          "values": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "label",
+          "values"
+        ],
+        "type": "object"
+      },
+      "SourceCaptureSummary": {
+        "additionalProperties": false,
+        "properties": {
+          "materials": {
+            "items": {
+              "$ref": "#/definitions/SourceCaptureMaterial"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "materials"
+        ],
+        "type": "object"
+      },
       "SourceChange": {
         "additionalProperties": false,
         "properties": {
@@ -4204,11 +4334,27 @@
           "attemptId": {
             "$ref": "#/definitions/ExecutionId"
           },
+          "captureSummary": {
+            "anyOf": [
+              {
+                "$ref": "#/definitions/SourceCaptureSummary"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "confirmation": {
             "$ref": "#/definitions/SourceConfirmation"
           },
           "counts": {
             "$ref": "#/definitions/SourceChangeCounts"
+          },
+          "coverage": {
+            "items": {
+              "$ref": "#/definitions/FileCoverage"
+            },
+            "type": "array"
           },
           "filteredTotal": {
             "format": "uint32",
@@ -4256,6 +4402,8 @@
         },
         "required": [
           "scope",
+          "coverage",
+          "captureSummary",
           "attemptId",
           "resultId",
           "previousSnapshotId",

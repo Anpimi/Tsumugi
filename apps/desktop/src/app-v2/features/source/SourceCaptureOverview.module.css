@@ -1,0 +1,19 @@
+.body, .material { display: flex; flex-direction: column; min-width: 0; gap: var(--space-4); }
+.body { border-block-start: var(--border-width) solid var(--color-border-subtle); padding-block-start: var(--space-5); }
+.body h3, .body h4, .body p { margin: 0; overflow-wrap: anywhere; }
+.body h3, .body h4 { font-size: var(--text-base); }
+.help, .counts dt, .properties dt { color: var(--color-text-secondary); font-size: var(--text-sm); }
+.material + .material { border-block-start: var(--border-width) solid var(--color-border-subtle); padding-block-start: var(--space-4); }
+.counts { display: grid; grid-template-columns: repeat(auto-fit, minmax(8rem, 1fr)); gap: var(--space-4); margin: 0; }
+.counts dd { margin: var(--space-2) 0 0; font-variant-numeric: tabular-nums; }
+.disclosure > summary { cursor: pointer; font-size: var(--text-sm); }
+.disclosure > summary:focus-visible, .tableScroll:focus-visible { outline: var(--focus-width) solid var(--color-accent-solid); outline-offset: var(--focus-offset); }
+.properties { display: grid; gap: var(--space-3); margin: var(--space-4) 0 0; }
+.properties > div { display: grid; grid-template-columns: minmax(6rem, 1fr) minmax(0, 2fr); gap: var(--space-3); }
+.properties dd { margin: 0; min-width: 0; white-space: pre-wrap; overflow-wrap: anywhere; }
+.tableScroll { min-width: 0; overflow: auto; margin-block-start: var(--space-4); }
+.table { border-collapse: collapse; width: 100%; font-size: var(--text-sm); }
+.table th, .table td { text-align: start; vertical-align: top; padding: var(--space-3); border-block-end: var(--border-width) solid var(--color-border-subtle); }
+.table thead th { color: var(--color-text-secondary); font-weight: var(--weight-medium); }
+.table tbody th { min-width: 8rem; overflow-wrap: anywhere; font-weight: var(--weight-medium); }
+.table td { font-variant-numeric: tabular-nums; }

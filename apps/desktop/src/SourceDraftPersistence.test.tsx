@@ -130,12 +130,19 @@ it.each(["en-US", "zh-CN"] as const)("hydrates without observing or replaying, u
   expect(captureCommand).not.toHaveBeenCalled(); expect(start).not.toHaveBeenCalled(); expect(executionCommands.identity).not.toHaveBeenCalled();
 });
 
-it("waits for the pending capture's local acknowledgement and treats a cancelled folder picker as no change", async () => {
+it("waits for the pending capture's local acknowledgement and retires a cancelled folder selection without losing its label", async () => {
   const gate = deferred<void>(); await open();
-  vi.spyOn(sourceCommands, "selectPlugin").mockResolvedValueOnce(pluginSourceWorkflow.selection).mockResolvedValueOnce(null);
+  const freshSelection = { ...pluginSourceWorkflow.selection, selectionId: id(815) };
+  vi.spyOn(sourceCommands, "selectPlugin").mockResolvedValueOnce(pluginSourceWorkflow.selection).mockResolvedValueOnce(null).mockResolvedValueOnce(freshSelection);
   act(() => { owner.setSource(pluginSourceRequest); }); await act(async () => { await owner.select(); owner.declare(true); await owner.flush(); });
   const originalSelection = owner.current().selection;
-  await act(async () => { await owner.select(); }); expect(owner.current().selection).toBe(originalSelection); expect(owner.current().declared).toBe(true);
+  // The native Host stops the previous preparation before opening its picker.
+  // Cancellation keeps the source hint, not a retired authorization token.
+  await act(async () => { await owner.select(); });
+  expect(owner.current().selection).toBeNull(); expect(owner.current().selectionLabel).toBe(originalSelection!.folderName);
+  expect(owner.current().declared).toBe(false); expect(owner.current().preparationExpired).toBe(true);
+  await act(async () => { await owner.select(); owner.declare(true); await owner.flush(); });
+  expect(owner.current().selection).toBe(freshSelection);
   const actual = sourceDraftCommands.write;
   vi.spyOn(sourceDraftCommands, "write").mockImplementation(async request => { if (request.write.value.pending?.kind === "capture") await gate.promise; return actual(request); });
   const capture = vi.spyOn(sourceCommands, "capturePlugin").mockImplementation(async request => {

@@ -929,6 +929,7 @@ fn page(
         return Err(failure(ErrorCode::InvalidInput, "page"));
     }
     let mut page = ContentPage {
+        capture_summary: output.capture_summary()?,
         snapshot_id: snapshot,
         attempt_id: input.envelope().attempt_id,
         result_id: result.envelope().result_id,
@@ -1273,6 +1274,8 @@ impl ProjectStore {
         }
         let counts = SourceChangeCounts::from_changes(&rows);
         let mut page = SourceChangePage {
+            capture_summary: output.capture_summary()?,
+            coverage: output.coverage.clone(),
             scope: scope.clone(),
             attempt_id: attempt,
             result_id: result.envelope().result_id,

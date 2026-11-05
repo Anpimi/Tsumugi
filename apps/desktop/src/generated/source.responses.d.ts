@@ -61,11 +61,11 @@ export type NativeHostExecutableIdentity =
     };
 export type NativeHostProfile = "native-application-host-v1";
 export type UnsignedDecimal = string;
-export type LineageDecision = "continue" | "reject";
 /**
  * Source coordinates are separate from ranges in decoded unit/target text.
  */
 export type SourceEncoding = "utf8-byte" | "utf16" | "grapheme" | "raw-byte";
+export type LineageDecision = "continue" | "reject";
 export type SourceChangeKind =
   "unchanged" | "moved" | "changed" | "added" | "rename-candidate" | "ambiguous" | "removed";
 export type SourceImpactStatus = "preserved" | "reassess" | "unresolved";
@@ -613,8 +613,10 @@ export interface SourcePluginStartMetadata {
 }
 export interface SourceChangePage {
   attemptId: ExecutionId;
+  captureSummary: SourceCaptureSummary | null;
   confirmation: SourceConfirmation;
   counts: SourceChangeCounts;
+  coverage: FileCoverage[];
   filteredTotal: number;
   /**
    * Subset of the complete comparison that requires a human mapping choice.
@@ -627,6 +629,48 @@ export interface SourceChangePage {
   rows: SourceChange[];
   scope: ContentScope;
   total: number;
+}
+export interface SourceCaptureSummary {
+  materials: SourceCaptureMaterial[];
+}
+export interface SourceCaptureMaterial {
+  counts: SourceCaptureCounts;
+  /**
+   * When supplied, the disjoint groups must sum to the material counts.
+   */
+  groups: SourceCaptureGroup[];
+  properties: SourceCaptureProperty[];
+  /**
+   * Captured parse-input evidence, not a filesystem path or read permission.
+   */
+  source: SourceReference;
+}
+export interface SourceCaptureCounts {
+  declaredFields: number;
+  items: number;
+  itemsWithFields: number;
+  nonEmptyFields: number;
+}
+export interface SourceCaptureGroup {
+  counts: SourceCaptureCounts;
+  label: string;
+}
+/**
+ * Labels and values are literal plugin-authored data, rendered as plain text.
+ * An empty values list explicitly reports no values, rather than missing data.
+ */
+export interface SourceCaptureProperty {
+  label: string;
+  values: string[];
+}
+export interface SourceReference {
+  artifactId: string;
+  range: SourceRange;
+}
+export interface SourceRange {
+  encoding: SourceEncoding;
+  end: number;
+  start: number;
 }
 export interface SourceConfirmation {
   actor: string | null;
@@ -669,6 +713,12 @@ export interface SourceChangeCounts {
   removed: number;
   renameCandidate: number;
   unchanged: number;
+}
+export interface FileCoverage {
+  artifactId: ExecutionId;
+  logicalPath: string;
+  role: string;
+  sha256: string;
 }
 export interface SourceChange {
   candidates: ContentRow[];
@@ -732,15 +782,6 @@ export interface NativeIdentityDisplay {
   source: SourceReference | null;
   value: string;
 }
-export interface SourceReference {
-  artifactId: string;
-  range: SourceRange;
-}
-export interface SourceRange {
-  encoding: SourceEncoding;
-  end: number;
-  start: number;
-}
 export interface ContentScope {
   currentSnapshot: ExecutionId | null;
   revision: Revision;
@@ -775,12 +816,6 @@ export interface SourceHistoryEntry {
   revision: Revision;
   snapshotId: ExecutionId;
   total: number;
-}
-export interface FileCoverage {
-  artifactId: ExecutionId;
-  logicalPath: string;
-  role: string;
-  sha256: string;
 }
 export interface SourceImpactPage {
   nextOrdinal: number | null;
@@ -1010,6 +1045,7 @@ export interface SourceMaintenanceHookStopped {
 }
 export interface ContentPage {
   attemptId: ExecutionId;
+  captureSummary: SourceCaptureSummary | null;
   confirmation: SourceConfirmation;
   coverage: FileCoverage[];
   diagnostics: string[];

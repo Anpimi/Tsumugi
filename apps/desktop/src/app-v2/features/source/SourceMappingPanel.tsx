@@ -12,6 +12,7 @@ import { sourceKeys, sourceReads } from "../../../sourceQueries";
 import type { ProjectView } from "../../../projectCommands";
 import type { SourceOwner, SourceReviewTarget } from "./sourceTypes";
 import SourceMappingTable from "./SourceMappingTable";
+import SourceCaptureOverview from "./SourceCaptureOverview";
 import styles from "./SourceMaintenance.module.css";
 
 export default function SourceMappingPanel({ project, owner, visible, disabled, current, onApplied, target }: {
@@ -82,6 +83,7 @@ export default function SourceMappingPanel({ project, owner, visible, disabled, 
     {reading ? <LoadingState label={t("readingComparison")}/> : null}
     {failure ? <Banner tone="error">{t("comparisonFailed")}<CommandFailureDetails failure={commandFailure(failure)}/></Banner> : null}
     {changed || value.stale ? <Banner tone="warning">{t("comparisonChanged")}</Banner> : null}
+    {basis ? <SourceCaptureOverview summary={basis.captureSummary} coverage={basis.coverage}/> : null}
     {value.comparison ? <>
       <p>{t("notApplied")}</p><p>{t("mappingInitialCount", { count: value.comparison.mappingReviewRequired })}</p>
       <dl className={styles.counts}>{(["unchanged", "moved", "changed", "added", "renameCandidate", "ambiguous", "removed"] as const).map(kind => <div key={kind}><dt>{t(`counts.${kind}`)}</dt><dd>{value.comparison!.counts[kind]}</dd></div>)}</dl>

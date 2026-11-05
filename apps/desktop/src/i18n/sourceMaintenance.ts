@@ -1,4 +1,10 @@
 export const sourceMaintenanceEn = {
+  captureTitle: "Captured scope",
+  captureHelp: "Counts cover the declared fields in the complete captured selection, including empty fields. They do not mean that all resources have been handled or translations are complete.",
+  captureProperties: "Format and dependencies", captureGroups: "View record groups", captureGroup: "Record group",
+  captureGroupsFor: "Record groups in {{file}}", captureNoValues: "None",
+  captureSourceMissing: "These capture details could not be matched to their source. Read the source preview again.",
+  captureCounts: { items: "Source records", itemsWithFields: "Records with declared fields", declaredFields: "Declared fields", nonEmptyFields: "Nonempty fields" },
   title: "Import an upstream version",
   briefTitle: "Source changes",
   appliedVersion: "Applied version", draftVersion: "Changes not yet applied", draftNotApplied: "These changes have not been applied.",
@@ -120,6 +126,12 @@ export const sourceMaintenanceEn = {
 } as const;
 
 export const sourceMaintenanceZh = {
+  captureTitle: "本次捕获范围",
+  captureHelp: "计数覆盖本次完整选择中已声明的字段，也包含空字段；不代表所有资源都已处理或译文已完成。",
+  captureProperties: "格式与依赖", captureGroups: "查看记录分组", captureGroup: "记录分组",
+  captureGroupsFor: "{{file}} 的记录分组", captureNoValues: "无",
+  captureSourceMissing: "这些捕获信息无法与来源对应，请重新读取源预览。",
+  captureCounts: { items: "来源记录", itemsWithFields: "含声明字段的记录", declaredFields: "声明字段", nonEmptyFields: "非空字段" },
   title: "导入上游新版本",
   briefTitle: "源内容变更",
   appliedVersion: "已采用的版本", draftVersion: "尚未采用的修改", draftNotApplied: "这些修改还没有采用。",

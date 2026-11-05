@@ -11,6 +11,7 @@ import { translationCommands } from "../../../translationCommands";
 import { sourceCommands } from "../../../sourceCommands";
 import type { SourceSession } from "../../../SourceDraftSession";
 import SourceCorrectionPanel from "./SourceCorrectionPanel";
+import SourceCaptureOverview from "./SourceCaptureOverview";
 import type { ProjectView } from "../../../projectCommands";
 import type { SourceReviewTarget } from "./sourceTypes";
 import styles from "./SourceMaintenance.module.css";
@@ -45,6 +46,7 @@ export default function SourceSavedDetails({ project, owner, snapshotId, target,
   return <section className={styles.body} aria-label={t("savedSource")}><h2>{t("savedSource")}</h2><p>{t("savedMappingHelp")}</p>
     {content.isFetching ? <LoadingState label={t("readingHistory")}/> : null}
     {content.error ? <Banner tone="error" action={<Button onClick={() => void content.refetch()}>{t("retryRead")}</Button>}>{t("historyFailed")}</Banner> : null}
+    {page ? <SourceCaptureOverview summary={page.captureSummary} coverage={page.coverage}/> : null}
     {page ? <ul>{page.rows.map(row => <li key={row.occurrenceId}><Button disabled={!current()} aria-current={selectedOrdinal === row.occurrence.ordinal ? "true" : undefined}
       onClick={() => setSelectedOrdinal(row.occurrence.ordinal)}>{row.occurrence.nativeIdentity?.display.value || row.occurrence.key || t("entry", { number: row.occurrence.ordinal + 1 })}</Button>
       <p><TokenizedText text={row.occurrence.text}/></p></li>)}</ul> : null}

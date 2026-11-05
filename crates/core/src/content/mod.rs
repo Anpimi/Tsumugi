@@ -676,6 +676,17 @@ pub struct SourceOutput {
     pub revision_policy: sdk::SourceRevisionPolicy,
 }
 
+impl SourceOutput {
+    pub(crate) fn capture_summary(&self) -> Result<Option<sdk::SourceCaptureSummary>, ExecutionError> {
+        let schema = sdk::source_capture_summary_contract();
+        self.exchange.domain_blocks.iter()
+            .find(|block| block.schema == schema)
+            .map(|block| sdk::parse_source_capture_summary_block(block, &self.exchange.artifacts)
+                .map_err(source_contract_error))
+            .transpose()
+    }
+}
+
 impl SourceOccurrence {
     /// Canonical matching values were already interpreted by the domain. Core
     /// compares their entire namespace/policy/value tuple without case folding.
@@ -1078,6 +1089,8 @@ pub struct SourceVersionComparison {
 #[cfg_attr(feature = "wire-schema", derive(schemars::JsonSchema))]
 pub struct SourceChangePage {
     pub scope: ContentScope,
+    pub coverage: Vec<FileCoverage>,
+    pub capture_summary: Option<sdk::SourceCaptureSummary>,
     pub attempt_id: ExecutionId,
     pub result_id: ExecutionId,
     pub previous_snapshot_id: ExecutionId,
@@ -1193,6 +1206,7 @@ pub struct ContentRow {
 #[cfg_attr(feature = "wire-schema", derive(schemars::JsonSchema))]
 pub struct ContentPage {
     pub snapshot_id: Option<ExecutionId>,
+    pub capture_summary: Option<sdk::SourceCaptureSummary>,
     pub attempt_id: ExecutionId,
     pub result_id: ExecutionId,
     pub scope: ContentScope,

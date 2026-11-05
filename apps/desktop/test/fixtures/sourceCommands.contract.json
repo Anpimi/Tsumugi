@@ -120,7 +120,8 @@
           }
         }
       }
-    ]
+    ],
+    "captureSummary": null
   },
   "history": {
     "snapshots": [
@@ -267,7 +268,16 @@
       "ambiguous": 0,
       "removed": 0
     },
-    "mappingReviewRequired": 0
+    "mappingReviewRequired": 0,
+    "captureSummary": null,
+    "coverage": [
+      {
+        "artifactId": "00000000-0000-4000-8000-000000000007",
+        "logicalPath": "i18n/default.json",
+        "role": "source",
+        "sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+      }
+    ]
   },
   "estimates": [
     {

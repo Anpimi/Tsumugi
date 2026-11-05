@@ -2019,6 +2019,17 @@ fn generic_source_proposal(source: &sdk::SourceExtractionInput) -> sdk::ContentE
             },
         ],
     };
+    if config["captureSummary"] == true {
+        let summary = sdk::SourceCaptureSummary { materials: vec![sdk::SourceCaptureMaterial {
+            source: reference,
+            properties: vec![sdk::SourceCaptureProperty { label: "Capture metadata".into(), values: vec![suffix.to_string()] }],
+            counts: sdk::SourceCaptureCounts { items: 3, items_with_fields: 3, declared_fields: 3, non_empty_fields: 3 },
+            groups: vec![],
+        }] };
+        proposal.domain_blocks.push(sdk::DomainBlock { target: sdk::ContentTarget::Snapshot,
+            schema: sdk::source_capture_summary_contract(), handling: sdk::ExtensionHandling::Preserve,
+            payload_utf8: serde_json::to_string(&summary).unwrap() });
+    }
     if config["capacity"] == true {
         // Synthetic opaque extensions exercise quoted ledger results above
         // eight MiB while respecting each block and the content byte budget.
@@ -2369,6 +2380,114 @@ fn maintenance_window_keeps_occurrence_display_and_canonical_plan_identity_separ
             },
             "{field}"
         );
+    }
+}
+
+#[test]
+fn capture_summary_follows_preview_comparison_history_and_reopen_without_revising_units() {
+    let temp = tempfile::tempdir().unwrap();
+    let path = temp.path().join("project");
+    let mut store = create(&path);
+    let mut runtime = ExecutionRuntime::new(&store).unwrap();
+    for checker in [false, true] {
+        runtime
+            .register_read_only(Arc::new(GenericSourcePlugin(generic_source_binding(
+                checker,
+            ))))
+            .unwrap();
+    }
+    let mut saved = Vec::new();
+    for metadata in [1, 2] {
+        let seed = generic_source_input(&store, 1, metadata, "CaseKey", false);
+        let mut bundle = SourceBundle::from_input(&seed).unwrap();
+        let mut config: serde_json::Value =
+            serde_json::from_slice(&bundle.files[0].bytes().unwrap()).unwrap();
+        config["captureSummary"] = json!(true);
+        let original = serde_json::to_vec(&config).unwrap();
+        let id = bundle.files[0].artifact_id;
+        let artifact = sdk::CapturedArtifact::from_bytes(
+            id.to_string(),
+            "records.bin".into(),
+            "source".into(),
+            &original,
+        )
+        .unwrap();
+        bundle.files[0] = CapturedFile::from_artifact(&artifact, id).unwrap();
+        bundle.manifest_digest = bundle.calculate_digest().unwrap();
+        let input = bundle
+            .fixed_plugin_input(
+                store.metadata().unwrap().project_id(),
+                generic_source_binding(false),
+                SourceSettings::from_input(&seed).unwrap(),
+            )
+            .unwrap();
+        let result = run_generic_source(&mut runtime, &mut store, &input);
+        let preview = store
+            .source_preview(
+                input.envelope().attempt_id,
+                result.envelope().result_id,
+                0,
+                1,
+            )
+            .unwrap();
+        let summary = preview.capture_summary.clone().unwrap();
+        assert_eq!(summary.materials[0].counts.declared_fields, 3);
+        assert_eq!(
+            summary.materials[0].properties[0].values,
+            [metadata.to_string()]
+        );
+        assert_eq!(
+            summary.materials[0].source.artifact_id,
+            preview.coverage[0].artifact_id.to_string()
+        );
+        assert_eq!(preview.coverage[0].logical_path, "records.bin");
+        assert!(
+            preview.next_ordinal.is_some(),
+            "summary describes the complete capture, not this page"
+        );
+        if let Some((previous, _)) = saved.first() {
+            let compared = store
+                .source_comparison_filtered(
+                    input.envelope().attempt_id,
+                    result.envelope().result_id,
+                    Some(*previous),
+                    "no matching entry",
+                    0,
+                    1,
+                )
+                .unwrap();
+            assert!(compared.rows.is_empty());
+            assert_eq!(compared.capture_summary, Some(summary.clone()));
+            assert_eq!(compared.coverage, preview.coverage);
+        }
+        let action = prepare(&mut store, &input, &result);
+        assert!(
+            store
+                .adopt_execution(&action, &SourceAdoptionHandler)
+                .is_err()
+        );
+        check_generic_source(&mut runtime, &mut store, &input, &result);
+        store
+            .adopt_execution(&action, &SourceAdoptionHandler)
+            .unwrap();
+        let snapshot = store.content_scope().unwrap().current_snapshot.unwrap();
+        let page = store.source_content(snapshot, 0, 100).unwrap();
+        assert_eq!(page.capture_summary, Some(summary));
+        saved.push((snapshot, page));
+    }
+    for (old, current) in saved[0].1.rows.iter().zip(&saved[1].1.rows) {
+        assert_eq!(old.unit_id, current.unit_id);
+        assert_eq!(old.source_revision_id, current.source_revision_id);
+    }
+    assert_ne!(saved[0].1.capture_summary, saved[1].1.capture_summary);
+    drop(runtime);
+    store.close().unwrap();
+    let reopened = ProjectStore::open(&path).unwrap();
+    for (snapshot, page) in saved {
+        let history = reopened.source_content(snapshot, 0, 100).unwrap();
+        assert_eq!(history.capture_summary, page.capture_summary);
+        assert_eq!(history.rows, page.rows);
+        assert_eq!(history.coverage, page.coverage);
     }
 }
 
