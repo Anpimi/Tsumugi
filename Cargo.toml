@@ -23,3 +23,11 @@ authors = ["Tsumugi contributors"]
 lto = true
 codegen-units = 1
 panic = "abort"
+
+# Package/runtime capture keeps fixed deadlines while hashing complete bounded
+# trees. Optimize this dependency in local builds without skipping byte checks.
+[profile.dev.package.sha2]
+opt-level = 3
+
+[profile.test.package.sha2]
+opt-level = 3

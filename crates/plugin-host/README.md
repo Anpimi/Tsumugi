@@ -137,3 +137,16 @@ With the prebuilt SMAPI plugin package selected in `TSUMUGI_TEST_PLUGIN_PACKAGE`
 - `--test translation_validation`: verifies translation import and mixed capability scopes.
 - `--test source_maintenance -- --ignored`: verifies upstream source updates, QA checks, human approval, artifact verification, and project reopen persistence.
 - `--test release_validation`: verifies plugin QA and independent artifact check proof across all output locales before saving a release.
+
+
+For the prebuilt Skyrim SE candidate, use the same isolated workspace with a release-built Native worker and its paired self-contained codec. Generate the synthetic fixture directory using the official plugin's format probe; no plugin source is linked into the Host tests:
+
+```sh
+TSUMUGI_TEST_PLUGIN_PACKAGE=/absolute/prebuilt/skyrim-se \
+TSUMUGI_TEST_PLUGIN_DIGEST=independently-inspected-package-digest \
+TSUMUGI_TEST_SKYRIM_FIXTURES=/absolute/synthetic/format-probe-output \
+  cargo test --manifest-path crates/plugin-host/compatibility/Cargo.toml \
+  --features core-adapter --test skyrim_se --locked -- --include-ignored --test-threads=1
+```
+
+These cases install and reopen the immutable package, run all five Native operations on mixed materials and a 476-field escaped-text capture, and verify missing-table errors and rejected altered output. A separate tiny binary fixture exercises Core grants, independent source/artifact checks, human translation and approval, saved release bytes, and project reopen. It does not establish a native GUI or game-loading result. Local dev/test builds optimize SHA-256 while retaining complete package-byte checks and the existing deadlines; delivery workers use their release profile.

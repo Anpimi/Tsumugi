@@ -39,6 +39,10 @@ name = "native_catalog"
 path = "../tests/native_catalog.rs"
 
 [[test]]
+name = "skyrim_se"
+path = "../tests/skyrim_se.rs"
+
+[[test]]
 name = "source_maintenance"
 path = "tests/source_maintenance.rs"
 
@@ -57,3 +61,7 @@ path = "tests/quality_corpus.rs"
 [[test]]
 name = "release_validation"
 path = "../tests/release_validation.rs"
+
+# This isolated workspace has the same bounded package-capture deadlines.
+[profile.test.package.sha2]
+opt-level = 3
