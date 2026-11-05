@@ -685,6 +685,7 @@ fn native_catalog_normal_core_requires_source_qa_human_and_artifact_proofs_and_k
             project,
             ExecutionId::new(),
             &[PluginBuildLocaleChoice {
+                translation_units: None,
                 locale: "zh-CN".into(),
                 output_paths: vec!["locales/zh-CN.json".into()],
                 configuration: vec![],

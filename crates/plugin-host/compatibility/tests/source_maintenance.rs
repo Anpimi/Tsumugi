@@ -361,6 +361,7 @@ fn release(
             project,
             ExecutionId::new(),
             &[PluginBuildLocaleChoice {
+                translation_units: None,
                 locale: LOCALE.into(),
                 output_paths: vec!["i18n/zh.json".into()],
                 configuration: vec![],

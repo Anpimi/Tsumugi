@@ -1,3 +1,4 @@
+import { releaseScopeEn } from "./releaseScope";
 import { projectMetadataEn } from "./projectMetadata";
 import { knowledgeExchangeEn } from "./knowledgeExchange";
 import { projectBriefEn } from "./projectBrief";
@@ -40,6 +41,7 @@ mcpWorkbench: mcpWorkbenchEn,
 startup: startupEn,
 knowledge: knowledgeEn,
 sourceMaintenance: sourceMaintenanceEn,
+  releaseScope: releaseScopeEn,
 conversation: conversationEn,
 workbenchV2: workbenchEn,
 workbenchPreview: workbenchPreviewEn,
@@ -1931,7 +1933,7 @@ ai: {
       eligibilityBasis: "Review basis: {{basis}}",
       exceptions: "Recorded exceptions",
       noExceptions: "No source fallbacks or QA waivers were used.",
-      exceptionKind: { "source-fallback": "Approved source fallback", "qa-waiver": "Approved QA waiver" },
+      exceptionKind: { "source-fallback": "Approved source fallback", "source-retained": "Source retained for this staged artifact", "qa-waiver": "Approved QA waiver" },
       chooseFolder: "Choose export folder",
       preview: "Check destination",
       destination: "Export folder: {{name}}. Files will use the exact relative paths saved in this release.",

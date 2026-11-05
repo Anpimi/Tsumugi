@@ -229,7 +229,7 @@ export type ArtifactCheckWorkflowSessionView =
 export type DeliveryFileState = "pending" | "succeeded" | "failed" | "unknown";
 export type DeliveryState = "pending" | "succeeded" | "partial" | "failed" | "unknown";
 export type DeliveryPreviewState = "absent" | "same" | "conflict";
-export type ReleaseExceptionKind = "source-fallback" | "qa-waiver";
+export type ReleaseExceptionKind = "source-fallback" | "source-retained" | "qa-waiver";
 export type AdoptionState = "unapplied" | "committed" | "conflict" | "rejected";
 export type ValidationState = "absent" | "pending" | "valid" | "invalid";
 
@@ -1293,6 +1293,10 @@ export interface PluginBuildLocaleChoice {
   configuration: EncodedPayload[];
   locale: string;
   outputPaths: string[];
+  /**
+   * Some fixes a staged translation scope; every other unit retains source.
+   */
+  translationUnits?: ExecutionId[] | null;
 }
 /**
  * Exact UTF-8 schema payload. The SDK verifies its byte digest but does not

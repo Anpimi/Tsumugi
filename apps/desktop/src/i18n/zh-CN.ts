@@ -1,3 +1,4 @@
+import { releaseScopeZh } from "./releaseScope";
 import { projectMetadataZh } from "./projectMetadata";
 import { knowledgeExchangeZh } from "./knowledgeExchange";
 import { projectBriefZh } from "./projectBrief";
@@ -42,6 +43,7 @@ mcpWorkbench: mcpWorkbenchZh,
 startup: startupZh,
 knowledge: knowledgeZh,
 sourceMaintenance: sourceMaintenanceZh,
+  releaseScope: releaseScopeZh,
 conversation: conversationZh,
 workbenchV2: workbenchZh,
 workbenchPreview: workbenchPreviewZh,
@@ -1920,7 +1922,7 @@ ai: {
       eligibilityBasis: "审阅依据：{{basis}}",
       exceptions: "已记录的例外",
       noExceptions: "未使用源文回退或质量检查豁免。",
-      exceptionKind: { "source-fallback": "已批准的源文回退", "qa-waiver": "已批准的 QA 豁免" },
+      exceptionKind: { "source-fallback": "已批准的源文回退", "source-retained": "本次阶段产物保留原文", "qa-waiver": "已批准的 QA 豁免" },
       chooseFolder: "选择导出文件夹",
       preview: "检查目标位置",
       destination: "导出文件夹：{{name}}。文件将使用此发布中保存的准确相对路径。",

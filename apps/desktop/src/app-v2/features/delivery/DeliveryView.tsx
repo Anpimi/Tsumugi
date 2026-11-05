@@ -138,6 +138,7 @@ export function DeliveryView(props: DeliveryViewProps) {
         onClick={() => { if (canInteract()) { if (commands.dispatch("release.choose-release", commandScope, delivery.recordPayload(record))) { setPrimaryMode("export"); reveal("export"); } } }}>{t("chooseRecord", { date: formatDate(record.createdAt) })}</Button>
       <Button variant="secondary" disabled={!delivery.savedBuildAvailability(delivery.recordPayload(record)).enabled}
         onClick={() => { if (canInteract() && commands.dispatch("release.open-saved-build", commandScope, delivery.recordPayload(record))) reveal("history"); }}>{t("viewRecord", { date: formatDate(record.createdAt) })}</Button>
+      {record.exceptions.some(item => item.kind === "source-retained") ? <p>{global("releaseScope.retainedCount", { count: record.exceptions.filter(item => item.kind === "source-retained").length })}</p> : null}
       <p>{record.artifacts.map(file => `${file.locale} → ${file.fileName}`).join(" · ")}</p>
       <Disclosure title={<>{t("diagnostics")}</>}><p>{t("snapshot")}: <code>{record.sourceSnapshotId}</code></p><p>{t("version")}: {record.builderVersion} · {record.validatorVersion}</p><code>{record.manifestSha256}</code><p>{t("exceptions")}</p>{record.exceptions.length ? <ul>{record.exceptions.map((item, index) => <li key={index}>{item.locale} · {item.nativeKey} · {global(`release.exceptionKind.${item.kind}`)}</li>)}</ul> : <p>{t("noExceptions")}</p>}</Disclosure>
     </li>)}</ul>
@@ -155,7 +156,9 @@ export function DeliveryView(props: DeliveryViewProps) {
       {originalWorkKept ? <Banner tone="info">{t("ownerKept")} <Button variant="link" disabled={!canInteract()} onClick={() => reveal("build")}>{t("backToDelivery")}</Button></Banner> : null}
     </section> : null}
     {chosen ? <>
-      <h3>{t("chosenRecord")}</h3><ul className={styles.fileList}>{chosen.artifacts.map(file => <li key={`${file.locale}:${file.fileName}`}><code>{file.fileName}</code><span>{file.locale} · {file.entryCount}</span></li>)}</ul>
+      <h3>{t("chosenRecord")}</h3>
+      {chosen.exceptions.some(item => item.kind === "source-retained") ? <Banner tone="info">{global("releaseScope.ready", { count: chosen.exceptions.filter(item => item.kind === "source-retained").length })}</Banner> : null}
+      <ul className={styles.fileList}>{chosen.artifacts.map(file => <li key={`${file.locale}:${file.fileName}`}><code>{file.fileName}</code><span>{file.locale} · {file.entryCount}</span></li>)}</ul>
       <div className={styles.actions}>
         <Button variant="secondary" disabled={!delivery.destinationAvailability(delivery.destinationPayload()).enabled} onClick={() => { const payload = delivery.destinationPayload(); if (payload) commands.dispatch("release.choose-destination", commandScope, payload); }}>{t("chooseFolder")}</Button>
         {selection ? <Button variant="secondary" disabled={!delivery.destinationAvailability(delivery.destinationPayload(), true).enabled} onClick={() => { const payload = delivery.destinationPayload(); if (payload) commands.dispatch("release.preview-destination", commandScope, payload); }}>{t("previewFolder")}</Button> : null}
@@ -200,7 +203,7 @@ export function DeliveryView(props: DeliveryViewProps) {
 
   function render(parts: BuildWorkbenchParts) {
     const summary: Record<Step, string> = {
-      readiness: owner.stale ? t("stale") : owner.eligibility ? owner.eligibility.ready ? t("ready") : t("blocked", { count: owner.eligibility.locales.reduce((sum, locale) => sum + locale.blockerCount, 0) }) : t("notChecked"),
+      readiness: owner.stale ? t("stale") : owner.eligibility ? owner.eligibility.ready ? Object.keys(owner.eligibility.translationScopes ?? {}).length ? global("releaseScope.readyShort") : t("ready") : t("blocked", { count: owner.eligibility.locales.reduce((sum, locale) => sum + locale.blockerCount, 0) }) : t("notChecked"),
       build: owner.buildReceipt ? t("saved") : parts.status.unknown || parts.status.readFailed ? t("buildUnconfirmed") : parts.status.failed ? t("buildFailed") : parts.status.buildActive ? t("building") : parts.status.outputReceived ? t("built") : owner.prepared ? t("prepared") : t("noBuild"),
       verification: owner.buildReceipt ? t("saved") : parts.status.complete ? t("verified") : parts.status.checkActive ? t("checking") : owner.workflow?.pending || owner.checkReview ? t("verificationUnconfirmed") : parts.status.outputReceived ? t("verificationNeeded") : t("noVerification"),
       export: pendingExport || result?.state === "unknown" || result?.state === "pending" ? t("exportPending") : result?.state === "succeeded" ? t("exported") : result?.state === "failed" || result?.state === "partial" ? t("exportFailed") : hasConflict && !overwrite ? t("exportConflict") : preview ? t("destinationReady") : chosen ? t("exportReady") : t("noRelease"),

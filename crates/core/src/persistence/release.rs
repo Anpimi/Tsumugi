@@ -167,6 +167,7 @@ fn parse_id(value: String) -> Result<ExecutionId, ExecutionError> {
 #[serde(rename_all = "kebab-case")]
 pub enum ReleaseExceptionKind {
     SourceFallback,
+    SourceRetained,
     QaWaiver,
 }
 

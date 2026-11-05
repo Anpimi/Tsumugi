@@ -17,6 +17,14 @@ pub struct PluginBuildLocaleChoice {
     pub locale: String,
     pub output_paths: Vec<String>,
     pub configuration: Vec<sdk::EncodedPayload>,
+    /// Some fixes a staged translation scope; every other unit retains source.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub translation_units: Option<Vec<ExecutionId>>,
+}
+impl PluginBuildLocaleChoice {
+    fn translated(&self) -> Option<BTreeSet<ExecutionId>> {
+        self.translation_units.as_ref().map(|units| units.iter().copied().collect())
+    }
 }
 
 /// Installed immutable metadata supplied by the trusted Host. Constructing this
@@ -162,8 +170,16 @@ impl ReleasePlan {
             .locales
             .iter()
             .flat_map(|locale| {
-                locale.targets.iter().flat_map(|target| {
+                let translated = locale.choice.translated();
+                locale.targets.iter().flat_map(move |target| {
                     let mut exceptions = Vec::new();
+                    if translated.as_ref().is_some_and(|units| !units.contains(&target.review.unit_id)) {
+                        return vec![super::ReleaseException {
+                            locale: locale.choice.locale.clone(),
+                            native_key: target.review.native_key.clone(),
+                            kind: super::ReleaseExceptionKind::SourceRetained,
+                        }];
+                    }
                     if target.review.selection_id.is_none()
                         && target
                             .review
@@ -306,6 +322,7 @@ impl ReleasePlan {
             .iter()
             .find(|l| l.choice.locale == locale)
             .ok_or_else(invalid)?;
+        let translated = entry.choice.translated();
         let input = sdk::BuildInput {
             source: self.source.clone(),
             target_language: entry.choice.locale.clone(),
@@ -316,7 +333,11 @@ impl ReleasePlan {
                     Ok(sdk::BuildTarget {
                         unit_id: target.local_unit_id.clone(),
                         source_revision_id: target.local_source_revision_id.clone(),
-                        text: decided_text(&target.review)?.to_owned(),
+                        text: if translated.as_ref().is_some_and(|units| !units.contains(&target.review.unit_id)) {
+                            target.review.source_text.clone()
+                        } else {
+                            decided_text(&target.review)?.to_owned()
+                        },
                     })
                 })
                 .collect::<Result<_, ExecutionError>>()?,
@@ -333,8 +354,11 @@ impl ReleasePlan {
     fn validate(&self) -> Result<(), ExecutionError> {
         self.build.validate()?;
         self.source.validate().map_err(|_| invalid())?;
-        if self.version != 1
-            || self.policy_version != super::super::review::POLICY_VERSION
+        let staged = self.locales.iter().any(|locale| locale.choice.translation_units.is_some());
+        let policy = if staged { super::super::review::STAGED_POLICY_VERSION } else { super::super::review::POLICY_VERSION };
+        let expected_version = if staged { 2 } else { 1 };
+        if self.version != expected_version
+            || self.policy_version != policy
             || self.locales.is_empty()
             || self.locales.len() > 16
             || [
@@ -362,6 +386,11 @@ impl ReleasePlan {
             {
                 return Err(invalid());
             }
+            let translated = locale.choice.translated();
+            if locale.choice.translation_units.as_ref().is_some_and(|ids| ids.len() > sdk::MAX_CONTENT_ITEMS
+                || translated.as_ref().unwrap().len() != ids.len()) {
+                return Err(invalid());
+            }
             let mut mapped = BTreeSet::new();
             for target in &locale.targets {
                 let unit = units.get(&target.local_unit_id).ok_or_else(invalid)?;
@@ -373,11 +402,13 @@ impl ReleasePlan {
                     || review.locale != locale.choice.locale
                     || review.basis_evidence.source_snapshot_id != self.source_snapshot_id
                     || review.basis_evidence.source_revision_id != review.source_revision_id
-                    || review.current_check.is_none()
-                    || !super::super::review::assess(review, false).0.is_empty()
+                    || !super::super::review::assess_build_scope(review, false, translated.as_ref()).0.is_empty()
                 {
                     return Err(invalid());
                 }
+            }
+            if translated.as_ref().is_some_and(|units| !units.is_subset(&mapped)) {
+                return Err(invalid());
             }
             self.plugin_input(&locale.choice.locale)?;
         }
@@ -475,7 +506,26 @@ impl ProjectStore {
         locales: &[String],
         basis: &str,
     ) -> Result<QualifiedRelease, ExecutionError> {
-        let eligibility = self.review_eligibility_if_basis(project, locales, basis)?;
+        self.capture_qualified_release_scope(project, locales, &BTreeMap::new(), basis)
+    }
+    fn capture_qualified_release_scope(
+        &self,
+        project: ExecutionId,
+        locales: &[String],
+        scopes: &BTreeMap<String, Vec<ExecutionId>>,
+        basis: &str,
+    ) -> Result<QualifiedRelease, ExecutionError> {
+        let check = || {
+            let eligibility = self.review_eligibility_for_build(project, locales, scopes, &crate::execution::Cancellation::default())?;
+            if eligibility.basis != basis {
+                return Err(failure(ErrorCode::DependencyConflict, "review-eligibility-stale")
+                    .with_conflict(crate::execution::ConflictEvidence::BuildEligibility {
+                        expected: basis.into(), current: eligibility.basis,
+                    }));
+            }
+            Ok(eligibility)
+        };
+        let eligibility = check()?;
         if !eligibility.ready {
             return Err(failure(ErrorCode::DependencyConflict, "build-ineligible"));
         }
@@ -498,7 +548,7 @@ impl ProjectStore {
             }
             captured.push(targets);
         }
-        self.review_eligibility_if_basis(project, locales, basis)?;
+        check()?;
         Ok(QualifiedRelease {
             eligibility,
             locales: captured,
@@ -513,7 +563,9 @@ impl ProjectStore {
     ) -> Result<ReleasePlan, ExecutionError> {
         build.validate()?;
         let languages: Vec<_> = choices.iter().map(|c| c.locale.clone()).collect();
-        let qualified = self.capture_qualified_release(project, &languages, basis)?;
+        let scopes = choices.iter().filter_map(|choice| choice.translation_units.as_ref()
+            .map(|units| (choice.locale.clone(), units.clone()))).collect();
+        let qualified = self.capture_qualified_release_scope(project, &languages, &scopes, basis)?;
         let source_snapshot_id = qualified.eligibility.source_snapshot_id;
         let connection = self
             .connection()
@@ -560,7 +612,7 @@ impl ProjectStore {
             });
         }
         let plan = ReleasePlan {
-            version: 1,
+            version: if choices.iter().any(|choice| choice.translation_units.is_some()) { 2 } else { 1 },
             project_id: project,
             source_snapshot_id,
             source_mapping_revision: Some(

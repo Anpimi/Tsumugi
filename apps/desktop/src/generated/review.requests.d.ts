@@ -183,6 +183,9 @@ export interface EligibilityRequest {
   locales: string[];
   projectId: ExecutionId;
   sessionToken: string;
+  translationScopes?: {
+    [k: string]: ExecutionId[];
+  };
 }
 export interface FallbackRequest {
   fallback: FallbackWrite;

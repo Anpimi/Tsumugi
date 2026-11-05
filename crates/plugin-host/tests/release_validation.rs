@@ -282,11 +282,13 @@ fn captured_builders_need_each_locale_proof_and_preserve_original_release_after_
     assert!(eligibility.ready, "{eligibility:?}");
     let choices = vec![
         PluginBuildLocaleChoice {
+            translation_units: None,
             locale: "zh-CN".into(),
             output_paths: vec!["i18n/zh.json".into()],
             configuration: vec![],
         },
         PluginBuildLocaleChoice {
+            translation_units: None,
             locale: "fr-FR".into(),
             output_paths: vec!["i18n/fr.json".into()],
             configuration: vec![],

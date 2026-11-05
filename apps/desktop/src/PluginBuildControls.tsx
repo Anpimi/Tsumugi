@@ -1,3 +1,4 @@
+import { ReleaseTranslationScope } from "./ReleaseTranslationScope";
 import { useEffect, useLayoutEffect, useRef, useState, useId, type ReactNode } from "react";
 import { useTranslation } from "react-i18next";
 import { commandFailure, CommandFailureDetails } from "./CommandFailure";
@@ -290,6 +291,9 @@ export function PluginBuildControls({ project, open, disabled, onRecorded, onOpe
           <input type="checkbox" checked={languages.includes(locale)} disabled={mappingLocked} onChange={event => { if (!mappingLocked && canInteract?.("input") !== false) owner.setLanguage(locale, event.target.checked); }}/>
         </Field>)}
       </fieldset>
+      {languages.map(locale => <ReleaseTranslationScope key={locale} project={project} locale={locale} visible={setupOpen}
+        selected={owner.translationScopes[locale]} disabled={mappingLocked} canInteract={canInteract}
+        onChange={units => owner.setTranslationScope(locale, units)}/>)}
       <p id={pathsHelpId} className={styles.help}>{t("releasePlugin.pathHelp")}</p>
       <div className={styles.paths}>
         {languages.map(locale => <Field key={locale} label={t("releasePlugin.paths", { locale })}>
@@ -307,12 +311,13 @@ export function PluginBuildControls({ project, open, disabled, onRecorded, onOpe
   </>;
   const readinessContent = <>
       {eligibility ? <section className={styles.readiness} aria-label={t("release.readiness")}>
-        <Banner tone={eligibility.ready ? "success" : "warning"} role="status">{t(eligibility.ready ? "release.ready" : "release.blocked", {
-          count: eligibility.locales.reduce((sum, item) => sum + (eligibility.ready ? item.exceptionCount : item.blockerCount), 0),
+        <Banner tone={eligibility.ready ? "success" : "warning"} role="status">{t(eligibility.ready ? Object.keys(eligibility.translationScopes ?? {}).length ? "releaseScope.ready" : "release.ready" : "release.blocked", {
+          count: eligibility.locales.reduce((sum, item) => sum + (eligibility.ready ? Object.keys(eligibility.translationScopes ?? {}).length ? item.retainedSourceUnits ?? 0 : item.exceptionCount : item.blockerCount), 0),
         })}</Banner>
         <details className={styles.evidence}><summary>{t("deliveryWorkbench.diagnostics")}</summary><p>{t("release.source", { id: eligibility.sourceSnapshotId })} · {eligibility.policyVersion}</p></details>
         {eligibility.locales.map(item => <section key={item.locale} className={styles.localeReadiness}>
           <h4>{item.locale}<span>{t("release.coverage", { count: item.checkedUnits })}</span></h4>
+          {item.retainedSourceUnits ? <p>{t("releaseScope.retainedCount", { count: item.retainedSourceUnits })}</p> : null}
           {item.blockers.length ? <div className={styles.blockerTable} tabIndex={0} role="region" aria-label={t("release.blockerTable", { locale: item.locale })}>
             <table><thead><tr><th scope="col">{t("release.entry")}</th><th scope="col">{t("release.blockingReason")}</th><th scope="col">{t("release.action")}</th></tr></thead>
               <tbody>{item.blockers.map((reason, index) => <tr key={`${reason.unitId}:${index}`}>
@@ -321,7 +326,7 @@ export function PluginBuildControls({ project, open, disabled, onRecorded, onOpe
               </tr>)}</tbody>
             </table>
           </div> : null}
-          {item.exceptions.length ? <ul className={styles.exceptions}>{item.exceptions.map((reason, index) => <li key={`${reason.unitId}:${index}`}>{t("release.exception", { key: reason.nativeKey, reason: reason.code })}</li>)}</ul> : null}
+          {item.exceptions.length ? <ul className={styles.exceptions}>{item.exceptions.map((reason, index) => <li key={`${reason.unitId}:${index}`}>{t("release.exception", { key: reason.nativeKey, reason: reason.code === "source-retained" ? t("releaseScope.retained") : reason.code })}</li>)}</ul> : null}
         </section>)}
       </section> : null}
   </>;
@@ -329,7 +334,8 @@ export function PluginBuildControls({ project, open, disabled, onRecorded, onOpe
       {prepared && !attempt && owner.earlierBuild ? <Banner tone="warning" role="status">{t("release.earlierPreparation")}</Banner> : null}
       {prepared ? <section className={styles.review}>
         <h4>{t("deliveryWorkbench.fixedHelp")}</h4><details><summary>{t("deliveryWorkbench.diagnostics")}</summary><p>{t("release.source", { id: prepared.review.sourceSnapshotId })}</p></details>
-        <ul>{prepared.review.choices.map(({ locale, outputPaths, configuration }) => <li key={locale}>{locale}<ul>{outputPaths.map(path => <li key={path}><code>{path}</code></li>)}</ul>
+        <ul>{prepared.review.choices.map(({ locale, outputPaths, configuration, translationUnits }) => <li key={locale}>{locale}<ul>{outputPaths.map(path => <li key={path}><code>{path}</code></li>)}</ul>
+          {translationUnits ? <p>{t("releaseScope.fixed", { count: translationUnits.length })}</p> : null}
           <CapturedBuildOptions declarations={prepared.review.build.declaration.configuration ?? []} configuration={configuration}/></li>)}</ul>
         {!attempt ? <>
           <BuildExecutionReview build={prepared.review.build} checker={false}/>

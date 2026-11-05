@@ -822,3 +822,76 @@ fn assert_large_artifact_storage(binary: bool) {
         large
     );
 }
+
+#[test]
+fn staged_release_reference_reopens_and_refuses_rehashed_source_or_manifest_substitution() {
+    for tamper in ["manifest", "source-input", "source-result"] {
+        let (_directory, mut store, generation, ordinary) = fixture_build(&["zh-CN"]);
+        let plan = ReleasePlan::from_input(&ordinary).unwrap();
+        let project = ordinary.envelope().project_id;
+        let selected = plan.locales[0].targets[0].review.unit_id;
+        let scopes = BTreeMap::from([("zh-CN".into(), vec![selected])]);
+        let eligibility = store.review_eligibility_for_build(project, &["zh-CN".into()], &scopes, &Cancellation::default()).unwrap();
+        let mut choices = plan.choices(); choices[0].translation_units = Some(vec![selected]);
+        let input = store.prepare_plugin_build(project, ExecutionId::new(), &choices, &eligibility.basis, plan.build_environment()).unwrap();
+        authorize(&mut store, generation, &input);
+        let result = builder_result(&mut store, &input, input.envelope().items[0].item_id);
+        prove(&mut store, generation, &input, &result);
+        let action = action(&mut store, &input, &[result]);
+        let receipt = store.adopt_execution(&action, &ReleaseAdoptionHandler).unwrap();
+        let release = release_id(&receipt);
+        let expected = store.release_view(release).unwrap();
+        let bytes: Vec<u8> = store.connection().unwrap().query_row("SELECT manifest FROM release_records WHERE release_id=?1", [release.to_string()], |row| row.get(0)).unwrap();
+        let manifest: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+        assert_eq!(manifest["version"], 2);
+        assert_eq!(manifest["plan"], serde_json::json!({"kind":"plugin-input"}));
+        let path = store.directory().to_owned(); store.close().unwrap();
+        let mut store = ProjectStore::open(&path).unwrap();
+        assert_eq!(store.release_view(release).unwrap(), expected);
+        if tamper == "manifest" {
+            let mut changed = manifest;
+            changed["plan"] = serde_json::json!({"kind":"plugin", "data":ReleasePlan::from_input(&input).unwrap()});
+            let bytes = serde_json::to_vec(&changed).unwrap();
+            store.connection().unwrap().execute("UPDATE release_records SET manifest=?2,manifest_digest=?3 WHERE release_id=?1", rusqlite::params![release.to_string(), &bytes, codec::digest(&bytes)]).unwrap();
+        } else {
+            rehash_source_evidence(&store, &input, tamper == "source-result");
+        }
+        let before = store.connection().unwrap().total_changes();
+        assert!(store.release_view(release).is_err());
+        assert_eq!(store.connection().unwrap().total_changes(), before);
+    }
+}
+
+#[test]
+fn original_unversioned_full_release_manifest_remains_readable_without_rewriting() {
+    #[derive(serde::Serialize)]
+    #[serde(rename_all = "camelCase")]
+    struct OriginalManifest {
+        input_digest: String,
+        result_ids: Vec<ExecutionId>,
+        plan: OriginalPlan,
+    }
+    #[derive(serde::Serialize)]
+    #[serde(tag = "kind", content = "data", rename_all = "kebab-case")]
+    enum OriginalPlan { Plugin(ReleasePlan) }
+    let (_directory, mut store, generation, input) = fixture_build(&["zh-CN"]);
+    let result = builder_result(&mut store, &input, input.envelope().items[0].item_id);
+    prove(&mut store, generation, &input, &result);
+    let action = action(&mut store, &input, &[result]);
+    let receipt = store.adopt_execution(&action, &ReleaseAdoptionHandler).unwrap();
+    let release = release_id(&receipt);
+    let current = store.release_view(release).unwrap();
+    let bytes = codec::encode(&OriginalManifest { input_digest: input.digest().into(), result_ids: action.result_ids.clone(), plan: OriginalPlan::Plugin(ReleasePlan::from_input(&input).unwrap()) }, MAX_INPUT_BYTES).unwrap();
+    store.connection().unwrap().execute("UPDATE release_records SET manifest=?2,manifest_digest=?3 WHERE release_id=?1", rusqlite::params![release.to_string(), &bytes, codec::digest(&bytes)]).unwrap();
+    let before = store.connection().unwrap().total_changes();
+    let historical = store.release_view(release).unwrap();
+    assert_eq!(historical.artifacts, current.artifacts);
+    assert_eq!(historical.policy_version, current.policy_version);
+    assert_eq!(store.connection().unwrap().total_changes(), before);
+    let path = store.directory().to_owned(); store.close().unwrap();
+    let mut reopened = ProjectStore::open(path).unwrap();
+    assert_eq!(reopened.release_view(release).unwrap(), historical);
+    assert_eq!(reopened.adopt_execution(&action, &ReleaseAdoptionHandler).unwrap(), receipt);
+    let preserved: Vec<u8> = reopened.connection().unwrap().query_row("SELECT manifest FROM release_records WHERE release_id=?1", [release.to_string()], |row| row.get(0)).unwrap();
+    assert_eq!(preserved, bytes);
+}

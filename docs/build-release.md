@@ -1,6 +1,6 @@
 # Local build output inspection and export
 
-Once translations are reviewed, checked, and approved, use **Delivery** to generate localized output files through an installed build plugin, run semantic artifact checks, record an immutable project release, and export the verified files to disk.
+Use **Delivery** to generate localized output files through an installed build plugin, run semantic artifact checks, record an immutable project release, and export the verified files to disk. A complete build requires reviewed, checked and approved translations; a staged build can explicitly retain the original source text outside its selected translation scope.
 
 See the [README](../README.md#development) for current database schema compatibility, and the [versioning policy](versioning.md) for application release versioning (the releases described in this guide are localized project outputs rather than application releases).
 
@@ -13,6 +13,14 @@ See the [README](../README.md#development) for current database schema compatibi
 
 The build executes as a persisted background task using saved project text without rereading external Mod files or generating new translations. You can monitor progress in **Delivery**; switching views or closing the build panel does not cancel a running task or discard your release form inputs.
 
+## Producing a staged artifact
+
+In **Build settings**, enable **Use selected translations and retain source for other entries** for each language that needs a staged output. Read the source and saved translation, then select the entries whose translations to include. Selection spans pages; an empty selection explicitly retains source text for every entry. Leaving the option off uses the ordinary complete-build policy.
+
+Included translations still require current QA and human approval. Every other entry uses the original captured source text, even if it has a saved translation. This does not erase translations, change approvals, or create project-wide source-fallback decisions. Resolve outstanding source correspondence before building. Choose **Check** again after changing the scope, and review the included translation and retained-source counts before authorizing execution.
+
+Staged artifacts cover the complete captured source and use the same independent artifact checks, release recording and destination-folder checks as complete builds. The fixed input and saved build details retain the original scope; release history and export setup identify retained source entries. Successful staged output does not make the project's complete-build readiness pass.
+
 ## Running artifact checks and recording a release
 
 A completed plugin build records each generated artifact's relative path, role, byte size, SHA-256 digest, and the number of targets in the build plan. In **Delivery**, review the build and verification details:
@@ -22,6 +30,8 @@ A completed plugin build records each generated artifact's relative path, role, 
 3. **Record the release**: Each passing check records its semantic proof. Once all required languages and artifact checks pass, apply the verified results to save an immutable project release. Subsequent edits to project translations do not modify an existing release or its stored artifact bytes.
 
 A past plugin build can be inspected without creating a new grant or release. This read-only view verifies the saved source references, fixed build plan, generated artifact files, and per-language artifact-check proofs, and remains accessible even after reopening the project or uninstalling the builder plugin (provided no unfinished build mapping or unresolved action is currently active in the form).
+
+New plugin releases use manifest version 2, referring to the original immutable execution input instead of copying the complete source and review plan into the manifest. Staged plans use version 2 and the separate `balanced-1-staged-1` policy. Current readers continue to verify earlier unversioned release manifests and complete version-1 plans without rewriting them. Older application snapshots cannot read the new representations; use the application version that created the release or a compatible newer version. These formats do not change the plugin SDK or the project database schema.
 
 In **History**, **View build details from …** opens the full saved build and artifact-check evidence. Reading it requires no new destination-folder permission and does not restart work. Unfinished build or export setup is kept; finish or clear that setup before opening an older build.
 

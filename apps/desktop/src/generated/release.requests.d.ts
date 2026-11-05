@@ -481,6 +481,10 @@ export interface PluginBuildLocaleChoice {
   configuration: EncodedPayload[];
   locale: string;
   outputPaths: string[];
+  /**
+   * Some fixes a staged translation scope; every other unit retains source.
+   */
+  translationUnits?: ExecutionId[] | null;
 }
 /**
  * Exact UTF-8 schema payload. The SDK verifies its byte digest but does not

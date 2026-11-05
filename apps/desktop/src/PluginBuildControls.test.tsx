@@ -13,6 +13,7 @@ import { pluginBuildInventory, pluginBuildPackage, pluginBuildView, pluginBuildW
 import { buildOptionsView, buildOptionPayload } from "./testSupport/pluginBuildOptionsFixture";
 import { fixtureIdentity } from "./testSupport/executionFixture";
 import executionFixture from "../test/fixtures/executionCommands.contract.json";
+import reviewFixture from "../test/fixtures/reviewCommands.contract.json";
 import type { ProjectView } from "./projectCommands";
 import type { AttemptDetail } from "./executionCommands";
 import type { PluginBuildPrepareRequest, ArtifactCheckPrepareRequest, PluginStartRequest, ReleaseView } from "./releaseCommands";
@@ -297,4 +298,38 @@ it("reads output settings from the saved plan without consulting a live builder"
   renderView(<SavedPluginBuildSummary build={saved} itemId={saved.locales[0].itemId}/>);
   expect(screen.getByText(i18n.t("releasePlugin.configurationValue", { name: "Loading language", value: "English" }))).toBeVisible();
   expect(invoke).not.toHaveBeenCalled();
+});
+
+it("captures the chosen saved translation scope from Delivery and retains source for other entries", async () => {
+  const original = invoke.getMockImplementation()!;
+  invoke.mockImplementation(async (command, args) => {
+    if (command === "read_review_page") return structuredClone(reviewFixture.responses.page);
+    const value = await original(command, args);
+    if (command === "read_review_eligibility") return { ...value, policyVersion: "balanced-1-staged-1", translationScopes: args.request.translationScopes,
+      locales: value.locales.map((locale: { locale: string }) => ({ ...locale, retainedSourceUnits: 1 })) };
+    return value;
+  });
+  const user = userEvent.setup(); render(<DeliveryConsumer/>, project);
+  await waitFor(() => expect(primary()).toBeEnabled()); await user.click(primary());
+  await waitFor(() => expect(screen.getByRole("combobox", { name: i18n.t("deliveryWorkbench.builder") })).toBeEnabled());
+  await user.click(screen.getByRole("checkbox", { name: "zh-CN" }));
+  await user.type(screen.getByRole("textbox", { name: i18n.t("releasePlugin.paths", { locale: "zh-CN" }) }), "staged.txt");
+  expect(invoke.mock.calls.some(([command]) => command === "read_review_page")).toBe(false);
+  await user.click(screen.getByRole("checkbox", { name: i18n.t("releaseScope.mode") }));
+  const entry = await screen.findByRole("checkbox", { name: i18n.t("releaseScope.include", { entry: "wooden-barrel" }) });
+  await user.click(entry);
+  await user.click(primary());
+  await screen.findByText(i18n.t("releaseScope.ready", { count: 1 }));
+  await user.click(primary());
+  expect(await screen.findByText(i18n.t("releaseScope.fixed", { count: 1 }))).toBeVisible();
+  expect(captured?.choices[0].translationUnits).toEqual([reviewFixture.responses.page.rows[0].unitId]);
+  expect(invoke.mock.calls.some(([command]) => command === "start_plugin_build")).toBe(false);
+});
+
+it("shows the saved staged scope without a live builder", () => {
+  const saved = structuredClone(savedPluginBuild), locale = saved.locales[0];
+  locale.choice.translationUnits = [];
+  renderView(<SavedPluginBuildSummary build={saved} itemId={locale.itemId}/>);
+  expect(screen.getByText(i18n.t("releaseScope.fixed", { count: 0 }))).toBeVisible();
+  expect(screen.getByText(i18n.t("releaseScope.retainedCount", { count: locale.targetCount }))).toBeVisible();
 });

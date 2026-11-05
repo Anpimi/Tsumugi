@@ -11,10 +11,15 @@ mod legacy;
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 struct ReleaseManifest {
+    #[serde(default = "original_manifest_version", skip_serializing_if = "is_original_manifest")]
+    version: u32,
     input_digest: String,
     result_ids: Vec<ExecutionId>,
     plan: FrozenPlan,
 }
+
+fn original_manifest_version() -> u32 { 1 }
+fn is_original_manifest(version: &u32) -> bool { *version == 1 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(
@@ -31,6 +36,9 @@ enum FrozenPlan {
     ))]
     Builtin(BuildManifest),
     Plugin(ReleasePlan),
+    /// The original fixed input is already required and authenticated by load.
+    /// New plugin manifests use that immutable authority without duplicating it.
+    PluginInput,
 }
 
 pub(super) struct ManifestSummary {
@@ -61,7 +69,11 @@ fn prepare_data(
     input: &FixedInput,
     action: &AdoptionAction,
     results: &[FixedResult],
+    version: u32,
 ) -> Result<(ReleaseManifest, ManifestSummary, Vec<Artifact>), ExecutionError> {
+    if ![1, 2].contains(&version) || version == 2 && input.envelope().plugin.is_none() {
+        return Err(failure(ErrorCode::CorruptLedger, "release-manifest-version"));
+    }
     action.validate(input, results)?;
     let mut seen = BTreeSet::new();
     let mut artifacts = Vec::new();
@@ -104,7 +116,8 @@ fn prepare_data(
         if seen.len() != plan.choices().len() {
             return Err(failure(ErrorCode::ResultMismatch, "release-coverage"));
         }
-        (FrozenPlan::Plugin(plan), summary)
+        let frozen = if version == 2 { FrozenPlan::PluginInput } else { FrozenPlan::Plugin(plan) };
+        (frozen, summary)
     } else {
         #[cfg(any(
             test,
@@ -128,6 +141,7 @@ fn prepare_data(
     });
     Ok((
         ReleaseManifest {
+            version,
             input_digest: input.digest().into(),
             result_ids: action.result_ids.clone(),
             plan,
@@ -142,7 +156,8 @@ pub(super) fn prepare(
     action: &AdoptionAction,
     results: &[FixedResult],
 ) -> Result<PreparedMutation, ExecutionError> {
-    let (manifest, summary, artifacts) = prepare_data(input, action, results)?;
+    let version = if input.envelope().plugin.is_some() { 2 } else { 1 };
+    let (manifest, summary, artifacts) = prepare_data(input, action, results, version)?;
     let manifest_bytes = codec::encode(&manifest, MAX_INPUT_BYTES)?;
     let digest = codec::digest(&manifest_bytes);
     let action = action.clone();
@@ -236,7 +251,7 @@ pub(super) fn load(
         .iter()
         .map(|id| super::super::ledger::load_result(connection, &input, *id))
         .collect::<Result<Vec<_>, _>>()?;
-    let (expected_manifest, summary, expected_artifacts) = prepare_data(&input, &action, &results)?;
+    let (expected_manifest, summary, expected_artifacts) = prepare_data(&input, &action, &results, manifest.version)?;
     if manifest != expected_manifest || bytes != codec::encode(&expected_manifest, MAX_INPUT_BYTES)?
     {
         return Err(failure(ErrorCode::CorruptLedger, "release-fixed-input"));
@@ -244,6 +259,7 @@ pub(super) fn load(
     if input.envelope().plugin.is_some() {
         match &manifest.plan {
             FrozenPlan::Plugin(plan) => plan.validate_source_reference(connection)?,
+            FrozenPlan::PluginInput => ReleasePlan::from_input(&input)?.validate_source_reference(connection)?,
             #[cfg(any(
                 test,
                 feature = "execution-test-host",

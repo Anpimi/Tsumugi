@@ -827,6 +827,7 @@ fn skyrim_normal_core_keeps_binary_source_review_release_and_reopen_evidence() {
             project,
             ExecutionId::new(),
             &[PluginBuildLocaleChoice {
+                translation_units: None,
                 locale: "zh-CN".into(),
                 output_paths: vec!["FormatProbe.esp".into()],
                 configuration: configuration(&build_binding),
@@ -1001,7 +1002,7 @@ fn skyrim_normal_core_adopts_maximum_escaped_capture_and_reopens_every_field() {
     let started = std::time::Instant::now();
     let AdoptedSource {
         snapshot,
-        grants,
+        mut grants,
         extracted,
         check_input_bytes,
         preview_summary,
@@ -1085,6 +1086,37 @@ fn skyrim_normal_core_adopts_maximum_escaped_capture_and_reopens_every_field() {
         }
         rows
     };
+    // An explicit all-source stage exercises the full build/record boundary
+    // without inventing 476 translation approvals or changing user selections.
+    let project = ExecutionId::parse(&store.metadata().unwrap().project_id().to_string()).unwrap();
+    let scopes = std::collections::BTreeMap::from([("zh-CN".into(), vec![])]);
+    let eligibility = store.review_eligibility_for_build(project, &["zh-CN".into()], &scopes, &Cancellation::default()).unwrap();
+    assert!(eligibility.ready);
+    assert!(!store.review_eligibility(project, &["zh-CN".into()]).unwrap().ready);
+    assert_eq!(eligibility.locales[0].retained_source_units, 476);
+    let build_environment = ReleaseBuildEnvironment::new(
+        build_binding.clone(),
+        builder.execution_binding(Some(build_binding.declaration.profile.clone())).unwrap(),
+        artifact_checker.execution_binding(Some(build_binding.declaration.profile.clone())).unwrap(),
+    ).unwrap();
+    let build_input = store.prepare_plugin_build(project, ExecutionId::new(), &[PluginBuildLocaleChoice {
+        translation_units: Some(vec![]), locale: "zh-CN".into(), output_paths: vec!["FormatProbe.esp".into()], configuration: configuration(&build_binding),
+    }], &eligibility.basis, &build_environment).unwrap();
+    grants.push(authorize(&runtime, &mut store, &build_input));
+    let built = execute(&mut runtime, &mut store, &build_input);
+    let action = store.prepare_adoption(build_input.envelope().attempt_id, build_input.envelope().units[0].unit_id, vec![built.envelope().result_id], json!({})).unwrap();
+    assert!(store.adopt_execution(&action, &ReleaseAdoptionHandler).is_err());
+    let capture = store.capture_artifact_validation(build_input.envelope().attempt_id, built.envelope().result_id).unwrap();
+    let check = capture.check_input().clone();
+    grants.push(authorize(&runtime, &mut store, &check));
+    let checked = execute(&mut runtime, &mut store, &check);
+    store.commit_artifact_validation(capture.prepare(checked).unwrap()).unwrap();
+    let receipt = store.adopt_execution(&action, &ReleaseAdoptionHandler).unwrap();
+    let release = ExecutionId::parse(&receipt.changes[0].id).unwrap();
+    let release_view = store.release_view(release).unwrap();
+    assert!(!store.review_eligibility(project, &["zh-CN".into()]).unwrap().ready);
+    assert_eq!(release_view.exceptions.iter().filter(|exception| exception.kind == tsumugi_core::ReleaseExceptionKind::SourceRetained).count(), 476);
+    let staged_bytes = store.release_artifact_by_path(release, "zh-CN", "FormatProbe.esp").unwrap().1;
     let rows = read_rows(&store);
     assert_eq!(
         rows.iter()
@@ -1112,6 +1144,8 @@ fn skyrim_normal_core_adopts_maximum_escaped_capture_and_reopens_every_field() {
     drop(runtime);
     store.close().unwrap();
     let reopened = ProjectStore::open(&path).unwrap();
+    assert_eq!(reopened.release_view(release).unwrap(), release_view);
+    assert_eq!(reopened.release_artifact_by_path(release, "zh-CN", "FormatProbe.esp").unwrap().1, staged_bytes);
     assert_eq!(read_rows(&reopened), rows);
     assert_eq!(
         reopened

@@ -1,0 +1,26 @@
+export const releaseScopeEn = {
+  heading: "Translation scope for {{locale}}", mode: "Use selected translations and retain source for other entries",
+  help: "Choose the entries whose saved translations to include. Included translations still need current checks and human approval. Other entries keep their original source text; saved translations remain unchanged.",
+  selected: "Translations selected: {{count}}", allSource: "No translations are selected. This staged artifact will retain source text for every entry.",
+  loading: "Reading entries…", failed: "Could not read entries. Your selection is kept; try reading again.", retry: "Read entries again",
+  clear: "Retain source for every entry", empty: "No source entries are available. Import a source snapshot first.",
+  fullSource: "View full text", previous: "Previous entries", next: "Next entries", total: "Source entries: {{count}}",
+  include: "Include saved translation for {{entry}}", savedTranslation: "Saved translation", noTranslation: "No saved translation",
+  emptyPage: "No entries on this page. Go back to earlier entries or read again.",
+  ready: "Staged artifact ready; {{count}} entries retain source text.", readyShort: "Staged artifact ready",
+  retained: "Retained source text", retainedCount: "Retained source entries: {{count}}",
+  fixed: "Staged scope: {{count}} translations included; all other entries retain source text.",
+} as const;
+export const releaseScopeZh = {
+  heading: "{{locale}} 的译文范围", mode: "使用选定译文，其余条目保留原文",
+  help: "选择本次使用已保存译文的条目。所选译文仍需当前检查和人工批准；其余条目使用原始源文，已保存译文不会改变。",
+  selected: "已选译文：{{count}}", allSource: "尚未选择译文。本次阶段产物的所有条目都将保留原文。",
+  loading: "正在读取条目…", failed: "无法读取条目。已保留你的选择，请重新读取。", retry: "重新读取条目",
+  clear: "所有条目保留原文", empty: "尚无源条目，请先导入源快照。",
+  fullSource: "查看完整文本", previous: "上一页条目", next: "下一页条目", total: "源条目：{{count}}",
+  include: "使用 {{entry}} 的已保存译文", savedTranslation: "已保存译文", noTranslation: "尚无已保存译文",
+  emptyPage: "本页没有条目，请返回前页或重新读取。",
+  ready: "阶段产物已就绪；{{count}} 个条目保留原文。", readyShort: "阶段产物已就绪",
+  retained: "保留原文", retainedCount: "保留原文的条目：{{count}}",
+  fixed: "阶段范围：使用 {{count}} 条译文，其余条目保留原文。",
+} as const;

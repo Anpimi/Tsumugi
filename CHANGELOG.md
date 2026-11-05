@@ -12,6 +12,7 @@ Current workspace version metadata: **`0.2.0-alpha.1`**. Because the published `
 
 ### Added
 
+- Build staged artifacts from explicitly selected, checked and approved translations, retaining captured source text for all other entries without changing saved translations or approvals. Build review, saved details and export setup retain the scope and identify source retention; complete-build readiness and independent artifact checks remain enforced. New plugin release manifests reference the original fixed input to support large captured sources; current readers preserve earlier release records, while older application snapshots cannot read the new manifest and staged-plan versions.
 - Source previews, upstream comparisons and saved source details show plugin-provided capture counts, record groups, format properties and dependencies for the complete captured selection. Empty fields and explicit empty dependency lists remain distinguishable; these details do not imply complete resource coverage or translation completion.
 - Export supported local draft text separately from a project backup. The UTF-8 rescue file supports manual recovery and leaves original pending requests on the device.
 - Save a committed project backup from Project settings and restore it from the welcome screen into a new folder. Supported older-schema backups upgrade an unpublished copy, retaining the original backup and an original-schema snapshot beside the restored project. The restored project uses a separate local draft journal.

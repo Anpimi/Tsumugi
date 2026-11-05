@@ -643,3 +643,49 @@ it.each([false, true])("does not apply a late option capture over newer input or
   else { expect(owner.names["zh-CN"]).toBe("Newer.esp"); expect(owner.choices()[0].configuration).toEqual([]); }
   expect(calls("read_review_eligibility")).toHaveLength(0);
 });
+
+it("binds explicit staged scopes to qualification and the immutable build request", async () => {
+  mount(); const original = invoke.getMockImplementation()!;
+  invoke.mockImplementation(async (command, args) => {
+    const result = await original(command, args);
+    return command === "read_review_eligibility" ? { ...result, translationScopes: args.request.translationScopes, policyVersion: "balanced-1-staged-1" } : result;
+  });
+  const unit = fixtureIdentity(819);
+  act(() => { owner.setLanguage("zh-CN", true); owner.setName("zh-CN", "staged.bin"); owner.setTranslationScope("zh-CN", [unit]); });
+  await act(async () => owner.assess(pluginBuildView));
+  expect(payloads<{ translationScopes: Record<string, string[]> }>("read_review_eligibility")[0].translationScopes).toEqual({ "zh-CN": [unit] });
+  expect(owner.eligibility?.ready).toBe(true);
+  await act(async () => owner.build());
+  expect(payloads<PluginBuildPrepareRequest>("prepare_plugin_build")[0].choices[0].translationUnits).toEqual([unit]);
+  expect(owner.prepared?.review.choices[0].translationUnits).toEqual([unit]);
+});
+
+it("keeps newer staged selection when an earlier qualification returns", async () => {
+  mount(); const original = invoke.getMockImplementation()!, gate = deferred<unknown>();
+  const first = fixtureIdentity(820), next = fixtureIdentity(821);
+  invoke.mockImplementation((command, args) => command === "read_review_eligibility" ? gate.promise : original(command, args));
+  act(() => { owner.setLanguage("zh-CN", true); owner.setTranslationScope("zh-CN", [first]); });
+  let running!: Promise<void>; act(() => { running = owner.assess(pluginBuildView); });
+  await waitFor(() => expect(calls("read_review_eligibility")).toHaveLength(1));
+  act(() => owner.setTranslationScope("zh-CN", [next]));
+  const response = await original("read_review_eligibility", { request: { locales: ["zh-CN"] } });
+  await act(async () => { gate.resolve({ ...response, translationScopes: { "zh-CN": [first] } }); await running; });
+  expect(owner.translationScopes["zh-CN"]).toEqual([next]); expect(owner.eligibility).toBeNull();
+  expect(calls("prepare_plugin_build")).toHaveLength(0);
+});
+
+it("refuses qualification that omits the explicitly requested staged scope", async () => {
+  mount();
+  act(() => { owner.setLanguage("zh-CN", true); owner.setTranslationScope("zh-CN", []); });
+  await act(async () => owner.assess(pluginBuildView));
+  expect(owner.eligibility).toBeNull(); expect(owner.translationScopes["zh-CN"]).toEqual([]);
+  expect(owner.failure).not.toBeNull(); expect(calls("prepare_plugin_build")).toHaveLength(0);
+});
+
+it("clears staged selections when explicitly discarding the complete build draft", async () => {
+  mount(); const original = invoke.getMockImplementation()!;
+  invoke.mockImplementation((command, args) => command === "cancel_plugin_build_preparation" ? Promise.resolve(false) : original(command, args));
+  act(() => { owner.setLanguage("zh-CN", true); owner.setTranslationScope("zh-CN", [fixtureIdentity(819)]); });
+  await act(async () => { expect(await owner.discardBuild(true)).toBe(true); });
+  expect(owner.translationScopes).toEqual({}); expect(owner.languages).toEqual([]); expect(owner.buildDirty).toBe(false);
+});

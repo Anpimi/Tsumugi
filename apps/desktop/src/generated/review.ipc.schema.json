@@ -341,6 +341,15 @@
           },
           "sessionToken": {
             "type": "string"
+          },
+          "translationScopes": {
+            "additionalProperties": {
+              "items": {
+                "$ref": "#/definitions/ExecutionId"
+              },
+              "type": "array"
+            },
+            "type": "object"
           }
         },
         "required": [
@@ -3682,6 +3691,15 @@
           },
           "sourceSnapshotId": {
             "$ref": "#/definitions/ExecutionId"
+          },
+          "translationScopes": {
+            "additionalProperties": {
+              "items": {
+                "$ref": "#/definitions/ExecutionId"
+              },
+              "type": "array"
+            },
+            "type": "object"
           }
         },
         "required": [
@@ -3739,6 +3757,12 @@
           },
           "ready": {
             "type": "boolean"
+          },
+          "retainedSourceUnits": {
+            "format": "uint32",
+            "maximum": 4294967295,
+            "minimum": 0,
+            "type": "integer"
           },
           "selectedUnits": {
             "format": "uint32",

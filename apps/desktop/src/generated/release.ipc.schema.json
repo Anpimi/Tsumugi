@@ -484,6 +484,16 @@
               "type": "string"
             },
             "type": "array"
+          },
+          "translationUnits": {
+            "description": "Some fixes a staged translation scope; every other unit retains source.",
+            "items": {
+              "$ref": "#/definitions/ExecutionId"
+            },
+            "type": [
+              "array",
+              "null"
+            ]
           }
         },
         "required": [
@@ -3030,6 +3040,16 @@
               "type": "string"
             },
             "type": "array"
+          },
+          "translationUnits": {
+            "description": "Some fixes a staged translation scope; every other unit retains source.",
+            "items": {
+              "$ref": "#/definitions/ExecutionId"
+            },
+            "type": [
+              "array",
+              "null"
+            ]
           }
         },
         "required": [
@@ -3363,6 +3383,7 @@
       "ReleaseExceptionKind": {
         "enum": [
           "source-fallback",
+          "source-retained",
           "qa-waiver"
         ],
         "type": "string"

@@ -401,6 +401,7 @@ fn fixture_build_policy(
     let choices: Vec<_> = locales
         .iter()
         .map(|locale| PluginBuildLocaleChoice {
+            translation_units: None,
             locale: (*locale).into(),
             output_paths: vec![format!("{locale}/main.txt"), format!("{locale}/second.txt")],
             configuration: vec![],

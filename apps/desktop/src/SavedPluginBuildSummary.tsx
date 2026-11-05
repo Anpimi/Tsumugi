@@ -17,6 +17,7 @@ export function SavedPluginBuildSummary({ build, itemId }: { build: SavedPluginB
     </dl></details>
     {locales.length === 0 ? <p>{t("releasePlugin.savedEmpty")}</p> : <ul>{locales.map(locale => <li key={locale.itemId}>
       <h4>{locale.choice.locale}</h4><p>{t("releasePlugin.savedTargets", { count: locale.targetCount })}</p>
+      {locale.choice.translationUnits ? <><p>{t("releaseScope.fixed", { count: locale.choice.translationUnits.length })}</p><p>{t("releaseScope.retainedCount", { count: locale.targetCount - locale.choice.translationUnits.length })}</p></> : null}
       <p>{t(`execution.states.${locale.status.execution}`)} · {t(`releasePlugin.validation.${locale.status.validation}`)}</p>
       {locale.status.cancellationRequested ? <p>{t("releasePlugin.cancelled")}</p> : null}
       {locale.status.diagnostic ? <details><summary>{t("execution.diagnostic")}</summary><code>{locale.status.diagnostic}</code></details> : null}

@@ -273,7 +273,11 @@ request!(
         limit: u32
     }
 );
-request!(#[cfg_attr(feature = "wire-schema", derive(schemars::JsonSchema))] EligibilityRequest { locales: Vec<String> });
+request!(#[cfg_attr(feature = "wire-schema", derive(schemars::JsonSchema))] EligibilityRequest {
+    locales: Vec<String>,
+    #[serde(default, skip_serializing_if = "std::collections::BTreeMap::is_empty")]
+    translation_scopes: std::collections::BTreeMap<String, Vec<ExecutionId>>
+});
 
 fn mapped(error: ExecutionError, stage: CommandStage) -> CommandError {
     let result = map_execution(error, stage);
@@ -969,7 +973,7 @@ pub async fn read_review_eligibility(
                     CommandStage::ExecutionRead,
                 )?
                 .store
-                .review_eligibility_with_cancel(request.project_id, &request.locales, cancellation)
+                .review_eligibility_for_build(request.project_id, &request.locales, &request.translation_scopes, cancellation)
                 .map_err(|error| mapped(error, CommandStage::ExecutionRead))
             },
         )?

@@ -1,6 +1,6 @@
 use super::*;
 use crate::persistence::review::tests::{adopt_source, approve, check, fixture, translate};
-use crate::{FallbackWrite, ProjectMetadata, execution::PluginConsent};
+use crate::{FallbackWrite, ProjectMetadata, execution::{PluginConsent, Cancellation}};
 
 mod artifact;
 
@@ -163,6 +163,7 @@ fn environment(store: &ProjectStore) -> ReleaseBuildEnvironment {
 }
 fn choices() -> Vec<PluginBuildLocaleChoice> {
     vec![PluginBuildLocaleChoice {
+        translation_units: None,
         locale: "zh-CN".into(),
         output_paths: vec!["locales/zh-CN.txt".into()],
         configuration: vec![],
@@ -487,6 +488,7 @@ fn multi_locale_capture_is_atomic_and_rejects_output_aliases_and_substitution() 
     let build = environment(&store);
     let mut choices = choices();
     choices.push(PluginBuildLocaleChoice {
+        translation_units: None,
         locale: "fr-FR".into(),
         output_paths: vec!["locales/fr-FR.txt".into()],
         configuration: vec![],
@@ -741,4 +743,80 @@ fn declared_build_configuration_is_frozen_and_checked_before_execution() {
             .configuration,
         choices[0].configuration
     );
+}
+
+#[test]
+fn staged_build_retains_unselected_source_without_changing_saved_translations() {
+    let (directory, mut store, project, units) = fixture();
+    assert!(units.len() >= 2);
+    let source = store.review_target(project, units[0], "zh-CN").unwrap().source_text;
+    let approved = format!("Approved {source}");
+    translate(&mut store, project, units[0], "zh-CN", &approved);
+    check(&mut store, project, units[0], "zh-CN");
+    approve(&mut store, project, units[0], "zh-CN");
+    translate(&mut store, project, units[1], "zh-CN", "Unapproved saved work");
+    let untouched = store.review_target(project, units[1], "zh-CN").unwrap();
+    assert!(!store.review_eligibility(project, &["zh-CN".into()]).unwrap().ready);
+    let scopes = BTreeMap::from([("zh-CN".into(), vec![units[0]])]);
+    let qualification = store.review_eligibility_for_build(project, &["zh-CN".into()], &scopes, &Cancellation::default()).unwrap();
+    assert!(qualification.ready);
+    assert_eq!(qualification.policy_version, super::super::super::review::STAGED_POLICY_VERSION);
+    assert_eq!(qualification.locales[0].retained_source_units as usize, units.len() - 1);
+    let mut selected = choices();
+    selected[0].translation_units = Some(vec![units[0]]);
+    let input = store.prepare_plugin_build(project, ExecutionId::new(), &selected, &qualification.basis, &environment(&store)).unwrap();
+    let plan = ReleasePlan::from_input(&input).unwrap();
+    assert_eq!(plan.version, 2);
+    let payload = plan.plugin_input("zh-CN").unwrap();
+    for target in &plan.locales[0].targets {
+        let output = payload.targets.iter().find(|value| value.unit_id == target.local_unit_id).unwrap();
+        assert_eq!(output.text, if target.review.unit_id == units[0] { &approved } else { &target.review.source_text }.as_str());
+    }
+    assert_eq!(plan.release_summary().exceptions.iter().filter(|item| item.kind == super::super::ReleaseExceptionKind::SourceRetained).count(), units.len() - 1);
+    validate_capture(&store, &input).unwrap();
+    let mut forged = input.envelope().clone();
+    forged.settings["version"] = serde_json::json!(1);
+    assert!(ReleasePlan::from_input(&FixedInput::capture(forged).unwrap()).is_err());
+    let mut forged = input.envelope().clone();
+    forged.items[0].payload["targets"][1]["text"] = serde_json::json!("Unapproved saved work");
+    assert!(ReleasePlan::from_input(&FixedInput::capture(forged).unwrap()).is_err());
+    enqueue_fixture(&mut store, &input);
+    let path = directory.path().join("project");
+    assert_eq!(store.review_target(project, units[1], "zh-CN").unwrap(), untouched);
+    store.close().unwrap();
+    let reopened = ProjectStore::open(path).unwrap();
+    assert_eq!(reopened.review_target(project, units[1], "zh-CN").unwrap(), untouched);
+    let saved = reopened.execution_input(input.envelope().attempt_id).unwrap();
+    assert_eq!(ReleasePlan::from_input(&saved).unwrap().plugin_input("zh-CN").unwrap(), payload);
+}
+
+#[test]
+fn staged_build_scope_refuses_unknown_duplicate_and_unqualified_translations() {
+    let (_directory, mut store, project, units) = fixture();
+    let locales = ["zh-CN".into()];
+    for scopes in [
+        BTreeMap::from([("zh-CN".into(), vec![ExecutionId::new()])]),
+        BTreeMap::from([("zh-CN".into(), vec![units[0], units[0]])]),
+        BTreeMap::from([("fr".into(), vec![])]),
+    ] {
+        assert!(store.review_eligibility_for_build(project, &locales, &scopes, &Cancellation::default()).is_err());
+    }
+    let selected = BTreeMap::from([("zh-CN".into(), vec![units[0]])]);
+    assert!(!store.review_eligibility_for_build(project, &locales, &selected, &Cancellation::default()).unwrap().ready);
+    let all_source = BTreeMap::from([("zh-CN".into(), vec![])]);
+    let qualification = store.review_eligibility_for_build(project, &locales, &all_source, &Cancellation::default()).unwrap();
+    assert!(qualification.ready);
+    let mut selected = choices(); selected[0].translation_units = Some(vec![]);
+    let input = store.prepare_plugin_build(project, ExecutionId::new(), &selected, &qualification.basis, &environment(&store)).unwrap();
+    let plan = ReleasePlan::from_input(&input).unwrap();
+    assert!(plan.plugin_input("zh-CN").unwrap().targets.iter().all(|target| plan.source.units.iter().find(|unit| unit.id == target.unit_id).unwrap().text == target.text));
+    selected[0].translation_units = Some(vec![units[0]]);
+    assert!(store.prepare_plugin_build(project, ExecutionId::new(), &selected, &qualification.basis, &environment(&store)).is_err());
+    let target = store.review_target(project, units[0], "zh-CN").unwrap();
+    store.allow_source_fallback(&FallbackWrite { project_id: project, action_id: ExecutionId::new(), unit_id: units[0], locale: "zh-CN".into(), expected_basis: target.basis, allow: true, expected_fallback_id: None, actor: "Reviewer".into(), reason: "Explicit ordinary fallback".into() }).unwrap();
+    check(&mut store, project, units[0], "zh-CN");
+    let selected = BTreeMap::from([("zh-CN".into(), vec![units[0]])]);
+    let qualification = store.review_eligibility_for_build(project, &locales, &selected, &Cancellation::default()).unwrap();
+    assert!(!qualification.ready);
+    assert!(qualification.locales[0].blockers.iter().any(|reason| reason.code == "translation-missing"));
 }

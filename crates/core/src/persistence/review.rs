@@ -30,6 +30,7 @@ pub(super) use checks::{
     validate_candidate_evidence,
 };
 pub(super) const POLICY_VERSION: &str = "balanced-1";
+pub(super) const STAGED_POLICY_VERSION: &str = "balanced-1-staged-1";
 const MAX_SCOPE: usize = 10_000;
 
 pub use checks::{SegmentQaCounts, SegmentQaSummary};
@@ -386,6 +387,8 @@ pub struct EligibilityLocale {
     pub blocking_units: u32,
     pub blocker_count: u32,
     pub exception_count: u32,
+    #[serde(default, skip_serializing_if = "is_zero")]
+    pub retained_source_units: u32,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
@@ -400,7 +403,11 @@ pub struct Eligibility {
     pub basis: String,
     pub ready: bool,
     pub locales: Vec<EligibilityLocale>,
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub translation_scopes: BTreeMap<String, Vec<ExecutionId>>,
 }
+
+fn is_zero(value: &u32) -> bool { *value == 0 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
@@ -1685,6 +1692,25 @@ pub(super) fn assess(target: &ReviewTarget, impacted: bool) -> (Vec<String>, Vec
     (blockers, exceptions)
 }
 
+/// Staged builds qualify only explicitly included translations. Retained source
+/// is an output disposition, never a QA pass or a persistent fallback decision.
+pub(super) fn assess_build_scope(
+    target: &ReviewTarget,
+    impacted: bool,
+    translated: Option<&BTreeSet<ExecutionId>>,
+) -> (Vec<String>, Vec<String>) {
+    if translated.is_some_and(|units| !units.contains(&target.unit_id)) {
+        return (Vec::new(), vec!["source-retained".into()]);
+    }
+    let (mut blockers, exceptions) = assess(target, impacted);
+    if translated.is_some() && target.selection_id.is_none()
+        && !blockers.iter().any(|reason| reason == "translation-missing")
+    {
+        blockers.push("translation-missing".into());
+    }
+    (blockers, exceptions)
+}
+
 fn eligibility_reason(target: &ReviewTarget, reason: &str) -> EligibilityReason {
     let (code, reference) = reason
         .split_once(':')
@@ -1797,6 +1823,18 @@ impl ProjectStore {
         locales: &[String],
         cancellation: &Cancellation,
     ) -> Result<Eligibility, ExecutionError> {
+        self.review_eligibility_for_build(project_id, locales, &BTreeMap::new(), cancellation)
+    }
+
+    /// Explicit per-language translation scopes retain every other source unit.
+    /// An empty scope intentionally requests an all-source staged artifact.
+    pub fn review_eligibility_for_build(
+        &self,
+        project_id: ExecutionId,
+        locales: &[String],
+        translation_scopes: &BTreeMap<String, Vec<ExecutionId>>,
+        cancellation: &Cancellation,
+    ) -> Result<Eligibility, ExecutionError> {
         if locales.is_empty()
             || locales.len() > 16
             || locales.iter().collect::<BTreeSet<_>>().len() != locales.len()
@@ -1806,6 +1844,17 @@ impl ProjectStore {
         queries::check_read_cancel(cancellation)?;
         let mut requested = locales.to_vec();
         requested.sort();
+        let mut scopes = translation_scopes.clone();
+        for (locale, units) in &mut scopes {
+            if !requested.contains(locale) || units.len() > MAX_SCOPE {
+                return Err(failure(ErrorCode::InvalidInput, "build-translation-scope"));
+            }
+            units.sort();
+            if units.windows(2).any(|pair| pair[0] == pair[1]) {
+                return Err(failure(ErrorCode::InvalidInput, "build-translation-scope"));
+            }
+        }
+        let policy = if scopes.is_empty() { POLICY_VERSION } else { STAGED_POLICY_VERSION };
         let connection = self
             .connection()
             .map_err(|_| failure(ErrorCode::StorageFailed, "review-read"))?;
@@ -1820,7 +1869,12 @@ impl ProjectStore {
             let mut bases = Vec::new();
             for locale in &requested {
                 queries::check_read_cancel(cancellation)?;
+                let translated = scopes.get(locale).map(|units| units.iter().copied().collect::<BTreeSet<_>>());
+                if translated.as_ref().is_some_and(|selected| selected.iter().any(|unit| !units.contains(unit))) {
+                    return Err(failure(ErrorCode::InvalidInput, "build-translation-scope"));
+                }
                 let impacts = self.impact_map(project_id, locale)?;
+                let mut retained_source_units = 0;
                 let mut blockers = Vec::new();
                 let mut exceptions = Vec::new();
                 let mut selected_units = 0u32;
@@ -1836,9 +1890,11 @@ impl ProjectStore {
                 )? {
                     let unit_id = target.unit_id;
                     let (mut unit_blockers, unit_exceptions) =
-                        assess(&target, impacts.contains_key(&unit_id));
+                        assess_build_scope(&target, impacts.contains_key(&unit_id), translated.as_ref());
+                    let retained = translated.as_ref().is_some_and(|units| !units.contains(&unit_id));
+                    retained_source_units += u32::from(retained);
                     if unresolved.contains(&unit_id) {unit_blockers.push("correspondence-unresolved".into());}
-                    selected_units += u32::from(target.selection_id.is_some());
+                    selected_units += u32::from(!retained && target.selection_id.is_some());
                     blocking_units += u32::from(!unit_blockers.is_empty());
                     blocker_count += unit_blockers.len() as u32;
                     exception_count += unit_exceptions.len() as u32;
@@ -1890,18 +1946,24 @@ impl ProjectStore {
                     blocking_units,
                     blocker_count,
                     exception_count,
+                    retained_source_units,
                 });
             }
             queries::check_read_cancel(cancellation)?;
             let ready = outcomes.iter().all(|item| item.ready);
             Ok(Eligibility {
-                policy_version: POLICY_VERSION.to_owned(),
+                policy_version: policy.to_owned(),
                 source_snapshot_id,
                 epoch: observation.epoch,
                 sequence: observation.sequence,
-                basis: digest(&(POLICY_VERSION, source_snapshot_id, &bases))?,
+                basis: if scopes.is_empty() {
+                    digest(&(POLICY_VERSION, source_snapshot_id, &bases))?
+                } else {
+                    digest(&(policy, source_snapshot_id, &bases, &scopes))?
+                },
                 ready,
                 locales: outcomes,
+                translation_scopes: scopes.clone(),
             })
         })
     }

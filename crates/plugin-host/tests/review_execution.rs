@@ -515,6 +515,7 @@ fn paired_core_review_scoped(
     let choices: Vec<_> = expected_outputs
         .iter()
         .map(|(locale, _, path, _)| PluginBuildLocaleChoice {
+            translation_units: None,
             locale: (*locale).into(),
             output_paths: vec![(*path).into()],
             configuration: vec![],

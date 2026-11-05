@@ -884,6 +884,9 @@ export interface Eligibility {
   ready: boolean;
   sequence: Revision;
   sourceSnapshotId: ExecutionId;
+  translationScopes?: {
+    [k: string]: ExecutionId[];
+  };
 }
 export interface EligibilityLocale {
   blockerCount: number;
@@ -894,6 +897,7 @@ export interface EligibilityLocale {
   exceptions: EligibilityReason[];
   locale: string;
   ready: boolean;
+  retainedSourceUnits?: number;
   selectedUnits: number;
 }
 export interface EligibilityReason {
