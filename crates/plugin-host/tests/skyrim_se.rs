@@ -465,6 +465,126 @@ async fn installed_skyrim_package_runs_mixed_and_capacity_material_through_all_f
     }
 }
 
+fn fixed_source(
+    store: &ProjectStore,
+    source_binding: &sdk::SourceImportBinding,
+    extractor: &RunnerProxy,
+    checker: &RunnerProxy,
+    bytes: Vec<u8>,
+) -> FixedInput {
+    let producer = extractor
+        .execution_binding(Some(source_binding.declaration.profile.clone()))
+        .unwrap();
+    let bundle = SourceBundle::capture_selected(
+        source_binding,
+        &[sdk::SourceFileSetSelection {
+            id: "plugin".into(),
+            logical_paths: vec!["FormatProbe.esp".into()],
+        }],
+        vec![bytes],
+        "en-US",
+    )
+    .unwrap();
+    bundle
+        .fixed_plugin_input(
+            store.metadata().unwrap().project_id(),
+            producer.clone(),
+            SourceSettings {
+                native_start: None,
+                revision_policy: source_binding.declaration.revision_policy.clone(),
+                checker: Some(
+                    checker
+                        .execution_binding(Some(source_binding.declaration.profile.clone()))
+                        .unwrap(),
+                ),
+                semantic_rules: source_binding.declaration.semantic_rules.clone(),
+                review: Some(
+                    SourceReviewBinding::capture(
+                        &source_binding.review,
+                        &tsumugi_core::execution::PluginExecutionBinding {
+                            component_scope: sdk::ComponentScope::Project,
+                            application_scope: None,
+                            capability: (&source_binding.review).checker.clone(),
+                            profile: Some((&source_binding.review).declaration.profile.clone()),
+                            environment: (*(&producer.environment)).clone().into(),
+                        },
+                    )
+                    .unwrap(),
+                ),
+            },
+        )
+        .unwrap()
+}
+
+struct AdoptedSource {
+    snapshot: ExecutionId,
+    grants: Vec<ExecutionId>,
+    extracted: FixedResult,
+    check_input_bytes: usize,
+}
+fn adopt_source(
+    store: &mut ProjectStore,
+    runtime: &mut ExecutionRuntime,
+    input: &FixedInput,
+) -> AdoptedSource {
+    assert_eq!(
+        runtime.submit(store, input).unwrap_err().code,
+        ErrorCode::Unauthorized
+    );
+    let mut grants = vec![authorize(runtime, store, input)];
+    let extracted = execute(runtime, store, input);
+    assert_eq!(
+        store
+            .execution_attempt(input.envelope().attempt_id, false)
+            .unwrap()
+            .items[0]
+            .validation,
+        ValidationState::Pending
+    );
+    let preview = store
+        .source_preview(
+            input.envelope().attempt_id,
+            extracted.envelope().result_id,
+            0,
+            100,
+        )
+        .unwrap();
+    let action = store
+        .prepare_adoption(
+            input.envelope().attempt_id,
+            input.envelope().units[0].unit_id,
+            vec![extracted.envelope().result_id],
+            json!(preview.confirmation),
+        )
+        .unwrap();
+    assert!(
+        store
+            .adopt_execution(&action, &SourceAdoptionHandler)
+            .is_err()
+    );
+    assert!(store.content_scope().unwrap().current_snapshot.is_none());
+    let capture = store
+        .capture_source_validation(input.envelope().attempt_id, extracted.envelope().result_id)
+        .unwrap();
+    let check = capture.check_input().clone();
+    let check_input_bytes = check.bytes().len();
+    grants.push(authorize(runtime, store, &check));
+    let checked = execute(runtime, store, &check);
+    store
+        .commit_source_validation(capture.prepare(checked).unwrap())
+        .unwrap();
+    store
+        .adopt_execution(&action, &SourceAdoptionHandler)
+        .unwrap();
+    let snapshot = store.content_scope().unwrap().current_snapshot.unwrap();
+    AdoptedSource {
+        snapshot,
+        grants,
+        extracted,
+        check_input_bytes,
+    }
+}
+
 #[test]
 #[ignore = "requires an explicitly reviewed prebuilt Skyrim SE package and synthetic fixtures"]
 fn skyrim_normal_core_keeps_binary_source_review_release_and_reopen_evidence() {
@@ -508,9 +628,6 @@ fn skyrim_normal_core_keeps_binary_source_review_release_and_reopen_evidence() {
     ] {
         runtime.register(proxy.clone()).unwrap();
     }
-    let producer = extractor
-        .execution_binding(Some(source_binding.declaration.profile.clone()))
-        .unwrap();
     let captured = fixture("source", false, false);
     let original = captured.artifacts[0]
         .validated_bytes()
@@ -518,95 +635,19 @@ fn skyrim_normal_core_keeps_binary_source_review_release_and_reopen_evidence() {
         .into_owned();
     let external = root.path().join("selected-original.esp");
     std::fs::write(&external, &original).unwrap();
-    let bundle = SourceBundle::capture_selected(
+    let input = fixed_source(
+        &store,
         &source_binding,
-        &[sdk::SourceFileSetSelection {
-            id: "plugin".into(),
-            logical_paths: vec!["FormatProbe.esp".into()],
-        }],
-        vec![std::fs::read(&external).unwrap()],
-        "en-US",
-    )
-    .unwrap();
+        &extractor,
+        &checker,
+        std::fs::read(&external).unwrap(),
+    );
     std::fs::write(&external, b"changed outside the captured snapshot").unwrap();
-    let input = bundle
-        .fixed_plugin_input(
-            store.metadata().unwrap().project_id(),
-            producer.clone(),
-            SourceSettings {
-                native_start: None,
-                revision_policy: source_binding.declaration.revision_policy.clone(),
-                checker: Some(
-                    checker
-                        .execution_binding(Some(source_binding.declaration.profile.clone()))
-                        .unwrap(),
-                ),
-                semantic_rules: source_binding.declaration.semantic_rules.clone(),
-                review: Some(
-                    SourceReviewBinding::capture(
-                        &source_binding.review,
-                        &tsumugi_core::execution::PluginExecutionBinding {
-                            component_scope: sdk::ComponentScope::Project,
-                            application_scope: None,
-                            capability: (&source_binding.review).checker.clone(),
-                            profile: Some((&source_binding.review).declaration.profile.clone()),
-                            environment: (*(&producer.environment)).clone().into(),
-                        },
-                    )
-                    .unwrap(),
-                ),
-            },
-        )
-        .unwrap();
-    assert_eq!(
-        runtime.submit(&mut store, &input).unwrap_err().code,
-        ErrorCode::Unauthorized
-    );
-    let mut grants = vec![authorize(&runtime, &mut store, &input)];
-    let extracted = execute(&mut runtime, &mut store, &input);
-    assert_eq!(
-        store
-            .execution_attempt(input.envelope().attempt_id, false)
-            .unwrap()
-            .items[0]
-            .validation,
-        ValidationState::Pending
-    );
-    let preview = store
-        .source_preview(
-            input.envelope().attempt_id,
-            extracted.envelope().result_id,
-            0,
-            100,
-        )
-        .unwrap();
-    let action = store
-        .prepare_adoption(
-            input.envelope().attempt_id,
-            input.envelope().units[0].unit_id,
-            vec![extracted.envelope().result_id],
-            json!(preview.confirmation),
-        )
-        .unwrap();
-    assert!(
-        store
-            .adopt_execution(&action, &SourceAdoptionHandler)
-            .is_err()
-    );
-    assert!(store.content_scope().unwrap().current_snapshot.is_none());
-    let capture = store
-        .capture_source_validation(input.envelope().attempt_id, extracted.envelope().result_id)
-        .unwrap();
-    let check = capture.check_input().clone();
-    grants.push(authorize(&runtime, &mut store, &check));
-    let checked = execute(&mut runtime, &mut store, &check);
-    store
-        .commit_source_validation(capture.prepare(checked).unwrap())
-        .unwrap();
-    store
-        .adopt_execution(&action, &SourceAdoptionHandler)
-        .unwrap();
-    let snapshot = store.content_scope().unwrap().current_snapshot.unwrap();
+    let AdoptedSource {
+        snapshot,
+        mut grants,
+        ..
+    } = adopt_source(&mut store, &mut runtime, &input);
     let rows = store.source_content(snapshot, 0, 100).unwrap().rows;
     assert_eq!(rows.len(), 1);
     assert_eq!(rows[0].occurrence.text, "Original token");
@@ -808,4 +849,178 @@ fn skyrim_normal_core_keeps_binary_source_review_release_and_reopen_evidence() {
     let content = sdk::parse_content_exchange(success(reread).utf8.as_bytes()).unwrap();
     assert_eq!(content.units.len(), 1);
     assert_eq!(content.units[0].text, "译名 — é 👩🏽‍💻");
+}
+
+#[test]
+#[ignore = "requires an inspected prebuilt Skyrim SE package and capacity fixtures"]
+fn skyrim_normal_core_adopts_maximum_escaped_capture_and_reopens_every_field() {
+    let root = tempfile::tempdir().unwrap();
+    let image = installed(root.path());
+    let environment = runtime();
+    let source_binding = image.source_import("source-profile").unwrap();
+    let build_binding = image.build_declaration("build-profile").unwrap();
+    let stage = root.path().join("workers");
+    std::fs::create_dir(&stage).unwrap();
+    let proxy = |id: &str| {
+        Arc::new(
+            RunnerProxy::new(
+                image.clone(),
+                id,
+                environment.clone(),
+                &stage,
+                HostLimits::default(),
+            )
+            .unwrap(),
+        )
+    };
+    let extractor = proxy(&source_binding.declaration.extractor);
+    let checker = proxy(&source_binding.declaration.checker);
+    let review_checker = proxy(&source_binding.review.declaration.checker);
+    let builder = proxy(&build_binding.declaration.builder);
+    let artifact_checker = proxy(&build_binding.declaration.checker);
+    let path = root.path().join("project");
+    let mut store = ProjectStore::create(
+        &path,
+        ProjectMetadata::create(
+            "Synthetic full-capacity Skyrim SE package",
+            "en-US",
+            ["zh-CN"],
+        )
+        .unwrap(),
+    )
+    .unwrap();
+    let mut runtime = ExecutionRuntime::new(&store).unwrap();
+    for proxy in [
+        &extractor,
+        &checker,
+        &review_checker,
+        &builder,
+        &artifact_checker,
+    ] {
+        runtime.register(proxy.clone()).unwrap();
+    }
+    let captured = fixture("capacity-238-escaped", false, false);
+    let original = captured.artifacts[0]
+        .validated_bytes()
+        .unwrap()
+        .into_owned();
+    assert_eq!(original.len(), 1977864);
+    let input = fixed_source(
+        &store,
+        &source_binding,
+        &extractor,
+        &checker,
+        original.clone(),
+    );
+    assert!(input.bytes().len() > 2 * 1024 * 1024);
+    eprintln!(
+        "capacity Core adoption started: {} input bytes",
+        input.bytes().len()
+    );
+    let started = std::time::Instant::now();
+    let AdoptedSource {
+        snapshot,
+        grants,
+        extracted,
+        check_input_bytes,
+    } = adopt_source(&mut store, &mut runtime, &input);
+    eprintln!("capacity Core adoption returned in {:?}", started.elapsed());
+    assert!(extracted.bytes().len() > 8 * 1024 * 1024);
+    assert!(check_input_bytes > 4 * 1024 * 1024);
+    let sdk::InvocationOutcome::Succeeded { output } =
+        &extracted.envelope().plugin.as_ref().unwrap().result.outcome
+    else {
+        panic!("expected captured domain content")
+    };
+    let expected = sdk::parse_content_exchange(output.utf8.as_bytes()).unwrap();
+    assert_eq!(expected.units.len(), 476);
+    let saved_result = extracted.bytes().to_vec();
+    let read_rows = |store: &ProjectStore| {
+        let mut rows = Vec::new();
+        let mut after = 0;
+        loop {
+            let page = store.source_content(snapshot, after, 100).unwrap();
+            assert_eq!(page.total, 476);
+            rows.extend(page.rows);
+            match page.next_ordinal {
+                Some(next) => {
+                    assert!(next > after);
+                    after = next;
+                }
+                None => break,
+            }
+        }
+        assert_eq!(rows.len(), 476);
+        for (row, occurrence_id) in rows.iter().zip(&expected.order) {
+            let unit = expected
+                .units
+                .iter()
+                .find(|unit| {
+                    unit.occurrences
+                        .iter()
+                        .any(|occurrence| &occurrence.id == occurrence_id)
+                })
+                .unwrap();
+            let occurrence = unit
+                .occurrences
+                .iter()
+                .find(|occurrence| &occurrence.id == occurrence_id)
+                .unwrap();
+            assert_eq!(row.occurrence.operation_unit_id, unit.id);
+            assert_eq!(row.occurrence.text, unit.text);
+            assert_eq!(row.occurrence.native_identity, occurrence.native_identity);
+            assert_eq!(row.occurrence.source, occurrence.source);
+        }
+        rows
+    };
+    let rows = read_rows(&store);
+    assert_eq!(
+        rows.iter()
+            .filter(|row| row.occurrence.text.len() == 8192)
+            .count(),
+        238
+    );
+    assert_eq!(
+        store
+            .source_bundle(snapshot)
+            .unwrap()
+            .source_input()
+            .artifacts[0]
+            .validated_bytes()
+            .unwrap()
+            .into_owned(),
+        original
+    );
+    assert_eq!(std::fs::read_dir(&stage).unwrap().count(), 0);
+    for grant in grants {
+        runtime.revoke_plugin(&mut store, grant).unwrap();
+    }
+    runtime.begin_quiesce(&mut store).unwrap();
+    runtime.finish_quiesce(&mut store).unwrap();
+    drop(runtime);
+    store.close().unwrap();
+    let reopened = ProjectStore::open(&path).unwrap();
+    assert_eq!(read_rows(&reopened), rows);
+    assert_eq!(
+        reopened
+            .source_bundle(snapshot)
+            .unwrap()
+            .source_input()
+            .artifacts[0]
+            .validated_bytes()
+            .unwrap()
+            .into_owned(),
+        original
+    );
+    assert_eq!(
+        reopened
+            .execution_result(input.envelope().attempt_id, extracted.envelope().result_id)
+            .unwrap()
+            .bytes(),
+        saved_result
+    );
+    eprintln!(
+        "capacity Core capture/adopt/read/reopen completed in {:?}",
+        started.elapsed()
+    );
 }

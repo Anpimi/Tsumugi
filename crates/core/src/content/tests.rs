@@ -2373,6 +2373,110 @@ fn maintenance_window_keeps_occurrence_display_and_canonical_plan_identity_separ
 }
 
 #[test]
+fn source_projection_preserves_coordinates_and_rejects_invalid_binary_and_text_evidence() {
+    let temp = tempfile::tempdir().unwrap();
+    let store = create(&temp.path().join("project"));
+    let seed = generic_source_input(&store, 1, 1, "é👩", false);
+    for binary in [false, true] {
+        let mut bundle = SourceBundle::from_input(&seed).unwrap();
+        let bytes = bundle.files[0].bytes().unwrap().into_owned();
+        let text = std::str::from_utf8(&bytes).unwrap();
+        let start = text.find("é👩").unwrap();
+        let end = start + "é👩".len();
+        if binary {
+            let id = bundle.files[0].artifact_id;
+            let artifact = sdk::CapturedArtifact::from_bytes(
+                id.to_string(),
+                "records.bin".into(),
+                "source".into(),
+                &bytes,
+            )
+            .unwrap();
+            bundle.files[0] = CapturedFile::from_artifact(&artifact, id).unwrap();
+            bundle.manifest_digest = bundle.calculate_digest().unwrap();
+        }
+        let mut exchange = generic_source_proposal(&bundle.source_input());
+        let range = if binary {
+            sdk::SourceRange::raw_bytes(start as u32, end as u32)
+        } else {
+            sdk::TextRange {
+                encoding: sdk::TextEncoding::Utf16,
+                start: text[..start].encode_utf16().count() as u32,
+                end: text[..end].encode_utf16().count() as u32,
+            }
+            .into()
+        };
+        let occurrence = &mut exchange.units[0].occurrences[0];
+        occurrence.source.range = range;
+        let display = &mut occurrence.native_identity.as_mut().unwrap().display;
+        display.value = "é👩".into();
+        display.source = Some(occurrence.source.clone());
+        let policy = SourceSettings::from_input(&seed).unwrap().revision_policy;
+        let projected = project_source_output(&bundle, exchange.clone(), policy.clone()).unwrap();
+        assert_eq!(
+            projected.occurrences[0].value_byte_range,
+            [start as u32, end as u32]
+        );
+        assert_eq!(
+            projected.occurrences[0].key_byte_range,
+            Some([start as u32, end as u32])
+        );
+        assert_eq!(projected.occurrences[0].source.range, range);
+        assert_eq!(projected.exchange, exchange);
+
+        // Both references must pass SDK validation before projection may use
+        // binary offsets directly. A later call must validate its own evidence.
+        for display in [false, true] {
+            for invalid in [
+                sdk::SourceRange {
+                    start: range.end,
+                    end: range.start,
+                    ..range
+                },
+                sdk::SourceRange {
+                    end: bytes.len() as u32 + 1,
+                    ..range
+                },
+                sdk::SourceRange {
+                    encoding: if binary {
+                        sdk::SourceEncoding::Utf8Byte
+                    } else {
+                        sdk::SourceEncoding::RawByte
+                    },
+                    ..range
+                },
+            ] {
+                let mut changed = exchange.clone();
+                let occurrence = &mut changed.units[0].occurrences[0];
+                if display {
+                    occurrence
+                        .native_identity
+                        .as_mut()
+                        .unwrap()
+                        .display
+                        .source
+                        .as_mut()
+                        .unwrap()
+                        .range = invalid;
+                } else {
+                    occurrence.source.range = invalid;
+                }
+                assert!(
+                    project_source_output(&bundle, changed, policy.clone()).is_err(),
+                    "binary={binary}, display={display}, range={invalid:?}"
+                );
+            }
+        }
+        let mut changed = exchange;
+        match &mut changed.artifacts[0] {
+            sdk::CapturedArtifact::Binary(artifact) => artifact.sha256 = "0".repeat(64),
+            sdk::CapturedArtifact::Text(artifact) => artifact.sha256 = "0".repeat(64),
+        }
+        assert!(project_source_output(&bundle, changed, policy).is_err());
+    }
+}
+
+#[test]
 fn generic_source_two_mib_binary_capture_is_checked_adopted_and_reopened_from_original_blobs() {
     let temp = tempfile::tempdir().unwrap();
     let path = temp.path().join("project");

@@ -787,6 +787,17 @@ pub(crate) fn project_source_output(
 ) -> Result<SourceOutput, ExecutionError> {
     sdk::validate_source_extraction(&bundle.source_input(), &exchange)
         .map_err(source_contract_error)?;
+    // The SDK has validated every range against these immutable materials.
+    // Raw coordinates already are byte offsets; decoding the whole binary for
+    // each occurrence/display range would repeat work proportional to its size.
+    let project_range = |artifact: &sdk::CapturedArtifact,
+                         range: sdk::SourceRange|
+     -> Result<[u32; 2], ExecutionError> {
+        match artifact {
+            sdk::CapturedArtifact::Binary(_) => Ok([range.start, range.end]),
+            sdk::CapturedArtifact::Text(_) => range.byte_range(artifact).map_err(source_contract_error),
+        }
+    };
     policy.validate().map_err(source_contract_error)?;
     if policy.profile != exchange.profile {
         return Err(invalid("source-policy"));
@@ -845,11 +856,7 @@ pub(crate) fn project_source_output(
             .iter()
             .find(|artifact| artifact.id() == occurrence.source.artifact_id)
             .ok_or_else(|| invalid("source-artifact"))?;
-        let source_range = occurrence
-            .source
-            .range
-            .byte_range(artifact)
-            .map_err(source_contract_error)?;
+        let source_range = project_range(artifact, occurrence.source.range)?;
         let key_byte_range = occurrence
             .native_identity
             .as_ref()
@@ -860,10 +867,7 @@ pub(crate) fn project_source_output(
                     .iter()
                     .find(|artifact| artifact.id() == reference.artifact_id)
                     .ok_or_else(|| invalid("source-display"))?;
-                let range = reference
-                    .range
-                    .byte_range(artifact)
-                    .map_err(source_contract_error)?;
+                let range = project_range(artifact, reference.range)?;
                 // The legacy reader's key range has one artifact column. Keep
                 // absence explicit when the display evidence is in another one.
                 Ok::<Option<[u32; 2]>, ExecutionError>(
