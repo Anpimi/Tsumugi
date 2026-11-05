@@ -218,6 +218,17 @@ fn alpha3_descriptor_remains_exact_without_becoming_the_current_host() {
 }
 
 #[test]
+fn alpha4_descriptor_remains_exact_without_becoming_the_current_host() {
+    let mut old = descriptor();
+    old.sdk_version = "0.1.0-alpha.4".into();
+    let bytes = serde_json::to_vec(&old).unwrap();
+    let decoded: RuntimeEnvironmentDescriptor = serde_json::from_slice(&bytes).unwrap();
+    decoded.validate().unwrap();
+    assert_eq!(serde_json::to_vec(&decoded).unwrap(), bytes);
+    assert_ne!(decoded.digest().unwrap(), descriptor().digest().unwrap());
+}
+
+#[test]
 fn descriptors_reject_missing_unknown_duplicate_and_unimplemented_fields() {
     let original = serde_json::to_value(descriptor()).unwrap();
     for key in ["profile", "platform", "tool", "host", "toolVersion"] {

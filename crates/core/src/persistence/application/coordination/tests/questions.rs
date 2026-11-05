@@ -200,10 +200,11 @@ fn frozen_team_settings_keep_legacy_system_bytes_and_capture_question_opt_in() {
             let path = store.directory().to_path_buf();
             store.close().unwrap();
             let connection = rusqlite::Connection::open(path.join("project.sqlite3")).unwrap();
+            crate::persistence::prepare_legacy_fixture_schema(&connection, 70).unwrap();
             connection.pragma_update(None, "user_version", 70).unwrap();
             drop(connection);
             let reopened = ProjectStore::open(path).unwrap();
-            assert_eq!(reopened.connection().unwrap().pragma_query_value(None, "user_version", |row| row.get::<_, i64>(0)).unwrap(), 71);
+            assert_eq!(reopened.connection().unwrap().pragma_query_value(None, "user_version", |row| row.get::<_, i64>(0)).unwrap(), crate::persistence::SCHEMA_VERSION);
             assert_eq!(reopened.work_plan(plan.plan_id).unwrap(), plan);
             assert_eq!(reopened.work_plan_receipt(receipt.action_id).unwrap(), Some(original_receipt));
             assert_eq!(reopened.execution_input(request.input.envelope().attempt_id).unwrap().bytes(), request.input.bytes());

@@ -21,5 +21,5 @@ export function encodeFrame(frame: MemberFrame): Buffer {
 }
 
 export class FrameDecoder extends JsonFrameDecoder<MemberFrame> {
-  constructor() { super(decodeFrame, MEMBER_PROFILE.maxFrameBytes); }
+  constructor() { super(decodeFrame, MEMBER_PROFILE.maxFrameBytes, MEMBER_PROFILE.maxSessionBytes); }
 }

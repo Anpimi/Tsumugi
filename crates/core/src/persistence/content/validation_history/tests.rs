@@ -100,7 +100,9 @@ fn old_rows(c: &Connection) -> Vec<(String, Vec<Vec<rusqlite::types::Value>>)> {
 #[test]
 fn supported_schema69_migration_backfills_only_proven_links_and_preserves_original_rows() {
     for version in 61..=68 {
-        let mut fixture = plugin_fixture();
+        // Construct the historical eight-MiB frame before grants/results exist;
+        // never relabel a new 32-MiB input as an older supported project.
+        let mut fixture = crate::persistence::content::decision_mappings::tests::plugin_fixture_with_result_limit(MAX_RESULT_BYTES as u32);
         let a_attempt = fixture.check_input.envelope().attempt_id;
         let a_result = fixture.store.execution_current_result(a_attempt, fixture.check_input.envelope().items[0].item_id).unwrap().unwrap();
         let b = another_check(&mut fixture.store, fixture.generation, &fixture.input, fixture.result, false);
@@ -113,10 +115,7 @@ fn supported_schema69_migration_backfills_only_proven_links_and_preserves_origin
         // Normal open installs the ledger's chunk reader before migration.
         // This raw connection also exercises the production proof backfill.
         crate::persistence::ledger::register_input_reader(&c).unwrap();
-        c.execute_batch("DROP TABLE source_validation_history").unwrap();
-        crate::persistence::content::lineage_corrections::make_legacy_schema(&c).unwrap();
-        if version < 68 { crate::persistence::translation::make_legacy_memory_schema(&c).unwrap(); }
-        if version < 66 { crate::persistence::resources::make_legacy_context_schema(&c).unwrap(); }
+        crate::persistence::prepare_legacy_fixture_schema(&c, version).unwrap();
         if version < 65 { c.execute_batch("DROP TABLE application_conversation_planning_attempts").unwrap(); }
         if version < 64 { c.execute_batch("DROP TABLE application_conversation_work_plans").unwrap(); }
         if version < 63 { c.execute_batch("DROP TABLE application_conversation_proposals").unwrap(); }

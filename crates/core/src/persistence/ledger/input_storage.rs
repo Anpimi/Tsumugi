@@ -1,7 +1,9 @@
 //! Ledger-owned storage for exact input frames. Wire bytes remain unchanged.
 //! A frame references bounded immutable chunks; every read checks their actual
 //! bytes and then restores the original complete frame and its digest.
-use super::{ErrorCode, ExecutionError, FixedInput, MAX_INPUT_BYTES, codec, error, sql_error};
+use super::{
+    ErrorCode, ExecutionError, FixedInput, MAX_FIXED_INPUT_BYTES, codec, error, sql_error,
+};
 use rusqlite::{
     Connection,
     functions::{Aggregate, Context, FunctionFlags},
@@ -10,8 +12,8 @@ use rusqlite::{
 use serde::{Deserialize, Serialize};
 
 pub(super) const CHUNK_BYTES: usize = 16 * 1024;
-pub(super) const MAX_STORED_INPUT_BYTES: usize = 18 * 1024;
-const MAX_CHUNKS: usize = MAX_INPUT_BYTES.div_ceil(CHUNK_BYTES);
+pub(super) const MAX_STORED_INPUT_BYTES: usize = 144 * 1024;
+const MAX_CHUNKS: usize = MAX_FIXED_INPUT_BYTES.div_ceil(CHUNK_BYTES);
 pub(super) const TABLE: &str = "CREATE TABLE execution_input_chunks (
     digest TEXT PRIMARY KEY NOT NULL CHECK(length(digest)=64),
     bytes BLOB NOT NULL CHECK(typeof(bytes)='blob' AND length(bytes) BETWEEN 1 AND 16384))";
@@ -27,7 +29,7 @@ impl StoredInput {
     fn validate(&self) -> Result<(), ExecutionError> {
         if self.format != 1
             || self.raw_bytes == 0
-            || self.raw_bytes > MAX_INPUT_BYTES
+            || self.raw_bytes > MAX_FIXED_INPUT_BYTES
             || self.chunks.len() != self.raw_bytes.div_ceil(CHUNK_BYTES)
             || self.chunks.len() > MAX_CHUNKS
             || self.chunks.iter().any(|s| {
@@ -168,7 +170,7 @@ impl Aggregate<Pieces, Option<Vec<u8>>> for InputChunks {
             || index as usize >= MAX_CHUNKS
             || bytes.is_empty()
             || bytes.len() > CHUNK_BYTES
-            || bytes.len() > MAX_INPUT_BYTES.saturating_sub(state.bytes)
+            || bytes.len() > MAX_FIXED_INPUT_BYTES.saturating_sub(state.bytes)
             || codec::digest(bytes) != digest
         {
             state.valid = false;

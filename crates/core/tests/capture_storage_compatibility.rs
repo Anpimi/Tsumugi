@@ -28,7 +28,7 @@ fn supported_old_backup_restores_upgrades_and_edits_without_changing_the_origina
         restored_database
             .pragma_query_value(None, "user_version", |row| row.get::<_, i64>(0))
             .unwrap(),
-        75
+        76
     );
     assert_eq!(records(&restored_database), original);
     drop(restored_database);
@@ -81,7 +81,7 @@ fn supported_old_backup_restores_upgrades_and_edits_without_changing_the_origina
 fn old_backup_restore_refuses_corruption_unsupported_versions_and_existing_targets() {
     use tsumugi_core::PersistenceErrorCode;
     let temp = tempfile::tempdir().unwrap();
-    for version in [60, 76] {
+    for version in [60, 77] {
         let backup = temp.path().join(format!("unsupported-{version}.backup"));
         old_backup(&backup);
         Connection::open(&backup)
@@ -198,7 +198,7 @@ fn actual_schema_74_project_upgrades_without_rewriting_captures_or_human_work() 
         upgraded
             .pragma_query_value(None, "user_version", |row| row.get::<_, i64>(0))
             .unwrap(),
-        75
+        76
     );
     assert_eq!(records(&upgraded), original);
     let snapshots: Vec<_> = std::fs::read_dir(temp.path())

@@ -6,12 +6,13 @@ Exchange protocol `1` defines the wire envelopes and semantic invariants for pas
 
 | Envelope / Collection | Limit |
 | --- | --- |
-| Complete encoded `content` frame | 4 MiB (including JSON escaping and envelope framing) |
+| Complete encoded `content` frame | 8 MiB (including JSON escaping and envelope framing) |
 | Other `ExchangeDocument` frames | 2 MiB |
-| Combined invocation inputs | 4 MiB |
-| Captured source material / build artifacts | 2 MiB each |
+| Combined invocation inputs | 16 MiB |
+| Captured source material / build artifacts | 2 MiB decoded bytes each |
+| Encoded `SourceExtractionInput` / `ArtifactSet` | 4 MiB each |
 | Content units, occurrences, order entries, relations | 2,000 items each |
-| Domain extension blocks (`DomainBlock`) | 4,000 items (allowing both identity and context blocks per unit/occurrence) |
+| Domain extension blocks (`DomainBlock`) | 4,001 items (two per content item plus one snapshot block) |
 
 ## Three-Layer `ContentExchange` Model
 

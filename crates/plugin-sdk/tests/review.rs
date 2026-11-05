@@ -88,24 +88,49 @@ fn review_roundtrip_preserves_original_evidence_unicode_and_missing_vs_empty_tex
     }
 }
 
-// Pad an already valid opaque extension using actual wire encoding. Newlines
-// consume two JSON bytes each without exceeding the block's raw UTF-8 budget.
+// Exercise source and compound limits independently, without exceeding any
+// individual extension or translation budget to reach the enclosing boundary.
 fn input_with_encoded_size(
     size: usize,
     encoded_len: impl Fn(&ReviewCheckInput) -> usize,
 ) -> ReviewCheckInput {
     let mut value = input();
-    let block = value.source.domain_blocks.last_mut().unwrap();
-    assert_eq!(block.schema.id, "example.unknown.metadata");
-    assert_eq!(block.handling, ExtensionHandling::Preserve);
-    block.payload_utf8.push_str("🧵 e\u{301} \"\\\0\t\r\n");
+    if size == MAX_INVOCATION_PAYLOAD_BYTES {
+        for index in 0..256 {
+            let mut unit = value.source.units[0].clone();
+            unit.id = format!("padding-unit-{index}");
+            unit.source_revision_id = format!("padding-revision-{index}");
+            for (position, occurrence) in unit.occurrences.iter_mut().enumerate() {
+                occurrence.id = format!("padding-occurrence-{index}-{position}");
+                occurrence.native_identity = None;
+                value.source.order.push(occurrence.id.clone());
+            }
+            value.selections.push(ReviewSelection {
+                unit_id: unit.id.clone(), source_revision_id: unit.source_revision_id.clone(),
+                translation_text: Some("\n".repeat(MAX_TEXT_BYTES)),
+            });
+            value.source.units.push(unit);
+        }
+        for requirement in &mut value.requirements {
+            requirement.targets = value.selections.iter().map(|s| s.unit_id.clone()).collect();
+        }
+    }
+    let template = value.source.domain_blocks.last().unwrap().clone();
+    assert_eq!(template.schema.id, "example.unknown.metadata");
+    assert_eq!(template.handling, ExtensionHandling::Preserve);
+    value.source.domain_blocks.last_mut().unwrap().payload_utf8.push_str("🧵 e\u{301} \"\\\0\t\r\n");
+    let chunk = MAX_EXCHANGE_BYTES / 2;
+    while size - encoded_len(&value) > chunk * 2 + 1024 {
+        value.source.domain_blocks.last_mut().unwrap().payload_utf8.push_str(&"\n".repeat(chunk));
+        let mut block = template.clone();
+        block.schema.id = format!("example.padding.{}", value.source.domain_blocks.len());
+        value.source.domain_blocks.push(block);
+    }
     let padding = size.checked_sub(encoded_len(&value)).unwrap();
     let block = value.source.domain_blocks.last_mut().unwrap();
     block.payload_utf8.push_str(&"\n".repeat(padding / 2));
-    if padding % 2 != 0 {
-        block.payload_utf8.push('x');
-    }
-    assert!(block.payload_utf8.len() <= MAX_EXCHANGE_BYTES);
+    if padding % 2 != 0 { block.payload_utf8.push('x'); }
+    assert!(value.source.domain_blocks.iter().all(|b| b.payload_utf8.len() <= MAX_EXCHANGE_BYTES));
     assert_eq!(encoded_len(&value), size);
     value
 }
@@ -143,10 +168,8 @@ fn review_source_validation_keeps_encoded_boundary_and_original_first_error() {
         serde_json::to_vec(&input.source).unwrap().len()
     });
     value.source.validate().unwrap();
-    assert!(serde_json::to_vec(&value).unwrap().len() > MAX_INVOCATION_PAYLOAD_BYTES);
-    let outer = value.validate().unwrap_err();
-    assert_eq!(outer.code, ContractErrorCode::LimitExceeded);
-    assert_eq!(outer.field, "reviewCheckInput");
+    assert!(serde_json::to_vec(&value).unwrap().len() < MAX_INVOCATION_PAYLOAD_BYTES);
+    value.validate().unwrap();
 
     value
         .source

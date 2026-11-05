@@ -10,7 +10,7 @@ pub use provider::{ProviderBudget, ReportedTokenTotal};
 
 const EXECUTION_RESULTS_TABLE: &str = "CREATE TABLE \"execution_results\" (
         result_id TEXT PRIMARY KEY NOT NULL, attempt_id TEXT NOT NULL, item_id TEXT NOT NULL, dispatch_token TEXT NOT NULL,
-        bytes BLOB NOT NULL CHECK(length(bytes) BETWEEN 1 AND 8388608), digest TEXT NOT NULL CHECK(length(digest) = 64),
+        bytes BLOB NOT NULL CHECK(length(bytes) BETWEEN 1 AND 33554432), digest TEXT NOT NULL CHECK(length(digest) = 64),
         FOREIGN KEY(attempt_id,item_id,dispatch_token) REFERENCES execution_items(attempt_id,item_id,dispatch_token))";
 
 pub(super) const TABLES: &[(&str, &str)] = &[
@@ -21,7 +21,7 @@ pub(super) const TABLES: &[(&str, &str)] = &[
     ("execution_attempts", "CREATE TABLE execution_attempts (
         attempt_id TEXT PRIMARY KEY NOT NULL, task_id TEXT NOT NULL, project_id TEXT NOT NULL,
         previous_attempt_id TEXT REFERENCES execution_attempts(attempt_id),
-        input BLOB NOT NULL CHECK(typeof(input)='blob' AND length(input) BETWEEN 1 AND 18432), digest TEXT NOT NULL CHECK(length(digest) = 64),
+        input BLOB NOT NULL CHECK(typeof(input)='blob' AND length(input) BETWEEN 1 AND 147456), digest TEXT NOT NULL CHECK(length(digest) = 64),
         cancellation_revision INTEGER NOT NULL CHECK(cancellation_revision >= 0),
         sequence INTEGER NOT NULL UNIQUE CHECK(sequence > 0),
         FOREIGN KEY(task_id, project_id) REFERENCES execution_tasks(task_id, project_id))"),
@@ -175,8 +175,11 @@ fn validate_schema(
             return Err(error(ErrorCode::CorruptLedger, "fixture-schema"));
         }
     }
+    let version: i64 = connection
+        .pragma_query_value(None, "user_version", |r| r.get(0))
+        .map_err(sql_error)?;
     for (name, expected) in TABLES {
-        let expected = *expected;
+        let expected = super::capture_capacity::schema_sql(name, expected, version);
         let actual: String = connection
             .query_row(
                 "SELECT sql FROM sqlite_master WHERE type='table' AND name=?1",
@@ -212,6 +215,13 @@ fn validate_schema(
     for id in ids {
         let id = parse_id(id.map_err(sql_error)?)?;
         let input = load_input(connection, id)?;
+        if (61..=75).contains(&version)
+            && (input.bytes().len() > MAX_INPUT_BYTES
+                || input.envelope().limits.max_result_bytes as usize > MAX_RESULT_BYTES
+                || input.envelope().limits.max_attempt_result_bytes as usize > MAX_ATTEMPT_RESULT_BYTES)
+        {
+            return Err(error(ErrorCode::CorruptLedger, "legacy-input-limits"));
+        }
         if input.envelope().project_id.to_string() != project.project_id().to_string() {
             return Err(error(ErrorCode::CorruptLedger, "project"));
         }
@@ -911,7 +921,7 @@ pub(super) fn visit_result_pairs(
          input_storage::reconstruct_sql(), input_storage::metadata_sql()
     )).map_err(sql_error)?;
     let rows = statement
-        .query_map(params![wanted, MAX_RESULT_BYTES as i64], |r| {
+        .query_map(params![wanted, MAX_PLUGIN_RESULT_BYTES as i64], |r| {
             Ok((
                 r.get::<_, String>(0)?,
                 r.get::<_, Option<Vec<u8>>>(1)?,
@@ -992,7 +1002,7 @@ fn check_stored_result(
     let expected = result.envelope();
     let (bytes,digest,item,token): (Vec<u8>,String,String,String) = connection.query_row(
         "SELECT CASE WHEN length(bytes)<=?3 THEN bytes END,digest,item_id,dispatch_token FROM execution_results WHERE result_id=?1 AND attempt_id=?2",
-        params![expected.result_id.to_string(),expected.attempt_id.to_string(),MAX_RESULT_BYTES as i64],
+        params![expected.result_id.to_string(),expected.attempt_id.to_string(),MAX_PLUGIN_RESULT_BYTES as i64],
         |r| Ok((r.get(0)?,r.get(1)?,r.get(2)?,r.get(3)?))).map_err(sql_error)?;
     if digest != result.digest()
         || bytes != result.bytes()

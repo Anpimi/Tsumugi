@@ -4,7 +4,7 @@ use super::*;
 use crate::{
     ReviewTarget,
     execution::{
-        AdoptionUnit, InputEnvelope, InputItem, MAX_RESULT_BYTES, PluginExecutionBinding, Scope,
+        AdoptionUnit, InputEnvelope, InputItem, MAX_PLUGIN_RESULT_BYTES, MAX_RESULT_BYTES, PluginExecutionBinding, Scope,
     },
 };
 use std::collections::BTreeMap;
@@ -420,7 +420,8 @@ impl ReleasePlan {
         envelope.attempt_id = attempt;
         envelope.units = vec![AdoptionUnit::new(ids)];
         envelope.settings = serde_json::to_value(self).map_err(|_| invalid())?;
-        envelope.limits.max_result_bytes = MAX_RESULT_BYTES as u32;
+        envelope.limits.max_result_bytes = MAX_PLUGIN_RESULT_BYTES as u32;
+        envelope.limits.max_attempt_result_bytes = MAX_PLUGIN_RESULT_BYTES as u32;
         envelope.limits.timeout_ms = envelope
             .limits
             .timeout_ms
@@ -438,7 +439,9 @@ impl ReleasePlan {
             || envelope.plugin.as_ref() != Some(&plan.build.builder())
             || envelope.units.len() != 1
             || envelope.items.len() != plan.locales.len()
-            || envelope.limits.max_result_bytes != MAX_RESULT_BYTES as u32
+            || ![MAX_RESULT_BYTES as u32, MAX_PLUGIN_RESULT_BYTES as u32]
+                .contains(&envelope.limits.max_result_bytes)
+            || envelope.limits.max_attempt_result_bytes != envelope.limits.max_result_bytes
             || envelope.limits.timeout_ms > plan.build.binding.builder.declaration.limits.timeout_ms
         {
             return Err(invalid());

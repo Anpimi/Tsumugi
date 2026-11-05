@@ -18,5 +18,5 @@ export function encodeFrame(value: ProcessFrame): Buffer {
   return result;
 }
 export class FrameDecoder extends JsonFrameDecoder<ProcessFrame> {
-  constructor() { super(decodeFrame, PROCESS_PROFILE.maxFrameBytes); }
+  constructor() { super(decodeFrame, PROCESS_PROFILE.maxFrameBytes, PROCESS_PROFILE.maxSessionBytes); }
 }

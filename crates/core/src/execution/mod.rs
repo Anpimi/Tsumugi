@@ -48,8 +48,15 @@ pub const REVIEW_CHECK_OPERATION: &str = "review-semantic-check";
 
 pub const MAX_ITEMS: usize = 2000;
 pub const MAX_INPUT_BYTES: usize = 4 * 1024 * 1024;
+/// Plugin frames can retain a checked Core plan and its SDK request together.
+/// Ordinary inputs retain MAX_INPUT_BYTES and cannot select this allowance.
+pub const MAX_FIXED_INPUT_BYTES: usize =
+    2 * tsumugi_plugin_sdk::MAX_INVOCATION_PAYLOAD_BYTES + 64 * 1024;
 pub const DEFAULT_RESULT_BYTES: usize = 256 * 1024;
 pub const MAX_RESULT_BYTES: usize = 8 * 1024 * 1024;
+/// The exact quoted SDK response and its checked ledger projection are bounded
+/// together. Ordinary operation defaults and result ceilings stay unchanged.
+pub const MAX_PLUGIN_RESULT_BYTES: usize = 32 * 1024 * 1024;
 pub const MAX_ATTEMPT_RESULT_BYTES: usize = 8 * 1024 * 1024;
 pub const MAX_DIAGNOSTIC_BYTES: usize = 4096;
 pub const MAX_DEPTH: usize = 32;
@@ -364,14 +371,24 @@ impl Default for ExecutionLimits {
     }
 }
 impl ExecutionLimits {
-    fn validate(&self, max_timeout_ms: u32) -> Result<(), ExecutionError> {
+    fn validate(&self, max_timeout_ms: u32, plugin: bool) -> Result<(), ExecutionError> {
         if self.timeout_ms == 0
             || self.timeout_ms > max_timeout_ms
             || self.cancel_wait_ms > 5_000
             || self.max_result_bytes == 0
-            || self.max_result_bytes as usize > MAX_RESULT_BYTES
+            || self.max_result_bytes as usize
+                > if plugin {
+                    MAX_PLUGIN_RESULT_BYTES
+                } else {
+                    MAX_RESULT_BYTES
+                }
             || self.max_attempt_result_bytes < self.max_result_bytes
-            || self.max_attempt_result_bytes as usize > MAX_ATTEMPT_RESULT_BYTES
+            || self.max_attempt_result_bytes as usize
+                > if plugin {
+                    MAX_PLUGIN_RESULT_BYTES
+                } else {
+                    MAX_ATTEMPT_RESULT_BYTES
+                }
         {
             return Err(ExecutionError::new(ErrorCode::LimitExceeded, "limits"));
         }
@@ -486,6 +503,7 @@ impl InputEnvelope {
             } else {
                 60_000
             },
+            self.plugin.is_some(),
         )?;
         if self.items.is_empty()
             || self.items.len() > MAX_ITEMS
@@ -567,17 +585,29 @@ pub struct FixedInput {
     digest: String,
 }
 impl FixedInput {
+    fn byte_limit(envelope: &InputEnvelope) -> usize {
+        envelope.plugin.as_ref().map_or(MAX_INPUT_BYTES, |binding| {
+            MAX_INPUT_BYTES
+                .max(
+                    (binding.capability.declaration.limits.max_input_bytes as usize)
+                        .saturating_mul(2)
+                        .saturating_add(64 * 1024),
+                )
+                .min(MAX_FIXED_INPUT_BYTES)
+        })
+    }
     pub fn capture(mut envelope: InputEnvelope) -> Result<Self, ExecutionError> {
         codec::validate_depth(&envelope.settings, 1)?;
         for item in &envelope.items {
             codec::validate_depth(&item.payload, 3)?;
         }
         envelope.normalize();
-        let bytes = codec::encode(&envelope, MAX_INPUT_BYTES)?;
+        envelope.validate()?;
+        let bytes = codec::encode(&envelope, Self::byte_limit(&envelope))?;
         Self::restore(&bytes, &codec::digest(&bytes))
     }
     pub fn restore(bytes: &[u8], expected_digest: &str) -> Result<Self, ExecutionError> {
-        if bytes.len() > MAX_INPUT_BYTES {
+        if bytes.len() > MAX_FIXED_INPUT_BYTES {
             return Err(ExecutionError::new(ErrorCode::LimitExceeded, "input"));
         }
         let digest = codec::digest(bytes);
@@ -587,8 +617,11 @@ impl FixedInput {
                 "input-digest",
             ));
         }
-        let envelope: InputEnvelope = codec::decode(bytes, MAX_INPUT_BYTES)?;
+        let envelope: InputEnvelope = codec::decode(bytes, MAX_FIXED_INPUT_BYTES)?;
         envelope.validate()?;
+        if bytes.len() > Self::byte_limit(&envelope) {
+            return Err(ExecutionError::new(ErrorCode::LimitExceeded, "input"));
+        }
         Ok(Self {
             envelope: Arc::new(envelope),
             bytes: Arc::from(bytes),

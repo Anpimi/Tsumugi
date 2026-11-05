@@ -75,10 +75,8 @@ fn make_legacy(path: &std::path::Path) {
     ] {
         c.execute_batch(&format!("DROP TABLE {name}")).unwrap();
     }
-    // Reconstruct the supported schema, rather than relabeling current tables.
-    crate::persistence::content::lineage_corrections::make_legacy_schema(&c).unwrap();
-    crate::persistence::resources::make_legacy_context_schema(&c).unwrap();
-    c.execute_batch("ALTER TABLE resource_decisions DROP COLUMN edited_target").unwrap();
+    // Reconstruct all supported old structures through their existing owner.
+    crate::persistence::prepare_legacy_fixture_schema(&c, 61).unwrap();
     c.pragma_update(None, "user_version", 61).unwrap();
 }
 
@@ -522,12 +520,12 @@ fn migration_interruptions_preserve_all_original_plan_team_and_receipt_rows() {
         let saved = store
             .publish_human_team_discussion(&scope, "local-user", &post)
             .unwrap();
-        let before = legacy_rows(store.connection().unwrap());
+        let before = crate::persistence::legacy_fixture_rows(store.connection().unwrap(), 61);
         let path = store.directory().to_path_buf();
         store.close().unwrap();
         make_legacy(&path);
         let raw = Connection::open(path.join(super::super::super::DATABASE_FILENAME)).unwrap();
-        let before_legacy = legacy_rows(&raw);
+        let before_legacy = crate::persistence::legacy_fixture_rows(&raw, 61);
         assert_eq!(version(&raw), 61);
         drop(raw);
         let marker = temp.path().join("migration-hook");
@@ -560,7 +558,7 @@ fn migration_interruptions_preserve_all_original_plan_team_and_receipt_rows() {
         assert_eq!(backups.len(), 1);
         let backup = Connection::open_with_flags(&backups[0], rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY).unwrap();
         assert_eq!(version(&backup), 61);
-        assert_eq!(legacy_rows(&backup), before_legacy);
+        assert_eq!(crate::persistence::legacy_fixture_rows(&backup, 61), before_legacy);
         drop(backup);
         let raw = Connection::open(path.join(super::super::super::DATABASE_FILENAME)).unwrap();
         assert_eq!(
@@ -571,11 +569,11 @@ fn migration_interruptions_preserve_all_original_plan_team_and_receipt_rows() {
                 61
             }
         );
-        assert_eq!(legacy_rows(&raw), if point == "conversation-after-commit" { before.clone() } else { before_legacy });
+        assert_eq!(crate::persistence::legacy_fixture_rows(&raw, 61), if point == "conversation-after-commit" { before.clone() } else { before_legacy });
         drop(raw);
         let reopened = ProjectStore::open(&path).unwrap();
         assert_eq!(version(reopened.connection().unwrap()), crate::persistence::SCHEMA_VERSION);
-        assert_eq!(legacy_rows(reopened.connection().unwrap()), before);
+        assert_eq!(crate::persistence::legacy_fixture_rows(reopened.connection().unwrap(), 61), before);
         assert_eq!(reopened.work_plan(plan.plan_id).unwrap(), plan);
         assert_eq!(
             reopened

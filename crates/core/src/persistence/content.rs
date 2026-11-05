@@ -20,15 +20,15 @@ mod publication;
 mod start_fence_tests;
 pub(in crate::persistence) mod validation_history;
 
-const TABLES:&[(&str,&str)]=&[
+pub(super) const TABLES:&[(&str,&str)]=&[
     ("source_sets","CREATE TABLE source_sets (
         set_id TEXT PRIMARY KEY NOT NULL, project_id TEXT NOT NULL,
-        payload BLOB NOT NULL CHECK(length(payload) BETWEEN 1 AND 1048576), digest TEXT NOT NULL CHECK(length(digest)=64),
+        payload BLOB NOT NULL CHECK(length(payload) BETWEEN 1 AND 4194304), digest TEXT NOT NULL CHECK(length(digest)=64),
         UNIQUE(set_id,project_id))"),
     ("source_files","CREATE TABLE source_files (
         artifact_id TEXT PRIMARY KEY NOT NULL, set_id TEXT NOT NULL REFERENCES source_sets(set_id),
         logical_path TEXT NOT NULL, role TEXT NOT NULL,
-        bytes BLOB NOT NULL CHECK(length(bytes)<=1048576), digest TEXT NOT NULL CHECK(length(digest)=64),
+        bytes BLOB NOT NULL CHECK(length(bytes)<=2097152), digest TEXT NOT NULL CHECK(length(digest)=64),
         UNIQUE(set_id,logical_path), UNIQUE(set_id,artifact_id))"),
     ("source_snapshots","CREATE TABLE source_snapshots (
         snapshot_id TEXT PRIMARY KEY NOT NULL, project_id TEXT NOT NULL, set_id TEXT NOT NULL,
@@ -173,14 +173,26 @@ pub(super) fn read_bundle(
     connection: &Connection,
     set: ExecutionId,
 ) -> Result<tsumugi_plugin_sdk::SourceExtractionInput, ExecutionError> {
+    read_bundle_limited(
+        connection,
+        set,
+        MAX_CAPTURED_SOURCE_INPUT_BYTES,
+        tsumugi_plugin_sdk::MAX_EXCHANGE_BYTES,
+    )
+}
+fn read_bundle_limited(
+    connection: &Connection,
+    set: ExecutionId,
+    input_limit: usize,
+    file_limit: usize,
+) -> Result<tsumugi_plugin_sdk::SourceExtractionInput, ExecutionError> {
     let (project,payload,digest):(String,Vec<u8>,String)=connection.query_row(
-        "SELECT project_id,CASE WHEN length(payload)<=1048576 THEN payload END,digest FROM source_sets WHERE set_id=?1",
-        [set.to_string()],|r|Ok((r.get(0)?,r.get(1)?,r.get(2)?))).map_err(sql_error)?;
+        "SELECT project_id,CASE WHEN length(payload)<=?2 THEN payload END,digest FROM source_sets WHERE set_id=?1",
+        params![set.to_string(),input_limit as i64],|r|Ok((r.get(0)?,r.get(1)?,r.get(2)?))).map_err(sql_error)?;
     if codec::digest(&payload) != digest {
         return Err(corrupt());
     }
-    let source: tsumugi_plugin_sdk::SourceExtractionInput =
-        codec::decode(&payload, MAX_CAPTURED_SOURCE_INPUT_BYTES)?;
+    let source: tsumugi_plugin_sdk::SourceExtractionInput = codec::decode(&payload, input_limit)?;
     source.validate().map_err(|_| corrupt())?;
     if source.source_set_id != set.to_string()
         || super::read_metadata_from(connection)
@@ -203,8 +215,8 @@ pub(super) fn read_bundle(
     }
     for file in &source.artifacts {
         let (path,role,bytes,digest):(String,String,Vec<u8>,String)=connection.query_row(
-            "SELECT logical_path,role,CASE WHEN length(bytes)<=1048576 THEN bytes END,digest FROM source_files WHERE set_id=?1 AND artifact_id=?2",
-            params![set.to_string(),file.id()],|r|Ok((r.get(0)?,r.get(1)?,r.get(2)?,r.get(3)?))).map_err(sql_error)?;
+            "SELECT logical_path,role,CASE WHEN length(bytes)<=?3 THEN bytes END,digest FROM source_files WHERE set_id=?1 AND artifact_id=?2",
+            params![set.to_string(),file.id(),file_limit as i64],|r|Ok((r.get(0)?,r.get(1)?,r.get(2)?,r.get(3)?))).map_err(sql_error)?;
         if path != file.logical_path()
             || role != file.role()
             || bytes != file.validated_bytes().map_err(|_| corrupt())?.as_ref()
@@ -289,7 +301,7 @@ pub(super) fn validate(connection: &Connection) -> Result<(), ExecutionError> {
                 |r| r.get(0),
             )
             .map_err(sql_error)?;
-        if actual != *sql {
+        if actual != super::capture_capacity::schema_sql(name, sql, version) {
             return Err(corrupt());
         }
     }
@@ -300,7 +312,20 @@ pub(super) fn validate(connection: &Connection) -> Result<(), ExecutionError> {
         .query_map([], |r| r.get::<_, String>(0))
         .map_err(sql_error)?
     {
-        let _ = read_bundle(connection, id(set.map_err(sql_error)?)?)?;
+        let (input_limit, file_limit) = if version < 76 {
+            (1024 * 1024, 1024 * 1024)
+        } else {
+            (
+                MAX_CAPTURED_SOURCE_INPUT_BYTES,
+                tsumugi_plugin_sdk::MAX_EXCHANGE_BYTES,
+            )
+        };
+        let _ = read_bundle_limited(
+            connection,
+            id(set.map_err(sql_error)?)?,
+            input_limit,
+            file_limit,
+        )?;
     }
     let mut referenced_sets = std::collections::BTreeSet::new();
     let mut attempts=connection.prepare("SELECT attempt_id FROM execution_attempts a JOIN execution_tasks t ON t.task_id=a.task_id WHERE t.operation=?1").map_err(sql_error)?;
@@ -1844,7 +1869,7 @@ impl AdoptionHandler for SourceAdoptionHandler {
                 check_adoption_scope(tx.connection(), action.project_id, &confirmation)?;
             let project = action.project_id.to_string();
             maintenance_hook::check_available(tx, &confirmation)?;
-            let (stored_project,stored,digest):(String,Vec<u8>,String)=tx.query_row("SELECT project_id,CASE WHEN length(payload)<=1048576 THEN payload END,digest FROM source_sets WHERE set_id=?1",[bundle.set_id.to_string()],|r|Ok((r.get(0)?,r.get(1)?,r.get(2)?)))?;
+            let (stored_project,stored,digest):(String,Vec<u8>,String)=tx.query_row("SELECT project_id,CASE WHEN length(payload)<=?2 THEN payload END,digest FROM source_sets WHERE set_id=?1",params![bundle.set_id.to_string(),MAX_CAPTURED_SOURCE_INPUT_BYTES as i64],|r|Ok((r.get(0)?,r.get(1)?,r.get(2)?)))?;
             if stored_project != project
                 || codec::digest(&stored) != digest
                 || codec::decode::<tsumugi_plugin_sdk::SourceExtractionInput>(
@@ -1863,7 +1888,7 @@ impl AdoptionHandler for SourceAdoptionHandler {
                 return Err(corrupt());
             }
             for f in &bundle.files {
-                let (path,role,bytes,digest):(String,String,Vec<u8>,String)=tx.query_row("SELECT logical_path,role,CASE WHEN length(bytes)<=1048576 THEN bytes END,digest FROM source_files WHERE set_id=?1 AND artifact_id=?2",params![bundle.set_id.to_string(),f.artifact_id.to_string()],|r|Ok((r.get(0)?,r.get(1)?,r.get(2)?,r.get(3)?)))?;
+                let (path,role,bytes,digest):(String,String,Vec<u8>,String)=tx.query_row("SELECT logical_path,role,CASE WHEN length(bytes)<=?3 THEN bytes END,digest FROM source_files WHERE set_id=?1 AND artifact_id=?2",params![bundle.set_id.to_string(),f.artifact_id.to_string(),tsumugi_plugin_sdk::MAX_EXCHANGE_BYTES as i64],|r|Ok((r.get(0)?,r.get(1)?,r.get(2)?,r.get(3)?)))?;
                 if path != f.logical_path
                     || role != f.role
                     || bytes != f.bytes()?.as_ref()

@@ -57,7 +57,7 @@ fn schema_71_upgrade_preserves_original_decision_digest_and_history() {
     assert!(!serde_json::to_string(&original).unwrap().contains("editedTarget"));
     drop(store);
     let connection = Connection::open(temp.path().join("project").join(super::super::DATABASE_FILENAME)).unwrap();
-    connection.execute_batch("ALTER TABLE resource_decisions DROP COLUMN edited_target").unwrap();
+    crate::persistence::prepare_legacy_fixture_schema(&connection, 71).unwrap();
     connection.pragma_update(None,"user_version",71).unwrap(); drop(connection);
     let mut store = ProjectStore::open(temp.path().join("project")).unwrap();
     assert_eq!(store.connection().unwrap().pragma_query_value(None,"user_version",|r|r.get::<_,i64>(0)).unwrap(),crate::persistence::SCHEMA_VERSION);
@@ -102,7 +102,7 @@ fn schema_71_upgrade_crashes_preserve_original_rows_and_column_version_atomicity
         let path = temp.path().join("project");
         store.close().unwrap();
         let raw = Connection::open(path.join(super::super::DATABASE_FILENAME)).unwrap();
-        raw.execute_batch("ALTER TABLE resource_decisions DROP COLUMN edited_target").unwrap();
+        crate::persistence::prepare_legacy_fixture_schema(&raw, 71).unwrap();
         raw.pragma_update(None, "user_version", 71).unwrap();
         assert_eq!(migration_rows(&raw), before);
         assert!(!edited_column(&raw)); drop(raw);

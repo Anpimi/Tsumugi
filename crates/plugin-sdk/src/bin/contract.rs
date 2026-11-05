@@ -165,7 +165,7 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
             )?)?);
         }
         if args[0] == "validate-artifact-set" {
-            return print(&parse_artifact_set(&bytes(MAX_EXCHANGE_BYTES)?)?);
+            return print(&parse_artifact_set(&bytes(MAX_ARTIFACT_SET_BYTES)?)?);
         }
         if args[0] == "validate-artifact-check-input" {
             return print(&parse_artifact_check_input(&bytes(
@@ -265,7 +265,7 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
     if args.len() == 2 && args[0] == "validate-source-extraction-input" {
         return print(&parse_source_extraction_input(&read(
             &args[1],
-            MAX_EXCHANGE_BYTES,
+            MAX_SOURCE_EXTRACTION_INPUT_BYTES,
         )?)?);
     }
     if args.len() == 2 && args[0] == "validate-source-import-declaration" {
@@ -302,7 +302,7 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
         return print(&report);
     }
     if args.len() == 3 && args[0] == "match-source-extraction" {
-        let input = parse_source_extraction_input(&read(&args[1], MAX_EXCHANGE_BYTES)?)?;
+        let input = parse_source_extraction_input(&read(&args[1], MAX_SOURCE_EXTRACTION_INPUT_BYTES)?)?;
         let exchange = parse_exchange(&read(&args[2], MAX_CONTENT_EXCHANGE_BYTES)?)?;
         let ExchangeBody::Content(content) = &exchange.document().body else {
             return Err("expected content exchange fixture".into());

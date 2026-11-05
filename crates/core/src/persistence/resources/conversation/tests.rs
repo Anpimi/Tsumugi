@@ -612,7 +612,7 @@ fn term_revision_preserves_original_entries_and_only_resolves_summary_and_questi
 }
 
 fn legacy_72(c: &Connection) {
-    super::super::make_legacy_capture_schema(c).unwrap();
+    crate::persistence::prepare_legacy_fixture_schema(c, 72).unwrap();
     c.pragma_update(None, "user_version", 72).unwrap();
 }
 

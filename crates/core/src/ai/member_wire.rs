@@ -7,7 +7,8 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 pub const PROTOCOL: u32 = 4;
-pub const MAX_FRAME_BYTES: usize = tsumugi_plugin_sdk::MAX_PROCESS_FRAME_BYTES;
+// The member protocol owns this bound independently of plugin payload capacity.
+pub const MAX_FRAME_BYTES: usize = 24 * 1024 * 1024 + 64 * 1024;
 pub const MAX_SESSION_BYTES: usize = 64 * 1024 * 1024;
 
 macro_rules! wire {

@@ -179,7 +179,7 @@ impl ArtifactSet {
             return Err(invalid("artifactSet.artifacts"));
         }
         validate_build_output_paths(self.artifacts.iter().map(|a| a.logical_path()))?;
-        encoded_limit(self, MAX_EXCHANGE_BYTES, "artifactSet")
+        encoded_limit(self, MAX_ARTIFACT_SET_BYTES, "artifactSet")
     }
 }
 /// Portable path, alias and file/directory collision checks shared by one build
@@ -578,7 +578,7 @@ receiver!(
     parse_artifact_set,
     artifact_set_schema,
     ArtifactSet,
-    MAX_EXCHANGE_BYTES
+    MAX_ARTIFACT_SET_BYTES
 );
 receiver!(
     parse_artifact_check_input,

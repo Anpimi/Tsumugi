@@ -1,6 +1,7 @@
 import { isAbsolute } from 'node:path';
 import { ComponentSession } from './component.js';
 import { FrameDecoder, encodeFrame } from './codec.js';
+import { PROCESS_PROFILE } from './generated/protocol.js';
 
 // This is lifecycle isolation, not a Node permission sandbox. The Rust parent
 // captures the module, clears environment, bounds pipes and kills timed-out groups.
@@ -16,7 +17,7 @@ let total = 0;
 const session = new ComponentSession(entry!, frame => {
   const bytes = encodeFrame(frame);
   total += bytes.length;
-  if (pending >= 2 || total > 64 * 1024 * 1024) throw new Error('Output limit');
+  if (pending >= 2 || total > PROCESS_PROFILE.maxSessionBytes) throw new Error('Output limit');
   pending++;
   return new Promise<void>((resolve, reject) => process.stdout.write(bytes, error => {
     pending--;

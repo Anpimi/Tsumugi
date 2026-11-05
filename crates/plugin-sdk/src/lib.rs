@@ -86,14 +86,19 @@ fn positive_u16_schema(_: &mut schemars::generate::SchemaGenerator) -> schemars:
 /// The current experimental content/invocation/check wire protocol.
 pub const EXCHANGE_PROTOCOL: u32 = 1;
 pub const MAX_EXCHANGE_BYTES: usize = 2 * 1024 * 1024;
+/// JSON/base64 framing has an independent ceiling from decoded material.
+pub const MAX_SOURCE_EXTRACTION_INPUT_BYTES: usize = 4 * 1024 * 1024;
+pub const MAX_ARTIFACT_SET_BYTES: usize = 4 * 1024 * 1024;
 /// Content can carry separate identity and context extensions for every item.
 /// Captured material, artifacts and non-content frames retain their own limits.
-pub const MAX_CONTENT_EXCHANGE_BYTES: usize = 4 * 1024 * 1024;
+pub const MAX_CONTENT_EXCHANGE_BYTES: usize = 8 * 1024 * 1024;
 /// Combined invocation data may contain both captured material and a proposal.
-pub const MAX_INVOCATION_PAYLOAD_BYTES: usize = 4 * 1024 * 1024;
+pub const MAX_INVOCATION_PAYLOAD_BYTES: usize = 16 * 1024 * 1024;
 /// Any UTF-8 payload byte can expand to six JSON bytes. Metadata is separately
 /// bounded by the typed context/provider/contracts and fits the reserved 64 KiB.
 pub const MAX_PROCESS_FRAME_BYTES: usize = 6 * MAX_INVOCATION_PAYLOAD_BYTES + 64 * 1024;
+/// Aggregate encoded frames in either direction of one plugin channel.
+pub const MAX_PROCESS_SESSION_BYTES: usize = 128 * 1024 * 1024;
 pub const MAX_CONTENT_ITEMS: usize = 2000;
 /// Separate identity and context extensions can accompany each content item.
 /// One additional block carries snapshot-wide metadata. The complete exchange
@@ -139,6 +144,7 @@ pub fn process_profile() -> serde_json::Value {
     serde_json::json!({
         "protocolVersion": PROCESS_PROTOCOL,
         "maxFrameBytes": MAX_PROCESS_FRAME_BYTES,
+        "maxSessionBytes": MAX_PROCESS_SESSION_BYTES,
         "maxInvocationPayloadBytes": MAX_INVOCATION_PAYLOAD_BYTES,
         "maxCapabilities": MAX_PROCESS_CAPABILITIES,
         "maxServiceBindings": MAX_SERVICE_BINDINGS,

@@ -4,10 +4,11 @@ Process protocol **3** defines the length-prefixed JSON message framing used ove
 
 ## Wire Framing and Byte Limits
 
-Every frame consists of a 4-byte unsigned **big-endian** byte length followed by a non-empty UTF-8 JSON body of at most `MAX_PROCESS_FRAME_BYTES` (24 MiB + 64 KiB).
+Every frame consists of a 4-byte unsigned **big-endian** byte length followed by a non-empty UTF-8 JSON body of at most `MAX_PROCESS_FRAME_BYTES` (96 MiB + 64 KiB).
 
-- `MAX_INVOCATION_PAYLOAD_BYTES` is 4 MiB of raw UTF-8 payload data. Because JSON string escaping can expand arbitrary UTF-8 bytes up to 6x (`\u00XX`), the 24 MiB + 64 KiB frame ceiling accommodates worst-case escaping plus 64 KiB of envelope metadata.
-- Individual domain contracts enforce their own tighter payload limits (for example, 2 MiB for source extraction or content exchange, and 4 MiB for combined check inputs).
+- `MAX_INVOCATION_PAYLOAD_BYTES` is 16 MiB of raw UTF-8 payload data. Because JSON string escaping can expand arbitrary UTF-8 bytes up to 6x (`\u00XX`), the 96 MiB + 64 KiB frame ceiling accommodates worst-case escaping plus 64 KiB of envelope metadata.
+- A plugin channel has a separate 128 MiB aggregate encoded-frame budget in each direction, including framing. Hosts may choose a smaller valid budget. This does not change the independent application member channel.
+- Individual domain contracts enforce their own tighter payload limits (for example, 4 MiB for source extraction, 8 MiB for content exchange, and 16 MiB for combined check inputs).
 - A capability's `maxInputBytes` and `maxOutputBytes` bound raw `EncodedPayload` UTF-8 bytes, while `InvocationRequest.maxResultBytes` bounds the complete encoded `result` frame.
 - `stdout` carries only protocol frames; `stderr` is reserved for diagnostic output and is bounded separately by the Host.
 

@@ -446,7 +446,7 @@ fn text_review_limits_count_escaped_encoding_and_actual_capability_limits() {
         ContractErrorCode::LimitExceeded
     );
     let mut large = input();
-    large.selections = (0..50)
+    large.selections = (0..(MAX_INVOCATION_PAYLOAD_BYTES / (MAX_TEXT_BYTES * 6) + 1))
         .map(|index| TextReviewSelection {
             unit_id: format!("unit-{index}"),
             source_revision_id: format!("revision-{index}"),

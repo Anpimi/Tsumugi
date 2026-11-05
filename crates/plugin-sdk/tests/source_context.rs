@@ -413,7 +413,9 @@ fn full_content_capacity_keeps_identity_and_context_blocks_with_independent_limi
     assert!(frame.len() > 2 * 1024 * 1024);
     assert!(frame.len() < 4 * 1024 * 1024);
     parse_exchange(&frame).unwrap();
-    source.domain_blocks[2].payload_utf8 = "x".repeat(2 * 1024 * 1024);
+    for index in [2, 4, 6] {
+        source.domain_blocks[index].payload_utf8 = "x".repeat(MAX_EXCHANGE_BYTES);
+    }
     assert_eq!(
         source.validate().unwrap_err().code,
         ContractErrorCode::LimitExceeded
@@ -423,8 +425,8 @@ fn full_content_capacity_keeps_identity_and_context_blocks_with_independent_limi
 #[test]
 fn larger_content_frames_do_not_expand_material_or_non_content_budgets() {
     assert_eq!(MAX_EXCHANGE_BYTES, 2 * 1024 * 1024);
-    assert_eq!(MAX_CONTENT_EXCHANGE_BYTES, 4 * 1024 * 1024);
-    assert_eq!(MAX_INVOCATION_PAYLOAD_BYTES, 4 * 1024 * 1024);
+    assert_eq!(MAX_CONTENT_EXCHANGE_BYTES, 8 * 1024 * 1024);
+    assert_eq!(MAX_INVOCATION_PAYLOAD_BYTES, 16 * 1024 * 1024);
     let mut request = include_bytes!("fixtures/invocation.request.json").to_vec();
     parse_exchange(&request).unwrap();
     request.resize(2 * 1024 * 1024 + 1, b' ');

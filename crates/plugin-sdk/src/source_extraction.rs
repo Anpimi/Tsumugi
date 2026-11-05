@@ -9,7 +9,7 @@ use serde::{Deserialize, Serialize};
 use crate::{
     CapturedArtifact, CheckImplementation, CheckRequirement, CheckResult, ContentExchange,
     ContractError, ContractErrorCode, ContractRef, MAX_CONTENT_EXCHANGE_BYTES, MAX_EXCHANGE_BYTES,
-    MAX_INVOCATION_PAYLOAD_BYTES,
+    MAX_INVOCATION_PAYLOAD_BYTES, MAX_SOURCE_EXTRACTION_INPUT_BYTES,
     checks::validate_check_results,
     content::validate_source_material,
     validation::{count, encoded_limit, opaque_id, reference, unique},
@@ -141,7 +141,11 @@ impl SourceExtractionInput {
             &self.source_language,
             &self.artifacts,
         )?;
-        encoded_limit(self, MAX_EXCHANGE_BYTES, "sourceExtractionInput")
+        encoded_limit(
+            self,
+            MAX_SOURCE_EXTRACTION_INPUT_BYTES,
+            "sourceExtractionInput",
+        )
     }
 }
 
@@ -285,7 +289,7 @@ impl SourceExtractionError {
 }
 
 pub fn parse_source_extraction_input(bytes: &[u8]) -> Result<SourceExtractionInput, ContractError> {
-    if bytes.len() > MAX_EXCHANGE_BYTES {
+    if bytes.len() > MAX_SOURCE_EXTRACTION_INPUT_BYTES {
         return Err(ContractError::at(
             ContractErrorCode::LimitExceeded,
             "sourceExtractionInput",

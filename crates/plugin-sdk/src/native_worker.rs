@@ -15,7 +15,7 @@ use std::{
 };
 
 const MAX_DISPATCHES: usize = 128;
-const MAX_STREAM_BYTES: usize = 64 * 1024 * 1024;
+const MAX_STREAM_BYTES: usize = MAX_PROCESS_SESSION_BYTES;
 
 /// Cooperative stop signal. It is not an authorization lease or evidence of
 /// rollback. The Host terminates workers that do not respect its deadlines.

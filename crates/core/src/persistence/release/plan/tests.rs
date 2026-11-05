@@ -224,6 +224,13 @@ fn captures_core_qualification_and_sends_only_fixed_build_data() {
     assert_eq!(store.connection().unwrap().total_changes(), changes);
     assert_eq!(store.content_scope().unwrap(), scope);
     let plan = ReleasePlan::from_input(&input).unwrap();
+    assert_eq!(input.envelope().limits.max_result_bytes, MAX_PLUGIN_RESULT_BYTES as u32);
+    let mut historical = input.envelope().clone();
+    historical.limits.max_result_bytes = MAX_RESULT_BYTES as u32;
+    historical.limits.max_attempt_result_bytes = MAX_RESULT_BYTES as u32;
+    assert_eq!(ReleasePlan::from_input(&FixedInput::capture(historical.clone()).unwrap()).unwrap(), plan);
+    historical.limits.max_attempt_result_bytes = MAX_PLUGIN_RESULT_BYTES as u32;
+    assert!(ReleasePlan::from_input(&FixedInput::capture(historical).unwrap()).is_err());
     assert_eq!(plan.locales[0].targets.len(), units.len());
     assert!(
         plan.locales[0]

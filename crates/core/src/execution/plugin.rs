@@ -229,9 +229,14 @@ impl FixedInput {
                 .min(sdk::MAX_EXCHANGE_BYTES as u32)
         } else if bounded_json_contract {
             let raw = envelope.limits.max_result_bytes.saturating_sub(64 * 1024) / 3;
+            let payload_limit = if declaration.output_schema == sdk::artifact_set_contract() {
+                sdk::MAX_ARTIFACT_SET_BYTES
+            } else {
+                sdk::MAX_EXCHANGE_BYTES
+            };
             let raw = raw
                 .min(declaration.limits.max_output_bytes)
-                .min(sdk::MAX_EXCHANGE_BYTES as u32);
+                .min(payload_limit as u32);
             if raw == 0 { 0 } else { raw * 2 + 32 * 1024 }
         } else {
             (envelope.limits.max_result_bytes.saturating_sub(16 * 1024) / 8)
@@ -259,7 +264,7 @@ impl FixedInput {
                 environment_digest: binding.environment_digest()?,
                 configuration_digest: codec::digest(&codec::encode(
                     &envelope.settings,
-                    MAX_INPUT_BYTES,
+                    MAX_FIXED_INPUT_BYTES,
                 )?),
             },
             provider: channel.clone(),

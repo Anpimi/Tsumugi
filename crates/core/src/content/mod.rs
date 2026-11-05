@@ -114,7 +114,7 @@ pub const OPERATION: &str = "source-import";
 pub const MAX_SOURCE_BYTES: usize = 128 * 1024;
 /// Complete serialized captured source material retained by the project store.
 /// Execution inputs and combined semantic-check inputs have separate budgets.
-pub const MAX_CAPTURED_SOURCE_INPUT_BYTES: usize = 1024 * 1024;
+pub const MAX_CAPTURED_SOURCE_INPUT_BYTES: usize = sdk::MAX_SOURCE_EXTRACTION_INPUT_BYTES;
 pub const MAX_OCCURRENCES: usize = 2000;
 pub const MAX_SOURCE_RESULT_BYTES: usize = MAX_RESULT_BYTES;
 pub const MAX_CONTENT_PAGE_BYTES: usize = 256 * 1024;
@@ -338,7 +338,15 @@ impl SourceBundle {
         let mut envelope = InputEnvelope::new(project, OPERATION, capability, version, vec![item])?;
         envelope.settings = value(&settings)?;
         envelope.plugin = plugin;
-        envelope.limits.max_result_bytes = MAX_SOURCE_RESULT_BYTES as u32;
+        envelope.limits.max_result_bytes = if envelope.plugin.is_some() {
+            MAX_PLUGIN_RESULT_BYTES
+        } else {
+            MAX_SOURCE_RESULT_BYTES
+        } as u32;
+        envelope.limits.max_attempt_result_bytes = envelope
+            .limits
+            .max_attempt_result_bytes
+            .max(envelope.limits.max_result_bytes);
         let input = FixedInput::capture(envelope)?;
         let _ = Self::from_input(&input)?;
         Ok(input)

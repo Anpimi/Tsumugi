@@ -60,6 +60,75 @@ fn content(input: &SourceExtractionInput) -> ContentExchange {
 }
 
 #[test]
+fn maximum_raw_binary_survives_source_content_checker_and_artifact_receivers() {
+    let mut input = source();
+    input.artifacts = vec![binary(&vec![0xff; MAX_EXCHANGE_BYTES])];
+    let proposal = content(&input);
+    validate_source_extraction(&input, &proposal).unwrap();
+    let mut encoded = serde_json::to_vec(&input).unwrap();
+    assert!(encoded.len() > MAX_EXCHANGE_BYTES);
+    encoded.resize(MAX_SOURCE_EXTRACTION_INPUT_BYTES, b' ');
+    assert_eq!(parse_source_extraction_input(&encoded).unwrap(), input);
+    encoded.push(b' ');
+    assert_eq!(
+        parse_source_extraction_input(&encoded).unwrap_err().code,
+        ContractErrorCode::LimitExceeded
+    );
+    assert_eq!(
+        parse_content_exchange(&serde_json::to_vec(&proposal).unwrap()).unwrap(),
+        proposal
+    );
+
+    let document = parse_exchange(include_bytes!("fixtures/checks.set.json")).unwrap();
+    let ExchangeBody::CheckSet(set) = &document.document().body else {
+        panic!()
+    };
+    let mut requirement = set
+        .requirements
+        .iter()
+        .find(|r| matches!(r.key.implementation, CheckImplementation::Plugin { .. }))
+        .unwrap()
+        .clone();
+    requirement.targets = vec![input.source_set_id.clone()];
+    let check = SourceExtractionCheckInput {
+        source: input.clone(),
+        proposal,
+        requirements: vec![requirement],
+    };
+    let encoded = serde_json::to_vec(&check).unwrap();
+    assert!(encoded.len() > MAX_SOURCE_EXTRACTION_INPUT_BYTES);
+    assert_eq!(
+        parse_source_extraction_check_input(&encoded).unwrap(),
+        check
+    );
+
+    let output = ArtifactSet {
+        profile: input.profile,
+        source_set_id: input.source_set_id,
+        target_language: "zh-CN".into(),
+        artifacts: input.artifacts,
+    };
+    let mut encoded = serde_json::to_vec(&output).unwrap();
+    assert!(encoded.len() > MAX_EXCHANGE_BYTES);
+    encoded.resize(MAX_ARTIFACT_SET_BYTES, b' ');
+    assert_eq!(parse_artifact_set(&encoded).unwrap(), output);
+    encoded.push(b' ');
+    assert_eq!(
+        parse_artifact_set(&encoded).unwrap_err().code,
+        ContractErrorCode::LimitExceeded
+    );
+    assert!(
+        CapturedArtifact::from_bytes(
+            "id".into(),
+            "over.bin".into(),
+            "source".into(),
+            &vec![0xff; MAX_EXCHANGE_BYTES + 1]
+        )
+        .is_err()
+    );
+}
+
+#[test]
 fn binary_transport_preserves_original_bytes_and_rejects_ambiguous_shapes() {
     let artifact = binary(&[0, 255, 128, 10]);
     assert_eq!(
@@ -259,8 +328,13 @@ fn binary_input_is_bounded_before_decoding_or_emitting_a_capture() {
         ContractErrorCode::LimitExceeded
     );
     let mut source = source();
-    source.artifacts[0] = binary(&vec![0; MAX_EXCHANGE_BYTES]);
-    // The existing encoded-envelope ceiling is independent of the raw limit.
+    let text = "\"".repeat(MAX_EXCHANGE_BYTES);
+    source.artifacts[0] = CapturedTextArtifact {
+        id: "source-artifact".into(), logical_path: "escaped.txt".into(), role: "source".into(),
+        sha256: artifact_bytes_digest(text.as_bytes()), utf8: text,
+    }.into();
+    // Raw bytes fit, but quotes double during JSON encoding and its metadata
+    // pushes the complete source input past the independent four MiB ceiling.
     assert_eq!(
         source.validate().unwrap_err().code,
         ContractErrorCode::LimitExceeded

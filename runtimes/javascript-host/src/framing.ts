@@ -37,7 +37,7 @@ export function parseFrameJson(bytes: Uint8Array, frameLimit: number, integers =
 
 /** Allocates only after checking a complete prefix; retains at most one frame. */
 export class JsonFrameDecoder<T> {
-  constructor(private readonly decode: (bytes: Uint8Array) => T, private readonly frameLimit: number) {}
+  constructor(private readonly decode: (bytes: Uint8Array) => T, private readonly frameLimit: number, private readonly sessionLimit: number) {}
   private prefix = Buffer.alloc(4);
   private prefixOffset = 0;
   private body: Buffer | undefined;
@@ -45,7 +45,7 @@ export class JsonFrameDecoder<T> {
   private total = 0;
   push(chunk: Buffer, receive: (frame: T) => void): void {
     this.total += chunk.length;
-    if (this.total > 64 * 1024 * 1024) throw new Error('Session input limit');
+    if (this.total > this.sessionLimit) throw new Error('Session input limit');
     let offset = 0;
     while (offset < chunk.length) {
       if (!this.body) {

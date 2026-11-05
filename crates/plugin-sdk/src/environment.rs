@@ -23,7 +23,10 @@ pub const NATIVE_HOST_ENVIRONMENT_PROTOCOL: u32 = 1;
 // independently approved runtime bytes and the actual current Host identity.
 fn supported_sdk(version: &str) -> bool {
     version == crate::SDK_VERSION
-        || matches!(version, "0.1.0-alpha.1" | "0.1.0-alpha.2" | "0.1.0-alpha.3")
+        || matches!(
+            version,
+            "0.1.0-alpha.1" | "0.1.0-alpha.2" | "0.1.0-alpha.3" | "0.1.0-alpha.4"
+        )
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]

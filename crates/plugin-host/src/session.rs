@@ -124,7 +124,7 @@ impl Default for HostLimits {
     fn default() -> Self {
         Self {
             max_frame_bytes: MAX_PROCESS_FRAME_BYTES,
-            max_session_output_bytes: 64 * 1024 * 1024,
+            max_session_output_bytes: tsumugi_plugin_sdk::MAX_PROCESS_SESSION_BYTES,
             max_stderr_bytes: 16 * 1024,
             max_invocations: 128,
             // Cold startup of a freshly materialized runtime is part of this bound.
@@ -140,7 +140,7 @@ impl HostLimits {
         if self.max_frame_bytes == 0
             || self.max_frame_bytes > MAX_PROCESS_FRAME_BYTES
             || self.max_session_output_bytes < self.max_frame_bytes
-            || self.max_session_output_bytes > 64 * 1024 * 1024
+            || self.max_session_output_bytes > tsumugi_plugin_sdk::MAX_PROCESS_SESSION_BYTES
             || self.max_stderr_bytes > 64 * 1024
             || self.max_invocations == 0
             || self.max_invocations > 128
@@ -1397,7 +1397,7 @@ mod budget_tests {
     fn process_and_aggregate_limits_have_independent_finite_bounds() {
         let limits = HostLimits::default();
         assert_eq!(limits.max_frame_bytes, MAX_PROCESS_FRAME_BYTES);
-        assert_eq!(limits.max_session_output_bytes, 64 * 1024 * 1024);
+        assert_eq!(limits.max_session_output_bytes, tsumugi_plugin_sdk::MAX_PROCESS_SESSION_BYTES);
         limits.validate().unwrap();
         let narrower = HostLimits {
             max_frame_bytes: 16 * 1024,
@@ -1414,7 +1414,7 @@ mod budget_tests {
                 ..limits.clone()
             },
             HostLimits {
-                max_session_output_bytes: 64 * 1024 * 1024 + 1,
+                max_session_output_bytes: tsumugi_plugin_sdk::MAX_PROCESS_SESSION_BYTES + 1,
                 ..limits.clone()
             },
         ] {

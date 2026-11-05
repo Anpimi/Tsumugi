@@ -280,10 +280,14 @@ pub(in crate::persistence) fn save_plugin_result(
 }
 
 pub(in crate::persistence) fn plugin_fixture() -> PluginFixture {
+    plugin_fixture_with_result_limit(MAX_PLUGIN_RESULT_BYTES as u32)
+}
+
+pub(in crate::persistence) fn plugin_fixture_with_result_limit(result_limit: u32) -> PluginFixture {
     let directory = tempfile::tempdir().unwrap();
     let mut store = ProjectStore::create(directory.path().join("project"),
         crate::ProjectMetadata::create("Plugin mapping", "en", ["zh-CN"]).unwrap()).unwrap();
-    crate::content::tests::adopt_shared_source_fixture(&mut store);
+    crate::content::tests::adopt_shared_source_fixture_with_result_limit(&mut store, result_limit);
     let project = ExecutionId::parse(&store.metadata().unwrap().project_id().to_string()).unwrap();
     let snapshot = store.content_scope().unwrap().current_snapshot.unwrap();
     let (_, (original, _, output, _)) = snapshot_rows(store.connection().unwrap(), snapshot, true).unwrap();

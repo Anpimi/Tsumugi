@@ -245,10 +245,7 @@ fn supported_memory_migration_preserves_old_requests_rows_and_rolls_back_nullabl
         drop(store);
         let path=temp.path().join("project");
         let mut c=Connection::open(path.join(crate::persistence::DATABASE_FILENAME)).unwrap();
-        c.execute_batch("DROP TABLE source_validation_history").unwrap();
-        crate::persistence::content::lineage_corrections::make_legacy_schema(&c).unwrap();
-        c.execute_batch("ALTER TABLE translation_revisions DROP COLUMN reuse_origin_json").unwrap();
-        if version<66 {crate::persistence::resources::make_legacy_context_schema(&c).unwrap();}
+        crate::persistence::prepare_legacy_fixture_schema(&c, version).unwrap();
         if version<65 {c.execute_batch("DROP TABLE application_conversation_planning_attempts").unwrap();}
         if version<64 {c.execute_batch("DROP TABLE application_conversation_work_plans").unwrap();}
         if version<63 {c.execute_batch("DROP TABLE application_conversation_proposals").unwrap();}

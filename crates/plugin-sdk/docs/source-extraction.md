@@ -20,7 +20,7 @@ The supported text-only family retains source input `1/1`, content exchange `2/1
 
 - `profile`: the target domain profile (`ContractRef`).
 - `sourceSetId` and `sourceLanguage` (wire label validated by the SDK; canonical language support is checked by the application's locale owner).
-- `artifacts`: up to 2,000 source files (bounded to 2 MiB total and 2 MiB for the entire encoded `SourceExtractionInput`), each carrying a unique artifact ID, safe relative logical path, role, exact text or binary bytes, and SHA-256 digest. See [artifact representations and source coordinates](exchange.md#captured-artifacts-and-source-coordinates).
+- `artifacts`: up to 2,000 source files (bounded to 2 MiB total and 4 MiB for the entire encoded `SourceExtractionInput`), each carrying a unique artifact ID, safe relative logical path, role, exact text or binary bytes, and SHA-256 digest. See [artifact representations and source coordinates](exchange.md#captured-artifacts-and-source-coordinates).
 
 `SourceExtractionInput::validate` and `ContentExchange::validate` share the same artifact validator to enforce size limits, unique IDs and paths, portable relative path rules, and exact SHA-256 byte digests.
 
@@ -76,7 +76,7 @@ cargo run -p tsumugi-plugin-sdk --features schema --bin tsumugi-plugin-contract 
 
 Because `validate_source_extraction` checks structural and coordinate integrity rather than domain format grammar, extracted proposals are verified by an independent semantic checker capability before adoption.
 
-`SourceExtractionCheckInput` (up to 4 MiB encoded; `source` and `proposal` each retain their 2 MiB ceiling) bundles:
+`SourceExtractionCheckInput` (up to 16 MiB encoded; `source` retains its 4 MiB encoded ceiling and `proposal` its 8 MiB ceiling, independently of the 2 MiB decoded material budget) bundles:
 
 - `source`: the original `SourceExtractionInput`.
 - `proposal`: the extractor's `ContentExchange`.

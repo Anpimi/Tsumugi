@@ -42,9 +42,9 @@ Size limits enforced by the receivers:
 | Path depth | 16 segments |
 | Decided unit text | 16 KiB per unit |
 | Distinct configuration schemas | 32 |
-| Original `ContentExchange` | 4 MiB encoded (also bounded by the enclosing invocation) |
-| `ArtifactSet` output | 2 MiB encoded (or smaller raw-byte ceiling set in `BuildInput`) |
-| `BuildInput` / `ArtifactCheckInput` | 4 MiB encoded each |
+| Original `ContentExchange` | 8 MiB encoded (also bounded by the enclosing invocation) |
+| `ArtifactSet` output | 4 MiB encoded; 2 MiB decoded bytes (or a smaller raw-byte ceiling set in `BuildInput`) |
+| `BuildInput` / `ArtifactCheckInput` | 16 MiB encoded each |
 
 ## Artifact Verification (`ArtifactCheckInput`) and Resource Binding
 

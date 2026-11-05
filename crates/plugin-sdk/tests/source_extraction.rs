@@ -132,7 +132,7 @@ fn strict_source_receivers_reject_unknown_duplicate_and_invalid_utf8_fields() {
     assert!(parse_source_extraction_input(duplicate.as_bytes()).is_err());
     assert!(parse_source_extraction_input(b"{\xff}").is_err());
     assert_eq!(
-        parse_source_extraction_input(&vec![b' '; MAX_EXCHANGE_BYTES + 1])
+        parse_source_extraction_input(&vec![b' '; MAX_SOURCE_EXTRACTION_INPUT_BYTES + 1])
             .unwrap_err()
             .code,
         ContractErrorCode::LimitExceeded
@@ -421,8 +421,8 @@ fn combined_check_budget_is_distinct_from_each_captured_content_budget() {
     request.proposal.domain_blocks[0]
         .payload_utf8
         .push_str(&"x".repeat(400_000));
-    // Content now has its own 4 MiB ceiling. Both individual values can fit
-    // while their combined check still exceeds its independent 4 MiB budget.
+    // Source, content and compound receivers have separate encoded ceilings.
+    // Enlarging the compound allowance does not change either inner budget.
     request.validate().unwrap();
     let mut additional = request.proposal.domain_blocks[0].clone();
     additional.schema.id.push_str(".additional");
@@ -430,11 +430,13 @@ fn combined_check_budget_is_distinct_from_each_captured_content_budget() {
     request.proposal.domain_blocks.push(additional);
     request.source.validate().unwrap();
     request.proposal.validate().unwrap();
-    assert!(serde_json::to_vec(&request).unwrap().len() > MAX_INVOCATION_PAYLOAD_BYTES);
-    assert_eq!(
-        request.validate().unwrap_err().code,
-        ContractErrorCode::LimitExceeded
-    );
+    request.validate().unwrap();
+    let mut encoded = serde_json::to_vec(&request).unwrap();
+    assert!(encoded.len() < MAX_INVOCATION_PAYLOAD_BYTES);
+    encoded.resize(MAX_INVOCATION_PAYLOAD_BYTES, b' ');
+    assert_eq!(parse_source_extraction_check_input(&encoded).unwrap(), request);
+    encoded.push(b' ');
+    assert_eq!(parse_source_extraction_check_input(&encoded).unwrap_err().code, ContractErrorCode::LimitExceeded);
     assert_eq!(
         parse_source_extraction_check_input(&vec![b' '; MAX_INVOCATION_PAYLOAD_BYTES + 1])
             .unwrap_err()

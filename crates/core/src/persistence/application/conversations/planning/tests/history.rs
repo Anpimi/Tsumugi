@@ -325,39 +325,8 @@ fn failed_planning_locator_insert_rolls_back_the_original_attempt_and_budget() {
 }
 
 fn old_rows(c: &Connection, version: i64) -> BTreeMap<String, Vec<Vec<rusqlite::types::Value>>> {
-    let names = c.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%' ORDER BY name").unwrap()
-        .query_map([], |row| row.get::<_, String>(0)).unwrap().collect::<Result<Vec<_>, _>>().unwrap();
-    names
-        .into_iter()
-        .filter(|name| {
-            name != "application_conversation_planning_attempts"
-                && !(version < 64 && name == "application_conversation_work_plans")
-                && !(version < 63 && name == "application_conversation_proposals")
-                && !(version == 61 && name.starts_with("application_conversation"))
-        })
-        .map(|name| {
-            let columns = match name.as_str() {
-                "context_revisions" => "rowid,revision_id,project_id,unit_id,locale,text,reason,previous_revision_id,action_id,request_digest",
-                "context_current" => "rowid,unit_id,locale,revision_id",
-                "resource_changes" => "rowid,change_id,project_id,kind,locale,scope_unit_id,old_scope_unit_id,source_phrase,old_source_phrase,old_revision_id,new_revision_id,action_id",
-                _ => "*",
-            };
-            let mut q = c
-                .prepare(&format!("SELECT {columns} FROM \"{name}\" ORDER BY rowid"))
-                .unwrap();
-            let columns = q.column_count();
-            let rows = q
-                .query_map([], |row| {
-                    (0..columns)
-                        .map(|index| row.get(index))
-                        .collect::<rusqlite::Result<Vec<rusqlite::types::Value>>>()
-                })
-                .unwrap()
-                .collect::<Result<Vec<_>, _>>()
-                .unwrap();
-            (name, rows)
-        })
-        .collect()
+    crate::persistence::legacy_fixture_rows(c, version).into_iter()
+        .filter(|(name, _)| name != "application_conversation_planning_attempts").collect()
 }
 
 #[test]
@@ -440,7 +409,7 @@ fn planning_history_migration_preserves_all_supported_rows_and_backfills_every_a
             let path = store.directory().to_path_buf();
             store.close().unwrap();
             let c = Connection::open(path.join(DATABASE_FILENAME)).unwrap();
-            crate::persistence::resources::make_legacy_context_schema(&c).unwrap();
+            crate::persistence::prepare_legacy_fixture_schema(&c, version).unwrap();
             assert_eq!(c.query_row("SELECT COUNT(*) FROM pragma_table_info('context_revisions') WHERE name='context_id'",[],|r|r.get::<_,i64>(0)).unwrap(),0);
             c.execute_batch("DROP TABLE application_conversation_planning_attempts")
                 .unwrap();
@@ -461,6 +430,7 @@ fn planning_history_migration_preserves_all_supported_rows_and_backfills_every_a
             let child = Command::new(std::env::current_exe().unwrap()).args(["--exact", "persistence::application::conversations::planning::tests::history::planning_history_migration_child", "--nocapture"])
                 .env("TSUMUGI_PLANNING_HISTORY_MIGRATION_PROJECT", &path).env("TSUMUGI_MIGRATION_CRASH", point).env("TSUMUGI_MIGRATION_HOOK", &marker).output().unwrap();
             assert!(!child.status.success());
+            assert!(marker.exists(), "migration stopped before {point}: {}", String::from_utf8_lossy(&child.stderr));
             assert_eq!(fs::read_to_string(marker).unwrap(), point);
             let c = Connection::open(path.join(DATABASE_FILENAME)).unwrap();
             assert_eq!(

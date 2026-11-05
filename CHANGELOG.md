@@ -152,6 +152,7 @@ Current workspace version metadata: **`0.2.0-alpha.1`**. Because the published `
 
 ### Changed
 
+- Binary source imports and builds now distinguish decoded material from JSON/base64 framing. Experimental SDK `0.1.0-alpha.5` allows 4 MiB encoded source/artifact sets, 8 MiB content and 16 MiB compound invocations while retaining the 2 MiB decoded-material ceiling. Projects upgrade atomically to schema 76 with a verified original-schema snapshot, preserving saved bytes, digests, row identities, human work and execution evidence. Larger plugin frames use the existing input chunks and explicit frozen budgets; ordinary operation defaults stay unchanged. Use a matching Host and independently pinned SDK consumer.
 - Experimental SDK `0.1.0-alpha.4` reserves one snapshot metadata block alongside identity and context blocks for all 2,000 content items (4,001 blocks total). The independent encoded exchange limit, item count and Process3 contracts are unchanged; use a matching SDK consumer and Host snapshot.
 
 - Artifact-capable source, build and mandatory review bindings can declare a format-process permission with a safe relative program path. Historical text-only bindings retain capture-only permissions; network, project-service and staged-output permissions remain outside these domain bindings. Process approval and execution stay with the existing Host and application boundaries.

@@ -20,6 +20,7 @@ pub(crate) use application::team::{
     validate_team_provider_view_in, validate_team_provider_view_history_in,
 };
 pub(crate) use application::maintenance::CapturedMaintenanceAssessment;
+mod capture_capacity;
 mod changes;
 #[cfg(test)]
 mod current_tests;
@@ -132,7 +133,7 @@ pub use translation::{
 const DATABASE_FILENAME: &str = "project.sqlite3";
 const LOCK_FILENAME: &str = ".tsumugi.lock";
 const APPLICATION_ID: i64 = 0x5453_4D47;
-pub(crate) const SCHEMA_VERSION: i64 = 75;
+pub(crate) const SCHEMA_VERSION: i64 = 76;
 #[cfg(test)]
 pub(crate) enum UnsupportedFixtureDomain {
     Arena,
@@ -168,7 +169,9 @@ pub(crate) fn remove_unsupported_fixture_domain(
 pub(in crate::persistence) fn prepare_legacy_fixture_schema(c: &Connection, version: i64) -> rusqlite::Result<()> {
     assert!((61..=72).contains(&version));
     assert!(c.is_autocommit());
-    if version < 70 { content::lineage_corrections::make_legacy_schema(c)?; }
+    capture_capacity::make_legacy_schema(c)?;
+    if version < 70 {
+        content::lineage_corrections::make_legacy_schema(c)?; }
     if version < 66 {
         resources::make_legacy_context_schema(c)?;
     } else if version < 68 {
@@ -1035,7 +1038,7 @@ fn validate_existing_database(
     let user_version: i64 = connection
         .query_row("PRAGMA user_version", [], |row| row.get(0))
         .map_err(|error| map_sqlite(error, PersistenceStage::Open))?;
-    if ![61, 62, 63, 64, 65, 66, 67, 68, 69, 70, 71, 72, 73, 74, SCHEMA_VERSION].contains(&user_version) {
+    if ![61, 62, 63, 64, 65, 66, 67, 68, 69, 70, 71, 72, 73, 74, 75, SCHEMA_VERSION].contains(&user_version) {
         return Err(PersistenceError::UnsupportedSchema {
             found_version: user_version,
             stage: PersistenceStage::Open,
@@ -1063,7 +1066,7 @@ fn validate_existing_database(
         // Validate the complete supported schema and storage pragmas before
         // replacing any tables.
         // SQLite's rollback journal makes both schema and version one durable
-        // unit; a crash leaves the original supported schema or complete 75.
+        // unit; a crash leaves the original supported schema or complete 76.
         let transaction = connection
             .transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)
             .map_err(|error| map_sqlite(error, PersistenceStage::Open))?;
@@ -1132,6 +1135,10 @@ fn validate_existing_database(
         // Schema 75 admits typed binary captures and artifact results in the
         // existing BLOB/JSON stores. Historical bytes and bindings are not
         // rewritten; the version gate excludes older text-only clients.
+        if user_version < 76 {
+            capture_capacity::migrate(&transaction)
+                .map_err(|error| map_sqlite(error, PersistenceStage::Open))?;
+        }
         #[cfg(test)]
         migration_crash_hook("conversation-after-ddl");
         transaction.pragma_update(None, "user_version", SCHEMA_VERSION)
@@ -1563,6 +1570,7 @@ mod tests {
         ProjectStore::create(&path, metadata()).unwrap().close().unwrap();
         let database = path.join(DATABASE_FILENAME);
         let legacy = Connection::open(&database).unwrap();
+        capture_capacity::make_legacy_schema(&legacy).unwrap();
         legacy.pragma_update(None, "user_version", 73).unwrap();
         let before = read_metadata_from(&legacy).unwrap();
         drop(legacy);

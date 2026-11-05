@@ -1790,8 +1790,8 @@ fn generic_source_binding(checker: bool) -> PluginExecutionBinding {
                 effect: sdk::EffectKind::ReadOnly,
                 permissions: vec![sdk::PermissionRequest::CapturedInput],
                 limits: sdk::CapabilityLimits {
-                    max_input_bytes: MAX_INPUT_BYTES as u32,
-                    max_output_bytes: MAX_INPUT_BYTES as u32,
+                    max_input_bytes: if checker { sdk::MAX_INVOCATION_PAYLOAD_BYTES } else { sdk::MAX_SOURCE_EXTRACTION_INPUT_BYTES } as u32,
+                    max_output_bytes: if checker { sdk::MAX_EXCHANGE_BYTES } else { sdk::MAX_CONTENT_EXCHANGE_BYTES } as u32,
                     concurrency: 1,
                     timeout_ms: 10_000,
                 },
@@ -1970,7 +1970,7 @@ fn generic_source_proposal(source: &sdk::SourceExtractionInput) -> sdk::ContentE
         "Original Case",
     );
     let order = vec![first.id.clone(), second.id.clone(), case.id.clone()];
-    sdk::ContentExchange {
+    let mut proposal = sdk::ContentExchange {
         profile: source.profile.clone(),
         source_set_id: source.source_set_id.clone(),
         source_language: source.source_language.clone(),
@@ -2018,7 +2018,20 @@ fn generic_source_proposal(source: &sdk::SourceExtractionInput) -> sdk::ContentE
                 payload_utf8: format!("{{\"metadata\": {suffix}, \"preserve\":\"\\u4e16\"}}"),
             },
         ],
+    };
+    if config["capacity"] == true {
+        // Synthetic opaque extensions exercise quoted ledger results above
+        // eight MiB while respecting each block and the content byte budget.
+        for index in 0..2 {
+            proposal.domain_blocks.push(sdk::DomainBlock {
+                target: sdk::ContentTarget::Snapshot,
+                schema: contract_ref(&format!("example.capacity-{index}")),
+                handling: sdk::ExtensionHandling::Preserve,
+                payload_utf8: "\n".repeat(1024 * 1024),
+            });
+        }
     }
+    proposal
 }
 
 /// A bounded in-process domain fixture, using the same grant/result/semantic
@@ -2128,6 +2141,15 @@ fn run_generic_source(
     store: &mut ProjectStore,
     input: &FixedInput,
 ) -> FixedResult {
+    run_generic_source_with_lease(runtime, store, input, 60_000)
+}
+
+fn run_generic_source_with_lease(
+    runtime: &mut ExecutionRuntime,
+    store: &mut ProjectStore,
+    input: &FixedInput,
+    lease_ms: u64,
+) -> FixedResult {
     let now = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .unwrap()
@@ -2137,7 +2159,7 @@ fn run_generic_source(
             store,
             ExecutionId::new(),
             input,
-            now + 60_000,
+            now + lease_ms,
             PluginConsent {
                 unsandboxed_execution: true,
                 application_execution: false,
@@ -2196,6 +2218,10 @@ fn check_generic_source(
 /// Reuse the synthetic in-process source/check fixture for downstream identity
 /// mapping tests. It registers no Node process or installed domain component.
 pub(crate) fn adopt_shared_source_fixture(store: &mut ProjectStore) {
+    adopt_shared_source_fixture_with_result_limit(store, MAX_PLUGIN_RESULT_BYTES as u32)
+}
+
+pub(crate) fn adopt_shared_source_fixture_with_result_limit(store: &mut ProjectStore, result_limit: u32) {
     let mut runtime = ExecutionRuntime::new(store).unwrap();
     for checker in [false, true] {
         runtime
@@ -2205,6 +2231,10 @@ pub(crate) fn adopt_shared_source_fixture(store: &mut ProjectStore) {
             .unwrap();
     }
     let input = generic_source_input(store, 1, 1, "CaseKey", false);
+    let mut envelope = input.envelope().clone();
+    envelope.limits.max_result_bytes = result_limit;
+    envelope.limits.max_attempt_result_bytes = result_limit;
+    let input = FixedInput::capture(envelope).unwrap();
     let result = run_generic_source(&mut runtime, store, &input);
     check_generic_source(&mut runtime, store, &input, &result);
     let action = prepare(store, &input, &result);
@@ -2343,14 +2373,16 @@ fn maintenance_window_keeps_occurrence_display_and_canonical_plan_identity_separ
 }
 
 #[test]
-fn generic_source_binary_capture_is_checked_adopted_and_reopened_from_original_blobs() {
+fn generic_source_two_mib_binary_capture_is_checked_adopted_and_reopened_from_original_blobs() {
     let temp = tempfile::tempdir().unwrap();
     let path = temp.path().join("project");
     let mut store = create(&path);
     let seed = generic_source_input(&store, 1, 1, "CaseKey", false);
     let mut bundle = SourceBundle::from_input(&seed).unwrap();
-    let original = bundle.files[0].bytes().unwrap().into_owned();
-    let mut companion = vec![0, 255, 128, 10];
+    let mut config: serde_json::Value = serde_json::from_slice(&bundle.files[0].bytes().unwrap()).unwrap();
+    config["capacity"] = json!(true);
+    let original = serde_json::to_vec(&config).unwrap();
+    let mut companion = vec![0xff; sdk::MAX_EXCHANGE_BYTES - original.len()];
     let artifact = sdk::CapturedArtifact::from_bytes(bundle.files[0].artifact_id.to_string(), "records.bin".into(), "source".into(), &original).unwrap();
     bundle.files[0] = CapturedFile::from_artifact(&artifact, bundle.files[0].artifact_id).unwrap();
     let id = ExecutionId::new();
@@ -2363,10 +2395,17 @@ fn generic_source_binary_capture_is_checked_adopted_and_reopened_from_original_b
     for checker in [false, true] {
         runtime.register_read_only(Arc::new(GenericSourcePlugin(generic_source_binding(checker)))).unwrap();
     }
-    let result = run_generic_source(&mut runtime, &mut store, &input);
+    // The unoptimized storage pressure probe includes repeated full frame reads;
+    // use an explicit five-minute fixture grant, retaining normal expiry checks.
+    let result = run_generic_source_with_lease(&mut runtime, &mut store, &input, 300_000);
+    assert!(result.bytes().len() > MAX_RESULT_BYTES, "quoted plugin evidence exceeds the ordinary result ceiling");
     let action = prepare(&mut store, &input, &result);
     assert!(store.adopt_execution(&action, &SourceAdoptionHandler).is_err());
-    check_generic_source(&mut runtime, &mut store, &input, &result);
+    let captured_check = store.capture_source_validation(input.envelope().attempt_id, result.envelope().result_id).unwrap();
+    let checker_input = captured_check.check_input().clone();
+    assert!(checker_input.bytes().len() > MAX_INPUT_BYTES, "complete source plus proposal exceeds an ordinary input");
+    let checked = run_generic_source_with_lease(&mut runtime, &mut store, &checker_input, 300_000);
+    store.commit_source_validation(captured_check.prepare(checked).unwrap()).unwrap();
     let action = prepare(&mut store, &input, &result);
     store.adopt_execution(&action, &SourceAdoptionHandler).unwrap();
     let snapshot = store.content_scope().unwrap().current_snapshot.unwrap();
@@ -2375,13 +2414,18 @@ fn generic_source_binary_capture_is_checked_adopted_and_reopened_from_original_b
     let reopened = ProjectStore::open(&path).unwrap();
     let saved = reopened.source_bundle(snapshot).unwrap();
     assert_eq!(saved, bundle);
+    assert_eq!(reopened.execution_input(checker_input.envelope().attempt_id).unwrap().bytes(), checker_input.bytes());
     assert_eq!(saved.files[0].bytes().unwrap().as_ref(), original);
-    assert_eq!(saved.files[1].bytes().unwrap().as_ref(), [0, 255, 128, 10]);
+    assert_eq!(saved.files[1].bytes().unwrap().as_ref(), vec![0xff; sdk::MAX_EXCHANGE_BYTES - original.len()]);
+    assert_eq!(reopened.execution_input(input.envelope().attempt_id).unwrap().bytes(), input.bytes());
+    assert_eq!(reopened.execution_result(input.envelope().attempt_id, result.envelope().result_id).unwrap().bytes(), result.bytes());
     assert_eq!(reopened.source_content(snapshot, 0, 10).unwrap().total, 3);
     reopened.close().unwrap();
     let raw = rusqlite::Connection::open(path.join("project.sqlite3")).unwrap();
     let bytes: Vec<u8> = raw.query_row("SELECT bytes FROM source_files WHERE artifact_id=?1", [id.to_string()], |row| row.get(0)).unwrap();
-    assert_eq!(bytes, [0, 255, 128, 10]);
+    assert_eq!(bytes, vec![0xff; sdk::MAX_EXCHANGE_BYTES - original.len()]);
+    let header: i64 = raw.query_row("SELECT length(input) FROM execution_attempts WHERE attempt_id=?1", [checker_input.envelope().attempt_id.to_string()], |row| row.get(0)).unwrap();
+    assert!(header > 18 * 1024, "the exact checker frame needs a larger chunk manifest, not larger chunks");
     raw.execute("UPDATE source_files SET bytes=?1 WHERE artifact_id=?2", rusqlite::params![vec![0_u8, 0, 0, 0], id.to_string()]).unwrap();
     drop(raw);
     assert!(ProjectStore::open(&path).is_err(), "stored raw bytes must match their fixed capture");
@@ -2904,24 +2948,42 @@ fn generic_source_requires_fixed_checker_rules_and_a_nonblocking_semantic_result
 }
 
 #[test]
-fn generic_captured_source_rejects_its_serialized_store_budget_before_enqueue() {
+fn generic_captured_source_accepts_sdk_valid_encoding_above_the_old_store_budget() {
     let temp = tempfile::tempdir().unwrap();
     let store = create(&temp.path().join("project"));
     let input = generic_source_input(&store, 1, 1, "CaseKey", false);
     let mut capture = SourceBundle::from_input(&input).unwrap();
     let file = &mut capture.files[0];
-    // The raw material is within the SDK budget; JSON quoting pushes the
-    // immutable Core capture over its separate one MiB storage boundary.
+    // Quoting exceeds the old one MiB store ceiling, while the SDK and
+    // current capture owner still agree on the complete encoded input.
     let text = "\"".repeat(600_000);
     file.byte_length = text.len() as u32;
     file.sha256 = codec::digest(text.as_bytes());
     file.data = sdk::CapturedArtifactData::Utf8(text);
     capture.manifest_digest = capture.calculate_digest().unwrap();
     capture.source_input().validate().unwrap();
-    assert_eq!(
-        capture.validate().unwrap_err().code,
-        ErrorCode::LimitExceeded
-    );
+    assert!(serde_json::to_vec(&capture.source_input()).unwrap().len() > 1024 * 1024);
+    capture.validate().unwrap();
+}
+
+#[test]
+fn generic_plugin_frame_capacity_follows_its_validated_frozen_binding() {
+    let temp = tempfile::tempdir().unwrap();
+    let store = create(&temp.path().join("project"));
+    let seed = generic_source_input(&store, 1, 1, "CaseKey", false);
+    let mut envelope = seed.envelope().clone();
+    envelope.settings["padding"] = json!("x".repeat(MAX_INPUT_BYTES));
+    let fixed = FixedInput::capture(envelope.clone()).unwrap();
+    assert!(fixed.bytes().len() > MAX_INPUT_BYTES);
+    assert_eq!(FixedInput::restore(fixed.bytes(), fixed.digest()).unwrap().bytes(), fixed.bytes());
+    envelope.plugin.as_mut().unwrap().capability.declaration.limits.max_input_bytes = 1024;
+    assert_eq!(FixedInput::capture(envelope.clone()).unwrap_err().code, ErrorCode::LimitExceeded);
+    let bytes = serde_json::to_vec(&envelope).unwrap();
+    assert_eq!(FixedInput::restore(&bytes, &codec::digest(&bytes)).unwrap_err().code, ErrorCode::LimitExceeded);
+    envelope.plugin = None;
+    envelope.limits = ExecutionLimits::default();
+    assert_eq!(FixedInput::capture(envelope).unwrap_err().code, ErrorCode::LimitExceeded);
+    assert_eq!(FixedInput::restore(&vec![b' '; MAX_FIXED_INPUT_BYTES + 1], seed.digest()).unwrap_err().code, ErrorCode::LimitExceeded);
 }
 
 #[test]

@@ -2,7 +2,22 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { decodeFrame, encodeFrame, FrameDecoder } from '../dist/codec.js';
 import { PROCESS_PROFILE } from '../dist/generated/protocol.js';
+import { JsonFrameDecoder } from '../dist/framing.js';
 const frame = { protocolVersion: PROCESS_PROFILE.protocolVersion, body: { kind: 'ping', data: { nonce: 'roundtrip' } } };
+
+test('shared framing preserves each channel aggregate allowance independently', () => {
+  const packet = Buffer.from([0, 0, 0, 4, 1, 2, 3, 4]);
+  const found = [];
+  const narrow = new JsonFrameDecoder(bytes => [...bytes], 4, 16);
+  narrow.push(Buffer.concat([packet, packet]), value => found.push(value));
+  assert.equal(found.length, 2);
+  assert.throws(() => narrow.push(packet, () => assert.fail()), /Session input limit/);
+  const wider = new JsonFrameDecoder(bytes => [...bytes], 4, 24);
+  wider.push(Buffer.concat([packet, packet, packet]), value => found.push(value));
+  wider.finish();
+  assert.equal(found.length, 5);
+  assert.throws(() => wider.push(packet, () => assert.fail()), /Session input limit/);
+});
 
 test('fragmented and coalesced frames preserve boundaries', () => {
   const bytes = encodeFrame(frame);
