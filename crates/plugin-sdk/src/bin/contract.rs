@@ -21,7 +21,8 @@ fn print<T: serde::Serialize>(value: &T) -> Result<(), Box<dyn std::error::Error
 }
 fn run() -> Result<(), Box<dyn std::error::Error>> {
     let args: Vec<_> = std::env::args_os().skip(1).collect();
-    let data_schemas: [(&str, fn() -> schemars::Schema); 27] = [
+    let data_schemas: [(&str, fn() -> schemars::Schema); 28] = [
+        ("source-capture-summary", source_capture_summary_schema),
         ("source-context-facts", source_context_facts_schema),
         ("generation-service-input", generation_service_input_schema),
         (
@@ -65,6 +66,9 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
         ),
         ("translation-types", translation_types_schema),
     ];
+    if args.len() == 1 && args[0] == "profile-source-capture" {
+        return print(&source_capture_summary_profile());
+    }
     if args.len() == 1 && args[0] == "profile-source-context" {
         return print(&source_context_facts_profile());
     }
@@ -83,6 +87,12 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
         }
     }
     if args.len() == 2 {
+        if args[0] == "validate-source-capture-summary" {
+            return print(&parse_source_capture_summary(&read(
+                &args[1],
+                MAX_SOURCE_CAPTURE_SUMMARY_BYTES,
+            )?)?);
+        }
         if args[0] == "validate-source-context-facts" {
             return print(&parse_source_context_facts(&read(
                 &args[1],
@@ -302,7 +312,8 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
         return print(&report);
     }
     if args.len() == 3 && args[0] == "match-source-extraction" {
-        let input = parse_source_extraction_input(&read(&args[1], MAX_SOURCE_EXTRACTION_INPUT_BYTES)?)?;
+        let input =
+            parse_source_extraction_input(&read(&args[1], MAX_SOURCE_EXTRACTION_INPUT_BYTES)?)?;
         let exchange = parse_exchange(&read(&args[2], MAX_CONTENT_EXCHANGE_BYTES)?)?;
         let ExchangeBody::Content(content) = &exchange.document().body else {
             return Err("expected content exchange fixture".into());

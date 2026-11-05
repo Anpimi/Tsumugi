@@ -1869,7 +1869,7 @@ dependencies = [
 
 [[package]]
 name = "tsumugi-plugin-sdk"
-version = "0.1.0-alpha.6"
+version = "0.1.0-alpha.7"
 dependencies = [
  "base64 0.22.1",
  "semver",

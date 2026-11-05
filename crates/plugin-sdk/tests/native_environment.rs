@@ -195,3 +195,14 @@ fn linux_complete_executable_hash_uses_standard_sha256_and_refuses_empty_bytes()
     );
     assert!(native_host_executable_sha256(b"").is_err());
 }
+
+#[test]
+fn alpha6_native_descriptor_keeps_its_exact_identity_after_the_sdk_advance() {
+    let mut old = native();
+    old.sdk_version = "0.1.0-alpha.6".into();
+    let bytes = serde_json::to_vec(&old).unwrap();
+    let decoded: NativeHostEnvironmentDescriptor = serde_json::from_slice(&bytes).unwrap();
+    decoded.validate().unwrap();
+    assert_eq!(serde_json::to_vec(&decoded).unwrap(), bytes);
+    assert_ne!(decoded.digest().unwrap(), native().digest().unwrap());
+}

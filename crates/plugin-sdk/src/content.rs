@@ -251,6 +251,9 @@ impl ContentExchange {
             if is_source_context_facts_contract(&block.schema) {
                 crate::source_context::parse_block_with_sources(block, &mut sources)?;
             }
+            if block.schema == crate::source_capture_summary_contract() {
+                crate::source_capture::parse_block_with_sources(block, &mut sources)?;
+            }
         }
         encoded_limit(self, MAX_CONTENT_EXCHANGE_BYTES, "contentExchange")
     }

@@ -323,3 +323,14 @@ fn artifact_digest_rejects_unbounded_or_invalid_input() {
     )]);
     assert!(runtime_artifact_digest(&oversized).is_err());
 }
+
+#[test]
+fn alpha6_descriptor_keeps_its_exact_identity_after_the_sdk_advance() {
+    let mut old = descriptor();
+    old.sdk_version = "0.1.0-alpha.6".into();
+    let bytes = serde_json::to_vec(&old).unwrap();
+    let decoded: RuntimeEnvironmentDescriptor = serde_json::from_slice(&bytes).unwrap();
+    decoded.validate().unwrap();
+    assert_eq!(serde_json::to_vec(&decoded).unwrap(), bytes);
+    assert_ne!(decoded.digest().unwrap(), descriptor().digest().unwrap());
+}

@@ -63,6 +63,10 @@ for (const kind of ['generation-component-input', 'generation-service-input', 'g
   cargo(`check-${kind}-schema`, fileURLToPath(url));
   generationSchemas.set(kind, JSON.parse(await readFile(url, 'utf8')));
 }
+const sourceCaptureURL = new URL('schemas/source-capture-summary.schema.json', root);
+cargo('check-source-capture-summary-schema', fileURLToPath(sourceCaptureURL));
+const sourceCaptureSchema = JSON.parse(await readFile(sourceCaptureURL, 'utf8'));
+const sourceCaptureProfile = JSON.parse(cargo('profile-source-capture'));
 const sourceContextURL = new URL('schemas/source-context-facts.schema.json', root);
 cargo('check-source-context-facts-schema', fileURLToPath(sourceContextURL));
 const sourceContextSchema = JSON.parse(await readFile(sourceContextURL, 'utf8'));
@@ -173,6 +177,15 @@ if (/^\s*import\s/m.test(componentValidator) || /\brequire\s*\(/.test(componentV
   throw new Error('The generated component input validator requires a runtime dependency.');
 }
 outputs.push([new URL('javascript/validate-generation-component-input.mjs', root), banner + sourceValidatorAttribution + componentValidator]);
+outputs.push([new URL('javascript/source-capture.d.ts', root), await compile(sourceCaptureSchema, 'SourceCaptureSummary', {
+  bannerComment: banner, additionalProperties: false, unreachableDefinitions: true,
+})]);
+const sourceCaptureValidator = standaloneValidator(ajv, sourceCaptureSchema);
+if (/^\s*import\s/m.test(sourceCaptureValidator) || /\brequire\s*\(/.test(sourceCaptureValidator)) {
+  throw new Error('The generated capture summary validator requires a runtime dependency.');
+}
+outputs.push([new URL('javascript/validate-source-capture-summary.mjs', root), banner + sourceValidatorAttribution + sourceCaptureValidator]);
+outputs.push([new URL('javascript/source-capture-profile.mjs', root), `${banner}const profile = ${JSON.stringify(sourceCaptureProfile, null, 2)};\nObject.freeze(profile.contract);\nexport const SOURCE_CAPTURE_SUMMARY_PROFILE = Object.freeze(profile);\n`]);
 for (const [url, source] of outputs) {
   if (process.argv.includes('--check')) {
     if (await readFile(url, 'utf8') !== source) throw new Error(`Stale generated contract: ${url.pathname.split('/').at(-1)}`);

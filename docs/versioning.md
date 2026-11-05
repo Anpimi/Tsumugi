@@ -44,7 +44,7 @@ When preparing an official release, move the `Unreleased` entries under `## [VER
 
 ### Experimental Plugin SDK (`crates/plugin-sdk`)
 
-`crates/plugin-sdk/Cargo.toml` manages its own independent version (currently `0.1.0-alpha.6`), while inheriting the workspace Rust edition, MSRV, license, and authors. It has no dependency on `tsumugi-core` or `tsumugi-plugin-host`. See the [SDK README](../crates/plugin-sdk/README.md) for build and consumer verification commands.
+`crates/plugin-sdk/Cargo.toml` manages its own independent version (currently `0.1.0-alpha.7`), while inheriting the workspace Rust edition, MSRV, license, and authors. It has no dependency on `tsumugi-core` or `tsumugi-plugin-host`. See the [SDK README](../crates/plugin-sdk/README.md) for build and consumer verification commands.
 
 Consumers pin SDK artifacts by exact commit and SHA-256 digest rather than relying on mutable version labels. Before distributing a new SDK archive, review all contract changes since the previous archive (such as new platform enum variants that affect exhaustive Rust matches) and advance the SDK prerelease version.
 

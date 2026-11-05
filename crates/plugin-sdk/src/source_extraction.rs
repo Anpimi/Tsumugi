@@ -116,6 +116,12 @@ impl SourceRevisionPolicy {
         )?;
         for basis in &self.revision_basis {
             reference(basis, "sourceRevisionPolicy.revisionBasis")?;
+            if basis.id == crate::SOURCE_CAPTURE_SUMMARY_SCHEMA_ID {
+                return Err(ContractError::at(
+                    ContractErrorCode::InvalidDeclaration,
+                    "sourceRevisionPolicy.revisionBasis",
+                ));
+            }
         }
         Ok(())
     }

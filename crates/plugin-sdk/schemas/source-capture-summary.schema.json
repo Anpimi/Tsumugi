@@ -1,0 +1,169 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "SourceCaptureSummary",
+  "type": "object",
+  "properties": {
+    "materials": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/SourceCaptureMaterial"
+      }
+    }
+  },
+  "additionalProperties": false,
+  "required": [
+    "materials"
+  ],
+  "$defs": {
+    "SourceCaptureCounts": {
+      "type": "object",
+      "properties": {
+        "declaredFields": {
+          "type": "integer",
+          "maximum": 4294967295,
+          "minimum": 0
+        },
+        "items": {
+          "type": "integer",
+          "maximum": 4294967295,
+          "minimum": 0
+        },
+        "itemsWithFields": {
+          "type": "integer",
+          "maximum": 4294967295,
+          "minimum": 0
+        },
+        "nonEmptyFields": {
+          "type": "integer",
+          "maximum": 4294967295,
+          "minimum": 0
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "items",
+        "itemsWithFields",
+        "declaredFields",
+        "nonEmptyFields"
+      ]
+    },
+    "SourceCaptureGroup": {
+      "type": "object",
+      "properties": {
+        "counts": {
+          "$ref": "#/$defs/SourceCaptureCounts"
+        },
+        "label": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "label",
+        "counts"
+      ]
+    },
+    "SourceCaptureMaterial": {
+      "type": "object",
+      "properties": {
+        "counts": {
+          "$ref": "#/$defs/SourceCaptureCounts"
+        },
+        "groups": {
+          "description": "When supplied, the disjoint groups must sum to the material counts.",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/SourceCaptureGroup"
+          }
+        },
+        "properties": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/SourceCaptureProperty"
+          }
+        },
+        "source": {
+          "description": "Captured parse-input evidence, not a filesystem path or read permission.",
+          "$ref": "#/$defs/SourceReference"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "source",
+        "properties",
+        "counts",
+        "groups"
+      ]
+    },
+    "SourceCaptureProperty": {
+      "description": "Labels and values are literal plugin-authored data, rendered as plain text.\nAn empty values list explicitly reports no values, rather than missing data.",
+      "type": "object",
+      "properties": {
+        "label": {
+          "type": "string"
+        },
+        "values": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "label",
+        "values"
+      ]
+    },
+    "SourceEncoding": {
+      "description": "Source coordinates are separate from ranges in decoded unit/target text.",
+      "type": "string",
+      "enum": [
+        "utf8-byte",
+        "utf16",
+        "grapheme",
+        "raw-byte"
+      ]
+    },
+    "SourceRange": {
+      "type": "object",
+      "properties": {
+        "encoding": {
+          "$ref": "#/$defs/SourceEncoding"
+        },
+        "end": {
+          "type": "integer",
+          "maximum": 4294967295,
+          "minimum": 0
+        },
+        "start": {
+          "type": "integer",
+          "maximum": 4294967295,
+          "minimum": 0
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "encoding",
+        "start",
+        "end"
+      ]
+    },
+    "SourceReference": {
+      "type": "object",
+      "properties": {
+        "artifactId": {
+          "type": "string"
+        },
+        "range": {
+          "$ref": "#/$defs/SourceRange"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "artifactId",
+        "range"
+      ]
+    }
+  }
+}
