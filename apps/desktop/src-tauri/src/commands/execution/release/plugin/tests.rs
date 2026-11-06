@@ -1154,49 +1154,72 @@ fn installed_build_and_checks(workflow: bool, failure_outcome: Option<&str>) {
                 .starts_with(b"[")
         );
     }
-    let preview = call(&window, "preview_delivery", delivery_request.clone()).unwrap();
-    assert!(
-        preview["files"]
+    // Domain files and Core reports share stale-preview, explicit overwrite
+    // and per-file outcome rules through the registered production exporter.
+    for changed_path in ["zh-CN.meta", "tsumugi-release/locale-1-zh-CN.json"] {
+        let preview = call(&window, "preview_delivery", delivery_request.clone()).unwrap();
+        assert!(
+            preview["files"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .all(|file| file["state"] == "same")
+        );
+        fs::write(destination.join(changed_path), b"external metadata").unwrap();
+        export["previewId"] = preview["previewId"].clone();
+        export["actionId"] = json!(ExecutionId::new());
+        export["overwriteConflicts"] = json!(false);
+        assert!(call(&window, "export_release", export.clone()).is_err());
+        let mut reconcile = context.clone();
+        reconcile["actionId"] = export["actionId"].clone();
+        reconcile["selectionId"] = json!(selection_id);
+        let failed = call(&window, "read_delivery_action", reconcile).unwrap();
+        assert_eq!(failed["state"], "failed");
+        let changed = failed["files"]
             .as_array()
             .unwrap()
             .iter()
-            .all(|file| file["state"] == "same")
-    );
-    // A changed second file of the same locale is matched by path as well.
-    fs::write(destination.join("zh-CN.meta"), b"external metadata").unwrap();
-    export["previewId"] = preview["previewId"].clone();
-    export["actionId"] = json!(ExecutionId::new());
-    assert!(call(&window, "export_release", export.clone()).is_err());
+            .find(|file| file["locale"] == "zh-CN" && file["fileName"] == changed_path)
+            .unwrap();
+        assert_eq!(
+            changed["actualSha256"],
+            artifact_digest(b"external metadata")
+        );
+        assert_eq!(
+            fs::read(destination.join(changed_path)).unwrap(),
+            b"external metadata"
+        );
+        let conflict = call(&window, "preview_delivery", delivery_request.clone()).unwrap();
+        let changed = conflict["files"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|file| file["fileName"] == changed_path)
+            .unwrap();
+        assert_eq!(changed["state"], "conflict");
+        export["previewId"] = conflict["previewId"].clone();
+        export["actionId"] = json!(ExecutionId::new());
+        assert!(call(&window, "export_release", export.clone()).is_err());
+        assert!(call(&window, "read_delivery_action", json!({"actionId":export["actionId"],
+            "selectionId":selection_id,"sessionToken":context["sessionToken"],"projectId":context["projectId"]})).unwrap().is_null());
+        export["overwriteConflicts"] = json!(true);
+        assert_eq!(
+            call(&window, "export_release", export.clone()).unwrap()["state"],
+            "succeeded"
+        );
+        let original = releases[0]["artifacts"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|file| file["fileName"] == changed_path)
+            .unwrap();
+        assert_eq!(
+            artifact_digest(&fs::read(destination.join(changed_path)).unwrap()),
+            original["sha256"]
+        );
+    }
     let mut reconcile = context.clone();
-    reconcile["actionId"] = export["actionId"].clone();
     reconcile["selectionId"] = json!(selection_id);
-    let failed = call(&window, "read_delivery_action", reconcile.clone()).unwrap();
-    assert_eq!(failed["state"], "failed");
-    let metadata = failed["files"]
-        .as_array()
-        .unwrap()
-        .iter()
-        .find(|file| file["locale"] == "zh-CN" && file["fileName"] == "zh-CN.meta")
-        .unwrap();
-    assert_eq!(
-        metadata["actualSha256"],
-        artifact_digest(b"external metadata")
-    );
-    assert_eq!(
-        fs::read(destination.join("zh-CN.meta")).unwrap(),
-        b"external metadata"
-    );
-    let conflict = call(&window, "preview_delivery", delivery_request.clone()).unwrap();
-    export["previewId"] = conflict["previewId"].clone();
-    export["actionId"] = json!(ExecutionId::new());
-    assert!(call(&window, "export_release", export.clone()).is_err());
-    assert!(call(&window, "read_delivery_action", json!({"actionId":export["actionId"],
-        "selectionId":selection_id,"sessionToken":context["sessionToken"],"projectId":context["projectId"]})).unwrap().is_null());
-    export["overwriteConflicts"] = json!(true);
-    assert_eq!(
-        call(&window, "export_release", export).unwrap()["state"],
-        "succeeded"
-    );
     // Simulate a lost completion receipt using the real Core action owner.
     let pending_action = ExecutionId::new();
     let root = selected.destination_path().to_string_lossy().into_owned();
@@ -1381,7 +1404,12 @@ fn installed_build_and_checks(workflow: bool, failure_outcome: Option<&str>) {
         "projectId":context["projectId"],"releaseId":release}),
     )
     .unwrap();
-    assert_eq!(history.as_array().unwrap().len(), 7);
+    let history = history.as_array().unwrap();
+    // Each external edit records a failed admitted export and a confirmed
+    // overwrite; rejecting a conflict before admission records no action.
+    assert_eq!(history.len(), 9);
+    assert_eq!(history.iter().filter(|entry| entry["state"] == "failed").count(), 2);
+    assert_eq!(history.iter().filter(|entry| entry["state"] == "succeeded").count(), 7);
 
     state.plugins.close();
     drop(state);
