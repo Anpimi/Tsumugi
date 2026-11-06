@@ -796,6 +796,7 @@ impl ProjectStore {
         let record = record::load(&snapshot, release_id)?;
         let mut artifacts = record.artifacts.into_iter().filter(|a| {
             a.summary.locale == locale && logical_path.is_none_or(|p| a.summary.file_name == p)
+                && (logical_path.is_some() || !record.report_paths.contains(&a.summary.file_name))
         });
         let artifact = artifacts
             .next()

@@ -1074,7 +1074,7 @@ fn installed_build_and_checks(workflow: bool, failure_outcome: Option<&str>) {
             2,
             "fresh package captures reuse one registration per provider/environment"
         );
-        assert_eq!(store.release_view(release).unwrap().artifacts.len(), 4);
+        assert_eq!(store.release_view(release).unwrap().artifacts.len(), 6);
         for locale in ["zh-CN", "fr-FR"] {
             assert!(store.release_artifact(release, locale).is_err());
             let (_, bytes) = store
@@ -1108,7 +1108,7 @@ fn installed_build_and_checks(workflow: bool, failure_outcome: Option<&str>) {
     let delivery_request = json!({"sessionToken":context["sessionToken"],"projectId":context["projectId"],
         "releaseId":release,"selectionId":selection_id});
     let preview = call(&window, "preview_delivery", delivery_request.clone()).unwrap();
-    assert_eq!(preview["files"].as_array().unwrap().len(), 4);
+    assert_eq!(preview["files"].as_array().unwrap().len(), 6);
     assert!(
         preview["files"]
             .as_array()
@@ -1127,12 +1127,23 @@ fn installed_build_and_checks(workflow: bool, failure_outcome: Option<&str>) {
     export["overwriteConflicts"] = json!(false);
     let delivery = call(&window, "export_release", export.clone()).unwrap();
     assert_eq!(delivery["state"], "succeeded");
-    assert_eq!(delivery["files"].as_array().unwrap().len(), 4);
+    assert_eq!(delivery["files"].as_array().unwrap().len(), 6);
     assert_eq!(
         call(&window, "export_release", export.clone()).unwrap(),
         delivery
     );
-    for locale in ["zh-CN", "fr-FR"] {
+    for (index, locale) in ["zh-CN", "fr-FR"].into_iter().enumerate() {
+        let report: serde_json::Value = serde_json::from_slice(
+            &fs::read(destination.join(format!(
+                "tsumugi-release/locale-{}-{locale}.json",
+                index + 1
+            )))
+            .unwrap(),
+        )
+        .unwrap();
+        assert_eq!(report["format"], "tsumugi-release-report");
+        assert_eq!(report["targetLanguage"], locale);
+        assert_eq!(report["files"].as_array().unwrap().len(), 2);
         assert_eq!(
             fs::read(destination.join(format!("deliverables/{locale}/content.txt"))).unwrap(),
             format!("\u{feff}Saved {locale} 👩🏽‍💻\r\n").as_bytes()

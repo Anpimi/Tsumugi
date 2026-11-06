@@ -71,6 +71,7 @@ pub(super) fn prepare(
         artifacts.push(Artifact {
             id: output.file_name.clone(),
             role: "locale".into(),
+            validator_version: summary.validator_version.clone(),
             summary: ReleasedArtifact {
                 locale: output.locale,
                 file_name: output.file_name,

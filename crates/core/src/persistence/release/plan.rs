@@ -9,6 +9,8 @@ use crate::{
 };
 use std::collections::BTreeMap;
 use tsumugi_plugin_sdk as sdk;
+mod report;
+pub(super) use report::{REPORT_ROLE, REPORT_VALIDATOR};
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
@@ -562,6 +564,7 @@ impl ProjectStore {
         build: &ReleaseBuildEnvironment,
     ) -> Result<ReleasePlan, ExecutionError> {
         build.validate()?;
+        report::validate_paths(choices)?;
         let languages: Vec<_> = choices.iter().map(|c| c.locale.clone()).collect();
         let scopes = choices.iter().filter_map(|choice| choice.translation_units.as_ref()
             .map(|units| (choice.locale.clone(), units.clone()))).collect();

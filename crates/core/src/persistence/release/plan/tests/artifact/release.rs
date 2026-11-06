@@ -181,7 +181,7 @@ fn all_artifacts_survive_frozen_edits_delivery_outcomes_and_current_format_move(
     let receipt = store.commit_execution_adoption(prepared).unwrap();
     let release = release_id(&receipt);
     let view = store.release_view(release).unwrap();
-    assert_eq!(view.artifacts.len(), 4);
+    assert_eq!(view.artifacts.len(), 6);
     assert_eq!(
         view.eligibility_basis,
         ReleasePlan::from_input(&input).unwrap().eligibility_basis()
@@ -201,7 +201,14 @@ fn all_artifacts_survive_frozen_edits_delivery_outcomes_and_current_format_move(
             "generic count is frozen source units, not three occurrences or parsed file records"
         );
         assert_eq!(codec::digest(&bytes), metadata.sha256);
-        assert!(bytes.starts_with(&[0xef, 0xbb, 0xbf]) && bytes.ends_with(b"\r\n"));
+        if ["tsumugi-release/locale-1-zh-CN.json", "tsumugi-release/locale-2-fr-FR.json"].contains(&summary.file_name.as_str()) {
+            let report: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+            assert_eq!(report["format"], "tsumugi-release-report");
+            assert_eq!(report["targetLanguage"], summary.locale);
+            assert_eq!(report["files"].as_array().unwrap().len(), 2);
+        } else {
+            assert!(bytes.starts_with(&[0xef, 0xbb, 0xbf]) && bytes.ends_with(b"\r\n"));
+        }
         assert!(
             !String::from_utf8(bytes.clone())
                 .unwrap()
@@ -249,7 +256,7 @@ fn all_artifacts_survive_frozen_edits_delivery_outcomes_and_current_format_move(
     let pending = store
         .begin_delivery(delivery_action, release, "isolated-destination", false)
         .unwrap();
-    assert_eq!(pending.files.len(), 4);
+    assert_eq!(pending.files.len(), 6);
     assert_eq!(
         store
             .begin_delivery(delivery_action, release, "isolated-destination", false)
@@ -399,7 +406,7 @@ fn one_missing_locale_proof_or_incomplete_action_cannot_create_a_release() {
             .unwrap()
             .artifacts
             .len(),
-        4
+        6
     );
 }
 
@@ -689,7 +696,7 @@ fn partial_locale_continuation_reuses_original_proof_and_rechecks_original_autho
                     .unwrap()
                     .artifacts
                     .len(),
-                4
+                6
             );
             let path = store.directory().to_owned();
             drop(store);
@@ -700,7 +707,7 @@ fn partial_locale_continuation_reuses_original_proof_and_rechecks_original_autho
                     .unwrap()
                     .artifacts
                     .len(),
-                4
+                6
             );
         } else {
             assert_eq!(
@@ -813,7 +820,7 @@ fn assert_large_artifact_storage(binary: bool) {
     let path = store.directory().to_owned();
     drop(store);
     let reopened = ProjectStore::open(path).unwrap();
-    assert_eq!(reopened.release_view(id).unwrap().artifacts.len(), 2);
+    assert_eq!(reopened.release_view(id).unwrap().artifacts.len(), 3);
     assert_eq!(
         reopened
             .release_artifact_by_path(id, "zh-CN", "zh-CN/second.txt")
@@ -843,7 +850,7 @@ fn staged_release_reference_reopens_and_refuses_rehashed_source_or_manifest_subs
         let expected = store.release_view(release).unwrap();
         let bytes: Vec<u8> = store.connection().unwrap().query_row("SELECT manifest FROM release_records WHERE release_id=?1", [release.to_string()], |row| row.get(0)).unwrap();
         let manifest: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
-        assert_eq!(manifest["version"], 2);
+        assert_eq!(manifest["version"], 3);
         assert_eq!(manifest["plan"], serde_json::json!({"kind":"plugin-input"}));
         let path = store.directory().to_owned(); store.close().unwrap();
         let mut store = ProjectStore::open(&path).unwrap();
@@ -883,9 +890,10 @@ fn original_unversioned_full_release_manifest_remains_readable_without_rewriting
     let current = store.release_view(release).unwrap();
     let bytes = codec::encode(&OriginalManifest { input_digest: input.digest().into(), result_ids: action.result_ids.clone(), plan: OriginalPlan::Plugin(ReleasePlan::from_input(&input).unwrap()) }, MAX_INPUT_BYTES).unwrap();
     store.connection().unwrap().execute("UPDATE release_records SET manifest=?2,manifest_digest=?3 WHERE release_id=?1", rusqlite::params![release.to_string(), &bytes, codec::digest(&bytes)]).unwrap();
+    store.connection().unwrap().execute("DELETE FROM release_artifacts WHERE release_id=?1 AND file_name='tsumugi-release/locale-1-zh-CN.json'", [release.to_string()]).unwrap();
     let before = store.connection().unwrap().total_changes();
     let historical = store.release_view(release).unwrap();
-    assert_eq!(historical.artifacts, current.artifacts);
+    assert_eq!(historical.artifacts, current.artifacts.into_iter().filter(|file| file.file_name != "tsumugi-release/locale-1-zh-CN.json").collect::<Vec<_>>());
     assert_eq!(historical.policy_version, current.policy_version);
     assert_eq!(store.connection().unwrap().total_changes(), before);
     let path = store.directory().to_owned(); store.close().unwrap();
@@ -894,4 +902,412 @@ fn original_unversioned_full_release_manifest_remains_readable_without_rewriting
     assert_eq!(reopened.adopt_execution(&action, &ReleaseAdoptionHandler).unwrap(), receipt);
     let preserved: Vec<u8> = reopened.connection().unwrap().query_row("SELECT manifest FROM release_records WHERE release_id=?1", [release.to_string()], |row| row.get(0)).unwrap();
     assert_eq!(preserved, bytes);
+}
+
+#[test]
+fn release_report_preserves_exact_staged_scope_settings_and_bytes_after_current_edits() {
+    let (_directory, mut store, generation, ordinary) = fixture_build(&["zh-CN"]);
+    let original = ReleasePlan::from_input(&ordinary).unwrap();
+    let project = ordinary.envelope().project_id;
+    let target = &original.locales[0].targets[0];
+    let selected = target.review.unit_id;
+    // An approved translation equal to source must still be reported as selected.
+    translate(
+        &mut store,
+        project,
+        selected,
+        "zh-CN",
+        &target.review.source_text,
+    );
+    check(&mut store, project, selected, "zh-CN");
+    approve(&mut store, project, selected, "zh-CN");
+    let scopes = BTreeMap::from([("zh-CN".into(), vec![selected])]);
+    let eligibility = store
+        .review_eligibility_for_build(
+            project,
+            &["zh-CN".into()],
+            &scopes,
+            &Cancellation::default(),
+        )
+        .unwrap();
+    let setting = sdk::BuildConfigurationDeclaration {
+        schema: sdk::ContractRef {
+            id: "example.output-settings".into(),
+            schema_version: 1,
+            behavior_version: 1,
+        },
+        display_name: "Game language files".into(),
+        options: vec![sdk::BuildOptionDeclaration {
+            id: "loading-language".into(),
+            display_name: "Loading language".into(),
+            choices: vec![sdk::BuildOptionChoice {
+                id: "english".into(),
+                display_name: "English".into(),
+            }],
+        }],
+    };
+    let mut environment = original.build_environment().clone();
+    environment.binding.declaration.configuration = Some(vec![setting.clone()]);
+    let mut choices = original.choices();
+    choices[0].translation_units = Some(vec![selected]);
+    choices[0].output_paths.truncate(1);
+    choices[0].configuration = vec![
+        setting
+            .capture(&[sdk::BuildOptionSelection {
+                id: "loading-language".into(),
+                value: "english".into(),
+            }])
+            .unwrap(),
+    ];
+    let input = store
+        .prepare_plugin_build(
+            project,
+            ExecutionId::new(),
+            &choices,
+            &eligibility.basis,
+            &environment,
+        )
+        .unwrap();
+    authorize(&mut store, generation, &input);
+    let result = builder_result(&mut store, &input, input.envelope().items[0].item_id);
+    prove(&mut store, generation, &input, &result);
+    let action = action(&mut store, &input, &[result]);
+    let prepared = store
+        .capture_execution_adoption(&action)
+        .unwrap()
+        .prepare(&ReleaseAdoptionHandler)
+        .unwrap();
+    let retained = original.locales[0].targets[1].review.unit_id;
+    translate(
+        &mut store,
+        project,
+        retained,
+        "zh-CN",
+        "Private newer unapproved translation",
+    );
+    let receipt = store.commit_execution_adoption(prepared).unwrap();
+    let release = release_id(&receipt);
+    let native = store
+        .release_artifact_by_path(release, "zh-CN", &choices[0].output_paths[0])
+        .unwrap();
+    assert_eq!(store.release_artifact(release, "zh-CN").unwrap(), native);
+    let (metadata, bytes) = store
+        .release_artifact_by_path(release, "zh-CN", "tsumugi-release/locale-1-zh-CN.json")
+        .unwrap();
+    let report: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+    assert_eq!(report["formatVersion"], 1);
+    assert_eq!(report["inputSha256"], input.digest());
+    assert_eq!(report["sourceLanguage"], "en");
+    assert_eq!(report["targetLanguage"], "zh-CN");
+    assert_eq!(report["coverage"]["units"], 2);
+    assert_eq!(report["coverage"]["translations"], 1);
+    assert_eq!(report["coverage"]["sourceRetained"], 1);
+    assert_eq!(report["coverage"]["sourceFallbacks"], 0);
+    assert_eq!(
+        report["coverage"]["entries"][0]["disposition"],
+        "translation"
+    );
+    assert_eq!(
+        report["coverage"]["entries"][1]["disposition"],
+        "source-retained"
+    );
+    assert_eq!(report["settings"][0]["option"], "Loading language");
+    assert_eq!(report["settings"][0]["value"], "English");
+    assert_eq!(report["settings"][0]["valueId"], "english");
+    assert_eq!(report["files"].as_array().unwrap().len(), 1);
+    assert_eq!(report["files"][0]["sha256"], native.0.sha256);
+    assert_eq!(report["files"][0]["bytes"], native.1.len());
+    assert_eq!(metadata.sha256, codec::digest(&bytes));
+    assert!(
+        !String::from_utf8(bytes.clone())
+            .unwrap()
+            .contains("Private newer unapproved translation")
+    );
+    let path = store.directory().to_owned();
+    store.close().unwrap();
+    let reopened = ProjectStore::open(path).unwrap();
+    assert_eq!(
+        reopened
+            .release_artifact_by_path(release, "zh-CN", &metadata.file_name)
+            .unwrap()
+            .1,
+        bytes
+    );
+    assert_eq!(
+        reopened
+            .review_target(project, retained, "zh-CN")
+            .unwrap()
+            .translation_text
+            .as_deref(),
+        Some("Private newer unapproved translation")
+    );
+}
+
+#[test]
+fn release_report_rejects_rehashed_substitution_and_reserves_safe_output_paths() {
+    let (_directory, mut store, generation, input) = fixture_build(&["zh-CN"]);
+    let plan = ReleasePlan::from_input(&input).unwrap();
+    for path in ["TSUMUGI-RELEASE/LOCALE-1-ZH-CN.JSON", "tsumugi-release"] {
+        let mut choices = plan.choices();
+        choices[0].output_paths = vec![path.into()];
+        assert_eq!(
+            store
+                .prepare_plugin_build(
+                    input.envelope().project_id,
+                    ExecutionId::new(),
+                    &choices,
+                    plan.eligibility_basis(),
+                    plan.build_environment()
+                )
+                .unwrap_err()
+                .code,
+            ErrorCode::InvalidInput
+        );
+    }
+    let result = builder_result(&mut store, &input, input.envelope().items[0].item_id);
+    prove(&mut store, generation, &input, &result);
+    let action = action(&mut store, &input, &[result]);
+    let release = release_id(
+        &store
+            .adopt_execution(&action, &ReleaseAdoptionHandler)
+            .unwrap(),
+    );
+    let (_, bytes) = store
+        .release_artifact_by_path(release, "zh-CN", "tsumugi-release/locale-1-zh-CN.json")
+        .unwrap();
+    let mut report: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+    report["coverage"]["translations"] = serde_json::json!(999);
+    let changed = serde_json::to_vec(&report).unwrap();
+    store.connection().unwrap().execute("UPDATE release_artifacts SET bytes=?2,sha256=?3 WHERE release_id=?1 AND file_name='tsumugi-release/locale-1-zh-CN.json'", rusqlite::params![release.to_string(), &changed, codec::digest(&changed)]).unwrap();
+    let before = store.connection().unwrap().total_changes();
+    assert_eq!(
+        store.release_view(release).unwrap_err().code,
+        ErrorCode::CorruptLedger
+    );
+    assert_eq!(store.connection().unwrap().total_changes(), before);
+}
+
+#[test]
+fn version_two_reference_release_remains_readable_without_adding_report_files() {
+    #[derive(serde::Serialize)]
+    #[serde(rename_all = "camelCase")]
+    struct OriginalManifest {
+        version: u32,
+        input_digest: String,
+        result_ids: Vec<ExecutionId>,
+        plan: OriginalPlan,
+    }
+    #[derive(serde::Serialize)]
+    #[serde(tag = "kind", content = "data", rename_all = "kebab-case")]
+    enum OriginalPlan {
+        PluginInput,
+    }
+    let (_directory, mut store, generation, input) = fixture_build(&["zh-CN"]);
+    let result = builder_result(&mut store, &input, input.envelope().items[0].item_id);
+    prove(&mut store, generation, &input, &result);
+    let action = action(&mut store, &input, &[result]);
+    let receipt = store
+        .adopt_execution(&action, &ReleaseAdoptionHandler)
+        .unwrap();
+    let release = release_id(&receipt);
+    let bytes = codec::encode(
+        &OriginalManifest {
+            version: 2,
+            input_digest: input.digest().into(),
+            result_ids: action.result_ids.clone(),
+            plan: OriginalPlan::PluginInput,
+        },
+        MAX_INPUT_BYTES,
+    )
+    .unwrap();
+    store.connection().unwrap().execute("DELETE FROM release_artifacts WHERE release_id=?1 AND file_name='tsumugi-release/locale-1-zh-CN.json'", [release.to_string()]).unwrap();
+    store
+        .connection()
+        .unwrap()
+        .execute(
+            "UPDATE release_records SET manifest=?2,manifest_digest=?3 WHERE release_id=?1",
+            rusqlite::params![release.to_string(), &bytes, codec::digest(&bytes)],
+        )
+        .unwrap();
+    let before = store.connection().unwrap().total_changes();
+    let view = store.release_view(release).unwrap();
+    assert_eq!(view.artifacts.len(), 2);
+    assert_eq!(store.connection().unwrap().total_changes(), before);
+    let path = store.directory().to_owned();
+    store.close().unwrap();
+    let mut reopened = ProjectStore::open(path).unwrap();
+    assert_eq!(reopened.release_view(release).unwrap(), view);
+    assert_eq!(
+        reopened
+            .adopt_execution(&action, &ReleaseAdoptionHandler)
+            .unwrap(),
+        receipt
+    );
+    let preserved: Vec<u8> = reopened
+        .connection()
+        .unwrap()
+        .query_row(
+            "SELECT manifest FROM release_records WHERE release_id=?1",
+            [release.to_string()],
+            |row| row.get(0),
+        )
+        .unwrap();
+    assert_eq!(preserved, bytes);
+}
+
+#[test]
+fn release_report_omits_opaque_settings_and_cannot_steal_component_artifact_identity() {
+    let (_directory, mut store, generation, ordinary) = fixture_build(&["zh-CN"]);
+    let original = ReleasePlan::from_input(&ordinary).unwrap();
+    let mut choices = original.choices();
+    choices[0].configuration = vec![
+        sdk::EncodedPayload::capture(
+            sdk::ContractRef {
+                id: "example.private-settings".into(),
+                schema_version: 1,
+                behavior_version: 1,
+            },
+            "{\"token\":\"synthetic-private-token\"}".into(),
+        )
+        .unwrap(),
+    ];
+    let mut environment = original.build_environment().clone();
+    environment.binding.declaration.configuration = None;
+    let input = store
+        .prepare_plugin_build(
+            ordinary.envelope().project_id,
+            ExecutionId::new(),
+            &choices,
+            original.eligibility_basis(),
+            &environment,
+        )
+        .unwrap();
+    authorize(&mut store, generation, &input);
+    let item = &input.envelope().items[0];
+    let request = store
+        .dispatch_execution_item(input.envelope().attempt_id, item.item_id)
+        .unwrap();
+    let build: sdk::BuildInput = serde_json::from_value(item.payload.clone()).unwrap();
+    let output = sdk::ArtifactSet {
+        profile: build.source.profile,
+        source_set_id: build.source.source_set_id,
+        target_language: build.target_language,
+        artifacts: build
+            .output_paths
+            .iter()
+            .enumerate()
+            .map(|(index, path)| {
+                sdk::CapturedArtifact::from_bytes(
+                    format!("tsumugi-report-{index}"),
+                    path.clone(),
+                    "tsumugi-release-report".into(),
+                    b"Synthetic domain bytes",
+                )
+                .unwrap()
+            })
+            .collect(),
+    };
+    let result = sdk_result(&request, serde_json::to_value(output).unwrap());
+    store.save_execution_result(&result).unwrap();
+    prove(&mut store, generation, &input, &result);
+    let action = action(&mut store, &input, &[result]);
+    let release = release_id(
+        &store
+            .adopt_execution(&action, &ReleaseAdoptionHandler)
+            .unwrap(),
+    );
+    assert_eq!(store.release_view(release).unwrap().artifacts.len(), 3);
+    assert!(
+        store.release_artifact(release, "zh-CN").is_err(),
+        "component artifacts with a report-like role must remain real domain artifacts"
+    );
+    for path in &choices[0].output_paths {
+        assert_eq!(
+            store
+                .release_artifact_by_path(release, "zh-CN", path)
+                .unwrap()
+                .1,
+            b"Synthetic domain bytes"
+        );
+    }
+    let (_, bytes) = store
+        .release_artifact_by_path(release, "zh-CN", "tsumugi-release/locale-1-zh-CN.json")
+        .unwrap();
+    let report: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+    assert_eq!(report["opaqueSettingsOmitted"], true);
+    assert_eq!(report["settings"], serde_json::json!([]));
+    assert!(report["sourceCapture"].is_null());
+    assert!(
+        !String::from_utf8(bytes)
+            .unwrap()
+            .contains("synthetic-private-token")
+    );
+}
+
+#[test]
+fn release_report_preserves_captured_dependencies_counts_and_relative_source_identity() {
+    let (_directory, mut store, _generation, input) = fixture_build(&["zh-CN"]);
+    let mut plan = ReleasePlan::from_input(&input).unwrap();
+    let result = builder_result(&mut store, &input, input.envelope().items[0].item_id);
+    let output = plan.artifact_set(&result).unwrap();
+    let source = plan.source.units[0].occurrences[0].source.clone();
+    let original = plan
+        .source
+        .artifacts
+        .iter()
+        .find(|artifact| artifact.id() == source.artifact_id)
+        .unwrap();
+    let expected_path = original.logical_path().to_owned();
+    let counts = sdk::SourceCaptureCounts {
+        items: 3,
+        items_with_fields: 2,
+        declared_fields: 4,
+        non_empty_fields: 2,
+    };
+    let summary = sdk::SourceCaptureSummary {
+        materials: vec![sdk::SourceCaptureMaterial {
+            source: source.clone(),
+            counts: counts.clone(),
+            properties: vec![
+                sdk::SourceCaptureProperty {
+                    label: "Dependencies".into(),
+                    values: vec!["Base.dat".into()],
+                },
+                sdk::SourceCaptureProperty {
+                    label: "Optional dependencies".into(),
+                    values: vec![],
+                },
+            ],
+            groups: vec![sdk::SourceCaptureGroup {
+                label: "Captured records".into(),
+                counts: counts.clone(),
+            }],
+        }],
+    };
+    plan.source.domain_blocks.push(sdk::DomainBlock {
+        target: sdk::ContentTarget::Snapshot,
+        schema: sdk::source_capture_summary_contract(),
+        handling: sdk::ExtensionHandling::Preserve,
+        payload_utf8: serde_json::to_string(&summary).unwrap(),
+    });
+    let (_, bytes) = plan.delivery_report(input.digest(), &output).unwrap();
+    let report: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+    assert_eq!(report["sourceCapture"][0]["input"], expected_path);
+    assert_eq!(
+        report["sourceCapture"][0]["inputRange"],
+        serde_json::to_value(source.range).unwrap()
+    );
+    assert_eq!(
+        report["sourceCapture"][0]["counts"],
+        serde_json::to_value(counts).unwrap()
+    );
+    assert_eq!(
+        report["sourceCapture"][0]["properties"],
+        serde_json::to_value(&summary.materials[0].properties).unwrap()
+    );
+    assert_eq!(
+        report["sourceCapture"][0]["groups"],
+        serde_json::to_value(&summary.materials[0].groups).unwrap()
+    );
+    assert_eq!(report["coverage"]["units"], 2);
 }

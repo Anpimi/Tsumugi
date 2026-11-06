@@ -380,7 +380,7 @@ fn captured_builders_need_each_locale_proof_and_preserve_original_release_after_
         receipt
     );
     let original = store.release_view(release).unwrap();
-    assert_eq!(original.artifacts.len(), 2);
+    assert_eq!(original.artifacts.len(), 4);
     assert_eq!(original.exceptions.len(), 2);
     assert!(
         original

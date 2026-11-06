@@ -206,6 +206,22 @@ function fixtureExceptionKind(kind: string): ReleaseExceptionKind {
   if (kind !== "source-fallback" && kind !== "qa-waiver") throw new Error("Invalid release exception fixture");
   return kind;
 }
+
+it("includes the Core companion report in the exact export preview and delivery acknowledgement", () => {
+  const report = { locale: "zh-CN", fileName: "tsumugi-release/locale-1-zh-CN.json", sha256: "b".repeat(64), entryCount: 2 };
+  const releases: unknown = [{ ...fixture.responses.releases[0], artifacts: [...fixture.responses.releases[0].artifacts, report] }];
+  if (!validators.validateResponseReleases(releases)) throw new Error("Invalid release report fixture");
+  const preview = { ...fixture.responses.preview, files: [...fixture.responses.preview.files,
+    { locale: report.locale, fileName: report.fileName, expectedSha256: report.sha256, currentSha256: null, state: "absent" }] };
+  if (!validators.validateResponsePreview(preview)) throw new Error("Invalid report preview fixture");
+  expect(() => confirmReleasePreview(preview, releases[0], fixture.requests.preview.selectionId)).not.toThrow();
+  expect(() => confirmReleasePreview({ ...preview, files: preview.files.slice(0, -1) }, releases[0], fixture.requests.preview.selectionId)).toThrow();
+  const delivery = { ...fixture.responses.delivery, files: [...fixture.responses.delivery.files,
+    { locale: report.locale, fileName: report.fileName, expectedSha256: report.sha256, actualSha256: report.sha256, state: "succeeded" }] };
+  if (!validators.validateResponseDelivery(delivery)) throw new Error("Invalid report delivery fixture");
+  expect(() => confirmReleaseDelivery(delivery, fixture.requests.export, preview.files)).not.toThrow();
+  expect(() => confirmReleaseDelivery({ ...delivery, files: delivery.files.slice(0, -1) }, fixture.requests.export, preview.files)).toThrow();
+});
 it("binds the entire preview vector and digest states to the saved release, regardless of display order", () => {
   const saved = fixture.responses.releases[0], preview = structuredClone(fixture.responses.preview) as DeliveryPreview;
   const release: ReleaseView = { ...saved, exceptions: saved.exceptions.map(value => ({ ...value, kind: fixtureExceptionKind(value.kind) })) };

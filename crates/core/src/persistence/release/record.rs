@@ -56,6 +56,7 @@ pub(super) struct ManifestSummary {
 pub(super) struct Artifact {
     id: String,
     role: String,
+    validator_version: String,
     pub summary: ReleasedArtifact,
     pub bytes: Vec<u8>,
 }
@@ -63,6 +64,7 @@ pub(super) struct Artifact {
 pub(super) struct Record {
     pub view: ReleaseView,
     pub artifacts: Vec<Artifact>,
+    pub report_paths: BTreeSet<String>,
 }
 
 fn prepare_data(
@@ -71,7 +73,7 @@ fn prepare_data(
     results: &[FixedResult],
     version: u32,
 ) -> Result<(ReleaseManifest, ManifestSummary, Vec<Artifact>), ExecutionError> {
-    if ![1, 2].contains(&version) || version == 2 && input.envelope().plugin.is_none() {
+    if ![1, 2, 3].contains(&version) || version >= 2 && input.envelope().plugin.is_none() {
         return Err(failure(ErrorCode::CorruptLedger, "release-manifest-version"));
     }
     action.validate(input, results)?;
@@ -95,6 +97,9 @@ fn prepare_data(
             // entries in each artifact. Domain interpretation belongs to its checker.
             let count = u32::try_from(plan.plugin_input(locale)?.targets.len())
                 .map_err(|_| failure(ErrorCode::OutputInvalid, "release-unit-count"))?;
+            let report = (version == 3)
+                .then(|| plan.delivery_report(input.digest(), &output))
+                .transpose()?;
             for artifact in output.artifacts {
                 let bytes = artifact
                     .validated_bytes()
@@ -103,6 +108,7 @@ fn prepare_data(
                 artifacts.push(Artifact {
                     id: artifact.id().into(),
                     role: artifact.role().into(),
+                    validator_version: summary.validator_version.clone(),
                     summary: ReleasedArtifact {
                         locale: locale.into(),
                         file_name: artifact.logical_path().into(),
@@ -112,11 +118,35 @@ fn prepare_data(
                     bytes,
                 });
             }
+            if let Some((file_name, bytes)) = report {
+                // Component IDs are untrusted and may use any valid opaque ID.
+                // Pick a deterministic unused ID without changing their identities.
+                let id = (0..=tsumugi_plugin_sdk::MAX_BUILD_ARTIFACTS)
+                    .map(|index| format!("tsumugi-report-{index}"))
+                    .find(|id| {
+                        !artifacts.iter().any(|artifact| {
+                            artifact.summary.locale == locale && artifact.id == *id
+                        })
+                    })
+                    .ok_or_else(|| failure(ErrorCode::OutputInvalid, "release-report-id"))?;
+                artifacts.push(Artifact {
+                    id,
+                    role: plan::REPORT_ROLE.into(),
+                    validator_version: plan::REPORT_VALIDATOR.into(),
+                    summary: ReleasedArtifact {
+                        locale: locale.into(),
+                        file_name,
+                        sha256: codec::digest(&bytes),
+                        entry_count: count,
+                    },
+                    bytes,
+                });
+            }
         }
         if seen.len() != plan.choices().len() {
             return Err(failure(ErrorCode::ResultMismatch, "release-coverage"));
         }
-        let frozen = if version == 2 { FrozenPlan::PluginInput } else { FrozenPlan::Plugin(plan) };
+        let frozen = if version >= 2 { FrozenPlan::PluginInput } else { FrozenPlan::Plugin(plan) };
         (frozen, summary)
     } else {
         #[cfg(any(
@@ -156,7 +186,7 @@ pub(super) fn prepare(
     action: &AdoptionAction,
     results: &[FixedResult],
 ) -> Result<PreparedMutation, ExecutionError> {
-    let version = if input.envelope().plugin.is_some() { 2 } else { 1 };
+    let version = if input.envelope().plugin.is_some() { 3 } else { 1 };
     let (manifest, summary, artifacts) = prepare_data(input, action, results, version)?;
     let manifest_bytes = codec::encode(&manifest, MAX_INPUT_BYTES)?;
     let digest = codec::digest(&manifest_bytes);
@@ -183,7 +213,7 @@ pub(super) fn prepare(
                  VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9)",
                 params![release_id.to_string(), artifact.summary.locale, artifact.id,
                     artifact.role, artifact.summary.file_name, artifact.bytes,
-                    artifact.summary.sha256, summary.validator_version, artifact.summary.entry_count],
+                    artifact.summary.sha256, artifact.validator_version, artifact.summary.entry_count],
             )?;
         }
         Ok(vec![ChangeReference {
@@ -300,6 +330,7 @@ pub(super) fn load(
                 Artifact {
                     id: r.get(1)?,
                     role: r.get(2)?,
+                    validator_version: r.get(6)?,
                     summary: ReleasedArtifact {
                         locale: r.get(0)?,
                         file_name: r.get(3)?,
@@ -315,7 +346,8 @@ pub(super) fn load(
     let mut artifacts = Vec::new();
     for row in rows {
         let (artifact, validator) = row.map_err(sql)?;
-        if validator != summary.validator_version {
+        if expected_artifacts.iter().find(|expected| expected.summary.locale == artifact.summary.locale
+            && expected.summary.file_name == artifact.summary.file_name).is_some_and(|expected| expected.validator_version != validator) {
             return Err(failure(ErrorCode::CorruptLedger, "release-validator"));
         }
         artifacts.push(artifact);
@@ -340,5 +372,21 @@ pub(super) fn load(
         artifacts: artifacts.iter().map(|a| a.summary.clone()).collect(),
         created_at: created,
     };
-    Ok(Record { view, artifacts })
+    let report_paths = if manifest.version == 3 {
+        artifacts
+            .iter()
+            .filter(|artifact| {
+                artifact.validator_version == plan::REPORT_VALIDATOR
+                    && artifact.role == plan::REPORT_ROLE
+            })
+            .map(|artifact| artifact.summary.file_name.clone())
+            .collect()
+    } else {
+        BTreeSet::new()
+    };
+    Ok(Record {
+        view,
+        artifacts,
+        report_paths,
+    })
 }
