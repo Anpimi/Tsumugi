@@ -12,7 +12,7 @@ import { executionContext, type AttemptDetail } from "../../../executionCommands
 import { WorkbenchCommands } from "../../../workbenchCommands";
 import type { ProjectView } from "../../../projectCommands";
 import { fixtureIdentity } from "../../../testSupport/executionFixture";
-import { translationInventory, translationPackage, translationView } from "../../../testSupport/pluginTranslationFixture";
+import { translationInventory, translationPackage, translationView, pairedTranslationFixture } from "../../../testSupport/pluginTranslationFixture";
 import { translationPreviewFixture, translationImportChoice, translationSelectionFixture, translationCaptureFixture,
   translationCheckerFixture, translationProjectionFixture, translationStageAttempt, translationAttemptFixture, translationRowFixture,
   translationActionFixture, translationReceiptFixture, translationRecoveryUnit } from "../../../testSupport/translationFixture";
@@ -461,9 +461,49 @@ it("keeps running attempt facts while hidden and prevents new execution in read-
   show(false);
   expect(owner.hasActive()).toBe(true); expect(calls("cancel_execution_task")).toHaveLength(0);
   expect(commands.describe("translation.start-import", scope, { kind: "translation-import-consent", editSeq: owner.current().editSeq, locale: "zh-CN", selectionId: owner.current().folder?.selectionId ?? null, fileName: "zh.json", sourceSnapshotId: preview.fixedSourceSnapshotId,
-    fileDigest: owner.current().preflight?.file.sha256 ?? null, inputDigest: owner.current().preflight?.inputDigest ?? null, producerConsent: true, confirmed: true })).toBeUndefined();
+    fileDigest: owner.current().preflight?.file?.sha256 ?? null, inputDigest: owner.current().preflight?.inputDigest ?? null, producerConsent: true, confirmed: true })).toBeUndefined();
   show(true, true);
   await screen.findByText(text("workbenchV2.importPreparationReadOnly"));
   expect(screen.getByRole("button", { name: text("execution.cancel") })).toBeDisabled();
   expect(owner.current().extractionAttempt).toBe(attempt);
+});
+
+it.each(["en-US", "zh-CN"])("captures an explicitly selected paired file group and shows originals before execution in %s", async language => {
+  await i18n.changeLanguage(language);
+  const pair = pairedTranslationFixture(), source = translationImportChoice(preview.fixedSourceSnapshotId).source;
+  const original = invoke.getMockImplementation()!;
+  invoke.mockImplementation(async (command, args) => {
+    if (command === "read_plugin_package") return pair.package;
+    if (command === "read_plugin_translation") return pair.view;
+    if (command === "select_plugin_translation") return { ...pair.selection, source };
+    if (command === "list_plugin_translation_files") return pair.selection.fileSets.flatMap(set => set.logicalPaths);
+    if (command === "preflight_plugin_translation") return { ...pair.preflight, source, attemptId: args.request.attemptId };
+    return original(command, args);
+  });
+  harness(); await selectEnvironment(); click("translation.chooseFolder");
+  await screen.findByRole("list", { name: text("translationPlugin.targetFiles") });
+  expect(screen.getByText("Example.esp")).toBeVisible();
+  expect(screen.getByText("Strings/Example.strings")).toBeVisible();
+  expect(screen.queryByRole("button", { name: text("translation.file") })).not.toBeInTheDocument();
+  const capture = screen.getByRole("button", { name: text("translationPlugin.captureGroup") });
+  expect(capture).toBeDisabled();
+  const languageConsent = screen.getByRole("checkbox", { name: i18n.t("translationPlugin.pairedLanguageConfirm", { target: "zh-CN" }) });
+  await waitFor(() => expect(languageConsent).toBeEnabled());
+  fireEvent.click(languageConsent);
+  await waitFor(() => expect(capture).toBeEnabled());
+  fireEvent.click(capture);
+  await screen.findByRole("region", { name: text("translationPlugin.producerReview") });
+  expect(screen.getByRole("region", { name: text("translationPlugin.originalFiles") })).toHaveTextContent("Original.esp");
+  expect(screen.getByRole("region", { name: text("translationPlugin.targetFiles") })).toHaveTextContent("Strings/Example.strings");
+  const request = calls("preflight_plugin_translation")[0][1].request;
+  expect(request).not.toHaveProperty("fileName");
+  expect(request).not.toHaveProperty("fileSets");
+  expect(request).not.toHaveProperty("pairedSource");
+  expect(calls("start_plugin_translation")).toHaveLength(0);
+  const consent = screen.getByRole("checkbox", { name: text("translationPlugin.pairedProducerConsent") });
+  expect(consent).not.toBeChecked();
+  expect(screen.getByRole("button", { name: text("translation.start") })).toBeDisabled();
+  fireEvent.click(consent);
+  await waitFor(() => expect(screen.getByRole("button", { name: text("translation.start") })).toBeEnabled());
+  expect(calls("start_plugin_translation")).toHaveLength(0);
 });

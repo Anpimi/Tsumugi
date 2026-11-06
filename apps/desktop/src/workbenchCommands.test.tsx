@@ -105,7 +105,10 @@ describe("Translation business command payloads",()=>{
     ["translation.start-import-projection", plugin, [{ projectionAttemptId: "" }]],
 
     ["translation.choose-import-folder",setup,[{editSeq:-1},{selectionId:undefined}]],
-    ["translation.inspect-import",setup,[{locale:""},{fileName:null}]],
+    ["translation.inspect-import",setup,[{locale:""},{fileName:42}]],
+    ["translation.inspect-import",{...setup,fileName:null},[{selectionId:null},{fileName:undefined}]],
+    ["translation.confirm-import-language",{...consent,fileName:null,fileDigest:null},[{confirmed:"yes"},{selectionId:null}]],
+    ["translation.start-import",{...consent,fileName:null,fileDigest:null},[{sourceSnapshotId:null},{inputDigest:""}]],
     ["translation.confirm-import-language",consent,[{confirmed:"yes"},{fileDigest:""}]],
     ["translation.start-import",consent,[{sourceSnapshotId:null},{selectionId:null}]],
     ["translation.retry-import-start",{kind:"translation-import-start-pending",request:translationWorkflow.start},[{request:{}}]],

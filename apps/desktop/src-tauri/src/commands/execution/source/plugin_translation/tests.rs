@@ -75,6 +75,15 @@ pub(in crate::commands::execution::source) fn choose(
     directory: std::path::PathBuf,
     request: PluginTranslationSelectRequest,
 ) -> ExecutionId {
+    choose_materials(state, directory, request, None)
+}
+
+fn choose_materials(
+    state: &AppState,
+    directory: std::path::PathBuf,
+    request: PluginTranslationSelectRequest,
+    file_sets: Option<Vec<sdk::SourceFileSetSelection>>,
+) -> ExecutionId {
     state.sessions.with(move |sessions| {
         let (host, store) = sessions.active.as_mut().unwrap().execution_parts().unwrap();
         let source = source_context(store, &request).unwrap();
@@ -90,6 +99,7 @@ pub(in crate::commands::execution::source) fn choose(
             selection_id,
             request,
             source,
+            file_sets,
         });
         selection_id
     })
@@ -306,11 +316,7 @@ fn translation_capture_ipc_binds_current_source_target_and_raw_bytes_without_run
     assert!(call(&window, "preflight_plugin_translation", capture).is_err());
 }
 
-#[cfg(all(
-    feature = "bundled-runtime",
-    target_os = "macos",
-    target_arch = "aarch64"
-))]
+#[cfg(all(target_os = "macos", target_arch = "aarch64", any(feature = "bundled-runtime", feature = "execution-test-host")))]
 pub(super) mod native {
     use super::*;
     use tauri::{
@@ -407,3 +413,6 @@ pub(super) mod native {
     target_arch = "aarch64"
 ))]
 mod execution_tests;
+
+#[cfg(all(target_os = "macos", target_arch = "aarch64", feature = "execution-test-host"))]
+include!("paired_capture_tests.rs");

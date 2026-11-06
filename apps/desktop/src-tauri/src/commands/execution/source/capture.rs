@@ -290,11 +290,61 @@ impl Selection {
         cancel: &Cancellation,
         opened: impl FnOnce(),
     ) -> Result<SourceBundle, ExecutionError> {
-        binding
-            .validate()
-            .map_err(|_| error(ErrorCode::InvalidInput, "source-import-binding"))?;
+        binding.validate().map_err(|_| error(ErrorCode::InvalidInput, "source-import-binding"))?;
         let resolved = binding.declaration.resolve_materials(selections)
             .map_err(|_| error(ErrorCode::InvalidInput, "source-import-selection"))?;
+        self.capture_materials_inner(&resolved, binding.declaration.capture_byte_limit(), cancel, opened,
+            |materials| SourceBundle::capture_selected(binding, selections, materials, language))
+    }
+    /// Paired target material shares the source owner's held-handle reads,
+    /// aggregate budget, alias checks and complete second observation.
+    pub fn capture_paired_translation(
+        &self,
+        binding: &tsumugi_plugin_sdk::TranslationImportBinding,
+        selections: &[tsumugi_plugin_sdk::SourceFileSetSelection],
+        cancel: &Cancellation,
+    ) -> Result<Vec<tsumugi_plugin_sdk::CapturedArtifact>, ExecutionError> {
+        self.capture_paired_translation_inner(binding, selections, cancel, || {})
+    }
+    fn capture_paired_translation_inner(
+        &self,
+        binding: &tsumugi_plugin_sdk::TranslationImportBinding,
+        selections: &[tsumugi_plugin_sdk::SourceFileSetSelection],
+        cancel: &Cancellation,
+        opened: impl FnOnce(),
+    ) -> Result<Vec<tsumugi_plugin_sdk::CapturedArtifact>, ExecutionError> {
+        use tsumugi_plugin_sdk as sdk;
+        binding.validate().map_err(|_| error(ErrorCode::InvalidInput, "translation-import-binding"))?;
+        let resolved = binding.declaration.resolve_paired_materials(selections)
+            .map_err(|_| error(ErrorCode::InvalidInput, "translation-import-selection"))?;
+        let limit = binding.declaration.max_total_bytes
+            .ok_or_else(|| error(ErrorCode::InvalidInput, "translation-file-sets-required"))? as usize;
+        self.capture_materials_inner(&resolved, limit, cancel, opened, |materials| {
+            binding.declaration.validate_paired_capture_sizes(selections, &materials.iter().map(Vec::len).collect::<Vec<_>>())
+                .map_err(|_| error(ErrorCode::LimitExceeded, "translation-import-materials"))?;
+            resolved.iter().zip(materials).map(|(material, bytes)| {
+                let id = ExecutionId::new().to_string();
+                match material.encoding {
+                    sdk::SourceMaterialEncoding::Utf8 => {
+                        let utf8 = String::from_utf8(bytes).map_err(|_| error(ErrorCode::InvalidInput, "unsupported-encoding"))?;
+                        Ok(sdk::CapturedTextArtifact { id, logical_path: material.logical_path.clone(), role: material.role.clone(),
+                            sha256: sdk::payload_digest(&utf8), utf8 }.into())
+                    }
+                    sdk::SourceMaterialEncoding::LegacyUtf8 => Err(error(ErrorCode::InvalidInput, "translation-import-encoding")),
+                    sdk::SourceMaterialEncoding::Binary => sdk::CapturedArtifact::from_bytes(id, material.logical_path.clone(), material.role.clone(), &bytes)
+                        .map_err(|_| error(ErrorCode::InvalidInput, "translation-import-materials")),
+                }
+            }).collect()
+        })
+    }
+    fn capture_materials_inner<T>(
+        &self,
+        resolved: &[tsumugi_plugin_sdk::SourceMaterialDeclaration],
+        limit: usize,
+        cancel: &Cancellation,
+        opened: impl FnOnce(),
+        finish: impl FnOnce(Vec<Vec<u8>>) -> Result<T, ExecutionError>,
+    ) -> Result<T, ExecutionError> {
         self.verify()?;
         let started = Instant::now();
         let check = || {
@@ -308,7 +358,7 @@ impl Selection {
         };
         let mut files = Vec::new();
         let mut identities = Vec::new();
-        for material in &resolved {
+        for material in resolved {
             check()?;
             let path = self.root.join(&material.logical_path);
             let file = platform::open(&path, false)?;
@@ -330,7 +380,6 @@ impl Selection {
         opened();
         let mut materials = Vec::new();
         let mut total = 0;
-        let limit = binding.declaration.capture_byte_limit();
         for entry in &mut files {
             entry.2 = entry.2.min(limit - total);
             let bytes = read(&mut entry.1, entry.2, &check)?;
@@ -347,9 +396,9 @@ impl Selection {
             platform::verify_file(&entry.1, &entry.0, entry.3)?;
         }
         self.verify()?;
-        let bundle = SourceBundle::capture_selected(binding, selections, materials, language)?;
+        let captured = finish(materials)?;
         check()?;
-        Ok(bundle)
+        Ok(captured)
     }
     pub(in crate::commands) fn native_relative_paths(&self, paths: Vec<PathBuf>) -> Result<Vec<String>, ExecutionError> {
         self.verify()?;
@@ -668,6 +717,101 @@ mod translation_import_tests {
         declaration.material.as_mut().unwrap().extension = "txt".into();
         declaration.bind(&manifest, &"a".repeat(64)).unwrap()
     }
+    fn paired_binding(limit: u32) -> tsumugi_plugin_sdk::TranslationImportBinding {
+        use tsumugi_plugin_sdk as sdk;
+        let mut binding = binding();
+        binding.declaration.material = None;
+        binding.declaration.max_total_bytes = Some(limit);
+        binding.declaration.file_sets = Some(vec![
+            sdk::SourceFileSetDeclaration { id: "records".into(), display_name: "Translated plugin".into(), role: "records".into(), encoding: sdk::SourceMaterialEncoding::Binary, extensions: vec!["esp".into()], min_files: 1, max_files: 1, max_bytes: sdk::MAX_EXCHANGE_BYTES as u32 },
+            sdk::SourceFileSetDeclaration { id: "tables".into(), display_name: "Translated tables".into(), role: "tables".into(), encoding: sdk::SourceMaterialEncoding::Binary, extensions: vec!["strings".into()], min_files: 0, max_files: 2, max_bytes: sdk::MAX_EXCHANGE_BYTES as u32 },
+            sdk::SourceFileSetDeclaration { id: "interface".into(), display_name: "Interface text".into(), role: "interface".into(), encoding: sdk::SourceMaterialEncoding::Utf8, extensions: vec!["txt".into()], min_files: 0, max_files: 1, max_bytes: sdk::MAX_EXCHANGE_BYTES as u32 },
+        ]);
+        binding.extractor.declaration.input_schema = sdk::paired_translation_extraction_input_contract();
+        binding.extractor.declaration.output_schema = sdk::paired_translation_exchange_contract();
+        binding.extractor.declaration.limits.max_input_bytes = sdk::MAX_PAIRED_TRANSLATION_INPUT_BYTES as u32;
+        binding.extractor.declaration.limits.max_output_bytes = sdk::MAX_PAIRED_TRANSLATION_RESULT_BYTES as u32;
+        binding.checker.declaration.input_schema = sdk::paired_translation_extraction_check_input_contract();
+        binding.checker.declaration.limits.max_input_bytes = sdk::MAX_INVOCATION_PAYLOAD_BYTES as u32;
+        binding.validate().unwrap();
+        binding
+    }
+    fn paired_choices() -> Vec<tsumugi_plugin_sdk::SourceFileSetSelection> {
+        use tsumugi_plugin_sdk::SourceFileSetSelection;
+        vec![SourceFileSetSelection { id: "records".into(), logical_paths: vec!["Example.esp".into()] },
+            SourceFileSetSelection { id: "tables".into(), logical_paths: vec!["Strings/Example.strings".into()] },
+            SourceFileSetSelection { id: "interface".into(), logical_paths: vec!["Interface/text.txt".into()] }]
+    }
+    fn paired_fixture() -> tempfile::TempDir {
+        let root = tempfile::tempdir().unwrap();
+        fs::create_dir(root.path().join("Strings")).unwrap();
+        fs::create_dir(root.path().join("Interface")).unwrap();
+        fs::write(root.path().join("Example.esp"), [0, 255, 1]).unwrap();
+        fs::write(root.path().join("Strings/Example.strings"), [255, 254, 0, 128]).unwrap();
+        fs::write(root.path().join("Interface/text.txt"), "\u{feff}$KEY\t中文\r\n").unwrap();
+        root
+    }
+    #[test]
+    fn paired_translation_capture_preserves_selected_order_roles_encodings_and_bytes() {
+        let root = paired_fixture();
+        let selection = Selection::authorize(root.path().into()).unwrap();
+        let choices = paired_choices();
+        let files = selection.capture_paired_translation(&paired_binding(tsumugi_plugin_sdk::MAX_EXCHANGE_BYTES as u32), &choices, &Cancellation::default()).unwrap();
+        assert_eq!(files.iter().map(|file| file.role()).collect::<Vec<_>>(), ["records", "tables", "interface"]);
+        assert_eq!(&*files[0].bytes().unwrap(), &[0,255,1]);
+        assert_eq!(&*files[1].bytes().unwrap(), &[255,254,0,128]);
+        assert!(files[0].as_text().is_none());
+        assert_eq!(files[2].as_text().unwrap().utf8, "\u{feff}$KEY\t中文\r\n");
+        fs::write(root.path().join("Example.esp"), b"later").unwrap();
+        assert_eq!(&*files[0].bytes().unwrap(), &[0,255,1]);
+        assert!(selection.capture_paired_translation(&binding(), &choices, &Cancellation::default()).is_err());
+    }
+    #[test]
+    fn paired_translation_capture_enforces_shared_raw_budget_at_n_and_n_plus_one() {
+        let root = paired_fixture();
+        let limit = tsumugi_plugin_sdk::MAX_EXCHANGE_BYTES;
+        fs::write(root.path().join("Example.esp"), vec![0;limit-4]).unwrap();
+        let mut choices = paired_choices(); choices.pop();
+        let selection = Selection::authorize(root.path().into()).unwrap();
+        let binding = paired_binding(limit as u32);
+        assert_eq!(selection.capture_paired_translation(&binding, &choices, &Cancellation::default()).unwrap().iter().map(|file| file.bytes().unwrap().len()).sum::<usize>(), limit);
+        fs::write(root.path().join("Example.esp"), vec![0;limit-3]).unwrap();
+        assert_eq!(selection.capture_paired_translation(&binding, &choices, &Cancellation::default()).unwrap_err().code, ErrorCode::LimitExceeded);
+    }
+    #[test]
+    fn paired_translation_capture_refuses_cancel_wrong_selection_and_utf8() {
+        let root = paired_fixture();
+        let selection = Selection::authorize(root.path().into()).unwrap();
+        let binding = paired_binding(tsumugi_plugin_sdk::MAX_EXCHANGE_BYTES as u32);
+        let choices = paired_choices();
+        let cancel = Cancellation::default(); cancel.request();
+        assert_eq!(selection.capture_paired_translation(&binding, &choices, &cancel).unwrap_err().code, ErrorCode::Cancelled);
+        for path in ["../Example.esp", "Interface/text.txt", "missing.esp"] {
+            let mut changed = choices.clone(); changed[0].logical_paths = vec![path.into()];
+            assert!(selection.capture_paired_translation(&binding, &changed, &Cancellation::default()).is_err());
+        }
+        fs::write(root.path().join("Interface/text.txt"), [255]).unwrap();
+        assert_eq!(selection.capture_paired_translation(&binding, &choices, &Cancellation::default()).unwrap_err().stage, "unsupported-encoding");
+    }
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn paired_translation_capture_refuses_links_aliases_and_changed_held_files() {
+        use std::os::unix::fs::symlink;
+        let root = paired_fixture();
+        let selection = Selection::authorize(root.path().into()).unwrap();
+        let binding = paired_binding(tsumugi_plugin_sdk::MAX_EXCHANGE_BYTES as u32);
+        let mut choices = paired_choices();
+        symlink(root.path().join("Example.esp"), root.path().join("Alias.esp")).unwrap();
+        choices[0].logical_paths = vec!["Alias.esp".into()];
+        assert!(selection.capture_paired_translation(&binding, &choices, &Cancellation::default()).is_err());
+        let mut choices = paired_choices();
+        fs::hard_link(root.path().join("Example.esp"), root.path().join("Strings/Alias.strings")).unwrap();
+        choices[1].logical_paths = vec!["Strings/Alias.strings".into()];
+        assert!(selection.capture_paired_translation(&binding, &choices, &Cancellation::default()).is_err());
+        assert!(selection.capture_paired_translation_inner(&binding, &paired_choices(), &Cancellation::default(), || {
+            fs::write(root.path().join("Example.esp"), [0,254,1]).unwrap();
+        }).is_err());
+    }
     fn fixture() -> tempfile::TempDir {
         let root = tempfile::tempdir().unwrap();
         fs::create_dir_all(root.path().join("localized/records")).unwrap();
@@ -984,6 +1128,12 @@ impl Selection {
         &self,
         _: &tsumugi_plugin_sdk::TranslationImportBinding,
     ) -> Result<Vec<String>, ExecutionError> {
+        Err(error(ErrorCode::InvalidInput, "unsupported-platform"))
+    }
+    pub fn capture_paired_translation(
+        &self, _: &tsumugi_plugin_sdk::TranslationImportBinding,
+        _: &[tsumugi_plugin_sdk::SourceFileSetSelection], _: &Cancellation,
+    ) -> Result<Vec<tsumugi_plugin_sdk::CapturedArtifact>, ExecutionError> {
         Err(error(ErrorCode::InvalidInput, "unsupported-platform"))
     }
     pub fn capture_declared_translation(

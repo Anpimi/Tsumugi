@@ -62,8 +62,10 @@ export function translationSelectionFixture(snapshotId: string, targetLocale = "
 export function translationCaptureFixture(attemptId: string, snapshotId: string, targetLocale = "zh-CN", fileName = "zh.json") {
   const material = translationCapture.translation.declaration.material;
   if (!material) throw new Error("Expected the single-file translation fixture");
+  const file = translationCapture.file;
+  if (!file) throw new Error("Expected the single-file translation capture");
   return { ...translationCapture, attemptId, source: { ...translationCapture.source, sourceSnapshotId: snapshotId }, targetLocale,
-    file: { ...translationCapture.file, logicalPath: `${material.logicalDirectory}/${fileName}` } };
+    file: { ...file, logicalPath: `${material.logicalDirectory}/${fileName}` } };
 }
 export function translationCheckerFixture(attemptId: string, producerAttemptId: string, resultId: string, snapshotId: string) {
   return { ...translationCheck, attemptId, translationAttemptId: producerAttemptId, translationResultId: resultId, source: { ...translationCheck.source, sourceSnapshotId: snapshotId } };

@@ -153,7 +153,7 @@ export interface TranslationHistoryRequest {
 }
 export interface PluginTranslationCaptureRequest {
   attemptId: ExecutionId;
-  fileName: string;
+  fileName?: string | null;
   languageConfirmed: boolean;
   projectId: ExecutionId;
   selectionId: ExecutionId;

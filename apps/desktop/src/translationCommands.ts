@@ -85,6 +85,11 @@ export function translationHistoryAfter(ordinal: string, pageSize: number): stri
 
 export type { TranslationCaptureRequest, TranslationStartRequest } from "./generated/translation.requests";
 
+function relatedPluginTranslationPreflight(value: Responses["pluginPreflight"], request: PluginTranslationCaptureRequest): boolean {
+  const paired = !value.translation.declaration.material;
+  return paired ? request.fileName == null && value.file == null && !!value.files?.length && !!value.pairedSourceFiles?.length
+    : typeof request.fileName === "string" && !!value.file && value.files == null && value.pairedSourceFiles == null;
+}
 export const translationCommands = {
   candidateSlice: (request: TranslationCandidateSliceRequest) => checkedInvoke("read_translation_candidate_slice", request,
     (page): page is Responses["candidateSlice"] => validateResponseCandidateSlice(page) && relatedCandidateSlice(request,page)),
@@ -98,7 +103,8 @@ export const translationCommands = {
   pluginSource: (request: TranslationSourceRequest) => checkedInvoke("read_plugin_translation_source", request, validateResponseSource),
   selectPlugin: (request: PluginTranslationSelectRequest) => checkedInvoke("select_plugin_translation", request, validateResponsePluginSelection),
   pluginFiles: (request: TranslationFilesRequest) => checkedInvoke("list_plugin_translation_files", request, validateResponseFiles),
-  preflightPlugin: (request: PluginTranslationCaptureRequest) => checkedInvoke("preflight_plugin_translation", request, validateResponsePluginPreflight),
+  preflightPlugin: (request: PluginTranslationCaptureRequest) => checkedInvoke("preflight_plugin_translation", request,
+    (value): value is Responses["pluginPreflight"] => validateResponsePluginPreflight(value) && relatedPluginTranslationPreflight(value, request)),
   startPlugin: (request: PluginStartRequest) => checkedInvoke("start_plugin_translation", request, validateResponseAttempt),
   prepareCheck: (request: TranslationCheckPrepareRequest) => checkedInvoke("prepare_translation_check", request, validateResponseCheckReview),
   startCheck: (request: PluginStartRequest) => checkedInvoke("start_translation_check", request, validateResponseAttempt),

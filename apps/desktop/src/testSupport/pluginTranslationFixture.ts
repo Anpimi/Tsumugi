@@ -32,3 +32,29 @@ export const translationPackage: PluginPackageDetailsView = checked({
       contribution: { kind: "resource", path: "profiles/translation.json", schema: { id: "tsumugi.translation-import-declaration", schemaVersion: 1, behaviorVersion: 1 } } }],
   },
 }, validateResponsePackage);
+
+/** Synthetic paired selection for UI consent tests, never execution evidence. */
+export function pairedTranslationFixture() {
+  const { material, ...declaration } = translationView.declaration;
+  const { file, ...preflight } = translationCapture;
+  const selected = translationSelection;
+  if (!material || !file || !selected) throw new Error("Expected the original single-file fixture");
+  const fileSets = [{ id: "translations", displayName: "Translated files", role: "translation", encoding: "binary" as const,
+    extensions: ["esp", "strings"], minFiles: 1, maxFiles: 2, maxBytes: 2097152 }];
+  const view = { ...translationView, declaration: { ...declaration, fileSets, maxTotalBytes: 2097152 },
+    extractor: { ...translationView.extractor, declaration: { ...translationView.extractor.declaration,
+      inputSchema: { ...translationView.extractor.declaration.inputSchema, schemaVersion: 3 },
+      outputSchema: { ...translationView.extractor.declaration.outputSchema, schemaVersion: 3 },
+      limits: { ...translationView.extractor.declaration.limits, maxInputBytes: 6291456, maxOutputBytes: 8388608 } } },
+    checker: { ...translationView.checker, declaration: { ...translationView.checker.declaration,
+      inputSchema: { ...translationView.checker.declaration.inputSchema, schemaVersion: 3 },
+      limits: { ...translationView.checker.declaration.limits, maxInputBytes: 16777216 } } } };
+  const pairedPackage: PluginPackageDetailsView = { ...translationPackage, manifest: { ...translationPackage.manifest,
+    contributions: translationPackage.manifest.contributions.map(item => item.contribution.kind === "resource" ? {
+      ...item, contribution: { ...item.contribution, schema: { ...item.contribution.schema, schemaVersion: 2 } } } : item) } };
+  const files = [{ ...file, logicalPath: "Example.esp", role: "translation", byteLength: 3 },
+    { ...file, logicalPath: "Strings/Example.strings", role: "translation", byteLength: 4 }];
+  const selection = { ...selected, translation: view, fileSets: [{ id: "translations", logicalPaths: files.map(file => file.logicalPath) }] };
+  return { package: pairedPackage, view, selection, preflight: { ...preflight, translation: view, files,
+    pairedSourceFiles: [{ ...file, logicalPath: "Original.esp", role: "source", byteLength: 100 }] } };
+}

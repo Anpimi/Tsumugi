@@ -57,6 +57,7 @@ struct TranslationChoice {
     selection_id: ExecutionId,
     request: PluginTranslationSelectRequest,
     source: TranslationSourceContext,
+    file_sets: Option<Vec<sdk::SourceFileSetSelection>>,
 }
 struct TranslationReview {
     choice: TranslationChoice,
@@ -85,7 +86,8 @@ request!(
     #[cfg_attr(feature = "wire-schema", derive(schemars::JsonSchema))]
     PluginTranslationCaptureRequest {
         selection_id: ExecutionId,
-        file_name: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        file_name: Option<String>,
         language_confirmed: bool,
         attempt_id: ExecutionId
     }
@@ -101,6 +103,8 @@ pub struct PluginTranslationSelection {
     pub native_scope: sdk::TranslationNativeScope,
     pub source: TranslationSourceContext,
     pub translation: PluginTranslationView,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub file_sets: Vec<sdk::SourceFileSetSelection>,
 }
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
@@ -111,7 +115,12 @@ pub struct PluginTranslationPreflight {
     pub target_locale: String,
     pub source: TranslationSourceContext,
     pub translation: PluginTranslationView,
-    pub file: plugin::PluginSourceFile,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub file: Option<plugin::PluginSourceFile>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub files: Option<Vec<plugin::PluginSourceFile>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub paired_source_files: Option<Vec<plugin::PluginSourceFile>>,
 }
 
 fn conflict(stage: &str) -> CommandError {
@@ -238,14 +247,14 @@ pub async fn select_plugin_translation<R: tauri::Runtime>(
             let work = host.begin_package_work(vec![initial.translation.package.clone()])?;
             host.source.stop();
             host.source.picker = Some(picker);
-            Ok((source, work))
+            Ok((source, work, host.runtime.generation()))
         },
     )?;
     let io = state.io.clone();
     let dialogs = state.dialogs.clone();
     let plugins = state.plugins.clone();
     tauri::async_runtime::spawn(async move {
-        let (source, work) = admitted.await?;
+        let (source, work, generation) = admitted.await?;
         let choice = request.translation.clone();
         let expected = source.clone();
         let accepted_work = work.clone();
@@ -258,21 +267,43 @@ pub async fn select_plugin_translation<R: tauri::Runtime>(
                     Ok(environment)
                 })
                 .await?;
+            let folder_app = app.clone();
             let path = dialogs
                 .run(CommandStage::ExecutionRead, move || {
-                    Ok(app.dialog().file().blocking_pick_folder())
+                    Ok(folder_app.dialog().file().blocking_pick_folder())
                 })
                 .await?;
-            io.run(CommandStage::ExecutionRead, move || {
-                path.map(|path| {
-                    let selection =
-                        capture::Selection::authorize(path.into_path().map_err(|_| stale())?)
-                            .map_err(map_source)?;
-                    Ok((Arc::new(selection), environment.view()?))
-                })
-                .transpose()
-            })
-            .await
+            let Some(path) = path else { return Ok(None); };
+            let selection = io.run(CommandStage::ExecutionRead, move || {
+                capture::Selection::authorize(path.into_path().map_err(|_| stale())?).map(Arc::new).map_err(map_source)
+            }).await?;
+            let file_sets = if environment.binding.declaration.is_paired() {
+                let scope = &lease;
+                let original = request.clone();
+                let expected_source = source.clone();
+                let scope_work = work.clone();
+                let check_scope = || {
+                    let original = original.clone();
+                    let expected_source = expected_source.clone();
+                    let scope_work = scope_work.clone();
+                    async move {
+                        scope_work.check()?;
+                        scope.run("select_plugin_translation.check", CommandStage::ExecutionRead, move |sessions| {
+                            let active = authorized(sessions, &original.session_token, original.project_id, CommandStage::ExecutionRead)?;
+                            let (host, store) = active.execution_parts()?;
+                            host.allow_mutation()?;
+                            if host.source.picker != Some(picker) || host.runtime.generation() != generation
+                                || source_context(store, &original)? != expected_source { return Err(stale()); }
+                            Ok(())
+                        }).await
+                    }
+                };
+                let Some(choices) = plugin::file_sets::choose_translation(Some(app), &io, &dialogs, selection.clone(), environment.binding.clone(), check_scope).await? else {
+                    return Ok(None);
+                };
+                Some(choices)
+            } else { None };
+            Ok(Some((selection, environment.view()?, file_sets)))
         }
         .await;
         lease
@@ -296,7 +327,7 @@ pub async fn select_plugin_translation<R: tauri::Runtime>(
                     if source_context(store, &request)? != source {
                         return Err(conflict("translation-source"));
                     }
-                    Ok(captured?.map(|(selection, translation)| {
+                    Ok(captured?.map(|(selection, translation, file_sets)| {
                         let selection_id = ExecutionId::new();
                         let view = PluginTranslationSelection {
                             selection_id,
@@ -305,12 +336,14 @@ pub async fn select_plugin_translation<R: tauri::Runtime>(
                             native_scope: request.native_scope.clone(),
                             source: source.clone(),
                             translation,
+                            file_sets: file_sets.clone().unwrap_or_default(),
                         };
                         host.source.selection = Some((selection_id, selection));
                         host.source.translation.choice = Some(TranslationChoice {
                             selection_id,
                             request,
                             source,
+                            file_sets,
                         });
                         view
                     }))
@@ -351,9 +384,13 @@ pub async fn list_plugin_translation_files(
         .run(CommandStage::ExecutionRead, move || {
             let environment = plugins.capture_translation(&selected.request.translation)?;
             environment_matches(&environment, &selected.source)?;
-            selection
-                .declared_translation_files(&environment.binding)
-                .map_err(map_source)
+            if let Some(choices) = &selected.file_sets {
+                environment.binding.declaration.resolve_paired_materials(choices)
+                    .map(|materials| materials.into_iter().map(|material| material.logical_path).collect())
+                    .map_err(|_| stale())
+            } else {
+                selection.declared_translation_files(&environment.binding).map_err(map_source)
+            }
         })
         .await;
     lease
@@ -402,6 +439,10 @@ pub async fn preflight_plugin_translation(
             )?;
             let (choice, selection) = choice_and_selection(active, initial.selection_id)?;
             let (host, store) = active.execution_parts()?;
+            if choice.file_sets.is_some() != initial.file_name.is_none() { return Err(stale()); }
+            let paired_source = if choice.file_sets.is_some() {
+                Some(store.translation_pair_source(&choice.request.target_locale, choice.source.source_snapshot_id).map_err(map_source)?)
+            } else { None };
             let existing = host
                 .source
                 .translation
@@ -427,13 +468,13 @@ pub async fn preflight_plugin_translation(
             let work = host.begin_package_work(vec![choice.request.translation.package.clone()])?;
             let id = plugin::begin_job(active)?;
             let cancel = active.execution_parts()?.0.source.cancel.clone();
-            Ok((id, cancel, choice, selection, existing, project, work))
+            Ok((id, cancel, choice, selection, existing, project, work, paired_source))
         },
     )?;
     let io = state.io.clone();
     let plugins = state.plugins.clone();
     tauri::async_runtime::spawn(async move {
-        let (id, cancel, choice, selection, existing, project, work) = admitted.await?;
+        let (id, cancel, choice, selection, existing, project, work, paired_source) = admitted.await?;
         let selected = choice.clone();
         let capturing = request.clone();
         let accepted_work = work.clone();
@@ -457,21 +498,21 @@ pub async fn preflight_plugin_translation(
                     }
                     return Ok(review);
                 }
-                let artifact = selection
-                    .capture_declared_translation(
-                        &environment.binding,
-                        &capturing.file_name,
-                        &cancel,
-                    )
-                    .map_err(map_source)?;
-                let file = plugin::PluginSourceFile {
-                    logical_path: artifact.logical_path.clone(),
-                    role: artifact.role.clone(),
-                    byte_length: artifact.utf8.len() as u32,
-                    sha256: artifact.sha256.clone(),
+                let artifacts = if let Some(choices) = &selected.file_sets {
+                    selection.capture_paired_translation(&environment.binding, choices, &cancel).map_err(map_source)?
+                } else {
+                    vec![selection.capture_declared_translation(&environment.binding,
+                        capturing.file_name.as_deref().ok_or_else(stale)?, &cancel).map_err(map_source)?.into()]
                 };
+                let file_view = |artifact: &sdk::CapturedArtifact| -> Result<plugin::PluginSourceFile, CommandError> {
+                    Ok(plugin::PluginSourceFile { logical_path: artifact.logical_path().into(), role: artifact.role().into(),
+                        byte_length: artifact.bytes().map_err(|_| stale())?.len() as u32, sha256: artifact.sha256().into() })
+                };
+                let captured_files = artifacts.iter().map(file_view).collect::<Result<Vec<_>, _>>()?;
+                let paired_source_files = paired_source.as_ref().map(|source| source.artifacts.iter().map(file_view).collect::<Result<Vec<_>, _>>()).transpose()?;
+                let paired = paired_source.is_some();
                 let material = sdk::TranslationExtractionInput {
-                    paired_source: None,
+                    paired_source,
                     profile: selected.source.profile.clone(),
                     import_id: capturing.attempt_id.to_string(),
                     source_set_id: selected.source.source_set_id.to_string(),
@@ -479,7 +520,7 @@ pub async fn preflight_plugin_translation(
                     target_language: selected.request.target_locale.clone(),
                     language_evidence: sdk::TranslationLanguageEvidence::UserConfirmed,
                     native_scope: selected.request.native_scope.clone(),
-                    artifacts: vec![artifact.into()],
+                    artifacts,
                 };
                 let fixed = settings
                     .fixed_input(project, material, execution_binding(&environment, false)?)
@@ -494,7 +535,9 @@ pub async fn preflight_plugin_translation(
                     target_locale: selected.request.target_locale,
                     source: selected.source,
                     translation: environment.view()?,
-                    file,
+                    file: (!paired).then(|| captured_files[0].clone()),
+                    files: paired.then_some(captured_files),
+                    paired_source_files,
                 };
                 Ok(Arc::new(TranslationReview {
                     choice: review_choice,

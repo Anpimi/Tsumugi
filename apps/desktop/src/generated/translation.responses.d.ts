@@ -765,8 +765,10 @@ export interface TranslationHistory {
 }
 export interface PluginTranslationPreflight {
   attemptId: ExecutionId;
-  file: PluginSourceFile;
+  file?: PluginSourceFile | null;
+  files?: PluginSourceFile[] | null;
   inputDigest: string;
+  pairedSourceFiles?: PluginSourceFile[] | null;
   source: TranslationSourceContext;
   targetLocale: string;
   translation: PluginTranslationView;
@@ -778,12 +780,17 @@ export interface PluginSourceFile {
   sha256: string;
 }
 export interface PluginTranslationSelection {
+  fileSets?: SourceFileSetSelection[];
   folderName: string;
   nativeScope: TranslationNativeScope;
   selectionId: ExecutionId;
   source: TranslationSourceContext;
   targetLocale: string;
   translation: PluginTranslationView;
+}
+export interface SourceFileSetSelection {
+  id: string;
+  logicalPaths: string[];
 }
 export interface TranslationPreflight {
   count: number;

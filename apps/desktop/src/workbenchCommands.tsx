@@ -187,7 +187,7 @@ export type ArenaPendingCommandPayload = { kind: "arena-pending" } & (
   | { pendingKind: "adopt"; actionId: string; attemptId: string; recoveryUnitId: string; resultId: string }
 );
 export interface TranslationImportSetupCommandPayload {
-  kind: "translation-import-setup"; editSeq: number; locale: string; selectionId: string | null; fileName: string;
+  kind: "translation-import-setup"; editSeq: number; locale: string; selectionId: string | null; fileName: string | null;
 }
 export interface TranslationImportConsentCommandPayload extends Omit<TranslationImportSetupCommandPayload, "kind"> {
   kind: "translation-import-consent"; sourceSnapshotId: string; fileDigest: string | null; inputDigest: string | null; producerConsent: boolean; confirmed: boolean;
@@ -1220,7 +1220,7 @@ function validApplicationToolExecutions(value: unknown): value is ApplicationSco
     && new Set(value.map(basis => basis.instanceId)).size === value.length;
 }
 function translationSetup(value: Omit<TranslationImportSetupCommandPayload, "kind">) {
-  return editSequence(value.editSeq) && validIdentity(value.locale) && nullableIdentity(value.selectionId) && typeof value.fileName === "string";
+  return editSequence(value.editSeq) && validIdentity(value.locale) && nullableIdentity(value.selectionId) && (typeof value.fileName === "string" || value.fileName === null && validIdentity(value.selectionId));
 }
 function translationPreview(value: TranslationImportPreviewTarget) {
   return editSequence(value.editSeq) && [value.attemptId,value.bundleId,value.basis,value.locale,value.fixedSourceSnapshotId,
@@ -1280,7 +1280,7 @@ function validTranslationPayload(payload: CommandPayload | undefined): payload i
       default: return false;
     }
     case "translation-import-setup": return translationSetup(payload);
-    case "translation-import-consent": return translationSetup(payload) && validIdentity(payload.selectionId) && validIdentity(payload.fileName)
+    case "translation-import-consent": return translationSetup(payload) && validIdentity(payload.selectionId) && nullableIdentity(payload.fileName)
       && validIdentity(payload.sourceSnapshotId) && nullableIdentity(payload.fileDigest) && nullableIdentity(payload.inputDigest)
       && typeof payload.producerConsent === "boolean" && typeof payload.confirmed === "boolean";
     case "translation-import-start-pending": return validateTranslationPluginStart(payload.request);

@@ -91,7 +91,7 @@ export default function ImportPreparation({ project, owner, tasks, commands, gat
   const inventory = useSessionQuery({ key: inventoryKey, scopes: [], enabled: visible && !disabled && !reads.retired, read: async () => {
     const value = await pluginCommands.inventory(), packages = await readEnabledPluginPackages(value);
     return { choices: packages.flatMap(item => item.manifest.contributions.flatMap(contribution => contribution.contribution.kind === "resource"
-      && contribution.contribution.schema.id === "tsumugi.translation-import-declaration" && contribution.contribution.schema.schemaVersion === 1 && contribution.contribution.schema.behaviorVersion === 1
+      && contribution.contribution.schema.id === "tsumugi.translation-import-declaration" && [1, 2].includes(contribution.contribution.schema.schemaVersion) && contribution.contribution.schema.behaviorVersion === 1
       ? [{ key: `${item.packageDigest}:${contribution.id}`, label: `${item.manifest.plugin.id} ${item.manifest.plugin.version} · ${contribution.id}`,
         package: { plugin: item.manifest.plugin, packageDigest: item.packageDigest }, resourceId: contribution.id, runtimeKinds: item.manifest.components.map(component => component.runtime) }] : [])),
       runtimes: approvedPluginEnvironments(value) };
@@ -171,25 +171,36 @@ export default function ImportPreparation({ project, owner, tasks, commands, gat
     setChoiceKey(key); setRuntimeDigest(digest);
     owner.setTranslation(digest ? { package: selected.package, resourceId: selected.resourceId, environmentDigest: digest } : null);
   }
+  function selectedInputReady() {
+    const current = owner.current(), folder = current.folder;
+    if (!folder || !ready(filesKey, files.data)) return false;
+    if (folder.translation.declaration.material) return !!current.fileName && !!files.data?.includes(current.fileName);
+    const selected = folder.fileSets?.flatMap(set => set.logicalPaths) ?? [];
+    return selected.length > 0 && files.data?.length === selected.length && selected.every(path => files.data?.includes(path));
+  }
+  function hasSelectedInput() {
+    const current = owner.current();
+    return current.folder && (current.folder.translation.declaration.material ? !!current.fileName : !!current.folder.fileSets?.some(set => set.logicalPaths.length > 0));
+  }
   function setupPayload(): TranslationImportSetupCommandPayload {
     const current = owner.current();
-    return { kind: "translation-import-setup", editSeq: current.editSeq, locale: current.targetLocale, selectionId: current.folder?.selectionId ?? null, fileName: current.fileName };
+    return { kind: "translation-import-setup", editSeq: current.editSeq, locale: current.targetLocale, selectionId: current.folder?.selectionId ?? null, fileName: current.folder && !current.folder.translation.declaration.material ? null : current.fileName };
   }
   function setupAvailability(input?: TranslationImportSetupCommandPayload, capture = false): CommandAvailability {
     const allowed = common(), current = owner.current();
     return allowed.enabled && input && same(input, setupPayload()) && !current.preflight && !current.extractionAttempt && !owner.hasActive() && preparationReady()
-      && (!capture || !!current.folder && !!current.fileName && current.confirmed && ready(filesKey, files.data) && files.data?.includes(current.fileName)) ? allowed : allowed.enabled ? unavailable : allowed;
+      && (!capture || current.confirmed && selectedInputReady()) ? allowed : allowed.enabled ? unavailable : allowed;
   }
   function consentPayload(confirmed = owner.current().confirmed): TranslationImportConsentCommandPayload | null {
     const current = owner.current();
     return current.folder ? { ...setupPayload(), kind: "translation-import-consent", sourceSnapshotId: current.preflight?.source.sourceSnapshotId ?? current.folder.source.sourceSnapshotId,
-      fileDigest: current.preflight?.file.sha256 ?? null, inputDigest: current.preflight?.inputDigest ?? null,
+      fileDigest: current.preflight?.file?.sha256 ?? null, inputDigest: current.preflight?.inputDigest ?? null,
       producerConsent: !!current.preflight && current.producerConsent === current.preflight.inputDigest, confirmed } : null;
   }
   function consentAvailability(input?: TranslationImportConsentCommandPayload, start = false): CommandAvailability {
     const allowed = common(), current = owner.current(), expected = consentPayload(input?.confirmed);
-    return allowed.enabled && input && expected && same(input, expected) && preparationReady() && !!current.fileName && !current.extractionAttempt
-      && (start ? !!current.preflight && input.confirmed && input.producerConsent : !current.preflight && ready(filesKey, files.data) && files.data?.includes(current.fileName)) ? allowed : allowed.enabled ? unavailable : allowed;
+    return allowed.enabled && input && expected && same(input, expected) && preparationReady() && hasSelectedInput() && !current.extractionAttempt
+      && (start ? !!current.preflight && input.confirmed && input.producerConsent : !current.preflight && selectedInputReady()) ? allowed : allowed.enabled ? unavailable : allowed;
   }
   function pluginPayload(): TranslationPluginCommandPayload {
     const current = owner.current();
@@ -300,8 +311,8 @@ export default function ImportPreparation({ project, owner, tasks, commands, gat
   const working = owner.hasActive();
   const cancellations = Object.values(tasks.state).filter(value => [state.extractionAttempt, state.checkAttempt, state.attempt].includes(value.target.attemptId));
   if (!visible) return null;
-  return <section className={styles.preparation} aria-label={t("workbenchV2.importPreparationTitle")} aria-busy={state.busy || inventory.isFetching || environment.isFetching}>
-    <header className={styles.header}><h3>{t("workbenchV2.importPreparationTitle")}</h3><p>{t("workbenchV2.importPreparationHelp")}</p></header>
+  return <section className={styles.preparation} aria-label={t(environment.data?.declaration.fileSets ? "translationPlugin.pairedTitle" : "workbenchV2.importPreparationTitle")} aria-busy={state.busy || inventory.isFetching || environment.isFetching}>
+    <header className={styles.header}><h3>{t(environment.data?.declaration.fileSets ? "translationPlugin.pairedTitle" : "workbenchV2.importPreparationTitle")}</h3><p>{t("workbenchV2.importPreparationHelp")}</p></header>
     {disabled ? <Banner tone="info">{t("workbenchV2.importPreparationReadOnly")}</Banner> : null}
     {failure ? <ErrorState title={t("translationPlugin.failed")} description={readFailure ? t("workbenchV2.importPreparationReadFailed") : undefined} action={<>
       <FailureDetails failure={failure} />
@@ -328,22 +339,26 @@ export default function ImportPreparation({ project, owner, tasks, commands, gat
     {!state.preflight && !state.extractionAttempt ? <>
       {environment.data?.declaration.material ? <p className={styles.secondary}>{t("translationPlugin.material", { directory: environment.data.declaration.material.logicalDirectory, extension: environment.data.declaration.material.extension, bytes: String(environment.data.declaration.material.maxBytes) })}</p> : null}
       <div className={styles.actions}><Button variant="secondary" disabled={!setupAvailability(setup).enabled} onClick={() => commands.dispatch("translation.choose-import-folder", commandScope, setup)}>{t("translation.chooseFolder")}</Button></div>
+      {environment.data?.declaration.fileSets ? <p>{t("translationPlugin.pairedMaterial")}</p> : null}
       {state.folder ? <>
         <p><TokenizedText text={t("translation.folder", { name: state.folder.folderName })} /></p>
         {files.isFetching ? <LoadingState label={t("execution.loading")} /> : files.isSuccess && files.data.length === 0 ? <EmptyState title={t("translation.noFiles")} /> : null}
-        {files.data?.length ? <Field label={t("translation.file")}>{props => <Menu align="start" trigger={<Button {...props} variant="secondary" disabled={draftLocked || !ready(filesKey, files.data)}>{state.fileName || t("translation.file")}</Button>}
+        {!state.folder.translation.declaration.material ? <ul aria-label={t("translationPlugin.targetFiles")}>{state.folder.fileSets?.flatMap(set => set.logicalPaths).map(path => <li key={path}>{path}</li>)}</ul> : null}
+        {state.folder.translation.declaration.material && files.data?.length ? <Field label={t("translation.file")}>{props => <Menu align="start" trigger={<Button {...props} variant="secondary" disabled={draftLocked || !ready(filesKey, files.data)}>{state.fileName || t("translation.file")}</Button>}
           items={files.data.map(file => ({ id: file, label: file, onSelect: () => { if (canEdit() && ready(filesKey, files.data) && files.data?.includes(file)) owner.setFile(file); } }))} />}</Field> : null}
-        {consent && state.fileName ? <label className={styles.check}><input type="checkbox" checked={state.confirmed} disabled={!consentAvailability(consent).enabled}
-          onChange={event => commands.dispatch("translation.confirm-import-language", commandScope, { ...consent, confirmed: event.target.checked })} />{t("translationPlugin.languageConfirm", { file: state.fileName, target: state.folder.targetLocale })}</label> : null}
-        <div className={styles.actions}><Button variant="primary" disabled={!setupAvailability(setup, true).enabled} onClick={() => commands.dispatch("translation.inspect-import", commandScope, setup)}>{t("translationPlugin.capture")}</Button></div>
+        {consent && hasSelectedInput() ? <label className={styles.check}><input type="checkbox" checked={state.confirmed} disabled={!consentAvailability(consent).enabled}
+          onChange={event => commands.dispatch("translation.confirm-import-language", commandScope, { ...consent, confirmed: event.target.checked })} />{state.folder.translation.declaration.material ? t("translationPlugin.languageConfirm", { file: state.fileName, target: state.folder.targetLocale }) : t("translationPlugin.pairedLanguageConfirm", { target: state.folder.targetLocale })}</label> : null}
+        <div className={styles.actions}><Button variant="primary" disabled={!setupAvailability(setup, true).enabled} onClick={() => commands.dispatch("translation.inspect-import", commandScope, setup)}>{t(state.folder.translation.declaration.material ? "translationPlugin.capture" : "translationPlugin.captureGroup")}</Button></div>
       </> : null}
     </> : null}
     {state.preflight ? <>
-      <p>{t("translationPlugin.captured", { file: state.preflight.file.logicalPath, bytes: String(state.preflight.file.byteLength), target: state.preflight.targetLocale })}</p>
+      {state.preflight.file ? <p>{t("translationPlugin.captured", { file: state.preflight.file.logicalPath, bytes: String(state.preflight.file.byteLength), target: state.preflight.targetLocale })}</p> : null}
+      {state.preflight.files ? <section aria-label={t("translationPlugin.targetFiles")}><h4>{t("translationPlugin.targetFiles")}</h4><ul>{state.preflight.files.map(file => <li key={file.logicalPath}>{t("translationPlugin.captured", { file: file.logicalPath, bytes: String(file.byteLength), target: state.preflight!.targetLocale })}</li>)}</ul></section> : null}
+      {state.preflight.pairedSourceFiles ? <section aria-label={t("translationPlugin.originalFiles")}><h4>{t("translationPlugin.originalFiles")}</h4><p>{t("translationPlugin.originalMaterial")}</p><ul>{state.preflight.pairedSourceFiles.map(file => <li key={file.logicalPath}>{file.logicalPath}</li>)}</ul></section> : null}
       {!state.extractionAttempt ? <>
         <ExecutionReview key={state.preflight.inputDigest} view={state.preflight.translation} checker={false} />
         <label className={styles.check}><input type="checkbox" checked={state.producerConsent === state.preflight.inputDigest} disabled={locked || !preparationReady()}
-          onChange={event => { if (common().enabled && preparationReady() && owner.current().preflight === state.preflight) owner.consentProducer(event.target.checked); }} />{t("translationPlugin.producerConsent")}</label>
+          onChange={event => { if (common().enabled && preparationReady() && owner.current().preflight === state.preflight) owner.consentProducer(event.target.checked); }} />{t(state.preflight.translation.declaration.material ? "translationPlugin.producerConsent" : "translationPlugin.pairedProducerConsent")}</label>
         <div className={styles.actions}><Button variant="primary" disabled={!consent || !consentAvailability(consent, true).enabled} onClick={() => { if (consent) commands.dispatch("translation.start-import", commandScope, consent); }}>{t("translation.start")}</Button></div>
       </> : null}
     </> : null}
@@ -355,7 +370,7 @@ export default function ImportPreparation({ project, owner, tasks, commands, gat
       <ExecutionReview key={state.checkReview.inputDigest} view={state.checkReview.translation} checker />
       <p>{t("translationPlugin.rules", { count: state.checkReview.rules.length })}</p>
       <label className={styles.check}><input type="checkbox" checked={state.checkerConsent === state.checkReview.inputDigest} disabled={locked || !preparationReady()}
-        onChange={event => { if (common().enabled && preparationReady() && owner.current().checkReview === state.checkReview) owner.consentChecker(event.target.checked); }} />{t("translationPlugin.checkerConsent")}</label>
+        onChange={event => { if (common().enabled && preparationReady() && owner.current().checkReview === state.checkReview) owner.consentChecker(event.target.checked); }} />{t(state.checkReview.translation.declaration.material ? "translationPlugin.checkerConsent" : "translationPlugin.pairedCheckerConsent")}</label>
       <div className={styles.actions}><Button variant="primary" disabled={!pluginAvailability(command, "start-check").enabled} onClick={() => commands.dispatch("translation.start-import-check", commandScope, command)}>{t("translationPlugin.startCheck")}</Button></div>
     </> : null}
     {checkedItem ? <p role="status">{t(`execution.states.${checkedItem.status.execution}`)}</p> : null}

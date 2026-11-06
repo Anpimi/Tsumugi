@@ -1,3 +1,4 @@
+import { pairedTranslationFixture } from "./testSupport/pluginTranslationFixture";
 import executionFixture from "../test/fixtures/pluginTranslationExecution.contract.json";
 import { beforeEach, expect, it, vi } from "vitest";
 import fixture from "../test/fixtures/translation-commands.json";
@@ -334,4 +335,20 @@ it("reads the full native translation start tuple without weakening digest or la
     invoke.mockResolvedValueOnce(value); expect(hasUnknownOutcome(await translationCommands.startAction(request).catch(error=>error))).toBe(true);
   }
   expect(invoke.mock.calls.every(([name,args]) => name === "read_translation_import_start" && JSON.stringify(args.request) === JSON.stringify(request))).toBe(true);
+});
+
+it("keeps paired material capture distinct from single-file observations", async () => {
+  const pair = pairedTranslationFixture(), { fileName, ...request } = captureFixture.capture;
+  expect(fileName).toBeTruthy();
+  expect(validators.validateRequestPluginCapture(request)).toBe(true);
+  invoke.mockResolvedValueOnce(pair.preflight);
+  expect(await translationCommands.preflightPlugin(request)).toEqual(pair.preflight);
+  for (const value of [{ ...pair.preflight, file: captureFixture.preflight.file },
+    { ...pair.preflight, files: [] }, { ...pair.preflight, pairedSourceFiles: [] },
+    captureFixture.preflight]) {
+    invoke.mockResolvedValueOnce(value);
+    await expect(translationCommands.preflightPlugin(request)).rejects.toThrow();
+  }
+  invoke.mockResolvedValueOnce(pair.preflight);
+  await expect(translationCommands.preflightPlugin(captureFixture.capture)).rejects.toThrow();
 });

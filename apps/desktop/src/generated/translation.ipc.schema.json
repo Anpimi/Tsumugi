@@ -201,7 +201,10 @@
             "$ref": "#/definitions/ExecutionId"
           },
           "fileName": {
-            "type": "string"
+            "type": [
+              "string",
+              "null"
+            ]
           },
           "languageConfirmed": {
             "type": "boolean"
@@ -220,7 +223,6 @@
           "sessionToken",
           "projectId",
           "selectionId",
-          "fileName",
           "languageConfirmed",
           "attemptId"
         ],
@@ -2259,10 +2261,35 @@
             "$ref": "#/definitions/ExecutionId"
           },
           "file": {
-            "$ref": "#/definitions/PluginSourceFile"
+            "anyOf": [
+              {
+                "$ref": "#/definitions/PluginSourceFile"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "files": {
+            "items": {
+              "$ref": "#/definitions/PluginSourceFile"
+            },
+            "type": [
+              "array",
+              "null"
+            ]
           },
           "inputDigest": {
             "type": "string"
+          },
+          "pairedSourceFiles": {
+            "items": {
+              "$ref": "#/definitions/PluginSourceFile"
+            },
+            "type": [
+              "array",
+              "null"
+            ]
           },
           "source": {
             "$ref": "#/definitions/TranslationSourceContext"
@@ -2279,14 +2306,19 @@
           "inputDigest",
           "targetLocale",
           "source",
-          "translation",
-          "file"
+          "translation"
         ],
         "type": "object"
       },
       "PluginTranslationSelection": {
         "additionalProperties": false,
         "properties": {
+          "fileSets": {
+            "items": {
+              "$ref": "#/definitions/SourceFileSetSelection"
+            },
+            "type": "array"
+          },
           "folderName": {
             "type": "string"
           },
@@ -3078,6 +3110,25 @@
           "minFiles",
           "maxFiles",
           "maxBytes"
+        ],
+        "type": "object"
+      },
+      "SourceFileSetSelection": {
+        "additionalProperties": false,
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "logicalPaths": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "id",
+          "logicalPaths"
         ],
         "type": "object"
       },

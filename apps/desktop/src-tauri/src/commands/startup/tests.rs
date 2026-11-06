@@ -55,30 +55,10 @@ fn call(window: &tauri::WebviewWindow<tauri::test::MockRuntime>, command: &str, 
 
 #[cfg(target_os = "macos")]
 fn install_metadata_runtime(fixture: &plugins::InstalledPluginFixture) -> (PluginSourceRequest, tsumugi_plugin_host::RuntimeApproval) {
-    use std::os::unix::fs::PermissionsExt;
-    use tsumugi_plugin_host::{CapturedRuntime, RuntimeApproval};
-    use tsumugi_plugin_sdk as sdk;
-    let root = tempfile::tempdir().unwrap();
-    let tool = PathBuf::from(std::env::var_os("TSUMUGI_TEST_RUNTIME_TOOL").expect("source-pinned tool tree required by IPC conformance"));
-    let host = BTreeMap::from([("dist/main.js".to_string(), sdk::RuntimeArtifactFile { bytes: b"throw new Error('preflight must not execute');".to_vec(), executable: false })]);
-    for (relative, file) in &host {
-        let path = root.path().join("host").join(relative); fs::create_dir_all(path.parent().unwrap()).unwrap();
-        fs::write(&path, &file.bytes).unwrap(); fs::set_permissions(&path, fs::Permissions::from_mode(0o600)).unwrap();
-    }
-    let pin = crate::runtime_bundle::node_pin().unwrap();
-    let descriptor = sdk::RuntimeEnvironmentDescriptor {
-        protocol_version: sdk::RUNTIME_ENVIRONMENT_PROTOCOL,
-        platform: sdk::RuntimePlatform { operating_system: sdk::RuntimeOperatingSystem::Macos,
-            architecture: if cfg!(target_arch = "aarch64") { sdk::RuntimeArchitecture::Aarch64 } else { sdk::RuntimeArchitecture::X86_64 } },
-        sdk_version: "0.1.0-alpha.1".into(), process_protocol: sdk::PROCESS_PROTOCOL,
-        profile: sdk::RuntimeEnvironmentProfile::NodeSystemLibrariesV1, tool_version: pin.version,
-        tool: sdk::RuntimeArtifactBinding { tree_digest: pin.tool_tree_digest, entrypoint: "bin/node".into() },
-        host: sdk::RuntimeArtifactBinding { tree_digest: sdk::runtime_artifact_digest(&host).unwrap(), entrypoint: "dist/main.js".into() },
-    };
-    let runtime = CapturedRuntime::capture_directories(&tool, &root.path().join("host"), &descriptor, || true).unwrap();
-    let approval = RuntimeApproval { environment: descriptor.into(), origin: crate::runtime_bundle::bundled_origin() };
-    fixture.install_runtime(&runtime, &approval); fixture.decide(true, vec![approval.clone()]);
-    let mut request = fixture.request(); request.environment_digest = approval.environment.digest().unwrap(); (request, approval)
+    let approval = fixture.install_metadata_runtime("0.1.0-alpha.1");
+    let mut request = fixture.request();
+    request.environment_digest = approval.environment.digest().unwrap();
+    (request, approval)
 }
 
 #[cfg(all(target_os = "macos", target_arch = "aarch64", feature = "execution-test-host"))]

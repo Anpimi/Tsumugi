@@ -271,12 +271,12 @@ export function TranslationImportProvider({ project, mutations, tasks, children 
   }
   async function preflight(proof: () => boolean = live, dispose?: () => void) {
     const before = current(), ticket = version.current, meta = metadata(projectRef.current, before.targetLocale);
-    if (!before.folder || !before.fileName || !before.confirmed || !available() || !proof() || !editable()) { dispose?.(); return; }
+    if (!before.folder || (before.folder.translation.declaration.material && !before.fileName) || !before.confirmed || !available() || !proof() || !editable()) { dispose?.(); return; }
     await withReadCleanup(dispose, () => runPlugin(async () => {
       const attemptId = await executionCommands.identity(session);
       if (!live() || !proof() || ticket !== version.current || meta !== metadata(projectRef.current, before.targetLocale) || current().folder !== before.folder) return;
       await dispatchPlugin({ pendingKind: "capture", request: { ...session, selectionId: before.folder!.selectionId,
-        fileName: before.fileName, languageConfirmed: true, attemptId } });
+        ...(before.folder!.translation.declaration.material ? { fileName: before.fileName } : {}), languageConfirmed: true, attemptId } });
     }));
   }
   function acceptStart(request: PluginStartRequest) {
