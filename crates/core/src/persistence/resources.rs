@@ -2135,6 +2135,7 @@ impl ProjectStore {
                    SELECT o.snapshot_id,o.unit_id,MIN(o.ordinal) AS ordinal
                    FROM source_effective_occurrences o
                    JOIN content_scope c ON c.current_snapshot=o.snapshot_id
+                   WHERE (?3 IS NULL OR o.unit_id IN (SELECT value FROM json_each(?3)))
                    GROUP BY o.snapshot_id,o.unit_id)
                  SELECT o.unit_id,o.revision_id,o.native_key,r.text,s.event_id,s.revision_id,
                         COALESCE(b.last_change_rowid,0)
@@ -2147,7 +2148,6 @@ impl ProjectStore {
                  JOIN translation_selections s ON s.unit_id=o.unit_id
                  LEFT JOIN translation_resource_baselines b ON b.revision_id=s.revision_id
                  WHERE u.project_id=?1 AND s.locale=?2
-                   AND (?3 IS NULL OR o.unit_id IN (SELECT value FROM json_each(?3)))
                    AND s.sequence=(SELECT MAX(x.sequence) FROM translation_selections x
                                    WHERE x.unit_id=s.unit_id AND x.locale=s.locale)
                  ORDER BY o.unit_id LIMIT 2001",

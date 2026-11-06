@@ -72,7 +72,9 @@ impl ProjectStore {
                 .take(limit as usize)
                 .map(|(unit, _)| *unit)
                 .collect::<Vec<_>>();
-            let rows = rows::project(self, connection, project_id, &units, locale)?;
+            let rows = rows::project(
+                self, &mut queries::TargetRead::new(connection), project_id, &units, locale,
+            )?;
             let mut window = SegmentQueueWindow {
                 project_id,
                 locale: locale.to_owned(),

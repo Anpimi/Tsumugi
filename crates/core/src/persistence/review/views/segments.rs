@@ -152,6 +152,7 @@ impl ProjectStore {
             .connection()
             .map_err(|_| failure(ErrorCode::StorageFailed, "segment-read"))?;
         read_snapshot(connection, |connection| {
+            let mut read = queries::TargetRead::new(connection);
             let fingerprint = digest(&(project_id, locale, query, "source-order-1"))?;
             let mut scope = if let Some(id) = scope_id {
                 self.segment_scope(connection, project_id, locale, id)?
@@ -159,7 +160,7 @@ impl ProjectStore {
                 // This establishes the SQLite read snapshot before sampling its clock.
                 let mut scope =
                     self.capture_review_read_scope(connection, project_id, locale, &query.text)?;
-                filters::retain(self, connection, project_id, locale, query, &mut scope.units)?;
+                filters::retain(self, &mut read, project_id, locale, query, &mut scope.units)?;
                 let (epoch, sequence, data_version) = stamp(self, connection)?;
                 let read_version = digest(&(
                     &fingerprint,
@@ -201,7 +202,7 @@ impl ProjectStore {
                 .take(limit as usize)
                 .map(|(unit, _)| *unit)
                 .collect::<Vec<_>>();
-            let rows = rows::project(self, connection, project_id, &units, locale)?;
+            let rows = rows::project(self, &mut read, project_id, &units, locale)?;
             let mut page = SegmentPage {
                 project_id,
                 locale: locale.to_owned(),

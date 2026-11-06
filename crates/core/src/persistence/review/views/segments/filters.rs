@@ -39,12 +39,13 @@ impl SegmentStatusFilter {
 
 pub(super) fn retain(
     store: &ProjectStore,
-    connection: &Connection,
+    read: &mut queries::TargetRead<'_>,
     project: ExecutionId,
     locale: &str,
     query: &SegmentQuery,
     units: &mut Vec<(ExecutionId, u32)>,
 ) -> Result<(), ExecutionError> {
+    let connection = read.connection();
     // These presets require absent/present selection before other evidence can
     // matter. Reuse the same authority as the explicit selection filter.
     let required_selection = match query.status {
@@ -73,7 +74,7 @@ pub(super) fn retain(
     // bounded as well, without individual row reads or browser-side membership.
     for batch in units.chunks(100) {
         let wanted = batch.iter().map(|(unit, _)| *unit).collect::<Vec<_>>();
-        for row in rows::project(store, connection, project, &wanted, locale)? {
+        for row in rows::project(store, read, project, &wanted, locale)? {
             if query.status.matches(&row) {
                 matching.insert(row.content.unit_id);
             }

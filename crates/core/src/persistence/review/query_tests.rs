@@ -713,6 +713,37 @@ fn translation_history_validation_batches_relationships_and_rejects_damaged_proo
 }
 
 #[test]
+fn status_filter_batches_share_source_proofs_but_a_new_read_revalidates_them() {
+    let (_directory, mut store, project) = large_fixture(205);
+    let snapshot = store.content_scope().unwrap().current_snapshot.unwrap();
+    let mut units = Vec::new();
+    for offset in (0..205).step_by(100) {
+        units.extend(store.source_content(snapshot, offset, 100).unwrap().rows.into_iter().map(|row| row.unit_id.unwrap()));
+    }
+    for unit in units.iter().step_by(10) {
+        translate(&mut store, project, *unit, "zh-CN", "人工译文");
+        let target = store.review_target(project, *unit, "zh-CN").unwrap();
+        store.run_review_checks(project, *unit, "zh-CN", &target.basis, ExecutionId::new()).unwrap();
+    }
+    for status in [SegmentStatusFilter::Issues, SegmentStatusFilter::Blocking] {
+        let query = SegmentQuery { text: String::new(), selection: SegmentSelectionFilter::All, status };
+        let (_, statements, _) = measure(&store, || store.read_segment_page(project, "zh-CN", &query, None, None, 50).unwrap());
+        let proofs = statements.iter().filter(|sql| sql.contains("SELECT attempt_id FROM source_snapshots WHERE snapshot_id=")).count();
+        assert_eq!(proofs, 1, "each bounded filter batch repeated the same frozen source proof: {status:?}");
+    }
+    let attempt = store.source_content(snapshot, 0, 1).unwrap().attempt_id;
+    let original = store.execution_input(attempt).unwrap();
+    let mut damaged = original.envelope().clone();
+    damaged.settings["unexpected"] = serde_json::json!(true);
+    let damaged = crate::execution::FixedInput::capture(damaged).unwrap();
+    crate::persistence::ledger::replace_test_input(store.connection().unwrap(), &damaged).unwrap();
+    let query = SegmentQuery { text: String::new(), selection: SegmentSelectionFilter::All, status: SegmentStatusFilter::All };
+    assert!(store.read_segment_page(project, "zh-CN", &query, None, None, 50).is_err(), "a new read cannot reuse a prior source validation");
+    crate::persistence::ledger::replace_test_input(store.connection().unwrap(), &original).unwrap();
+    assert_eq!(store.read_segment_page(project, "zh-CN", &query, None, None, 50).unwrap().total, 205);
+}
+
+#[test]
 fn maintenance_reads_only_window_targets_while_preserving_original_impact_reasons() {
     let (_directory, mut store, project) = large_fixture(120);
     let snapshot = store.content_scope().unwrap().current_snapshot.unwrap();

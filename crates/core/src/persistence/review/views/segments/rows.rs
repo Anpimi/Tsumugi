@@ -125,13 +125,14 @@ fn term_summary(resolution: &resources::TermResolution) -> SegmentTermSummary {
 
 pub(super) fn project(
     store: &ProjectStore,
-    connection: &Connection,
+    read: &mut queries::TargetRead<'_>,
     project: ExecutionId,
     units: &[ExecutionId],
     locale: &str,
 ) -> Result<Vec<SegmentRow>, ExecutionError> {
+    let connection = read.connection();
     let (targets, terms) = queries::targets_and_terms_in(
-        connection,
+        read,
         project,
         units,
         locale,

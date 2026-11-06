@@ -182,6 +182,8 @@ Current workspace version metadata: **`0.2.0-alpha.1`**. Because the published `
 
 ### Fixed
 
+- Resource impact subsets group only the requested source entries, avoiding repeated full-scope grouping in status filters while retaining the original limits and evidence.
+
 - Opening projects batches historical translation source bindings and action proofs while retaining every revision identity, ordinal and selection-chain check.
 
 - The untranslated and needs review segment filters reuse current selection membership, and saved legacy QA rows share frozen source-input validation within each read, reducing repeated work while preserving current evidence and fixed scope checks.

@@ -20,7 +20,8 @@ fn report_read<T: Serialize>(
     if std::env::var_os("TSUMUGI_PERFORMANCE_QUERY_PLAN").is_some() && round == 0 {
         for query in statements
             .iter()
-            .filter(|query| query.contains("MIN(o.ordinal) OVER"))
+            .filter(|query| query.contains("MIN(o.ordinal) OVER") || query.contains("JOIN wanted ON wanted.unit_id=o.unit_id GROUP BY"))
+            .collect::<BTreeSet<_>>()
         {
             let mut plan = store
                 .connection()
