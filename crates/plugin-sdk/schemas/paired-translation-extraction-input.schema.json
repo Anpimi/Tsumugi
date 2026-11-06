@@ -1,0 +1,185 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "TranslationExtractionInput",
+  "type": "object",
+  "properties": {
+    "artifacts": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/CapturedArtifact"
+      }
+    },
+    "importId": {
+      "type": "string"
+    },
+    "languageEvidence": {
+      "$ref": "#/$defs/TranslationLanguageEvidence"
+    },
+    "nativeScope": {
+      "$ref": "#/$defs/TranslationNativeScope"
+    },
+    "pairedSource": {
+      "type": "object",
+      "properties": {
+        "artifacts": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/CapturedArtifact"
+          }
+        },
+        "sourceLanguage": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "sourceLanguage",
+        "artifacts"
+      ]
+    },
+    "profile": {
+      "$ref": "#/$defs/ContractRef"
+    },
+    "sourceSetId": {
+      "type": "string"
+    },
+    "sourceSnapshotId": {
+      "type": "string"
+    },
+    "targetLanguage": {
+      "type": "string"
+    }
+  },
+  "additionalProperties": false,
+  "required": [
+    "profile",
+    "importId",
+    "sourceSetId",
+    "sourceSnapshotId",
+    "targetLanguage",
+    "languageEvidence",
+    "nativeScope",
+    "artifacts",
+    "pairedSource"
+  ],
+  "$defs": {
+    "CapturedArtifact": {
+      "description": "Exactly one representation. Text retains its original wire shape; mixed,\nnull and unknown fields are rejected by the two closed representations.",
+      "anyOf": [
+        {
+          "$ref": "#/$defs/CapturedTextArtifact"
+        },
+        {
+          "$ref": "#/$defs/CapturedBinaryArtifact"
+        }
+      ]
+    },
+    "CapturedBinaryArtifact": {
+      "description": "Canonical padded RFC 4648 base64 of the original bytes. The digest describes\nthe decoded bytes, never their transport encoding. Decoding is domain-owned.",
+      "type": "object",
+      "properties": {
+        "base64": {
+          "type": "string"
+        },
+        "id": {
+          "type": "string"
+        },
+        "logicalPath": {
+          "type": "string"
+        },
+        "role": {
+          "type": "string"
+        },
+        "sha256": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "logicalPath",
+        "role",
+        "sha256",
+        "base64"
+      ]
+    },
+    "CapturedTextArtifact": {
+      "description": "Exact UTF-8 bytes, including BOMs and original line endings.",
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "logicalPath": {
+          "type": "string"
+        },
+        "role": {
+          "type": "string"
+        },
+        "sha256": {
+          "type": "string"
+        },
+        "utf8": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "logicalPath",
+        "role",
+        "sha256",
+        "utf8"
+      ]
+    },
+    "ContractRef": {
+      "description": "Schema and behavior are separate exact-match compatibility identities.\nMatching JSON field types or a package SemVer is not behavioral compatibility.",
+      "type": "object",
+      "properties": {
+        "behaviorVersion": {
+          "type": "integer",
+          "maximum": 4294967295,
+          "minimum": 1
+        },
+        "id": {
+          "type": "string"
+        },
+        "schemaVersion": {
+          "type": "integer",
+          "maximum": 4294967295,
+          "minimum": 1
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "schemaVersion",
+        "behaviorVersion"
+      ]
+    },
+    "TranslationLanguageEvidence": {
+      "description": "Describes the caller's recorded explicit choice, not an execution/adoption\ngrant. Only the trusted application can establish that consent actually ran.",
+      "type": "string",
+      "enum": [
+        "user-confirmed"
+      ]
+    },
+    "TranslationNativeScope": {
+      "description": "Captured from the current adopted source. The plugin supplies canonical\nnative values under this exact policy; Core must never normalize them again.",
+      "type": "object",
+      "properties": {
+        "namespace": {
+          "type": "string"
+        },
+        "policy": {
+          "$ref": "#/$defs/ContractRef"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "namespace",
+        "policy"
+      ]
+    }
+  }
+}

@@ -1,0 +1,130 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "TranslationImportDeclaration",
+  "type": "object",
+  "properties": {
+    "checker": {
+      "type": "string"
+    },
+    "displayName": {
+      "type": "string"
+    },
+    "extractor": {
+      "type": "string"
+    },
+    "fileSets": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/SourceFileSetDeclaration"
+      }
+    },
+    "maxTotalBytes": {
+      "type": "integer",
+      "format": "uint32",
+      "minimum": 0
+    },
+    "profile": {
+      "$ref": "#/$defs/ContractRef"
+    },
+    "semanticRules": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/ContractRef"
+      }
+    }
+  },
+  "additionalProperties": false,
+  "required": [
+    "displayName",
+    "profile",
+    "extractor",
+    "checker",
+    "semanticRules",
+    "fileSets",
+    "maxTotalBytes"
+  ],
+  "$defs": {
+    "ContractRef": {
+      "description": "Schema and behavior are separate exact-match compatibility identities.\nMatching JSON field types or a package SemVer is not behavioral compatibility.",
+      "type": "object",
+      "properties": {
+        "behaviorVersion": {
+          "type": "integer",
+          "maximum": 4294967295,
+          "minimum": 1
+        },
+        "id": {
+          "type": "string"
+        },
+        "schemaVersion": {
+          "type": "integer",
+          "maximum": 4294967295,
+          "minimum": 1
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "schemaVersion",
+        "behaviorVersion"
+      ]
+    },
+    "SourceFileSetDeclaration": {
+      "description": "Explicit user choices within one authorized root. No glob, directory scan,\nabsolute path, or permission is part of this declaration or its resolution.",
+      "type": "object",
+      "properties": {
+        "displayName": {
+          "type": "string"
+        },
+        "encoding": {
+          "$ref": "#/$defs/SourceMaterialEncoding"
+        },
+        "extensions": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "id": {
+          "type": "string"
+        },
+        "maxBytes": {
+          "type": "integer",
+          "format": "uint32",
+          "minimum": 0
+        },
+        "maxFiles": {
+          "type": "integer",
+          "format": "uint32",
+          "minimum": 0
+        },
+        "minFiles": {
+          "type": "integer",
+          "format": "uint32",
+          "minimum": 0
+        },
+        "role": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "displayName",
+        "role",
+        "encoding",
+        "extensions",
+        "minFiles",
+        "maxFiles",
+        "maxBytes"
+      ]
+    },
+    "SourceMaterialEncoding": {
+      "type": "string",
+      "enum": [
+        "utf8",
+        "binary"
+      ]
+    }
+  }
+}

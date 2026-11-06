@@ -471,6 +471,7 @@ pub async fn preflight_plugin_translation(
                     sha256: artifact.sha256.clone(),
                 };
                 let material = sdk::TranslationExtractionInput {
+                    paired_source: None,
                     profile: selected.source.profile.clone(),
                     import_id: capturing.attempt_id.to_string(),
                     source_set_id: selected.source.source_set_id.to_string(),

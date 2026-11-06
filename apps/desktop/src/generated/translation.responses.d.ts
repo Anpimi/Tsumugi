@@ -100,6 +100,28 @@ export type CheckOutcome =
 export type FindingSeverity = "warning" | "error";
 export type ReviewCheckOutcome = "completed" | "failed" | "cancelled" | "unknown";
 export type ReviewDecisionKind = "approve" | "request-changes";
+export type TranslationImportDeclaration = {
+  checker: string;
+  displayName: string;
+  extractor: string;
+  fileSets?: SourceFileSetDeclaration[];
+  material?: TranslationMaterialDeclaration;
+  maxTotalBytes?: number;
+  profile: ContractRef;
+  semanticRules: ContractRef[];
+} & TranslationImportDeclaration1;
+export type SourceMaterialEncoding = "utf8" | "binary";
+export type TranslationImportDeclaration1 =
+  | {
+      fileSets?: never;
+      material: unknown;
+      maxTotalBytes?: never;
+    }
+  | {
+      fileSets: unknown;
+      material?: never;
+      maxTotalBytes: unknown;
+    };
 export type UnsignedDecimal = string;
 export type TranslationMatch =
   "unique" | "unmatched" | "ambiguous" | "selected-conflict" | "source-changed" | "applied";
@@ -704,13 +726,19 @@ export interface PluginTranslationView {
   runtimeOrigin: PluginOriginView;
   settingsRevision: UnsignedDecimal;
 }
-export interface TranslationImportDeclaration {
-  checker: string;
+/**
+ * Explicit user choices within one authorized root. No glob, directory scan,
+ * absolute path, or permission is part of this declaration or its resolution.
+ */
+export interface SourceFileSetDeclaration {
   displayName: string;
-  extractor: string;
-  material: TranslationMaterialDeclaration;
-  profile: ContractRef;
-  semanticRules: ContractRef[];
+  encoding: SourceMaterialEncoding;
+  extensions: string[];
+  id: string;
+  maxBytes: number;
+  maxFiles: number;
+  minFiles: number;
+  role: string;
 }
 /**
  * Metadata describing one selected file relative to an explicitly granted

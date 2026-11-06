@@ -104,12 +104,12 @@ pub struct SourceFileSetSelection {
     pub logical_paths: Vec<String>,
 }
 
-fn explicit_file_sets<'de, D: serde::Deserializer<'de>>(
+pub(crate) fn explicit_file_sets<'de, D: serde::Deserializer<'de>>(
     deserializer: D,
 ) -> Result<Option<Vec<SourceFileSetDeclaration>>, D::Error> {
     Vec::<SourceFileSetDeclaration>::deserialize(deserializer).map(Some)
 }
-fn explicit_total_bytes<'de, D: serde::Deserializer<'de>>(
+pub(crate) fn explicit_total_bytes<'de, D: serde::Deserializer<'de>>(
     deserializer: D,
 ) -> Result<Option<u32>, D::Error> {
     u32::deserialize(deserializer).map(Some)
@@ -196,8 +196,15 @@ fn validate_materials(
     }
     Ok(total)
 }
-impl SourceImportDeclaration {
-    pub fn is_legacy_text(&self) -> bool {
+/// The shared capture rules used by source imports and paired translations.
+/// This is a borrowed specification, not a new wire representation or permission.
+pub(crate) struct MaterialCapture<'a> {
+    pub materials: &'a [SourceMaterialDeclaration],
+    pub file_sets: Option<&'a [SourceFileSetDeclaration]>,
+    pub max_total_bytes: Option<u32>,
+}
+impl MaterialCapture<'_> {
+    fn is_legacy_text(&self) -> bool {
         self.file_sets.is_none()
             && !self.materials.is_empty()
             && self
@@ -205,48 +212,7 @@ impl SourceImportDeclaration {
                 .iter()
                 .all(|material| is_legacy_utf8(&material.encoding))
     }
-    pub fn declaration_contract(&self) -> ContractRef {
-        ContractRef {
-            schema_version: if self.max_total_bytes.is_some() {
-                5
-            } else if self.file_sets.is_some() {
-                4
-            } else if self.is_legacy_text() {
-                2
-            } else {
-                3
-            },
-            ..source_import_declaration_contract()
-        }
-    }
-    fn validate_current(&self) -> Result<(), ContractError> {
-        self.validate()?;
-        if self.file_sets.is_none() {
-            return Err(invalid("sourceImport.fileSets"));
-        }
-        if self.max_total_bytes.is_none() {
-            return Err(invalid("sourceImport.maxTotalBytes"));
-        }
-        Ok(())
-    }
-    pub fn validate(&self) -> Result<(), ContractError> {
-        if self.display_name.trim().is_empty()
-            || self.display_name.len() > 128
-            || self.display_name.chars().any(char::is_control)
-        {
-            return Err(invalid("sourceImport.displayName"));
-        }
-        reference(&self.profile, "sourceImport.profile")?;
-        name(&self.extractor, "sourceImport.extractor")?;
-        name(&self.checker, "sourceImport.checker")?;
-        name(&self.review_resource, "sourceImport.reviewResource")?;
-        if self.extractor == self.checker {
-            return Err(invalid("sourceImport.checker"));
-        }
-        self.revision_policy.validate()?;
-        if self.revision_policy.profile != self.profile {
-            return Err(invalid("sourceImport.revisionPolicy"));
-        }
+    pub(crate) fn validate(&self) -> Result<(), ContractError> {
         if self.materials.len() > MAX_SOURCE_IMPORT_MATERIALS {
             return Err(invalid("sourceImport.materials"));
         }
@@ -270,7 +236,7 @@ impl SourceImportDeclaration {
         let mut total = validate_materials(&self.materials, limit, reserve_maximum)?;
         let mut maximum = self.materials.len();
         let mut minimum = self.materials.len();
-        if let Some(sets) = &self.file_sets {
+        if let Some(sets) = self.file_sets {
             if sets.len() > MAX_SOURCE_IMPORT_MATERIALS {
                 return Err(invalid("sourceImport.fileSets"));
             }
@@ -313,22 +279,15 @@ impl SourceImportDeclaration {
         {
             return Err(invalid("sourceImport.materials"));
         }
-        if (reserve_maximum && total > limit)
-            || self.semantic_rules.is_empty()
-            || self.semantic_rules.len() > 32
-        {
+        if reserve_maximum && total > limit {
             return Err(invalid("sourceImport.limits"));
         }
-        unique(self.semantic_rules.iter(), "sourceImport.semanticRules")?;
-        for rule in &self.semantic_rules {
-            reference(rule, "sourceImport.semanticRules")?;
-        }
-        encoded_limit(self, MAX_SOURCE_IMPORT_DECLARATION_BYTES, "sourceImport")
+        Ok(())
     }
 
     /// Resolve typed choices into the one ordered capture recipe. The caller
     /// separately authorizes and reads those relative files as one snapshot.
-    pub fn resolve_materials(
+    pub(crate) fn resolve_materials(
         &self,
         selections: &[SourceFileSetSelection],
     ) -> Result<Vec<SourceMaterialDeclaration>, ContractError> {
@@ -347,7 +306,7 @@ impl SourceImportDeclaration {
         {
             return Err(invalid("sourceImport.selection.id"));
         }
-        let mut materials = self.materials.clone();
+        let mut materials = self.materials.to_vec();
         for set in sets {
             let paths = selections
                 .iter()
@@ -392,7 +351,7 @@ impl SourceImportDeclaration {
         Ok(materials)
     }
 
-    pub fn capture_byte_limit(&self) -> usize {
+    pub(crate) fn capture_byte_limit(&self) -> usize {
         self.max_total_bytes
             .map(|bytes| bytes as usize)
             .unwrap_or(MAX_EXCHANGE_BYTES)
@@ -400,7 +359,7 @@ impl SourceImportDeclaration {
 
     /// Validate measured bytes in the exact resolved order. Resolution is pure;
     /// it cannot reserve the per-file maxima as though they were observed sizes.
-    pub fn validate_capture_sizes(
+    pub(crate) fn validate_capture_sizes(
         &self,
         selections: &[SourceFileSetSelection],
         sizes: &[usize],
@@ -425,6 +384,91 @@ impl SourceImportDeclaration {
             }
         }
         Ok(())
+    }
+}
+
+impl SourceImportDeclaration {
+    pub fn is_legacy_text(&self) -> bool {
+        self.capture().is_legacy_text()
+    }
+    pub fn declaration_contract(&self) -> ContractRef {
+        ContractRef {
+            schema_version: if self.max_total_bytes.is_some() {
+                5
+            } else if self.file_sets.is_some() {
+                4
+            } else if self.is_legacy_text() {
+                2
+            } else {
+                3
+            },
+            ..source_import_declaration_contract()
+        }
+    }
+    fn validate_current(&self) -> Result<(), ContractError> {
+        self.validate()?;
+        if self.file_sets.is_none() {
+            return Err(invalid("sourceImport.fileSets"));
+        }
+        if self.max_total_bytes.is_none() {
+            return Err(invalid("sourceImport.maxTotalBytes"));
+        }
+        Ok(())
+    }
+    pub fn validate(&self) -> Result<(), ContractError> {
+        if self.display_name.trim().is_empty()
+            || self.display_name.len() > 128
+            || self.display_name.chars().any(char::is_control)
+        {
+            return Err(invalid("sourceImport.displayName"));
+        }
+        reference(&self.profile, "sourceImport.profile")?;
+        name(&self.extractor, "sourceImport.extractor")?;
+        name(&self.checker, "sourceImport.checker")?;
+        name(&self.review_resource, "sourceImport.reviewResource")?;
+        if self.extractor == self.checker {
+            return Err(invalid("sourceImport.checker"));
+        }
+        self.revision_policy.validate()?;
+        if self.revision_policy.profile != self.profile {
+            return Err(invalid("sourceImport.revisionPolicy"));
+        }
+        self.capture().validate()?;
+        if self.semantic_rules.is_empty() || self.semantic_rules.len() > 32 {
+            return Err(invalid("sourceImport.limits"));
+        }
+        unique(self.semantic_rules.iter(), "sourceImport.semanticRules")?;
+        for rule in &self.semantic_rules {
+            reference(rule, "sourceImport.semanticRules")?;
+        }
+        encoded_limit(self, MAX_SOURCE_IMPORT_DECLARATION_BYTES, "sourceImport")
+    }
+
+    pub(crate) fn capture(&self) -> MaterialCapture<'_> {
+        MaterialCapture {
+            materials: &self.materials,
+            file_sets: self.file_sets.as_deref(),
+            max_total_bytes: self.max_total_bytes,
+        }
+    }
+    /// Resolve the exact selected capture without reading external files.
+    pub fn resolve_materials(
+        &self,
+        selections: &[SourceFileSetSelection],
+    ) -> Result<Vec<SourceMaterialDeclaration>, ContractError> {
+        self.validate()?;
+        self.capture().resolve_materials(selections)
+    }
+    pub fn capture_byte_limit(&self) -> usize {
+        self.capture().capture_byte_limit()
+    }
+    pub fn validate_capture_sizes(
+        &self,
+        selections: &[SourceFileSetSelection],
+        sizes: &[usize],
+    ) -> Result<(), ContractError> {
+        self.validate()?;
+        self.capture().validate_capture_sizes(selections, sizes)
     }
 
     /// Bind source and Review providers from the same captured manifest. The application

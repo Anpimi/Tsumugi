@@ -247,6 +247,7 @@ fn checked_source_update_refuses_old_translation_adoption_and_preserves_committe
     let raw =
         "{\"mIxA\":\"你好 é\",\"Different\":\"已选译文\",\"Empty\":\"\",\"Removed\":\"旧条目\"}";
     let material = sdk::TranslationExtractionInput {
+        paired_source: None,
         profile: resource.declaration.profile.clone(),
         import_id: ExecutionId::new().to_string(),
         source_set_id: source_bundle.set_id.to_string(),
@@ -663,10 +664,10 @@ fn webvtt_translation_preserves_captured_cues_and_uses_original_per_entry_adopti
         source_resource.declaration.profile
     );
     assert_eq!(
-        resource.declaration.material.logical_directory,
+        resource.declaration.material.as_ref().unwrap().logical_directory,
         "translations"
     );
-    assert_eq!(resource.declaration.material.extension, "vtt");
+    assert_eq!(resource.declaration.material.as_ref().unwrap().extension, "vtt");
     let temporary = tempfile::tempdir().unwrap();
     let staging = temporary.path().join("workers");
     std::fs::create_dir(&staging).unwrap();
@@ -736,6 +737,7 @@ fn webvtt_translation_preserves_captured_cues_and_uses_original_per_entry_adopti
     // pairs entries; the captured translation timeline never updates the source.
     let raw = "\u{feff}WEBVTT\r\n\r\nNOTE imported evidence 👩🏽‍💻\r\n\r\nOTHER\r\n00:10.000 --> 00:11.000\r\n另一条\r\n第二行\r\n\r\nmIxA\r\n00:20.000 --> 00:21.000\r\n译文 e\u{301} 👩🏽‍💻\r\n\r\nghost\r\n00:30.000 --> 00:31.000\r\nunmatched\r\n";
     let material = sdk::TranslationExtractionInput {
+        paired_source: None,
         profile: resource.declaration.profile.clone(),
         import_id: ExecutionId::new().to_string(),
         source_set_id: bundle.set_id.to_string(),

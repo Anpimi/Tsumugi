@@ -90,6 +90,26 @@ fn check_native_scope(
 }
 
 impl ProjectStore {
+    /// Read the exact original material from an authenticated adopted source.
+    /// The caller still needs separate file selection, execution and adoption.
+    pub fn translation_pair_source(
+        &self,
+        target_locale: &str,
+        expected_snapshot: ExecutionId,
+    ) -> Result<tsumugi_plugin_sdk::TranslationPairSource, ExecutionError> {
+        let context = self.translation_source_context(target_locale)?;
+        if context.source_snapshot_id != expected_snapshot {
+            return Err(error(ErrorCode::DependencyConflict, "translation-source"));
+        }
+        let page = self.source_content(expected_snapshot, 0, 1)?;
+        let original = self.execution_input(page.attempt_id)?;
+        let source = crate::content::SourceBundle::from_input(&original)?.source_input();
+        Ok(tsumugi_plugin_sdk::TranslationPairSource {
+            source_language: source.source_language,
+            artifacts: source.artifacts,
+        })
+    }
+
     pub fn translation_source_context(
         &self,
         target_locale: &str,
@@ -618,6 +638,12 @@ fn record_plugin_input(connection: &Connection, input: &FixedInput) -> Result<()
             ErrorCode::DependencyConflict,
             "translation-native-scope",
         ));
+    }
+    if let Some(pair) = &material.paired_source {
+        let original = bundle.source_input();
+        if pair.source_language != original.source_language || pair.artifacts != original.artifacts {
+            return Err(error(ErrorCode::DependencyConflict, "translation-paired-source"));
+        }
     }
     // Compare the selected domain policy exactly. Display labels and text
     // equality cannot establish a policy or justify normalizing native values.
@@ -2269,6 +2295,7 @@ impl RawRevision {
 #[cfg(test)]
 mod tests {
     use super::*;
+    include!("translation/paired_tests.rs");
     use crate::{
         ProjectMetadata,
         content::{

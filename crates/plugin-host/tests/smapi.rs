@@ -232,12 +232,13 @@ fn official_smapi_translation_proposals_and_independent_checks_use_the_captured_
         let image = installed(temporary.path(), "stardew-smapi");
         let binding = image.translation_import("translation-profile").unwrap();
         assert_eq!(binding.declaration.profile, contract("smapi-i18n-flat"));
-        assert_eq!(binding.declaration.material.logical_directory, "i18n");
-        assert_eq!(binding.declaration.material.extension, "json");
-        assert_eq!(binding.declaration.material.max_bytes, 131072);
+        assert_eq!(binding.declaration.material.as_ref().unwrap().logical_directory, "i18n");
+        assert_eq!(binding.declaration.material.as_ref().unwrap().extension, "json");
+        assert_eq!(binding.declaration.material.as_ref().unwrap().max_bytes, 131072);
         assert_eq!(binding.declaration.semantic_rules, vec![contract("smapi.translation-semantics")]);
         let raw = "\u{feff}{\r\n // 原始 中文 😀\r\n \"MiX\\u0041\": \"译文 👩🏽‍💻 é\",\r\n \"same-a\": \"同文\",\r\n \"same-b\": \"同文\",\r\n \"empty\": \"\",\r\n \"$schema\": \"schema.json\",\r\n}\r\n";
         let input = TranslationExtractionInput {
+            paired_source: None,
             profile: binding.declaration.profile.clone(), import_id: "synthetic-translation-import".into(),
             source_set_id: "synthetic-source-set".into(), source_snapshot_id: "synthetic-source-snapshot".into(),
             target_language: "zh-CN".into(), language_evidence: TranslationLanguageEvidence::UserConfirmed,

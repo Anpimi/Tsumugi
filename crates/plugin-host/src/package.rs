@@ -151,9 +151,13 @@ impl PackageImage {
         &self,
         contribution_id: &str,
     ) -> HostResult<TranslationImportBinding> {
-        parse_translation_import_declaration(
-            self.resource_bytes(contribution_id, &translation_import_declaration_contract())?,
-        )
+        let contribution = self.manifest.manifest().contributions.iter()
+            .find(|entry| entry.id == contribution_id)
+            .ok_or(HostError::InvalidContract)?;
+        let ContributionKind::Resource { schema, .. } = &contribution.contribution else {
+            return Err(HostError::InvalidContract);
+        };
+        parse_translation_import_declaration_for_contract(self.resource_bytes(contribution_id, schema)?, schema)
         .and_then(|declaration| declaration.bind(&self.manifest, &self.digest))
         .map_err(|_| HostError::InvalidContract)
     }

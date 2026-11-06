@@ -3996,6 +3996,29 @@
       },
       "TranslationImportDeclaration": {
         "additionalProperties": false,
+        "oneOf": [
+          {
+            "properties": {
+              "fileSets": false,
+              "material": true,
+              "maxTotalBytes": false
+            },
+            "required": [
+              "material"
+            ]
+          },
+          {
+            "properties": {
+              "fileSets": true,
+              "material": false,
+              "maxTotalBytes": true
+            },
+            "required": [
+              "fileSets",
+              "maxTotalBytes"
+            ]
+          }
+        ],
         "properties": {
           "checker": {
             "type": "string"
@@ -4006,8 +4029,20 @@
           "extractor": {
             "type": "string"
           },
+          "fileSets": {
+            "items": {
+              "$ref": "#/definitions/SourceFileSetDeclaration"
+            },
+            "type": "array"
+          },
           "material": {
             "$ref": "#/definitions/TranslationMaterialDeclaration"
+          },
+          "maxTotalBytes": {
+            "format": "uint32",
+            "maximum": 4294967295,
+            "minimum": 0,
+            "type": "integer"
           },
           "profile": {
             "$ref": "#/definitions/ContractRef"
@@ -4022,7 +4057,6 @@
         "required": [
           "displayName",
           "profile",
-          "material",
           "extractor",
           "checker",
           "semanticRules"

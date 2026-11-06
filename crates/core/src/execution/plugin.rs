@@ -221,12 +221,22 @@ impl FixedInput {
             // small digest reference rather than a duplicate parsed proposal.
             // The SDK receiver bounds the entire encoded response, including
             // quoting; Core metadata has its own reserved space.
-            envelope
-                .limits
-                .max_result_bytes
-                .saturating_sub(64 * 1024)
-                .min(declaration.limits.max_output_bytes)
-                .min(sdk::MAX_EXCHANGE_BYTES as u32)
+            if declaration.output_schema == sdk::paired_translation_exchange_contract() {
+                declaration
+                    .limits
+                    .max_output_bytes
+                    .min(sdk::MAX_PAIRED_TRANSLATION_RESULT_BYTES as u32)
+                    .saturating_mul(2)
+                    .saturating_add(32 * 1024)
+                    .min(envelope.limits.max_result_bytes.saturating_sub(64 * 1024))
+            } else {
+                envelope
+                    .limits
+                    .max_result_bytes
+                    .saturating_sub(64 * 1024)
+                    .min(declaration.limits.max_output_bytes)
+                    .min(sdk::MAX_EXCHANGE_BYTES as u32)
+            }
         } else if bounded_json_contract {
             let raw = envelope.limits.max_result_bytes.saturating_sub(64 * 1024) / 3;
             let payload_limit = if declaration.output_schema == sdk::artifact_set_contract() {

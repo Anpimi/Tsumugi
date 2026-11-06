@@ -326,7 +326,7 @@ export default function ImportPreparation({ project, owner, tasks, commands, gat
     {environmentChanged ? <Banner tone="warning">{t("translationPlugin.environmentChanged")}</Banner> : null}
     {!preparationReady() && !readFailure && !inventory.isFetching && !source.isFetching && !environment.isFetching && !!translation && runtimes.length > 0 ? <Banner tone="info">{t("workbenchV2.importPreparationNotReady")}</Banner> : null}
     {!state.preflight && !state.extractionAttempt ? <>
-      {environment.data ? <p className={styles.secondary}>{t("translationPlugin.material", { directory: environment.data.declaration.material.logicalDirectory, extension: environment.data.declaration.material.extension, bytes: String(environment.data.declaration.material.maxBytes) })}</p> : null}
+      {environment.data?.declaration.material ? <p className={styles.secondary}>{t("translationPlugin.material", { directory: environment.data.declaration.material.logicalDirectory, extension: environment.data.declaration.material.extension, bytes: String(environment.data.declaration.material.maxBytes) })}</p> : null}
       <div className={styles.actions}><Button variant="secondary" disabled={!setupAvailability(setup).enabled} onClick={() => commands.dispatch("translation.choose-import-folder", commandScope, setup)}>{t("translation.chooseFolder")}</Button></div>
       {state.folder ? <>
         <p><TokenizedText text={t("translation.folder", { name: state.folder.folderName })} /></p>

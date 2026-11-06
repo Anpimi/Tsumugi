@@ -199,6 +199,7 @@ fn complete_translation(checks_attempt: Option<bool>) {
     let native = source.rows[0].occurrence.native_identity.as_ref().unwrap();
     let raw = "\u{feff}{\r\n // original 中文 👩🏽‍💻\r\n \"mIxA\": \"你好 é\",\r\n \"Different\": \"你好 é\",\r\n \"Empty\": \"\",\r\n \"Unmatched\": \"未匹配\",\r\n}\r\n";
     let material = sdk::TranslationExtractionInput {
+        paired_source: None,
         profile: profile.clone(),
         import_id: ExecutionId::new().to_string(),
         source_set_id: source_bundle.set_id.to_string(),

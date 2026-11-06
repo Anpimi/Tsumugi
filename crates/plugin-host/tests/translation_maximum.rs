@@ -208,6 +208,7 @@ fn maximum_file_workflow(unicode: bool, key_length: usize) {
         .expect("complete fixture fits raw limit");
     raw.push_str(&" ".repeat(padding));
     let material = sdk::TranslationExtractionInput {
+        paired_source: None,
         profile: profile.clone(),
         import_id: ExecutionId::new().to_string(),
         source_set_id: source_bundle.set_id.to_string(),

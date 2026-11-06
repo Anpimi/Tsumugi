@@ -60,8 +60,10 @@ export function translationSelectionFixture(snapshotId: string, targetLocale = "
   return { ...selectedTranslationFolder, source: { ...selectedTranslationFolder.source, sourceSnapshotId: snapshotId }, targetLocale };
 }
 export function translationCaptureFixture(attemptId: string, snapshotId: string, targetLocale = "zh-CN", fileName = "zh.json") {
+  const material = translationCapture.translation.declaration.material;
+  if (!material) throw new Error("Expected the single-file translation fixture");
   return { ...translationCapture, attemptId, source: { ...translationCapture.source, sourceSnapshotId: snapshotId }, targetLocale,
-    file: { ...translationCapture.file, logicalPath: `${translationCapture.translation.declaration.material.logicalDirectory}/${fileName}` } };
+    file: { ...translationCapture.file, logicalPath: `${material.logicalDirectory}/${fileName}` } };
 }
 export function translationCheckerFixture(attemptId: string, producerAttemptId: string, resultId: string, snapshotId: string) {
   return { ...translationCheck, attemptId, translationAttemptId: producerAttemptId, translationResultId: resultId, source: { ...translationCheck.source, sourceSnapshotId: snapshotId } };

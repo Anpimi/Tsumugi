@@ -5,6 +5,12 @@ use super::*;
 pub const TRANSLATION_EXTRACTION_OPERATION: &str = "translation-extract";
 pub const MAX_TRANSLATION_INPUT_BYTES: usize = 1024 * 1024;
 pub const MAX_TRANSLATION_RESULT_BYTES: usize = 2 * 1024 * 1024;
+// Preserve legacy budgets. Only the explicitly paired SDK family can carry
+// both source captures and the larger, independently bounded proposal frame.
+pub const MAX_PAIRED_TRANSLATION_FIXED_INPUT_BYTES: usize =
+    sdk::MAX_PAIRED_TRANSLATION_INPUT_BYTES + 128 * 1024;
+pub const MAX_PAIRED_TRANSLATION_FIXED_RESULT_BYTES: usize =
+    sdk::MAX_PAIRED_TRANSLATION_RESULT_BYTES * 2 + 128 * 1024;
 
 fn invalid(stage: &str) -> ExecutionError {
     ExecutionError::new(ErrorCode::InvalidInput, stage)
@@ -58,6 +64,7 @@ impl PluginTranslationSettings {
         self.binding(&producer)?
             .validate_input(&material)
             .map_err(contract_error)?;
+        let paired = material.paired_source.is_some();
         let item = InputItem::new(
             Scope {
                 kind: "translation-file".into(),
@@ -75,7 +82,14 @@ impl PluginTranslationSettings {
             vec![item],
         )?;
         envelope.settings = value(self)?;
-        envelope.limits.max_result_bytes = MAX_TRANSLATION_RESULT_BYTES as u32;
+        envelope.limits.max_result_bytes = if paired {
+            MAX_PAIRED_TRANSLATION_FIXED_RESULT_BYTES
+        } else {
+            MAX_TRANSLATION_RESULT_BYTES
+        } as u32;
+        if paired {
+            envelope.limits.max_attempt_result_bytes = envelope.limits.max_result_bytes;
+        }
         envelope.limits.timeout_ms = envelope
             .limits
             .timeout_ms
@@ -93,7 +107,15 @@ pub fn plugin_translation_input(
     input: &FixedInput,
 ) -> Result<(sdk::TranslationExtractionInput, PluginTranslationSettings), ExecutionError> {
     let envelope = input.envelope();
-    if input.bytes().len() > MAX_TRANSLATION_INPUT_BYTES {
+    let settings: PluginTranslationSettings = from_value(&envelope.settings)?;
+    let paired = settings.declaration.is_paired();
+    if input.bytes().len()
+        > if paired {
+            MAX_PAIRED_TRANSLATION_FIXED_INPUT_BYTES
+        } else {
+            MAX_TRANSLATION_INPUT_BYTES
+        }
+    {
         return Err(ExecutionError::new(
             ErrorCode::LimitExceeded,
             "translation-input-budget",
@@ -110,12 +132,16 @@ pub fn plugin_translation_input(
         || envelope.units.len() != 1
         || envelope.units[0].item_ids != vec![envelope.items[0].item_id]
         || !envelope.items[0].dependencies.is_empty()
-        || envelope.limits.max_result_bytes as usize > MAX_TRANSLATION_RESULT_BYTES
+        || envelope.limits.max_result_bytes as usize
+            > if paired {
+                MAX_PAIRED_TRANSLATION_FIXED_RESULT_BYTES
+            } else {
+                MAX_TRANSLATION_RESULT_BYTES
+            }
     {
         return Err(invalid("translation-input"));
     }
     let material: sdk::TranslationExtractionInput = from_value(&envelope.items[0].payload)?;
-    let settings: PluginTranslationSettings = from_value(&envelope.settings)?;
     settings
         .binding(producer)?
         .validate_input(&material)
@@ -155,12 +181,21 @@ pub fn validate_plugin_translation_output(
     };
     if result.envelope().item_id != input.envelope().items[0].item_id
         || result.envelope().outcome != ExecutionState::Succeeded
-        || Some(&output.schema) != input.envelope().plugin.as_ref().map(|binding| &binding.capability.declaration.output_schema)
+        || Some(&output.schema)
+            != input
+                .envelope()
+                .plugin
+                .as_ref()
+                .map(|binding| &binding.capability.declaration.output_schema)
     {
         return Err(invalid("translation-result"));
     }
-    let proposal =
-        sdk::parse_translation_exchange(output.utf8.as_bytes()).map_err(contract_error)?;
+    let proposal = if material.paired_source.is_some() {
+        sdk::parse_paired_translation_exchange(output.utf8.as_bytes())
+    } else {
+        sdk::parse_translation_exchange(output.utf8.as_bytes())
+    }
+    .map_err(contract_error)?;
     sdk::validate_translation_extraction(&material, &proposal).map_err(contract_error)?;
     Ok(proposal)
 }

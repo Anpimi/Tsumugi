@@ -235,6 +235,27 @@ export type PluginTextReviewAvailability =
       kind: "unavailable";
     };
 export type ToolQueryPathPart = string | number;
+export type TranslationImportDeclaration = {
+  checker: string;
+  displayName: string;
+  extractor: string;
+  fileSets?: SourceFileSetDeclaration[];
+  material?: TranslationMaterialDeclaration;
+  maxTotalBytes?: number;
+  profile: ContractRef;
+  semanticRules: ContractRef[];
+} & TranslationImportDeclaration1;
+export type TranslationImportDeclaration1 =
+  | {
+      fileSets?: never;
+      material: unknown;
+      maxTotalBytes?: never;
+    }
+  | {
+      fileSets: unknown;
+      material?: never;
+      maxTotalBytes: unknown;
+    };
 
 export interface Responses {
   binding: CapabilityBinding;
@@ -1361,14 +1382,6 @@ export interface PluginTranslationView {
   resourceId: string;
   runtimeOrigin: PluginOriginView;
   settingsRevision: UnsignedDecimal;
-}
-export interface TranslationImportDeclaration {
-  checker: string;
-  displayName: string;
-  extractor: string;
-  material: TranslationMaterialDeclaration;
-  profile: ContractRef;
-  semanticRules: ContractRef[];
 }
 /**
  * Metadata describing one selected file relative to an explicitly granted

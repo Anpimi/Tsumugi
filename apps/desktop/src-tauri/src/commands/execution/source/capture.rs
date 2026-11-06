@@ -395,10 +395,9 @@ impl Selection {
         binding
             .validate()
             .map_err(|_| error(ErrorCode::InvalidInput, "translation-import-binding"))?;
-        self.translation_file_listing(
-            &binding.declaration.material.logical_directory,
-            &binding.declaration.material.extension,
-        )
+        let material = binding.declaration.material.as_ref()
+            .ok_or_else(|| error(ErrorCode::InvalidInput, "translation-file-sets-required"))?;
+        self.translation_file_listing(&material.logical_directory, &material.extension)
     }
     fn translation_file_listing(
         &self,
@@ -443,7 +442,8 @@ impl Selection {
         binding
             .validate()
             .map_err(|_| error(ErrorCode::InvalidInput, "translation-import-binding"))?;
-        let material = &binding.declaration.material;
+        let material = binding.declaration.material.as_ref()
+            .ok_or_else(|| error(ErrorCode::InvalidInput, "translation-file-sets-required"))?;
         tsumugi_plugin_sdk::validate_portable_package_path(file_name)
             .map_err(|_| error(ErrorCode::Unauthorized, "unauthorized-selection"))?;
         if file_name.contains('/')
@@ -664,8 +664,8 @@ mod translation_import_tests {
         let mut declaration = tsumugi_plugin_sdk::parse_translation_import_declaration(include_bytes!(
             "../../../../../../../crates/plugin-sdk/tests/fixtures/translation-import.declaration.json"
         )).unwrap();
-        declaration.material.logical_directory = "localized/records".into();
-        declaration.material.extension = "txt".into();
+        declaration.material.as_mut().unwrap().logical_directory = "localized/records".into();
+        declaration.material.as_mut().unwrap().extension = "txt".into();
         declaration.bind(&manifest, &"a".repeat(64)).unwrap()
     }
     fn fixture() -> tempfile::TempDir {
@@ -700,7 +700,7 @@ mod translation_import_tests {
             .capture_declared_translation(&binding, "not-a-locale.txt", &Cancellation::default())
             .unwrap();
         assert_eq!(captured.logical_path, "localized/records/not-a-locale.txt");
-        assert_eq!(captured.role, binding.declaration.material.role);
+        assert_eq!(captured.role, binding.declaration.material.as_ref().unwrap().role);
         assert_eq!(captured.utf8.as_bytes(), raw.as_bytes());
         assert_eq!(captured.sha256, tsumugi_plugin_sdk::payload_digest(raw));
         assert_eq!(
@@ -714,7 +714,7 @@ mod translation_import_tests {
         let root = fixture();
         let binding = binding();
         let path = root.path().join("localized/records/limit.txt");
-        let raw = "x".repeat(binding.declaration.material.max_bytes as usize);
+        let raw = "x".repeat(binding.declaration.material.as_ref().unwrap().max_bytes as usize);
         fs::write(&path, &raw).unwrap();
         let selected = Selection::authorize(root.path().into()).unwrap();
         assert_eq!(

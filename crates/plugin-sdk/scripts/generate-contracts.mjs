@@ -40,6 +40,12 @@ for (const kind of ['translation-extraction-input', 'translation-exchange', 'tra
   translationSchemas.set(kind, JSON.parse(await readFile(url, 'utf8')));
 }
 const reviewSchemas = new Map();
+const pairedTranslationSchemas = new Map();
+for (const kind of ['extraction-input', 'exchange', 'extraction-check-input', 'import-declaration', 'types']) {
+  const url = new URL(`schemas/paired-translation-${kind}.schema.json`, root);
+  cargo(`check-paired-translation-${kind}-schema`, fileURLToPath(url));
+  pairedTranslationSchemas.set(kind, JSON.parse(await readFile(url, 'utf8')));
+}
 for (const kind of ['review-check-input', 'review-declaration', 'review-check-error', 'review-types']) {
   const url = new URL(`schemas/${kind}.schema.json`, root);
   cargo(`check-${kind}-schema`, fileURLToPath(url));
@@ -186,6 +192,14 @@ if (/^\s*import\s/m.test(sourceCaptureValidator) || /\brequire\s*\(/.test(source
 }
 outputs.push([new URL('javascript/validate-source-capture-summary.mjs', root), banner + sourceValidatorAttribution + sourceCaptureValidator]);
 outputs.push([new URL('javascript/source-capture-profile.mjs', root), `${banner}const profile = ${JSON.stringify(sourceCaptureProfile, null, 2)};\nObject.freeze(profile.contract);\nexport const SOURCE_CAPTURE_SUMMARY_PROFILE = Object.freeze(profile);\n`]);
+// Append the new family after existing validators to preserve their generated
+// function identities and avoid changing the frozen single-file outputs.
+outputs.push([new URL('javascript/paired-translation.d.ts', root), await compile(pairedTranslationSchemas.get('types'), 'PairedTranslationTypes', {
+  bannerComment: banner, additionalProperties: false, unreachableDefinitions: true,
+})]);
+for (const kind of ['extraction-input', 'exchange', 'extraction-check-input']) {
+  outputs.push([new URL(`javascript/validate-paired-translation-${kind}.mjs`, root), banner + sourceValidatorAttribution + standaloneValidator(ajv, pairedTranslationSchemas.get(kind))]);
+}
 for (const [url, source] of outputs) {
   if (process.argv.includes('--check')) {
     if (await readFile(url, 'utf8') !== source) throw new Error(`Stale generated contract: ${url.pathname.split('/').at(-1)}`);

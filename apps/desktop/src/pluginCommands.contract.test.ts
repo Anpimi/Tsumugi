@@ -201,6 +201,18 @@ it("reads a declared translation pair and preserves metadata without accepting f
 });
 
 
+it("keeps single-file and paired translation resource shapes mutually exclusive", () => {
+  const { material, ...common } = translation.view.declaration;
+  const declaration = { ...common, fileSets: [{ id: "translated", displayName: "Translated files", role: "translation", encoding: "binary",
+    extensions: ["esp"], minFiles: 1, maxFiles: 1, maxBytes: 2097152 }], maxTotalBytes: 2097152 };
+  const paired = { ...translation.view, declaration };
+  expect(validateResponseTranslation(paired)).toBe(true);
+  for (const invalid of [{ ...declaration, material }, { ...declaration, material: null },
+    { ...declaration, fileSets: null }, { ...declaration, maxTotalBytes: null }, { ...common, fileSets: declaration.fileSets }]) {
+    expect(validateResponseTranslation({ ...paired, declaration: invalid })).toBe(false);
+  }
+});
+
 it("reads strict Native decisions without treating them as installed Node environments", async () => {
   const environment = { protocolVersion: 1, platform: runtime.environment.platform,
     sdkVersion: "0.1.0-alpha.1", processProtocol: 3, profile: "native-application-host-v1",

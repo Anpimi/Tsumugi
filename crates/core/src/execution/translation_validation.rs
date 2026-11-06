@@ -161,12 +161,19 @@ pub fn translation_check_payload(
 ) -> Result<sdk::TranslationExtractionCheckInput, ExecutionError> {
     if input.envelope().operation != TRANSLATION_CHECK_OPERATION
         || input.envelope().items.len() != 1
-        || input.bytes().len() > crate::content::MAX_TRANSLATION_INPUT_BYTES
     {
         return Err(invalid());
     }
     let captured: TranslationCheckPayload =
         serde_json::from_value(input.envelope().items[0].payload.clone()).map_err(|_| invalid())?;
+    let limit = if captured.input.paired_source.is_some() {
+        sdk::MAX_INVOCATION_PAYLOAD_BYTES + 128 * 1024
+    } else {
+        crate::content::MAX_TRANSLATION_INPUT_BYTES
+    };
+    if input.bytes().len() > limit {
+        return Err(invalid());
+    }
     captured.expand()
 }
 
@@ -234,6 +241,7 @@ impl TranslationValidationCapture {
             requirements: domain,
         };
         payload.validate().map_err(|_| invalid())?;
+        let paired = payload.input.paired_source.is_some();
         let basis = TranslationValidationBasis {
             producer_attempt_id: producer.input.envelope().attempt_id,
             producer_result_id: producer.result.envelope().result_id,
@@ -272,7 +280,12 @@ impl TranslationValidationCapture {
             .min(binding.capability.declaration.limits.timeout_ms);
         envelope.plugin = Some(binding);
         let check_input = FixedInput::capture(envelope)?;
-        if check_input.bytes().len() > crate::content::MAX_TRANSLATION_INPUT_BYTES {
+        let limit = if paired {
+            sdk::MAX_INVOCATION_PAYLOAD_BYTES + 128 * 1024
+        } else {
+            crate::content::MAX_TRANSLATION_INPUT_BYTES
+        };
+        if check_input.bytes().len() > limit {
             return Err(ExecutionError::new(
                 ErrorCode::LimitExceeded,
                 "translation-check-input-budget",
@@ -321,5 +334,84 @@ impl TranslationValidationCapture {
             check_result,
             proof,
         })
+    }
+}
+
+#[cfg(test)]
+mod paired_tests {
+    use super::*;
+
+    #[test]
+    fn paired_check_capture_keeps_original_material_once_and_roundtrips_exactly() {
+        let mut input = sdk::parse_translation_extraction_input(include_bytes!(
+            "../../../plugin-sdk/tests/fixtures/translation-extraction.input.json",
+        ))
+        .unwrap();
+        let proposal = sdk::parse_translation_exchange(include_bytes!(
+            "../../../plugin-sdk/tests/fixtures/translation.exchange.json",
+        ))
+        .unwrap();
+        input.paired_source = Some(sdk::TranslationPairSource {
+            source_language: "en-US".into(),
+            artifacts: vec![
+                sdk::CapturedArtifact::from_bytes(
+                    "original".into(),
+                    "Original.esp".into(),
+                    "source".into(),
+                    &vec![255; 1024 * 1024],
+                )
+                .unwrap(),
+            ],
+        });
+        let payload = sdk::TranslationExtractionCheckInput {
+            requirements: vec![sdk::CheckRequirement {
+                key: sdk::CheckKey {
+                    rule: sdk::ContractRef {
+                        id: "example.translation-check".into(),
+                        schema_version: 1,
+                        behavior_version: 1,
+                    },
+                    implementation: sdk::CheckImplementation::Plugin {
+                        provider: sdk::ProviderSelectionBinding {
+                            plugin: sdk::PluginIdentity {
+                                publisher: "example".into(),
+                                id: "plain-text".into(),
+                                version: "0.1.0".into(),
+                            },
+                            component_id: "worker".into(),
+                            contribution_id: "check".into(),
+                            package_digest: "a".repeat(64),
+                        },
+                    },
+                },
+                input_digest: "b".repeat(64),
+                scope_digest: "c".repeat(64),
+                targets: vec![input.import_id.clone()],
+                mandatory: true,
+                waivable: false,
+                not_applicable: None,
+            }],
+            input,
+            proposal,
+        };
+        payload.validate().unwrap();
+        let original = payload.input.paired_source.clone();
+        let compact = TranslationCheckPayload::capture(payload.clone()).unwrap();
+        let bytes = serde_json::to_vec(&compact).unwrap();
+        assert!(bytes.len() > crate::content::MAX_TRANSLATION_INPUT_BYTES);
+        assert!(bytes.len() < sdk::MAX_INVOCATION_PAYLOAD_BYTES);
+        let value: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+        assert!(value.get("proposal").is_none());
+        assert_eq!(
+            value["input"]["pairedSource"]["artifacts"]
+                .as_array()
+                .unwrap()
+                .len(),
+            1
+        );
+        let restored: TranslationCheckPayload = serde_json::from_slice(&bytes).unwrap();
+        let restored = restored.expand().unwrap();
+        assert_eq!(restored, payload);
+        assert_eq!(restored.input.paired_source, original);
     }
 }

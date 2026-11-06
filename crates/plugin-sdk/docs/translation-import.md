@@ -46,6 +46,18 @@ A plugin package declares its translation import capability in a non-executable 
 - Binds the domain `profile`, `extractor` contribution ID, a separate read-only `checker` contribution ID, and a non-empty list of mandatory `semanticRules` within the same package.
 - `TranslationImportBinding::validate_input` checks that a `TranslationExtractionInput` contains exactly one file matching the declared directory, extension, role, profile, and byte limit (format-specific file rules, such as rejecting `default.json` as a translation file in SMAPI, are enforced by the domain checker).
 
+## Explicit Paired Native Materials
+
+SDK `0.1.0-alpha.8` adds an opt-in family: extraction input, exchange and checker input `3/1`, selected by a translation resource `2/1`. The original helpers still select input/exchange/check `2/1` and resource `1/1`; supported schema-1 text bindings are unchanged. Use the `paired_translation_*_contract`, `parse_paired_translation_*` and generated `paired-translation` modules explicitly. Unknown or mixed families are rejected.
+
+The paired resource replaces `material` with required, non-null `fileSets` and `maxTotalBytes`. It reuses source-import file-set names, roles, encodings, suffixes, counts, safe relative paths and actual-size checks. Roles must uniquely identify groups. The binding reconstructs the selected group order from captured roles, checks the entire ordered capture and rejects omitted required files, extra roles, encoding mismatches, path aliases and aggregate overflow. It does not scan directories or grant access.
+
+The input requires `pairedSource` with the original `sourceLanguage` and exact original `artifacts`. The application obtains them from its authenticated adopted-source capture, keeps original identities, representation, order, paths and bytes, and rechecks them at registration against the current snapshot. A caller-supplied rehashed replacement is insufficient. The proposal carries only the target artifacts; the independent checker receives the complete paired input, the proposal and mandatory requirements. The domain must verify module/version/field identity, declared language, non-text compatibility and complete decoding before candidates can be used. Structural association alone proves none of those domain conclusions.
+
+Each side retains the existing 2 MiB decoded-material cap. Paired encoded input is bounded at 6 MiB, proposal at 8 MiB, and compound checker input at 16 MiB; framing and application ledger budgets are separate. A larger encoded allowance never permits oversized raw captures. Schema-3 bindings may request an explicitly declared safe-relative format `Process`, as well as `CapturedInput`; single-file bindings remain captured-input only. Network, project service and staged-output permissions are rejected. Actual process execution still needs the application's independent approval and grant.
+
+Schemas, Rust parsing and package metadata are API foundations. They do not provide an application file-selection journey, a native format reader, project candidate adoption or game validation by themselves. Historical single-file captures are not backfilled with original material. An earlier SDK cannot interpret the new family; use matching consumers and keep existing package/runtime pins unchanged until deliberately updated.
+
 ## CLI and Code Generation
 
 From a built `tsumugi-plugin-contract` binary:
@@ -59,3 +71,14 @@ tsumugi-plugin-contract validate-translation-import-declaration declaration.json
 ```
 
 Schema generation commands (`schema-translation-extraction-input`, `schema-translation-exchange`, `schema-translation-extraction-check-input`, `schema-translation-import-declaration`, `schema-translation-types`, and their `check-<kind>-schema` counterparts) feed `generate-contracts.mjs` to emit TypeScript definitions and standalone JavaScript structural validators.
+
+For the paired family, prefix the corresponding commands with `paired-translation`, for example:
+
+```sh
+tsumugi-plugin-contract validate-paired-translation-extraction-input input.json
+tsumugi-plugin-contract match-paired-translation-extraction input.json proposal.json
+tsumugi-plugin-contract validate-paired-translation-extraction-check-input check.json
+tsumugi-plugin-contract validate-paired-translation-import-declaration declaration.json
+```
+
+The `schema-paired-translation-*` and `check-paired-translation-*-schema` commands cover the input, exchange, checker, resource and aggregate type schemas. Generated structural validators do not replace bounded Rust parsing or the independent domain checker.

@@ -154,6 +154,7 @@ fn maximum_complete_translation_transport_preserves_sdk_bytes_and_fixed_budgets(
         raw.push_str(&" ".repeat(128 * 1024 - raw.len()));
         assert_eq!(raw.len(), 128 * 1024);
         let material = sdk::TranslationExtractionInput {
+            paired_source: None,
             profile: profile.clone(),
             import_id: ExecutionId::new().to_string(),
             source_set_id: source_bundle.set_id.to_string(),

@@ -21,7 +21,24 @@ fn print<T: serde::Serialize>(value: &T) -> Result<(), Box<dyn std::error::Error
 }
 fn run() -> Result<(), Box<dyn std::error::Error>> {
     let args: Vec<_> = std::env::args_os().skip(1).collect();
-    let data_schemas: [(&str, fn() -> schemars::Schema); 28] = [
+    let data_schemas: [(&str, fn() -> schemars::Schema); 33] = [
+        (
+            "paired-translation-extraction-input",
+            paired_translation_extraction_input_schema,
+        ),
+        (
+            "paired-translation-exchange",
+            paired_translation_exchange_schema,
+        ),
+        (
+            "paired-translation-extraction-check-input",
+            paired_translation_extraction_check_input_schema,
+        ),
+        (
+            "paired-translation-import-declaration",
+            paired_translation_import_declaration_schema,
+        ),
+        ("paired-translation-types", paired_translation_types_schema),
         ("source-capture-summary", source_capture_summary_schema),
         ("source-context-facts", source_context_facts_schema),
         ("generation-service-input", generation_service_input_schema),
@@ -100,6 +117,26 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
             )?)?);
         }
         let bytes = |limit| read(&args[1], limit);
+        if args[0] == "validate-paired-translation-extraction-input" {
+            return print(&parse_paired_translation_extraction_input(&bytes(
+                MAX_PAIRED_TRANSLATION_INPUT_BYTES,
+            )?)?);
+        }
+        if args[0] == "validate-paired-translation-exchange" {
+            return print(&parse_paired_translation_exchange(&bytes(
+                MAX_PAIRED_TRANSLATION_RESULT_BYTES,
+            )?)?);
+        }
+        if args[0] == "validate-paired-translation-extraction-check-input" {
+            return print(&parse_paired_translation_extraction_check_input(&bytes(
+                MAX_INVOCATION_PAYLOAD_BYTES,
+            )?)?);
+        }
+        if args[0] == "validate-paired-translation-import-declaration" {
+            return print(&parse_paired_translation_import_declaration(&bytes(
+                MAX_TRANSLATION_IMPORT_DECLARATION_BYTES,
+            )?)?);
+        }
         if args[0] == "validate-generation-component-input" {
             return print(&parse_generation_component_input(&bytes(
                 MAX_GENERATION_COMPONENT_INPUT_BYTES,
@@ -302,6 +339,18 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
     if args.len() == 3 && args[0] == "match-translation-extraction" {
         let input = parse_translation_extraction_input(&read(&args[1], MAX_EXCHANGE_BYTES)?)?;
         let proposal = parse_translation_exchange(&read(&args[2], MAX_EXCHANGE_BYTES)?)?;
+        validate_translation_extraction(&input, &proposal)?;
+        return print(&proposal);
+    }
+    if args.len() == 3 && args[0] == "match-paired-translation-extraction" {
+        let input = parse_paired_translation_extraction_input(&read(
+            &args[1],
+            MAX_PAIRED_TRANSLATION_INPUT_BYTES,
+        )?)?;
+        let proposal = parse_paired_translation_exchange(&read(
+            &args[2],
+            MAX_PAIRED_TRANSLATION_RESULT_BYTES,
+        )?)?;
         validate_translation_extraction(&input, &proposal)?;
         return print(&proposal);
     }

@@ -12,6 +12,11 @@ use crate::{
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet};
 
+mod paired;
+pub use paired::*;
+#[cfg(feature = "schema")]
+mod schema;
+
 pub const MAX_TRANSLATION_IMPORT_DECLARATION_BYTES: usize = 32 * 1024;
 fn contract(id: &str) -> ContractRef {
     ContractRef {
@@ -79,9 +84,17 @@ pub struct TranslationExtractionInput {
     pub language_evidence: TranslationLanguageEvidence,
     pub native_scope: TranslationNativeScope,
     pub artifacts: Vec<CapturedArtifact>,
+    /// Present only in the explicit paired schema-3 family.
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "paired::explicit_paired_source"
+    )]
+    #[cfg_attr(feature = "schema", schemars(skip))]
+    pub paired_source: Option<TranslationPairSource>,
 }
 impl TranslationExtractionInput {
-    pub fn validate(&self) -> Result<(), ContractError> {
+    fn validate_material(&self) -> Result<(), ContractError> {
         validate_source_material(
             &self.profile,
             &self.source_set_id,
@@ -91,7 +104,22 @@ impl TranslationExtractionInput {
         opaque_id(&self.import_id, "translation.importId")?;
         opaque_id(&self.source_snapshot_id, "translation.sourceSnapshotId")?;
         validate_native_scope(&self.native_scope.namespace, &self.native_scope.policy)?;
-        encoded_limit(self, MAX_EXCHANGE_BYTES, "translationExtractionInput")
+        Ok(())
+    }
+    pub fn validate(&self) -> Result<(), ContractError> {
+        self.validate_material()?;
+        if let Some(source) = &self.paired_source {
+            source.validate(&self.profile, &self.source_set_id)?;
+        }
+        encoded_limit(
+            self,
+            if self.paired_source.is_some() {
+                MAX_PAIRED_TRANSLATION_INPUT_BYTES
+            } else {
+                MAX_EXCHANGE_BYTES
+            },
+            "translationExtractionInput",
+        )
     }
 }
 
@@ -125,6 +153,9 @@ pub struct TranslationExchange {
 }
 impl TranslationExchange {
     pub fn validate(&self) -> Result<(), ContractError> {
+        self.validate_with_limit(MAX_EXCHANGE_BYTES)
+    }
+    fn validate_with_limit(&self, limit: usize) -> Result<(), ContractError> {
         let input = TranslationExtractionInput {
             profile: self.profile.clone(),
             import_id: self.import_id.clone(),
@@ -134,8 +165,9 @@ impl TranslationExchange {
             language_evidence: self.language_evidence,
             native_scope: self.native_scope.clone(),
             artifacts: self.artifacts.clone(),
+            paired_source: None,
         };
-        input.validate()?;
+        input.validate_material()?;
         // Registered/canonical languages and filename interpretation belong to
         // the existing application locale and selected domain owners.
         if self.declared_language.is_empty()
@@ -183,7 +215,7 @@ impl TranslationExchange {
                 return Err(mismatch("translation.nativeScope"));
             }
         }
-        encoded_limit(self, MAX_EXCHANGE_BYTES, "translationExchange")
+        encoded_limit(self, limit, "translationExchange")
     }
 }
 
@@ -194,7 +226,11 @@ pub fn validate_translation_extraction(
     proposal: &TranslationExchange,
 ) -> Result<(), ContractError> {
     input.validate()?;
-    proposal.validate()?;
+    proposal.validate_with_limit(if input.paired_source.is_some() {
+        MAX_PAIRED_TRANSLATION_RESULT_BYTES
+    } else {
+        MAX_EXCHANGE_BYTES
+    })?;
     if input.profile != proposal.profile
         || input.import_id != proposal.import_id
         || input.source_set_id != proposal.source_set_id
@@ -266,10 +302,31 @@ pub struct TranslationMaterialDeclaration {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
+#[cfg_attr(feature = "schema", schemars(transform = schema::declaration_variants))]
 pub struct TranslationImportDeclaration {
     pub display_name: String,
     pub profile: ContractRef,
-    pub material: TranslationMaterialDeclaration,
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "paired::explicit_single_material"
+    )]
+    #[cfg_attr(feature = "schema", schemars(with = "TranslationMaterialDeclaration"))]
+    pub material: Option<TranslationMaterialDeclaration>,
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "crate::source_import::explicit_file_sets"
+    )]
+    #[cfg_attr(feature = "schema", schemars(with = "Vec<SourceFileSetDeclaration>"))]
+    pub file_sets: Option<Vec<SourceFileSetDeclaration>>,
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "crate::source_import::explicit_total_bytes"
+    )]
+    #[cfg_attr(feature = "schema", schemars(with = "u32"))]
+    pub max_total_bytes: Option<u32>,
     pub extractor: String,
     pub checker: String,
     pub semantic_rules: Vec<ContractRef>,
@@ -291,23 +348,39 @@ impl TranslationImportDeclaration {
         reference(&self.profile, "translationImport.profile")?;
         name(&self.extractor, "translationImport.extractor")?;
         name(&self.checker, "translationImport.checker")?;
-        validate_portable_package_path(&self.material.logical_directory)?;
-        name(&self.material.role, "translationImport.material.role")?;
         if self.extractor == self.checker
-            || self.material.logical_directory.split('/').count() > 15
-            || self.material.extension.is_empty()
-            || self.material.extension.len() > 16
-            || !self
-                .material
-                .extension
-                .bytes()
-                .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit())
-            || self.material.max_bytes == 0
-            || self.material.max_bytes as usize > MAX_EXCHANGE_BYTES
             || self.semantic_rules.is_empty()
             || self.semantic_rules.len() > 32
         {
             return Err(invalid("translationImport.material"));
+        }
+        match (&self.material, &self.file_sets, self.max_total_bytes) {
+            (Some(material), None, None) => {
+                validate_portable_package_path(&material.logical_directory)?;
+                name(&material.role, "translationImport.material.role")?;
+                if material.logical_directory.split('/').count() > 15
+                    || material.extension.is_empty()
+                    || material.extension.len() > 16
+                    || !material
+                        .extension
+                        .bytes()
+                        .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit())
+                    || material.max_bytes == 0
+                    || material.max_bytes as usize > MAX_EXCHANGE_BYTES
+                {
+                    return Err(invalid("translationImport.material"));
+                }
+            }
+            (None, Some(sets), Some(_)) => {
+                self.paired_capture()?.validate()?;
+                // A captured role identifies exactly one selected group. This
+                // lets the binding reconstruct complete coverage from the bytes.
+                unique(
+                    sets.iter().map(|set| &set.role),
+                    "translationImport.fileSets.role",
+                )?;
+            }
+            _ => return Err(invalid("translationImport.material")),
         }
         unique(
             self.semantic_rules.iter(),
@@ -349,11 +422,21 @@ impl TranslationImportBinding {
         {
             return Err(invalid("translationImport.provider"));
         }
-        let version = crate::artifact::artifact_contract_version(
-            &self.extractor.declaration.input_schema,
-            translation_extraction_input_contract(),
-        )
-        .ok_or_else(|| invalid("translationImport.capability"))?;
+        let paired = self.declaration.is_paired();
+        let version = if paired {
+            if self.extractor.declaration.input_schema
+                != paired_translation_extraction_input_contract()
+            {
+                return Err(invalid("translationImport.capability"));
+            }
+            3
+        } else {
+            crate::artifact::artifact_contract_version(
+                &self.extractor.declaration.input_schema,
+                translation_extraction_input_contract(),
+            )
+            .ok_or_else(|| invalid("translationImport.capability"))?
+        };
         for (binding, mut input, mut output) in [
             (
                 &self.extractor,
@@ -369,6 +452,11 @@ impl TranslationImportBinding {
             if version == 1 {
                 input.schema_version = 1;
                 output.schema_version = 1;
+            } else if paired {
+                input.schema_version = 3;
+                if binding == &self.extractor {
+                    output.schema_version = 3;
+                }
             }
             let d = &binding.declaration;
             if d.input_schema != input
@@ -376,9 +464,7 @@ impl TranslationImportBinding {
                 || d.error_schema != source_extraction_error_contract()
                 || !d.profiles.contains(&self.declaration.profile)
                 || !matches!(d.effect, EffectKind::ReadOnly | EffectKind::Proposal)
-                || d.permissions
-                    .iter()
-                    .any(|p| *p != PermissionRequest::CapturedInput)
+                || !crate::validation::domain_permissions_are_allowed(&d.permissions, paired)
             {
                 return Err(invalid("translationImport.capability"));
             }
@@ -391,6 +477,12 @@ impl TranslationImportBinding {
     pub fn validate_input(&self, input: &TranslationExtractionInput) -> Result<(), ContractError> {
         self.validate()?;
         input.validate()?;
+        if self.declaration.is_paired() {
+            return self.validate_paired_input(input);
+        }
+        if input.paired_source.is_some() {
+            return Err(mismatch("translationImport.pairedSource"));
+        }
         if self.extractor.declaration.input_schema.schema_version == 1 {
             crate::artifact::require_text_artifacts(
                 &input.artifacts,
@@ -401,7 +493,11 @@ impl TranslationImportBinding {
             return Err(mismatch("translationImport.input"));
         }
         let artifact = &input.artifacts[0];
-        let material = &self.declaration.material;
+        let material = self
+            .declaration
+            .material
+            .as_ref()
+            .ok_or_else(|| invalid("translationImport.material"))?;
         validate_portable_package_path(artifact.logical_path())?;
         let prefix = format!("{}/", material.logical_directory);
         let leaf = artifact
@@ -437,6 +533,9 @@ pub fn parse_translation_extraction_input(
     let v: TranslationExtractionInput =
         parse(bytes, MAX_EXCHANGE_BYTES, "translationExtractionInput")?;
     v.validate()?;
+    if v.paired_source.is_some() {
+        return Err(invalid("translationExtractionInput.pairedSource"));
+    }
     Ok(v)
 }
 pub fn parse_translation_exchange(bytes: &[u8]) -> Result<TranslationExchange, ContractError> {
@@ -450,6 +549,9 @@ pub fn parse_translation_extraction_check_input(
     let v: TranslationExtractionCheckInput =
         parse(bytes, MAX_INVOCATION_PAYLOAD_BYTES, "translationCheck")?;
     v.validate()?;
+    if v.input.paired_source.is_some() {
+        return Err(invalid("translationCheck.pairedSource"));
+    }
     Ok(v)
 }
 pub fn parse_translation_import_declaration(
@@ -461,6 +563,9 @@ pub fn parse_translation_import_declaration(
         "translationImport",
     )?;
     v.validate()?;
+    if v.is_paired() {
+        return Err(invalid("translationImport.contract"));
+    }
     Ok(v)
 }
 #[cfg(feature = "schema")]
@@ -477,7 +582,7 @@ pub fn translation_extraction_check_input_schema() -> schemars::Schema {
 }
 #[cfg(feature = "schema")]
 pub fn translation_import_declaration_schema() -> schemars::Schema {
-    schemars::schema_for!(TranslationImportDeclaration)
+    schemars::schema_for!(schema::LegacyTranslationImportDeclaration)
 }
 #[cfg(feature = "schema")]
 pub fn translation_types_schema() -> schemars::Schema {
@@ -487,7 +592,7 @@ pub fn translation_types_schema() -> schemars::Schema {
         input: TranslationExtractionInput,
         exchange: TranslationExchange,
         check_input: TranslationExtractionCheckInput,
-        declaration: TranslationImportDeclaration,
+        declaration: schema::LegacyTranslationImportDeclaration,
     }
     schemars::schema_for!(TranslationTypes)
 }

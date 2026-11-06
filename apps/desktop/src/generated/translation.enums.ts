@@ -10,6 +10,7 @@ export const ReviewInvocationOutcomeValues = ["succeeded","failed","unknown"] as
 export const RuntimeArchitectureValues = ["aarch64","x86_64"] as const;
 export const RuntimeEnvironmentProfileValues = ["node-system-libraries-v1"] as const;
 export const RuntimeOperatingSystemValues = ["macos","linux","windows"] as const;
+export const SourceMaterialEncodingValues = ["utf8","binary"] as const;
 export const TextEncodingValues = ["utf8-byte","utf16","grapheme"] as const;
 export const TextReviewDispositionValues = ["advisory"] as const;
 export const TextReviewFieldValues = ["source","translation"] as const;
