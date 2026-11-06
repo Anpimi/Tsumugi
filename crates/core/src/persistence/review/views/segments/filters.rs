@@ -45,9 +45,14 @@ pub(super) fn retain(
     query: &SegmentQuery,
     units: &mut Vec<(ExecutionId, u32)>,
 ) -> Result<(), ExecutionError> {
-    // Untranslated uses the same selection authority as the explicit selection
-    // filter. Evidence for excluded rows is not needed to establish membership.
-    if query.selection != SegmentSelectionFilter::All || query.status == SegmentStatusFilter::Untranslated {
+    // These presets require absent/present selection before other evidence can
+    // matter. Reuse the same authority as the explicit selection filter.
+    let required_selection = match query.status {
+        SegmentStatusFilter::Untranslated => Some(false),
+        SegmentStatusFilter::NeedsReview => Some(true),
+        _ => None,
+    };
+    if query.selection != SegmentSelectionFilter::All || required_selection.is_some() {
         let mut statement = connection.prepare(
             "SELECT DISTINCT unit_id FROM translation_selections WHERE project_id=?1 AND locale=?2",
         ).map_err(sql)?;
@@ -57,7 +62,7 @@ pub(super) fn retain(
         units.retain(|(unit, _)| {
             let selected = selected.contains(unit);
             (query.selection == SegmentSelectionFilter::All || selected == (query.selection == SegmentSelectionFilter::Selected))
-                && (query.status != SegmentStatusFilter::Untranslated || !selected)
+                && required_selection.is_none_or(|required| selected == required)
         });
     }
     if matches!(query.status, SegmentStatusFilter::All | SegmentStatusFilter::Untranslated) {

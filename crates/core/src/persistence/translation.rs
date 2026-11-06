@@ -685,12 +685,30 @@ pub(super) fn validate(connection: &Connection) -> rusqlite::Result<()> {
         |row| row.get(0),
     )?;
     let mut revision_ordinals = std::collections::BTreeMap::<(String, String), i64>::new();
+    // Resolve repeated historical bindings once and keep one streamed row per
+    // revision. Each row still proves its own original source and action.
     let mut revisions = connection.prepare(
-        "SELECT revision_id,project_id,unit_id,locale,ordinal,source_snapshot_id,
-                source_revision_id,origin_kind,action_id,attempt_id,result_id,item_id
-         FROM translation_revisions ORDER BY unit_id,locale,ordinal",
+        "WITH referenced AS MATERIALIZED (
+           SELECT DISTINCT source_snapshot_id,unit_id,source_revision_id FROM translation_revisions),
+         valid_sources AS MATERIALIZED (
+           SELECT DISTINCT o.snapshot_id,o.unit_id,o.revision_id
+           FROM referenced w JOIN source_binding_history o
+             ON o.snapshot_id=w.source_snapshot_id AND o.unit_id=w.unit_id AND o.revision_id=w.source_revision_id
+           JOIN source_units u ON u.unit_id=o.unit_id WHERE u.project_id=?1)
+         SELECT t.revision_id,t.project_id,t.unit_id,t.locale,t.ordinal,t.source_snapshot_id,
+                t.source_revision_id,t.origin_kind,t.action_id,t.attempt_id,t.result_id,t.item_id,
+                v.unit_id IS NOT NULL,
+                CASE WHEN t.origin_kind='manual' THEN s.event_id IS NOT NULL
+                     WHEN t.origin_kind IN ('import','ai') THEN a.action_id IS NOT NULL AND r.result_id IS NOT NULL
+                     ELSE 0 END
+         FROM translation_revisions t
+         LEFT JOIN valid_sources v ON v.snapshot_id=t.source_snapshot_id AND v.unit_id=t.unit_id AND v.revision_id=t.source_revision_id
+         LEFT JOIN translation_selections s ON s.action_id=t.action_id AND s.revision_id=t.revision_id
+         LEFT JOIN adoption_receipts a ON a.action_id=t.action_id AND a.attempt_id=t.attempt_id
+         LEFT JOIN execution_results r ON r.result_id=t.result_id AND r.item_id=t.item_id
+         ORDER BY t.unit_id,t.locale,t.ordinal",
     )?;
-    let rows = revisions.query_map([], |row| {
+    let rows = revisions.query_map([project.as_str()], |row| {
         Ok((
             row.get::<_, String>(0)?,
             row.get::<_, String>(1)?,
@@ -704,6 +722,8 @@ pub(super) fn validate(connection: &Connection) -> rusqlite::Result<()> {
             row.get::<_, Option<String>>(9)?,
             row.get::<_, Option<String>>(10)?,
             row.get::<_, Option<String>>(11)?,
+            row.get::<_, bool>(12)?,
+            row.get::<_, bool>(13)?,
         ))
     })?;
     for row in rows {
@@ -720,6 +740,8 @@ pub(super) fn validate(connection: &Connection) -> rusqlite::Result<()> {
             attempt,
             result,
             item,
+            source_valid,
+            origin_valid,
         ) = row?;
         let key = (unit.clone(), locale.clone());
         let previous = revision_ordinals.get(&key).copied().unwrap_or(0);
@@ -736,24 +758,10 @@ pub(super) fn validate(connection: &Connection) -> rusqlite::Result<()> {
             return Err(rusqlite::Error::InvalidQuery);
         }
         revision_ordinals.insert(key, ordinal);
-        let source_valid: bool = connection.query_row(
-            "SELECT EXISTS(SELECT 1 FROM source_binding_history o
-             JOIN source_units u ON u.unit_id=o.unit_id
-             WHERE o.snapshot_id=?1 AND o.unit_id=?2 AND o.revision_id=?3 AND u.project_id=?4)",
-            params![snapshot, unit, source, project],
-            |row| row.get(0),
-        )?;
         if !source_valid {
             return Err(rusqlite::Error::InvalidQuery);
         }
-        let origin_valid: bool = if kind == "manual" {
-            connection.query_row(
-                "SELECT EXISTS(SELECT 1 FROM translation_selections
-                 WHERE action_id=?1 AND revision_id=?2)",
-                params![action, revision],
-                |row| row.get(0),
-            )?
-        } else if kind == "import" || kind == "ai" {
+        if kind == "import" || kind == "ai" {
             let (Some(attempt), Some(result), Some(item)) = (attempt, result, item) else {
                 return Err(rusqlite::Error::InvalidQuery);
             };
@@ -763,17 +771,9 @@ pub(super) fn validate(connection: &Connection) -> rusqlite::Result<()> {
             {
                 return Err(rusqlite::Error::InvalidQuery);
             }
-            connection.query_row(
-                "SELECT EXISTS(SELECT 1 FROM adoption_receipts a
-                 JOIN execution_results r ON r.result_id=?3
-                 WHERE a.action_id=?1 AND a.attempt_id=?2
-                   AND r.item_id=?4)",
-                params![action, attempt, result, item],
-                |row| row.get(0),
-            )?
-        } else {
-            false
-        };
+        } else if kind != "manual" {
+            return Err(rusqlite::Error::InvalidQuery);
+        }
         if !origin_valid {
             return Err(rusqlite::Error::InvalidQuery);
         }

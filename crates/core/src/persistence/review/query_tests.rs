@@ -688,6 +688,31 @@ fn current_legacy_checks_share_source_validation_inside_one_read() {
 }
 
 #[test]
+fn translation_history_validation_batches_relationships_and_rejects_damaged_proofs() {
+    let (_directory, mut store, project) = large_fixture(40);
+    let units = store.review_summary_page(project, "zh-CN", 0, 10, "", None).unwrap().rows
+        .into_iter().map(|row| row.unit_id).collect::<Vec<_>>();
+    for round in 0..6 {
+        for unit in &units { translate(&mut store, project, *unit, "zh-CN", &format!("译文 {round}")); }
+    }
+    adopt_source(&mut store, br#"{"replacement":"An unrelated successor source"}"#);
+    let wrong_snapshot = store.content_scope().unwrap().current_snapshot.unwrap().to_string();
+    let connection = store.connection().unwrap();
+    let (revision, snapshot, action): (String, String, String) = connection.query_row(
+        "SELECT revision_id,source_snapshot_id,action_id FROM translation_revisions ORDER BY rowid LIMIT 1",
+        [], |row| Ok((row.get(0)?,row.get(1)?,row.get(2)?))).unwrap();
+    let (_, statements, _) = measure(&store, || crate::persistence::translation::validate(connection).unwrap());
+    connection.execute("UPDATE translation_revisions SET source_snapshot_id=?1 WHERE revision_id=?2", params![wrong_snapshot, revision]).unwrap();
+    assert!(crate::persistence::translation::validate(connection).is_err(), "an existing snapshot cannot prove an unrelated source binding");
+    connection.execute("UPDATE translation_revisions SET source_snapshot_id=?1 WHERE revision_id=?2", params![snapshot, revision]).unwrap();
+    connection.execute("UPDATE translation_revisions SET action_id=?1 WHERE revision_id=?2", params![ExecutionId::new().to_string(), revision]).unwrap();
+    assert!(crate::persistence::translation::validate(connection).is_err(), "a manual revision requires its original selection action");
+    connection.execute("UPDATE translation_revisions SET action_id=?1 WHERE revision_id=?2", params![action, revision]).unwrap();
+    crate::persistence::translation::validate(connection).unwrap();
+    assert!(statements.len() < 40, "history validation queried relationships per revision: {}", statements.len());
+}
+
+#[test]
 fn maintenance_reads_only_window_targets_while_preserving_original_impact_reasons() {
     let (_directory, mut store, project) = large_fixture(120);
     let snapshot = store.content_scope().unwrap().current_snapshot.unwrap();

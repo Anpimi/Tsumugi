@@ -151,6 +151,48 @@ fn sequence(
                 .unwrap()
         });
         assert_eq!(untranslated.total as usize, 2000 - selected);
+        for (operation, status) in [
+            ("needs_review_filter", SegmentStatusFilter::NeedsReview),
+            ("issues_filter", SegmentStatusFilter::Issues),
+            ("blocking_filter", SegmentStatusFilter::Blocking),
+        ] {
+            let page = report_read(store, phase, round, operation, || {
+                store
+                    .read_segment_page(
+                        project,
+                        "zh-CN",
+                        &SegmentQuery {
+                            status,
+                            ..query.clone()
+                        },
+                        None,
+                        None,
+                        50,
+                    )
+                    .unwrap()
+            });
+            assert!(page.total <= 2000);
+            if status == SegmentStatusFilter::NeedsReview {
+                assert!(page.total as usize <= selected);
+                assert!(page.rows.iter().all(|row| {
+                    row.content.selection_id.is_some()
+                        && !matches!(
+                            row.content
+                                .current_decision
+                                .as_ref()
+                                .map(|decision| decision.kind),
+                            Some(ReviewDecisionKind::Approve)
+                        )
+                }));
+            }
+            if status == SegmentStatusFilter::Blocking {
+                assert!(
+                    page.rows
+                        .iter()
+                        .all(|row| row.qualification.blocker_count > 0)
+                );
+            }
+        }
         let unit = first.rows[0].content.unit_id;
         let editor = report_read(store, phase, round, "editor_snapshot", || {
             store

@@ -182,7 +182,9 @@ Current workspace version metadata: **`0.2.0-alpha.1`**. Because the published `
 
 ### Fixed
 
-- Untranslated segment filters reuse current selection membership, and saved legacy QA rows share frozen source-input validation within each read, reducing repeated work while preserving current evidence and fixed scope checks.
+- Opening projects batches historical translation source bindings and action proofs while retaining every revision identity, ordinal and selection-chain check.
+
+- The untranslated and needs review segment filters reuse current selection membership, and saved legacy QA rows share frozen source-input validation within each read, reducing repeated work while preserving current evidence and fixed scope checks.
 
 - Source impact and maintenance reads batch effective bindings and ancestor lookups within the original read transaction, avoiding per-entry SQL queries while retaining frozen mapping versions and unresolved-match checks.
 
