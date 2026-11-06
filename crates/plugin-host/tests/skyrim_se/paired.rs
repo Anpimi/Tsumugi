@@ -215,6 +215,240 @@ fn translation_action(
         .unwrap()
 }
 
+fn checked_source_result(
+    store: &mut ProjectStore,
+    runtime: &mut ExecutionRuntime,
+    input: &FixedInput,
+) -> FixedResult {
+    authorize(runtime, store, input);
+    let result = execute(runtime, store, input);
+    let capture = store
+        .capture_source_validation(input.envelope().attempt_id, result.envelope().result_id)
+        .unwrap();
+    let check = capture.check_input().clone();
+    authorize(runtime, store, &check);
+    let checked = execute(runtime, store, &check);
+    store
+        .commit_source_validation(capture.prepare(checked).unwrap())
+        .unwrap();
+    result
+}
+
+#[test]
+#[ignore = "requires an inspected Skyrim SE package and synthetic fixtures"]
+fn skyrim_j2_repeated_capture_keeps_source_semantics_and_manual_work() {
+    let root = tempfile::tempdir().unwrap();
+    let image = installed(root.path());
+    let environment = super::runtime();
+    let source = image.source_import("source-profile").unwrap();
+    let stage = root.path().join("workers");
+    std::fs::create_dir(&stage).unwrap();
+    let proxy = |id: &str| {
+        Arc::new(
+            RunnerProxy::new(
+                image.clone(),
+                id,
+                environment.clone(),
+                &stage,
+                HostLimits::default(),
+            )
+            .unwrap(),
+        )
+    };
+    let extractor = proxy(&source.declaration.extractor);
+    let checker = proxy(&source.declaration.checker);
+    let path = root.path().join("project");
+    let mut store = ProjectStore::create(
+        &path,
+        ProjectMetadata::create("Repeated Skyrim capture", "en-US", ["zh-CN"]).unwrap(),
+    )
+    .unwrap();
+    let project = ExecutionId::parse(&store.metadata().unwrap().project_id().to_string()).unwrap();
+    let mut runtime = ExecutionRuntime::new(&store).unwrap();
+    for runner in [&extractor, &checker] {
+        runtime.register(runner.clone()).unwrap();
+    }
+    let captured = fixture("coverage-shared", true, true);
+    let first = fixed_capture(&store, &source, &extractor, &checker, &captured);
+    let adopted = adopt_source(&mut store, &mut runtime, &first);
+    let page = store.source_content(adopted.snapshot, 0, 100).unwrap();
+    let row = page
+        .rows
+        .iter()
+        .find(|row| row.occurrence.text == "Star {$BASE}")
+        .unwrap();
+    let unit = row.unit_id.unwrap();
+    store
+        .save_translation_revision(&SaveTranslationRevision {
+            project_id: project,
+            action_id: ExecutionId::new(),
+            unit_id: unit,
+            locale: "zh-CN".into(),
+            source_revision_id: row.source_revision_id.unwrap(),
+            expected_selection_id: None,
+            text: "人工保留 {$BASE}".into(),
+            reuse_origin: None,
+        })
+        .unwrap();
+    let work = store.review_target(project, unit, "zh-CN").unwrap();
+    let next = fixed_capture(&store, &source, &extractor, &checker, &captured);
+    let next_bundle = SourceBundle::from_input(&next).unwrap();
+    let first_bundle = SourceBundle::from_input(&first).unwrap();
+    assert_ne!(
+        first_bundle.files[0].artifact_id,
+        next_bundle.files[0].artifact_id
+    );
+    assert!(
+        first_bundle
+            .files
+            .iter()
+            .zip(&next_bundle.files)
+            .all(|(a, b)| a.bytes().unwrap() == b.bytes().unwrap())
+    );
+    let result = checked_source_result(&mut store, &mut runtime, &next);
+    let comparison = store
+        .source_comparison(
+            next.envelope().attempt_id,
+            result.envelope().result_id,
+            0,
+            100,
+        )
+        .unwrap();
+    eprintln!(
+        "repeated capture counts: unchanged={} moved={} changed={} added={} removed={} ambiguous={}",
+        comparison.counts.unchanged,
+        comparison.counts.moved,
+        comparison.counts.changed,
+        comparison.counts.added,
+        comparison.counts.removed,
+        comparison.counts.ambiguous
+    );
+    assert_eq!(
+        comparison.counts.changed, 0,
+        "fresh capture IDs cannot alter source semantics"
+    );
+    assert_eq!(comparison.counts.unchanged, 13);
+    assert_eq!(
+        (
+            comparison.counts.moved,
+            comparison.counts.added,
+            comparison.counts.removed,
+            comparison.counts.ambiguous
+        ),
+        (0, 0, 0, 0)
+    );
+    assert_eq!(
+        store.content_scope().unwrap().current_snapshot,
+        Some(adopted.snapshot)
+    );
+    assert_eq!(store.review_target(project, unit, "zh-CN").unwrap(), work);
+    let mut shifted = captured.clone();
+    shifted.artifacts[4] = mcm(
+        "moved-mcm",
+        "Example",
+        "; only coordinates change\r\n$TITLE\tStar {$BASE}\r\n$KEEP\tOriginal\r\n",
+    );
+    let mut final_adoption = None;
+    for (name, captured) in [
+        ("coordinates", shifted),
+        ("string-ids", fixture("coverage-renumbered", true, true)),
+    ] {
+        let input = fixed_capture(&store, &source, &extractor, &checker, &captured);
+        let result = checked_source_result(&mut store, &mut runtime, &input);
+        let comparison = store
+            .source_comparison(
+                input.envelope().attempt_id,
+                result.envelope().result_id,
+                0,
+                100,
+            )
+            .unwrap();
+        eprintln!(
+            "{name}: unchanged={} moved={} changed={}",
+            comparison.counts.unchanged, comparison.counts.moved, comparison.counts.changed
+        );
+        assert_eq!(comparison.counts.changed, 0, "{name} cannot change meaning");
+        assert_eq!(comparison.counts.unchanged + comparison.counts.moved, 13);
+        assert_eq!(
+            (
+                comparison.counts.added,
+                comparison.counts.removed,
+                comparison.counts.ambiguous
+            ),
+            (0, 0, 0)
+        );
+        assert_eq!(
+            store.content_scope().unwrap().current_snapshot,
+            Some(adopted.snapshot)
+        );
+        assert_eq!(store.review_target(project, unit, "zh-CN").unwrap(), work);
+        final_adoption = Some((input, result, comparison.confirmation));
+    }
+    let (input, result, confirmation) = final_adoption.unwrap();
+    let action = store
+        .prepare_adoption(
+            input.envelope().attempt_id,
+            input.envelope().units[0].unit_id,
+            vec![result.envelope().result_id],
+            json!(confirmation),
+        )
+        .unwrap();
+    let receipt = store
+        .adopt_execution(&action, &SourceAdoptionHandler)
+        .unwrap();
+    assert_eq!(
+        store
+            .adopt_execution(&action, &SourceAdoptionHandler)
+            .unwrap(),
+        receipt
+    );
+    let snapshot = store.content_scope().unwrap().current_snapshot.unwrap();
+    assert_ne!(snapshot, adopted.snapshot);
+    let current = store.source_content(snapshot, 0, 100).unwrap();
+    for row in &current.rows {
+        let identity = row.occurrence.native_identity.as_ref().unwrap();
+        let previous = page
+            .rows
+            .iter()
+            .find(|old| {
+                old.occurrence
+                    .native_identity
+                    .as_ref()
+                    .is_some_and(|value| {
+                        value.namespace == identity.namespace
+                            && value.policy == identity.policy
+                            && value.value == identity.value
+                    })
+            })
+            .unwrap();
+        assert_eq!(
+            (row.unit_id, row.source_revision_id),
+            (previous.unit_id, previous.source_revision_id)
+        );
+    }
+    let preserved = store.review_target(project, unit, "zh-CN").unwrap();
+    assert_eq!(preserved.selection_id, work.selection_id);
+    assert_eq!(preserved.revision_id, work.revision_id);
+    assert_eq!(preserved.source_revision_id, work.source_revision_id);
+    assert_eq!(preserved.translation_text, work.translation_text);
+    runtime.begin_quiesce(&mut store).unwrap();
+    runtime.finish_quiesce(&mut store).unwrap();
+    store.close().unwrap();
+    let reopened = ProjectStore::open(&path).unwrap();
+    assert_eq!(reopened.source_content(snapshot, 0, 100).unwrap(), current);
+    let historical = reopened.source_content(adopted.snapshot, 0, 100).unwrap();
+    assert_eq!(historical.snapshot_id, page.snapshot_id);
+    assert_eq!(historical.rows, page.rows);
+    assert_eq!(historical.coverage, page.coverage);
+    assert_eq!(historical.capture_summary, page.capture_summary);
+    assert_eq!(
+        reopened.review_target(project, unit, "zh-CN").unwrap(),
+        preserved
+    );
+    reopened.close().unwrap();
+    assert_eq!(std::fs::read_dir(stage).unwrap().count(), 0);
+}
+
 #[test]
 #[ignore = "requires an inspected paired Skyrim SE package and synthetic fixtures"]
 fn skyrim_paired_core_keeps_multifile_candidates_and_manual_selection_on_reopen() {
