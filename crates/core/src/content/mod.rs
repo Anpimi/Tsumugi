@@ -93,13 +93,14 @@ pub fn supported_identity_policy(policy: &str) -> bool {
             .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
 }
 pub use translation::{
-    TRANSLATION_OPERATION, TranslationEntry, TranslationOutput, validate_translation_output,
+    TRANSLATION_OPERATION, TranslationEntry, TranslationImportFile, TranslationOutput, validate_translation_output,
 };
 pub use translation_projection::{
     TRANSLATION_PROJECTION_CAPABILITY, TranslationProjectionRunner, TranslationProjectionStartRead,
 };
 pub(crate) use translation_projection::{
-    TranslationProjection, is_translation_projection, validate_projected_translation_output,
+    MAX_PAIRED_PROJECTION_ATTEMPT_BYTES, MAX_PAIRED_PROJECTION_INPUT_BYTES,
+    TranslationProjection, is_paired_projection, is_translation_projection, validate_projected_translation_output,
 };
 
 use crate::{

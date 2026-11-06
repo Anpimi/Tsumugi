@@ -135,6 +135,29 @@ beforeEach(async () => {
 });
 afterEach(() => { cleanup(); resources.splice(0).forEach(({ reads, drafts }) => { drafts.retire(); reads.retire(); }); });
 
+it.each(["en-US", "zh-CN"])("shows all imported files and each row's exact value and display provenance in %s", async language => {
+  await i18n.changeLanguage(language);
+  const first = translationRowFixture(0), second = translationRowFixture(1);
+  first.entry.keyArtifactId = fixtureIdentity(700);
+  second.entry.artifactId = fixtureIdentity(701);
+  preview = translationPreviewFixture([first, second]);
+  preview.files = [
+    { artifactId: first.entry.artifactId, logicalPath: "tables/翻译 <literal>.strings", role: "translation", byteLength: 12, sha256: "a".repeat(64) },
+    { artifactId: second.entry.artifactId, logicalPath: "interface/中文.txt", role: "translation", byteLength: 14, sha256: "b".repeat(64) },
+    { artifactId: first.entry.keyArtifactId, logicalPath: "Example.esp", role: "translation", byteLength: 100, sha256: "c".repeat(64) },
+  ];
+  await harness();
+  expect(screen.getByText(i18n.t("workbenchV2.importFilesSummary", { count: 3, locale: "zh-CN" }))).toBeVisible();
+  const firstRow = screen.getByRole("rowheader", { name: "key-0" }).closest("tr");
+  const secondRow = screen.getByRole("rowheader", { name: "key-1" }).closest("tr");
+  if (!firstRow || !secondRow) throw new Error("Expected both imported entries");
+  expect(within(firstRow).getByText("tables/翻译 <literal>.strings")).toBeVisible();
+  expect(within(firstRow).getByText(i18n.t("workbenchV2.importKeyFile", { path: "Example.esp" }))).toBeVisible();
+  expect(within(secondRow).getByText("interface/中文.txt")).toBeVisible();
+  expect(within(secondRow).queryByText("tables/翻译 <literal>.strings")).not.toBeInTheDocument();
+  expect(calls("adopt_execution")).toHaveLength(0);
+});
+
 it("confirms an imported alternative in Chinese while preserving the literal translation text", async () => {
   await i18n.changeLanguage("zh-CN");
   const row = translationRowFixture(0);

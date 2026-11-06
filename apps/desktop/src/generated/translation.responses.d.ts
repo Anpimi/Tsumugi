@@ -802,6 +802,10 @@ export interface TranslationPreview {
   currentSourceSnapshotId: ExecutionId;
   declaredLocale: string;
   fileDigest: string;
+  /**
+   * Complete provenance for paired imports. Legacy single-file reads omit it.
+   */
+  files?: TranslationImportFile[] | null;
   fixedSourceSnapshotId: ExecutionId;
   logicalPath: string;
   nextOrdinal: number | null;
@@ -813,6 +817,16 @@ export interface TranslationPreview {
   total: number;
   unique: number;
   unmatched: number;
+}
+/**
+ * File provenance only. Original bytes remain in the checked producer result.
+ */
+export interface TranslationImportFile {
+  artifactId: ExecutionId;
+  byteLength: number;
+  logicalPath: string;
+  role: string;
+  sha256: string;
 }
 export interface TranslationPreviewRow {
   currentSelection: TranslationSelection | null;
@@ -830,7 +844,12 @@ export interface TranslationPreviewRow {
 export interface TranslationEntry {
   artifactId: ExecutionId;
   /**
-   * Optional half-open UTF-8 byte offsets for the original display evidence.
+   * Display evidence may be in a different captured file from the value.
+   * Absent in the original single-file encoding.
+   */
+  keyArtifactId?: ExecutionId | null;
+  /**
+   * Optional half-open raw byte offsets for the original display evidence.
    *
    * @minItems 2
    * @maxItems 2
@@ -840,7 +859,7 @@ export interface TranslationEntry {
   ordinal: number;
   text: string;
   /**
-   * Half-open UTF-8 byte offsets before escape decoding or text normalization.
+   * Half-open raw byte offsets before decoding or text normalization.
    *
    * @minItems 2
    * @maxItems 2

@@ -12,6 +12,7 @@ Current workspace version metadata: **`0.2.0-alpha.1`**. Because the published `
 
 ### Added
 
+- Checked paired translation proposals retain per-file value and display evidence through preview and candidate adoption. The preview lists every imported file, and saved revisions retain the exact value-file provenance. Existing single-file records keep their original encoding; older application snapshots cannot read the new paired projection format. Paired file selection and domain extraction still require their application/plugin consumers.
 - The experimental plugin SDK adds explicit paired translation contracts with captured original material, selected binary file groups and independent byte budgets. Original single-file schemas remain unchanged. This is a plugin API; paired file selection and domain matching require their application and plugin consumers.
 
 - Verified plugin releases include a companion JSON report per language with original input fingerprints, captured properties and dependencies, explicit output settings, output file identities and the exact translation/source-retention scope. Reports use the existing export preview, conflict checks and recovery. New releases use manifest version 3; older release records retain their original file sets, and older application snapshots cannot read the new representation. Opaque settings, review history and translation text are not copied into reports.

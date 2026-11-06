@@ -277,6 +277,7 @@ fn parsed_translation(
         entries.push(TranslationEntry {
             ordinal: entries.len() as u32,
             artifact_id: bundle.file.artifact_id,
+            key_artifact_id: None,
             native_key: key.into(),
             text: text.value.to_string(),
             key_byte_range: Some([

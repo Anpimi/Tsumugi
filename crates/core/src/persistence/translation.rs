@@ -189,6 +189,9 @@ pub struct TranslationPreview {
     pub result_digest: String,
     pub file_digest: String,
     pub logical_path: String,
+    /// Complete provenance for paired imports. Legacy single-file reads omit it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub files: Option<Vec<crate::content::TranslationImportFile>>,
     pub declared_locale: String,
     pub target_locale: String,
     pub basis: String,
@@ -462,12 +465,13 @@ pub(super) fn initialize(connection: &Connection) -> rusqlite::Result<()> {
 /// The shared preview/adoption view of a checked plugin projection. The former
 /// built-in importer is available only as an explicit test baseline.
 struct TranslationImportView {
+    version: u32,
     bundle_id: ExecutionId,
     source_snapshot_id: ExecutionId,
     target_locale: String,
     declared_locale: String,
     manifest_digest: String,
-    file: crate::content::CapturedFile,
+    files: Vec<crate::content::TranslationImportFile>,
     entries: Vec<crate::content::TranslationEntry>,
     namespace: Option<String>,
     policy: tsumugi_plugin_sdk::ContractRef,
@@ -478,19 +482,18 @@ impl TranslationImportView {
         if crate::content::is_translation_projection(input) {
             let projection = crate::content::TranslationProjection::from_input(input)?;
             return Ok(Self {
+                version: projection.version,
                 bundle_id: projection.bundle_id,
                 source_snapshot_id: projection.source_snapshot_id,
                 target_locale: projection.target_locale.clone(),
                 declared_locale: projection.declared_locale.clone(),
                 manifest_digest: input.digest().into(),
-                file: projection.file.clone(),
+                files: projection.files(),
                 entries: projection
                     .entries
                     .iter()
                     .enumerate()
-                    .map(|(ordinal, entry)| {
-                        entry.entry(ordinal as u32, projection.file.artifact_id)
-                    })
+                    .map(|(ordinal, _)| projection.entry(ordinal as u32))
                     .collect(),
                 namespace: Some(projection.native_scope.namespace.clone()),
                 policy: projection.native_scope.policy.clone(),
@@ -526,17 +529,22 @@ impl TranslationImportView {
             .map(|entry| entry.native_key.to_ascii_lowercase())
             .collect();
         Ok(Self {
+            version: 1,
             bundle_id: bundle.bundle_id,
             source_snapshot_id: bundle.source_snapshot_id,
             target_locale: bundle.target_locale,
             declared_locale: bundle.declared_locale,
             manifest_digest: bundle.manifest_digest,
-            file: bundle.file,
+            files: vec![crate::content::TranslationImportFile::from(&bundle.file)],
             entries,
             namespace: None,
             policy: crate::content::contract_ref("smapi-native-key"),
             native_values,
         })
+    }
+
+    fn file(&self, entry: Option<&crate::content::TranslationEntry>) -> &crate::content::TranslationImportFile {
+        entry.map_or(&self.files[0], |entry| self.files.iter().find(|file| file.artifact_id == entry.artifact_id).expect("validated file reference"))
     }
 }
 
@@ -1219,10 +1227,10 @@ impl AdoptionHandler for TranslationAdoptionHandler {
                     result.envelope().result_id.to_string(),
                     result.envelope().item_id.to_string(),
                     entry.artifact_id.to_string(),
-                    bundle.file.logical_path,
+                    bundle.file(Some(&entry)).logical_path,
                     bundle.declared_locale,
                     entry.native_key,
-                    bundle.file.sha256,
+                    bundle.file(Some(&entry)).sha256,
                 ],
             )?;
             let resource_baseline: i64 = tx.query_row(
@@ -1404,13 +1412,14 @@ impl ProjectStore {
             }
             crate::content::validate_translation_output(&input, &result)?;
             let ordinal: Option<u32> = crate::content::from_value(&item.payload)?;
+            let entry = ordinal.map(|n| entries[n as usize].clone());
             let expected = TranslationOutput {
-                version: 1,
+                version: bundle.version,
                 bundle_id: bundle.bundle_id,
                 manifest_digest: bundle.manifest_digest.clone(),
-                file_digest: bundle.file.sha256.clone(),
+                file_digest: bundle.file(entry.as_ref()).sha256.clone(),
                 entry_count: entries.len() as u32,
-                entry: ordinal.map(|n| entries[n as usize].clone()),
+                entry,
             };
             let actual: TranslationOutput = crate::content::from_value(
                 result
@@ -1500,8 +1509,9 @@ impl ProjectStore {
             fixed_source_snapshot_id: bundle.source_snapshot_id,
             current_source_snapshot_id: current,
             result_digest,
-            file_digest: bundle.file.sha256,
-            logical_path: bundle.file.logical_path,
+            file_digest: bundle.files[0].sha256.clone(),
+            logical_path: bundle.files[0].logical_path.clone(),
+            files: (bundle.version == 2).then_some(bundle.files),
             declared_locale: bundle.declared_locale,
             target_locale: bundle.target_locale,
             basis,
@@ -2296,6 +2306,7 @@ impl RawRevision {
 mod tests {
     use super::*;
     include!("translation/paired_tests.rs");
+    include!("translation/paired_projection_tests.rs");
     use crate::{
         ProjectMetadata,
         content::{

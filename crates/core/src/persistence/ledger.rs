@@ -1476,7 +1476,7 @@ pub(super) fn check_translation_projection(
             &checker,
             &checked,
             projection.bundle_id,
-            projection.file.artifact_id,
+            Some(&projection.files().iter().map(|file| file.artifact_id).collect::<Vec<_>>()),
         )?;
         if rebuilt != *projection {
             return Err(error(
@@ -1830,7 +1830,7 @@ impl ProjectStore {
             &prepared.capture.check_input,
             &prepared.check_result,
             ExecutionId::new(),
-            ExecutionId::new(),
+            None,
         )?;
         let project: crate::ProjectId = producer
             .envelope()

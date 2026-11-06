@@ -3651,8 +3651,19 @@
           "artifactId": {
             "$ref": "#/definitions/ExecutionId"
           },
+          "keyArtifactId": {
+            "anyOf": [
+              {
+                "$ref": "#/definitions/ExecutionId"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Display evidence may be in a different captured file from the value.\nAbsent in the original single-file encoding."
+          },
           "keyByteRange": {
-            "description": "Optional half-open UTF-8 byte offsets for the original display evidence.",
+            "description": "Optional half-open raw byte offsets for the original display evidence.",
             "items": {
               "format": "uint32",
               "maximum": 4294967295,
@@ -3679,7 +3690,7 @@
             "type": "string"
           },
           "valueByteRange": {
-            "description": "Half-open UTF-8 byte offsets before escape decoding or text normalization.",
+            "description": "Half-open raw byte offsets before decoding or text normalization.",
             "items": {
               "format": "uint32",
               "maximum": 4294967295,
@@ -3823,6 +3834,38 @@
           "extractor",
           "checker",
           "semanticRules"
+        ],
+        "type": "object"
+      },
+      "TranslationImportFile": {
+        "additionalProperties": false,
+        "description": "File provenance only. Original bytes remain in the checked producer result.",
+        "properties": {
+          "artifactId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "byteLength": {
+            "format": "uint32",
+            "maximum": 4294967295,
+            "minimum": 0,
+            "type": "integer"
+          },
+          "logicalPath": {
+            "type": "string"
+          },
+          "role": {
+            "type": "string"
+          },
+          "sha256": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "artifactId",
+          "logicalPath",
+          "role",
+          "byteLength",
+          "sha256"
         ],
         "type": "object"
       },
@@ -4017,6 +4060,16 @@
           },
           "fileDigest": {
             "type": "string"
+          },
+          "files": {
+            "description": "Complete provenance for paired imports. Legacy single-file reads omit it.",
+            "items": {
+              "$ref": "#/definitions/TranslationImportFile"
+            },
+            "type": [
+              "array",
+              "null"
+            ]
           },
           "fixedSourceSnapshotId": {
             "$ref": "#/definitions/ExecutionId"

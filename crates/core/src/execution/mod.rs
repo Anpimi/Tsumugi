@@ -371,7 +371,12 @@ impl Default for ExecutionLimits {
     }
 }
 impl ExecutionLimits {
-    fn validate(&self, max_timeout_ms: u32, plugin: bool) -> Result<(), ExecutionError> {
+    fn validate(
+        &self,
+        max_timeout_ms: u32,
+        plugin: bool,
+        paired_projection: bool,
+    ) -> Result<(), ExecutionError> {
         if self.timeout_ms == 0
             || self.timeout_ms > max_timeout_ms
             || self.cancel_wait_ms > 5_000
@@ -386,6 +391,8 @@ impl ExecutionLimits {
             || self.max_attempt_result_bytes as usize
                 > if plugin {
                     MAX_PLUGIN_RESULT_BYTES
+                } else if paired_projection {
+                    crate::content::MAX_PAIRED_PROJECTION_ATTEMPT_BYTES
                 } else {
                     MAX_ATTEMPT_RESULT_BYTES
                 }
@@ -504,6 +511,7 @@ impl InputEnvelope {
                 60_000
             },
             self.plugin.is_some(),
+            crate::content::is_paired_projection(self),
         )?;
         if self.items.is_empty()
             || self.items.len() > MAX_ITEMS
@@ -586,6 +594,9 @@ pub struct FixedInput {
 }
 impl FixedInput {
     fn byte_limit(envelope: &InputEnvelope) -> usize {
+        if crate::content::is_paired_projection(envelope) {
+            return crate::content::MAX_PAIRED_PROJECTION_INPUT_BYTES;
+        }
         envelope.plugin.as_ref().map_or(MAX_INPUT_BYTES, |binding| {
             MAX_INPUT_BYTES
                 .max(
