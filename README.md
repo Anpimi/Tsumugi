@@ -176,6 +176,8 @@ On Apple Silicon, cross-compiling for Intel requires installing the `x86_64-appl
 
 ### Wire Contracts and Text Offsets
 
+The [continuous integration workflow](docs/continuous-integration.md) checks frontend behavior, Rust/Core/Host contracts and generated bindings from locked public inputs. Its source checks are separate from complete application packaging and native/provider acceptance.
+
 IPC DTOs across project lifecycle, execution, source, translation, resources, review, release, AI, Arena, connections, plugins, strategy, and MCP use Rust/Serde definitions as their single source of truth. After modifying wire types, regenerate and verify the checked-in schemas, TypeScript definitions, and precompiled validators:
 
 ```sh

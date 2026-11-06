@@ -1,0 +1,146 @@
+name: Continuous integration
+
+on:
+  pull_request:
+    paths:
+      - .github/workflows/ci.yml
+      - apps/**
+      - crates/**
+      - runtimes/**
+      - third_party/**
+      - Cargo.toml
+      - Cargo.lock
+      - pnpm-workspace.yaml
+      - pnpm-lock.yaml
+  push:
+    branches: [main]
+    paths:
+      - .github/workflows/ci.yml
+      - apps/**
+      - crates/**
+      - runtimes/**
+      - third_party/**
+      - Cargo.toml
+      - Cargo.lock
+      - pnpm-workspace.yaml
+      - pnpm-lock.yaml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  NODE_VERSION: 26.10.0
+  PNPM_VERSION: 12.8.1
+  RUST_VERSION: 1.99.0
+  CARGO_TERM_COLOR: always
+  CARGO_INCREMENTAL: '0'
+  CARGO_PROFILE_DEV_DEBUG: '0'
+  CARGO_PROFILE_TEST_DEBUG: '0'
+  CARGO_BUILD_JOBS: '2'
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  frontend:
+    name: Frontend build and behavior
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          package-manager-cache: false
+      - name: Install pinned pnpm
+        run: npm install --global "pnpm@$PNPM_VERSION"
+      - name: Cache pnpm downloads
+        uses: actions/cache@caa296126883cff596d87d8935842f9db880ef25 # v5
+        with:
+          path: ${{ runner.temp }}/pnpm-store
+          key: ${{ runner.os }}-${{ runner.arch }}-pnpm-${{ env.PNPM_VERSION }}-${{ hashFiles('pnpm-lock.yaml') }}
+      - name: Install locked workspace dependencies
+        run: pnpm install --frozen-lockfile --store-dir "$RUNNER_TEMP/pnpm-store"
+      - name: Typecheck and build frontend
+        run: pnpm --dir apps/desktop build
+      - name: Check editing, adoption, review and delivery behavior
+        run: >-
+          pnpm --dir apps/desktop test --maxWorkers=2
+          src/TranslationDraftSession.test.tsx
+          src/TranslationImportSession.test.tsx
+          src/SourceDraftSession.test.tsx
+          src/ReviewBatchSession.test.tsx
+          src/ReleaseDraftSession.test.tsx
+          src/app-v2/features/assistant/ConversationPanel.test.tsx
+          src/ipcContracts.test.ts
+
+  rust-and-contracts:
+    name: Rust, process channels and generated contracts
+    runs-on: macos-15
+    timeout-minutes: 30
+    env:
+      RUSTUP_TOOLCHAIN: 1.99.0
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          package-manager-cache: false
+      - name: Install pinned pnpm
+        run: npm install --global "pnpm@$PNPM_VERSION"
+      - name: Cache pnpm downloads
+        uses: actions/cache@caa296126883cff596d87d8935842f9db880ef25 # v5
+        with:
+          path: ${{ runner.temp }}/pnpm-store
+          key: ${{ runner.os }}-${{ runner.arch }}-pnpm-${{ env.PNPM_VERSION }}-${{ hashFiles('pnpm-lock.yaml') }}
+      - name: Install locked workspace dependencies
+        run: pnpm install --frozen-lockfile --store-dir "$RUNNER_TEMP/pnpm-store"
+      - name: Install pinned Rust toolchain
+        run: rustup toolchain install "$RUST_VERSION" --profile minimal
+      - name: Cache Cargo downloads
+        uses: actions/cache@caa296126883cff596d87d8935842f9db880ef25 # v5
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+          key: ${{ runner.os }}-${{ runner.arch }}-cargo-${{ env.RUST_VERSION }}-${{ hashFiles('Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-${{ runner.arch }}-cargo-${{ env.RUST_VERSION }}-
+      - name: Fetch locked Rust dependencies
+        run: cargo fetch --locked
+      - name: Check SDK contracts
+        run: cargo test -p tsumugi-plugin-sdk --tests --features schema --locked
+      - name: Check Core behavior
+        run: cargo test -p tsumugi-core --lib --locked -- --test-threads=2
+      - name: Check Host and real process channels
+        run: cargo test -p tsumugi-plugin-host --features conformance-worker --lib --test process --locked -- --test-threads=2
+      - name: Check generated SDK bindings
+        run: pnpm --dir crates/plugin-sdk check:contracts
+      - name: Check generated JavaScript Host bindings
+        run: pnpm --dir runtimes/javascript-host check:contracts
+      - name: Check generated member bindings
+        run: pnpm --dir runtimes/agent-service check:contracts
+      - name: Check generated desktop IPC bindings
+        run: pnpm --dir apps/desktop check:contracts
+      - name: Check SDK JavaScript receivers
+        run: |
+          TSUMUGI_PLUGIN_CONTRACT="$(cd "${CARGO_TARGET_DIR:-target}" && pwd)/debug/tsumugi-plugin-contract" \
+            pnpm --dir crates/plugin-sdk test
+      - name: Build and check JavaScript Host
+        run: |
+          pnpm --dir runtimes/javascript-host build
+          pnpm --dir runtimes/javascript-host test
+      - name: Build and check member runtime
+        run: |
+          pnpm --dir runtimes/agent-service build
+          pnpm --dir runtimes/agent-service test

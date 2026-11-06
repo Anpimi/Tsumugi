@@ -170,6 +170,8 @@ open target/release/bundle/macos/Tsumugi.app
 
 ### 协议契约生成与文本偏移
 
+[持续集成入口](docs/continuous-integration.md)基于锁定的公开输入检查前端行为、Rust／Core／Host 契约及生成绑定。源码检查与完整应用打包、原生操作及真实 Provider 验收分别判断。
+
 项目生命周期、执行、源内容、译文、资源、审阅、发布、AI、Arena、连接、插件、策略及 MCP 等桌面 IPC DTO 均以 Rust/Serde 定义为单一事实来源。修改相关定义后，需重新生成并校验仓库内的 JSON Schema、TypeScript 类型与预编译校验器：
 
 ```sh
