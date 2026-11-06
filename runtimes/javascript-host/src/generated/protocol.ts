@@ -7,5 +7,5 @@ export const PROCESS_PROFILE = {
   "maxServiceCalls": 128,
   "maxSessionBytes": 134217728,
   "protocolVersion": 3,
-  "sdkVersion": "0.1.0-alpha.5"
+  "sdkVersion": "0.1.0-alpha.8"
 } as const;
