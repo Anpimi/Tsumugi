@@ -20,7 +20,10 @@ fn report_read<T: Serialize>(
     if std::env::var_os("TSUMUGI_PERFORMANCE_QUERY_PLAN").is_some() && round == 0 {
         for query in statements
             .iter()
-            .filter(|query| query.contains("MIN(o.ordinal) OVER") || query.contains("JOIN wanted ON wanted.unit_id=o.unit_id GROUP BY"))
+            .filter(|query| {
+                query.contains("MIN(o.ordinal) OVER")
+                    || query.contains("JOIN wanted ON wanted.unit_id=o.unit_id GROUP BY")
+            })
             .collect::<BTreeSet<_>>()
         {
             let mut plan = store
@@ -426,4 +429,49 @@ fn measure_retained_supported_reads() {
         );
     }
     counts(&store, "after_reads");
+}
+
+#[test]
+#[ignore = "explicit native fixture preparation through the ordinary backup owner"]
+fn prepare_retained_project_native_copy() {
+    let source = std::path::PathBuf::from(
+        std::env::var_os("TSUMUGI_PERFORMANCE_PROJECT")
+            .expect("Select a retained synthetic project"),
+    );
+    let output = std::path::PathBuf::from(
+        std::env::var_os("TSUMUGI_PERFORMANCE_NATIVE_OUTPUT")
+            .expect("Select a new native fixture directory"),
+    );
+    let connection = Connection::open_with_flags(
+        source.join("project.sqlite3"),
+        rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY,
+    )
+    .unwrap();
+    let schema: i64 = connection
+        .pragma_query_value(None, "user_version", |row| row.get(0))
+        .unwrap();
+    assert_eq!(
+        schema,
+        crate::persistence::SCHEMA_VERSION,
+        "Fixture preparation must not migrate the original"
+    );
+    drop(connection);
+    std::fs::create_dir(&output).unwrap();
+    let store = ProjectStore::open(&source).unwrap();
+    let metadata = store.metadata().unwrap();
+    let backup = output.join("source.backup");
+    let destination = output.join("project");
+    counts(&store, "original_before_copy");
+    store.backup_to(&backup).unwrap();
+    ProjectStore::restore_backup(&backup, &destination).unwrap();
+    let restored = ProjectStore::open(&destination).unwrap();
+    assert_eq!(restored.metadata().unwrap(), metadata);
+    assert!(restored.restored_instance().is_some());
+    counts(&restored, "native_copy");
+    counts(&store, "original_after_copy");
+    println!(
+        "{}",
+        json!({"operation": "native_project_copy", "source": source,
+        "backup": backup, "project": destination, "project_id": metadata.project_id().to_string()})
+    );
 }
