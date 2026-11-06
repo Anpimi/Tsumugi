@@ -10,11 +10,12 @@ fn schema_73_upgrade_preserves_original_fixed_connection_inputs() {
     project.enqueue_execution(&input).unwrap(); drop(project);
     let path = temp.path().join("project");
     let db = rusqlite::Connection::open(path.join("project.sqlite3")).unwrap();
+    crate::persistence::prepare_legacy_fixture_schema(&db, 73).unwrap();
     db.pragma_update(None, "user_version", 73).unwrap(); drop(db);
     let reopened = ProjectStore::open(&path).unwrap();
     assert_eq!(reopened.execution_input(input.envelope().attempt_id).unwrap().bytes(), input.bytes());
     assert_eq!(rusqlite::Connection::open(path.join("project.sqlite3")).unwrap()
-        .pragma_query_value(None, "user_version", |r| r.get::<_, i64>(0)).unwrap(), 74);
+        .pragma_query_value(None, "user_version", |r| r.get::<_, i64>(0)).unwrap(), crate::persistence::SCHEMA_VERSION);
 }
 
 #[test]

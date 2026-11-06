@@ -166,8 +166,8 @@ pub(crate) fn remove_unsupported_fixture_domain(
 /// Restore only structures introduced after the requested supported fixture.
 /// Conversation tables are retained or removed by each fixture's own scenario.
 #[cfg(test)]
-pub(in crate::persistence) fn prepare_legacy_fixture_schema(c: &Connection, version: i64) -> rusqlite::Result<()> {
-    assert!((61..=72).contains(&version));
+pub(crate) fn prepare_legacy_fixture_schema(c: &Connection, version: i64) -> rusqlite::Result<()> {
+    assert!((61..=75).contains(&version));
     assert!(c.is_autocommit());
     capture_capacity::make_legacy_schema(c)?;
     if version < 70 {
@@ -180,7 +180,7 @@ pub(in crate::persistence) fn prepare_legacy_fixture_schema(c: &Connection, vers
         c.execute_batch("DROP TABLE source_validation_history")?;
     }
     if version < 72 { c.execute_batch("ALTER TABLE resource_decisions DROP COLUMN edited_target")?; }
-    resources::make_legacy_capture_schema(c)
+    if version < 73 { resources::make_legacy_capture_schema(c) } else { Ok(()) }
 }
 
 /// Compare every original legacy column and row identity across migration.

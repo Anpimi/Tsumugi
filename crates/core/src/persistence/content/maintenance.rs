@@ -24,9 +24,10 @@ pub(in crate::persistence) fn unresolved_occurrences_in(
             Ok((id(occurrence)?, id(unit)?))
         }).collect::<Result<Vec<_>,ExecutionError>>()?;
     let version=lineage_corrections::mapping_revision(connection,snapshot)?;
+    let mut origins=lineage_corrections::OriginRead::new(connection)?;
     let mut unresolved=Vec::new();
     for (occurrence,unit) in rows {
-        if lineage_corrections::unresolved_origin(connection,occurrence,version)?.is_some(){unresolved.push((occurrence,unit));if unresolved.len()==limit{break;}}
+        if origins.unresolved_origin(occurrence,version)?.is_some(){unresolved.push((occurrence,unit));if unresolved.len()==limit{break;}}
     }
     Ok(unresolved)
 }

@@ -989,7 +989,9 @@ impl Runner for Unrelated {
 }
 #[test]
 fn team_recovery_expired_queued_work_does_not_starve_unrelated_work() {
-    let mut f = setup_with_expiry(Arc::new(Dormant), 1);
+    // The permission must survive setup and queueing before this test waits for
+    // expiry. A one-second, whole-second grant can expire during admission.
+    let mut f = setup_with_expiry(Arc::new(Dormant), 5);
     let (sent, received) = mpsc::channel();
     f.runtime
         .register_read_only(Arc::new(Unrelated(sent)))
@@ -1004,7 +1006,7 @@ fn team_recovery_expired_queued_work_does_not_starve_unrelated_work() {
     other.limits.timeout_ms = 60_000;
     let other = FixedInput::capture(other).unwrap();
     f.runtime.submit(&mut f.store, &other).unwrap();
-    let until = Instant::now() + Duration::from_secs(3);
+    let until = Instant::now() + Duration::from_secs(10);
     while f
         .runtime
         .team_recovery_state(&f.store, f.plan.plan_id)

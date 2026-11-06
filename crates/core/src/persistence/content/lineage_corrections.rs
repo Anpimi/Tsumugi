@@ -2,6 +2,8 @@
 use super::*;
 use rusqlite::OptionalExtension;
 use std::collections::{BTreeMap, BTreeSet};
+mod origin_read;
+pub(in crate::persistence) use origin_read::OriginRead;
 
 pub(in crate::persistence) const TABLES: &[(&str, &str)] = &[
     ("source_lineage_corrections", "CREATE TABLE source_lineage_corrections (
@@ -104,12 +106,25 @@ fn occurrence_revision(c:&Connection,occurrence:ExecutionId,cap:Revision)->Resul
 }
 
 pub(in crate::persistence) fn effective_rows(c: &Connection, rows: &mut [ContentRow]) -> Result<(), ExecutionError> {
+    if rows.is_empty() { return Ok(()); }
+    let occurrences = rows.iter().map(|row| row.occurrence_id.ok_or_else(corrupt))
+        .collect::<Result<Vec<_>, _>>()?;
+    let encoded = serde_json::to_string(&occurrences).map_err(|_| corrupt())?;
+    let mut statement = c.prepare(
+        "SELECT occurrence_id,unit_id,revision_id FROM source_effective_occurrences
+         WHERE occurrence_id IN (SELECT value FROM json_each(?1))",
+    ).map_err(sql_error)?;
+    let bindings = statement.query_map([encoded], |row| {
+        Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?, row.get::<_, String>(2)?))
+    }).map_err(sql_error)?.map(|row| {
+        let (occurrence, unit, revision) = row.map_err(sql_error)?;
+        Ok((id(occurrence)?, (id(unit)?, id(revision)?)))
+    }).collect::<Result<BTreeMap<_, _>, ExecutionError>>()?;
     for row in rows {
-        let (unit, revision): (String, String) = c.query_row(
-            "SELECT unit_id,revision_id FROM source_effective_occurrences WHERE occurrence_id=?1",
-            [row.occurrence_id.ok_or_else(corrupt)?.to_string()], |r| Ok((r.get(0)?,r.get(1)?))).map_err(sql_error)?;
-        row.unit_id = Some(id(unit)?);
-        row.source_revision_id = Some(id(revision)?);
+        let (unit, revision) = bindings.get(&row.occurrence_id.ok_or_else(corrupt)?)
+            .ok_or_else(|| sql_error(rusqlite::Error::QueryReturnedNoRows))?;
+        row.unit_id = Some(*unit);
+        row.source_revision_id = Some(*revision);
     }
     Ok(())
 }
@@ -121,39 +136,8 @@ pub(in crate::persistence) fn binding_at(c: &Connection, occurrence: ExecutionId
     Ok((id(unit)?,id(source)?))
 }
 
-fn binding_at_version(c:&Connection,occurrence:ExecutionId,version:Revision)->Result<SourceLineageBinding,ExecutionError>{
-    let (unit,source)=binding_at(c,occurrence,version)?;
-    let corrected:Option<(Option<String>,String)>=if version.get()==0 {None} else {
-        c.query_row("SELECT b.predecessor_id,b.relation FROM source_lineage_correction_bindings b JOIN source_lineage_corrections a ON a.action_id=b.action_id WHERE b.occurrence_id=?1 AND a.mapping_revision<=?2 ORDER BY a.mapping_revision DESC LIMIT 1",params![occurrence.to_string(),version.get() as i64],|r|Ok((r.get(0)?,r.get(1)?))).optional().map_err(sql_error)?
-    };
-    let (predecessor,relation)=match corrected {Some(value)=>value,None=>c.query_row("SELECT predecessor_id,relation FROM source_lineage WHERE occurrence_id=?1",[occurrence.to_string()],|r|Ok((r.get(0)?,r.get(1)?))).map_err(sql_error)?};
-    Ok(SourceLineageBinding{occurrence_id:occurrence,unit_id:unit,source_revision_id:source,predecessor_id:predecessor.map(id).transpose()?,relation})
-}
-
 pub(in crate::persistence) fn unresolved_origin(c:&Connection,occurrence:ExecutionId,version:Revision)->Result<Option<Vec<SourceLineageOrigin>>,ExecutionError>{
-    let mut occurrence=occurrence;let mut version=version;let mut seen=BTreeSet::new();let mut chain=Vec::new();
-    loop {
-        if !seen.insert(occurrence){return Err(corrupt());}
-        let snapshot:String=c.query_row("SELECT snapshot_id FROM source_occurrences WHERE occurrence_id=?1",[occurrence.to_string()],|r|r.get(0)).map_err(sql_error)?;
-        let snapshot=id(snapshot)?;
-        version=occurrence_revision(c,occurrence,version)?;
-        chain.push(SourceLineageOrigin{snapshot_id:snapshot,occurrence_id:occurrence,mapping_revision:version});
-        let current=binding_at_version(c,occurrence,version)?;
-        if matches!(current.relation.as_str(),"new"|"unresolved") {
-            let evidence:bool=c.query_row("SELECT EXISTS(SELECT 1 FROM source_lineage_evidence WHERE new_occurrence_id=?1)",[occurrence.to_string()],|r|r.get(0)).map_err(sql_error)?;
-            return Ok((evidence||version.get()>0).then_some(chain));
-        }
-        if !matches!(current.relation.as_str(),"unchanged"|"changed"){return Ok(None);}
-        let old=current.predecessor_id.ok_or_else(corrupt)?;
-        let old_snapshot:String=c.query_row("SELECT snapshot_id FROM source_occurrences WHERE occurrence_id=?1",[old.to_string()],|r|r.get(0)).map_err(sql_error)?;
-        let old_snapshot=id(old_snapshot)?;
-        let has_bases:bool=c.query_row("SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE name='source_snapshot_mapping_bases')",[],|r|r.get(0)).map_err(sql_error)?;
-        let captured=if has_bases {c.query_row("SELECT mapping_revision FROM source_snapshot_mapping_bases WHERE snapshot_id=?1 AND base_snapshot_id=?2",params![snapshot.to_string(),old_snapshot.to_string()],|r|r.get::<_,i64>(0)).optional().map_err(sql_error)?} else {None};
-        let old_version=match captured {Some(v)=>Revision::new(v as u64)?,None=>mapping_revision(c,old_snapshot)?};
-        if binding_at(c,old,old_version)?.0!=current.unit_id{return Err(corrupt());}
-        occurrence=old;version=old_version;
-        if chain.len()>MAX_OCCURRENCES{return Err(failure(ErrorCode::LimitExceeded,"source-lineage-depth"));}
-    }
+    OriginRead::new(c)?.unresolved_origin(occurrence, version)
 }
 
 fn origin_base(c:&Connection,origin:&SourceLineageOrigin)->Result<ExecutionId,ExecutionError>{

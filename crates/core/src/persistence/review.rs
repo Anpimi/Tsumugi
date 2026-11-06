@@ -2007,10 +2007,10 @@ pub(super) mod tests {
 
     fn adopt_source_files(store: &mut ProjectStore, manifest: &[u8], bytes: &[u8]) {
         let mut runtime = ExecutionRuntime::new(store).unwrap();
-        adopt_source_files_in_runtime(store, &mut runtime, manifest, bytes);
+        adopt_source_files_in_runtime(store, &mut runtime, manifest, bytes, Vec::new());
     }
 
-    fn adopt_source_files_in_runtime(store: &mut ProjectStore, runtime: &mut ExecutionRuntime, manifest: &[u8], bytes: &[u8]) {
+    fn adopt_source_files_in_runtime(store: &mut ProjectStore, runtime: &mut ExecutionRuntime, manifest: &[u8], bytes: &[u8], lineage: Vec<crate::content::LineageChoice>) {
         let bundle = SourceBundle::capture(manifest, bytes, "en").unwrap();
         let input = bundle
             .fixed_input(store.metadata().unwrap().project_id())
@@ -2020,13 +2020,11 @@ pub(super) mod tests {
         let deadline = Instant::now() + Duration::from_secs(5);
         let result = loop {
             runtime.tick(store).unwrap();
-            if store
-                .execution_attempt(input.envelope().attempt_id, true)
-                .unwrap()
-                .items[0]
-                .execution
-                == ExecutionState::Succeeded
-            {
+            let attempt = store.execution_attempt(input.envelope().attempt_id, true).unwrap();
+            assert!(!matches!(attempt.items[0].execution,
+                ExecutionState::Failed | ExecutionState::Unknown | ExecutionState::CancelledBeforeDispatch),
+                "source fixture ended without output: {:?}", attempt.items[0]);
+            if attempt.items[0].execution == ExecutionState::Succeeded {
                 break store
                     .execution_current_result(
                         input.envelope().attempt_id,
@@ -2041,13 +2039,18 @@ pub(super) mod tests {
         let preview = store
             .source_preview(input.envelope().attempt_id, result, 0, 50)
             .unwrap();
+        let mut confirmation = preview.confirmation;
+        if !lineage.is_empty() {
+            confirmation.actor = Some("Synthetic reviewer".into());
+            confirmation.lineage = lineage;
+        }
         let action = store
             .prepare_adoption_with_id(
                 ExecutionId::new(),
                 input.envelope().attempt_id,
                 input.envelope().units[0].unit_id,
                 vec![result],
-                serde_json::to_value(preview.confirmation).unwrap(),
+                serde_json::to_value(confirmation).unwrap(),
             )
             .unwrap();
         store
@@ -2066,6 +2069,7 @@ pub(super) mod tests {
             runtime,
             br#"{"UniqueID":"Review.Test","Name":"Review","Version":"1.0.0","EntryDll":"Review.dll"}"#,
             bytes,
+            Vec::new(),
         );
     }
 
@@ -2888,62 +2892,21 @@ pub(super) mod tests {
             .unwrap();
         assert!(ready.ready);
 
-        // M03 has no successor adoption yet. Inject a successor scope shape to
-        // exercise the M06 read boundary without claiming an M03 mutation path.
-        let next_snapshot = ExecutionId::new().to_string();
-        let next_revision = ExecutionId::new().to_string();
-        let connection = store.connection_mut().unwrap();
-        let transaction = connection.transaction().unwrap();
-        transaction
-            .execute(
-                "INSERT INTO source_snapshots(snapshot_id,project_id,set_id,attempt_id,result_id,source_language,identity_policy)
-                 SELECT ?1,project_id,set_id,attempt_id,result_id,source_language,identity_policy
-                 FROM source_snapshots WHERE snapshot_id=?2",
-                params![next_snapshot, changed_before.source_snapshot_id.to_string()],
-            )
-            .unwrap();
-        transaction
-            .execute(
-                "INSERT INTO source_revisions(revision_id,unit_id,revision,text)
-                 VALUES (?1,?2,2,'Hello again {{name}}')",
-                params![next_revision, units[0].to_string()],
-            )
-            .unwrap();
-        let occurrences: Vec<String> = transaction
-            .prepare("SELECT occurrence_id FROM source_occurrences WHERE snapshot_id=?1 ORDER BY ordinal")
-            .unwrap()
-            .query_map([changed_before.source_snapshot_id.to_string()], |row| row.get(0))
-            .unwrap()
-            .collect::<Result<_, _>>()
-            .unwrap();
-        assert_eq!(occurrences.len(), 2);
-        for old_occurrence in occurrences {
-            let new_occurrence = ExecutionId::new().to_string();
-            transaction
-                .execute(
-                    "INSERT INTO source_occurrences(occurrence_id,snapshot_id,ordinal,artifact_id,unit_id,revision_id,namespace,native_key,comparison_key,key_start,key_end,value_start,value_end,local_unit_id,local_occurrence_id,local_revision_id,projection)
-                     SELECT ?1,?2,ordinal,artifact_id,unit_id,
-                            CASE WHEN unit_id=?3 THEN ?4 ELSE revision_id END,
-                            namespace,native_key,comparison_key,key_start,key_end,value_start,value_end,local_unit_id,local_occurrence_id,local_revision_id,projection
-                     FROM source_occurrences WHERE occurrence_id=?5",
-                    params![new_occurrence, next_snapshot, units[0].to_string(), next_revision, old_occurrence],
-                )
-                .unwrap();
-            transaction
-                .execute(
-                    "INSERT INTO source_identity(occurrence_id,policy,basis)
-                     SELECT ?1,policy,basis FROM source_identity WHERE occurrence_id=?2",
-                    params![new_occurrence, old_occurrence],
-                )
-                .unwrap();
-        }
-        transaction
-            .execute(
-                "UPDATE content_scope SET revision=revision+1,current_snapshot=?1 WHERE row_id=1",
-                [next_snapshot],
-            )
-            .unwrap();
-        transaction.commit().unwrap();
+        let old_occurrence: String = store.connection().unwrap().query_row(
+            "SELECT occurrence_id FROM source_occurrences WHERE snapshot_id=?1 AND unit_id=?2",
+            params![changed_before.source_snapshot_id.to_string(), units[0].to_string()], |row| row.get(0),
+        ).unwrap();
+        let mut runtime = ExecutionRuntime::new(&mut store).unwrap();
+        adopt_source_files_in_runtime(
+            &mut store, &mut runtime,
+            br#"{"UniqueID":"Review.Test","Name":"Review","Version":"1.0.0","EntryDll":"Review.dll"}"#,
+            br#"{"hello":"Hello again {{name}}","plain":"Plain"}"#,
+            vec![crate::content::LineageChoice {
+                new_ordinal: 0, old_occurrence_id: parse_id(old_occurrence).unwrap(),
+                decision: crate::content::LineageDecision::Continue,
+                reason: "Explicitly continue the changed hello fixture".into(),
+            }],
+        );
 
         let changed = store.review_target(project, units[0], "zh-CN").unwrap();
         let unchanged = store.review_target(project, units[1], "zh-CN").unwrap();
@@ -4401,6 +4364,7 @@ pub(super) mod tests {
             let source_revision = ExecutionId::new().to_string();
             let translation_revision = ExecutionId::new().to_string();
             let key = format!("selected-{ordinal}");
+            let occurrence = ExecutionId::new().to_string();
             transaction
                 .execute(
                     "INSERT INTO source_units(unit_id,project_id) VALUES (?1,?2)",
@@ -4417,9 +4381,14 @@ pub(super) mod tests {
                 .execute(
                     "INSERT INTO source_occurrences(occurrence_id,snapshot_id,ordinal,artifact_id,unit_id,revision_id,namespace,native_key,comparison_key,key_start,key_end,value_start,value_end,local_unit_id,local_occurrence_id,local_revision_id,projection)
                      VALUES (?1,?2,?3,?4,?5,?6,'default',?7,?7,0,1,1,2,?7,?7,?7,x'7b7d')",
-                    params![ExecutionId::new().to_string(), snapshot, ordinal, artifact, unit, source_revision, key],
+                    params![occurrence, snapshot, ordinal, artifact, unit, source_revision, key],
                 )
                 .unwrap();
+            // This deliberately over-budget storage scope must reach the
+            // selection budget before expanding its synthetic projections.
+            transaction.execute(
+                "INSERT INTO source_lineage(occurrence_id,relation) VALUES (?1,'initial')", [&occurrence],
+            ).unwrap();
             transaction
                 .execute(
                     "INSERT INTO translation_revisions(revision_id,project_id,unit_id,locale,ordinal,text,source_snapshot_id,source_revision_id,origin_kind,action_id,request_digest)

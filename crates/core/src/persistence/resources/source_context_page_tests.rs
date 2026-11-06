@@ -71,7 +71,7 @@ fn view() -> SourceContextView {
                 },
                 schema: sdk::ContractRef {
                     id: sdk::SOURCE_CONTEXT_FACTS_SCHEMA_ID.into(),
-                    schema_version: 2,
+                    schema_version: sdk::source_context_facts_contract().schema_version + 1,
                     behavior_version: 1,
                 },
                 handling: sdk::ExtensionHandling::Required,

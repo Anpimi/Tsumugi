@@ -246,7 +246,7 @@ fn missing_empty_and_unknown_versions_remain_distinct() {
     assert!(!selected(&empty).observations.missing_blocks);
     assert_eq!(selected(&empty).observations.empty_blocks, 1);
 
-    source.blocks[0].schema.schema_version = 2;
+    source.blocks[0].schema.schema_version = sdk::source_context_facts_contract().schema_version + 1;
     source.blocks[0].facts = None;
     let unknown = select_source_context(&source, &selection).unwrap();
     assert_eq!(selected(&unknown).observations.unknown_blocks, 1);
@@ -254,7 +254,7 @@ fn missing_empty_and_unknown_versions_remain_distinct() {
         selected(&unknown).observations.unknown_samples[0]
             .schema
             .schema_version,
-        2
+        sdk::source_context_facts_contract().schema_version + 1
     );
     source.blocks[0].handling = sdk::ExtensionHandling::Required;
     let error = select_source_context(&source, &selection).unwrap_err();
@@ -341,7 +341,7 @@ fn omission_and_unknown_samples_are_bounded_and_text_free() {
     for index in 0..20 {
         let mut block = base.clone();
         block.block_index = 100 + index;
-        block.schema.schema_version = 2;
+        block.schema.schema_version = sdk::source_context_facts_contract().schema_version + 1;
         block.facts = None;
         source.blocks.push(block);
     }
@@ -381,7 +381,7 @@ fn long_unknown_targets_reduce_samples_without_losing_counts() {
             },
             schema: sdk::ContractRef {
                 id: sdk::SOURCE_CONTEXT_FACTS_SCHEMA_ID.into(),
-                schema_version: 2,
+                schema_version: sdk::source_context_facts_contract().schema_version + 1,
                 behavior_version: 1,
             },
             handling: sdk::ExtensionHandling::Optional,

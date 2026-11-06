@@ -598,7 +598,7 @@ fn source_impact_reads_one_work_set_for_two_thousand_units() {
         crate::ProjectMetadata::create("Impact queries", "en", ["zh-CN"]).unwrap(),
     )
     .unwrap();
-    let source = (1..=2000)
+    let mut source = (1..=2000)
         .map(|index| {
             (
                 format!("entry{index:04}"),
@@ -607,27 +607,41 @@ fn source_impact_reads_one_work_set_for_two_thousand_units() {
         })
         .collect::<BTreeMap<_, _>>();
     adopt_source(&mut store, &serde_json::to_vec(&source).unwrap());
-    let snapshot = store.content_scope().unwrap().current_snapshot.unwrap();
-    for round in ["first", "repeat"] {
-        let (impact, statements, elapsed) = measure(&store, || {
-            store.source_impact(snapshot, "zh-CN", 0, 50).unwrap()
-        });
-        assert_eq!(impact.summary.total, 2000);
-        assert_eq!(impact.summary.unresolved, 2000);
-        assert_eq!(impact.rows.len(), 50);
-        assert_eq!(impact.summary.preserved, 0);
-        assert_eq!(impact.summary.reassess, 0);
-        assert!(
-            statements.len() < 500,
-            "whole-scope/page reads multiplied: {}",
-            statements.len()
-        );
-        println!(
-            "source_impact data=2000 page=50 round={round} statements={} payload_bytes={} elapsed_us={}",
-            statements.len(),
-            serde_json::to_vec(&impact).unwrap().len(),
-            elapsed.as_micros()
-        );
+    for stage in ["initial", "successor"] {
+        if stage == "successor" {
+            source.remove("entry2000");
+            source.insert("entry9999".into(), "A newly added source entry".into());
+            adopt_source(&mut store, &serde_json::to_vec(&source).unwrap());
+            let unchanged: i64 = store.connection().unwrap().query_row(
+            "SELECT COUNT(*) FROM source_lineage l JOIN source_occurrences o ON o.occurrence_id=l.occurrence_id
+             WHERE o.snapshot_id=?1 AND l.relation='unchanged'",
+            [store.content_scope().unwrap().current_snapshot.unwrap().to_string()], |row| row.get(0),
+        ).unwrap();
+            assert_eq!(unchanged, 1999);
+        }
+        let snapshot = store.content_scope().unwrap().current_snapshot.unwrap();
+        for round in ["first", "repeat"] {
+            let (impact, statements, elapsed) = measure(&store, || {
+                store.source_impact(snapshot, "zh-CN", 0, 50).unwrap()
+            });
+            assert_eq!(impact.summary.total as usize, source.len());
+            assert_eq!(impact.summary.unresolved as usize, source.len());
+            assert_eq!(impact.rows.len(), 50);
+            assert_eq!(impact.summary.preserved, 0);
+            assert_eq!(impact.summary.reassess, 0);
+            assert!(
+                statements.len() < 500,
+                "whole-scope/page reads multiplied: {}",
+                statements.len()
+            );
+            println!(
+                "source_impact data={} page=50 stage={stage} round={round} statements={} payload_bytes={} elapsed_us={}",
+                source.len(),
+                statements.len(),
+                serde_json::to_vec(&impact).unwrap().len(),
+                elapsed.as_micros()
+            );
+        }
     }
 }
 

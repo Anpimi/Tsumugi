@@ -851,15 +851,12 @@ fn current_reopen_preserves_results_adoption_receipts_relations_and_refuses_sche
     );
     let mut changed_confirmation = confirmation.clone();
     changed_confirmation.source_language = "fr-FR".into();
+    let wrong_project = store.source_adoption_action_read(
+        ExecutionId::new(), source_attempt, source_action_id, source_unit, source_result_id, &confirmation,
+    ).unwrap_err();
+    assert_eq!(wrong_project.code, ErrorCode::Unauthorized);
+    assert_eq!(wrong_project.stage, "source-action-project");
     for wrong in [
-        store.source_adoption_action_read(
-            ExecutionId::new(),
-            source_attempt,
-            source_action_id,
-            source_unit,
-            source_result_id,
-            &confirmation,
-        ),
         store.source_adoption_action_read(
             source_project,
             ExecutionId::new(),
@@ -2642,7 +2639,7 @@ fn continuation_keeps_large_captured_frames_in_the_original_chunk_store() {
     let temp = tempfile::tempdir().unwrap();
     let path = temp.path().join("project");
     let mut store = store(&path);
-    let material = "captured-🧵;".repeat(4096);
+    let material = "captured-🧵;".repeat(input_storage::MAX_STORED_INPUT_BYTES / "captured-🧵;".len() + 1);
     let mut envelope = fixture_input(&store, false).envelope().clone();
     envelope.settings = json!({"material": material});
     let original = FixedInput::capture(envelope).unwrap();
@@ -2688,7 +2685,7 @@ fn continuation_keeps_large_captured_frames_in_the_original_chunk_store() {
         );
         assert_eq!(
             input.envelope().settings["material"],
-            json!("captured-🧵;".repeat(4096))
+            json!(material)
         );
     }
     assert_eq!(
@@ -2715,7 +2712,7 @@ fn continuation_keeps_large_captured_frames_in_the_original_chunk_store() {
         assert_eq!(restored.digest(), input.digest());
         assert_eq!(
             restored.envelope().settings["material"],
-            json!("captured-🧵;".repeat(4096))
+            json!(material)
         );
     }
     assert_eq!(
