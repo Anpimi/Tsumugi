@@ -178,6 +178,8 @@ Current workspace version metadata: **`0.2.0-alpha.1`**. Because the published `
 
 ### Fixed
 
+- Delivery labels saving a completed independent check as “Save check result,” distinguishing it from running the checker again.
+
 - Source adoption and saved source pages reuse binary byte coordinates after complete SDK validation, avoiding another full decode for every field and native label. Text coordinate conversion, captured-byte checks and authorization remain unchanged.
 
 - Request summaries show remaining request capacity after reservations and older holds. When the provider reports no tokens for a total or detail, the summary shows that the figure is unreported. Team previews separate the shared request limit from each member’s request settings.

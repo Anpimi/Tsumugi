@@ -131,9 +131,16 @@ async function check(user: ReturnType<typeof userEvent.setup>, locale: string) {
   await openStep(user, "verification");
   const consent = await screen.findByRole("checkbox", { name: i18n.t("releasePlugin.checkerConsent") });
   expect(consent).not.toBeChecked(); expect(primary()).toBeDisabled();
+  expect(primary()).toHaveAccessibleName(i18n.t("deliveryWorkbench.verify"));
   await user.click(consent); await user.click(primary());
   await screen.findByText(i18n.t("releasePlugin.checkReceived"));
-  await waitFor(() => expect(primary()).toBeEnabled()); await user.click(primary());
+  await waitFor(() => expect(primary()).toHaveAccessibleName(i18n.t("releasePlugin.recordCheck")));
+  expect(primary()).toBeEnabled();
+  const starts = invoke.mock.calls.filter(([command]) => command === "start_artifact_check").length;
+  const finishes = invoke.mock.calls.filter(([command]) => command === "finish_artifact_check").length;
+  await user.click(primary());
+  await waitFor(() => expect(invoke.mock.calls.filter(([command]) => command === "finish_artifact_check")).toHaveLength(finishes + 1));
+  expect(invoke.mock.calls.filter(([command]) => command === "start_artifact_check")).toHaveLength(starts);
 }
 
 it("opens the independent artifact checker for the Core source-snapshot build scope", async () => {

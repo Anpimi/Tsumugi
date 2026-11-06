@@ -227,7 +227,10 @@ export function PluginBuildControls({ project, open, disabled, onRecorded, onOpe
       return action("verification", command === "release.run-check-workflow" ? "verify" : "checkResult", available, () => { registry.dispatch(command, scope, payload); });
     }
     if (checkReview && !checkAttempt) return action("verification", "verify", startAvailability(startPayload(true), true, true).enabled, () => { const payload = startPayload(true); if (payload) registry.dispatch("release.start-artifact-check", scope, payload); });
-    if (checkReview && checkAttempt && checkItem?.resultId && checkItem.status.execution === "succeeded") return action("verification", "verify", finishAvailability(finishPayload()).enabled, () => { const payload = finishPayload(); if (payload) registry.dispatch("release.finish-artifact-check", scope, payload); });
+    if (checkReview && checkAttempt && checkItem?.resultId && checkItem.status.execution === "succeeded") return {
+      step: "verification", label: t("releasePlugin.recordCheck"), enabled: finishAvailability(finishPayload()).enabled,
+      run: () => { const payload = finishPayload(); if (payload) registry.dispatch("release.finish-artifact-check", scope, payload); },
+    };
     if (attempt) {
       const item = detail?.items.find(value => value.resultId && value.scope.locale !== null && matchesBuildScope(value, prepared?.review) && value.status.execution === "succeeded" && value.status.validation !== "valid" && !value.status.cancellationRequested);
       if (item?.resultId) return action("verification", "verify", artifactAvailability(artifactPayload(item.resultId)).enabled, () => { const payload = item.resultId ? artifactPayload(item.resultId) : undefined; if (payload) registry.dispatch("release.prepare-artifact-check", scope, payload); });
