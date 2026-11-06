@@ -159,21 +159,7 @@ impl ProjectStore {
                 // This establishes the SQLite read snapshot before sampling its clock.
                 let mut scope =
                     self.capture_review_read_scope(connection, project_id, locale, &query.text)?;
-                if query.selection != SegmentSelectionFilter::All {
-                    let mut statement = connection.prepare("SELECT DISTINCT unit_id FROM translation_selections WHERE project_id=?1 AND locale=?2").map_err(sql)?;
-                    let selected = statement
-                        .query_map(params![project_id.to_string(), locale], |row| {
-                            row.get::<_, String>(0)
-                        })
-                        .map_err(sql)?
-                        .map(|row| row.map_err(sql).and_then(parse_id))
-                        .collect::<Result<BTreeSet<_>, _>>()?;
-                    scope.units.retain(|(unit, _)| {
-                        selected.contains(unit)
-                            == (query.selection == SegmentSelectionFilter::Selected)
-                    });
-                }
-                filters::retain(self, connection, project_id, locale, query.status, &mut scope.units)?;
+                filters::retain(self, connection, project_id, locale, query, &mut scope.units)?;
                 let (epoch, sequence, data_version) = stamp(self, connection)?;
                 let read_version = digest(&(
                     &fingerprint,

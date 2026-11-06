@@ -5,6 +5,7 @@ use std::{
     cell::RefCell,
     time::{Duration, Instant},
 };
+mod performance;
 
 thread_local! {
     static SQL: RefCell<Vec<String>> = const { RefCell::new(Vec::new()) };
@@ -643,6 +644,47 @@ fn source_impact_reads_one_work_set_for_two_thousand_units() {
             );
         }
     }
+}
+
+#[test]
+fn untranslated_membership_does_not_project_the_whole_source_scope() {
+    let (_directory, mut store, project) = large_fixture(205);
+    let first = store.read_segment_page(project, "zh-CN", &SegmentQuery {
+        text: String::new(), selection: SegmentSelectionFilter::All, status: SegmentStatusFilter::All,
+    }, None, None, 1).unwrap().rows[0].content.unit_id;
+    translate(&mut store, project, first, "zh-CN", "");
+    let query = SegmentQuery { text: String::new(), selection: SegmentSelectionFilter::All,
+        status: SegmentStatusFilter::Untranslated };
+    let (page, statements, _) = measure(&store, || {
+        store.read_segment_page(project, "zh-CN", &query, None, None, 50).unwrap()
+    });
+    assert_eq!(page.total, 204, "a selected empty string remains translated");
+    assert!(page.rows.iter().all(|row| row.content.unit_id != first && row.content.selection_id.is_none()));
+    assert!(statements.len() < 40, "untranslated membership expanded full review evidence: {}", statements.len());
+    let contradictory = SegmentQuery { selection: SegmentSelectionFilter::Selected, ..query.clone() };
+    assert_eq!(store.read_segment_page(project, "zh-CN", &contradictory, None, None, 50).unwrap().total, 0);
+    let unselected = SegmentQuery { selection: SegmentSelectionFilter::Unselected, ..query };
+    assert_eq!(store.read_segment_page(project, "zh-CN", &unselected, None, None, 50).unwrap().total, 204);
+}
+
+#[test]
+fn current_legacy_checks_share_source_validation_inside_one_read() {
+    let (_directory, mut store, project) = large_fixture(120);
+    let units = store.review_summary_page(project, "zh-CN", 0, 20, "", None).unwrap().rows
+        .into_iter().map(|row| row.unit_id).collect::<Vec<_>>();
+    for unit in &units {
+        translate(&mut store, project, *unit, "zh-CN", "人工译文");
+        let target = store.review_target(project, *unit, "zh-CN").unwrap();
+        store.run_review_checks(project, *unit, "zh-CN", &target.basis, ExecutionId::new()).unwrap();
+    }
+    let (page, statements, _) = measure(&store, || {
+        store.read_segment_page(project, "zh-CN", &SegmentQuery {
+            text: String::new(), selection: SegmentSelectionFilter::All, status: SegmentStatusFilter::All,
+        }, None, None, 20).unwrap()
+    });
+    assert_eq!(page.rows.len(), units.len());
+    assert!(page.rows.iter().all(|row| row.content.current_check.is_some()));
+    assert!(statements.len() < 40, "one saved source input was validated per check: {}", statements.len());
 }
 
 #[test]

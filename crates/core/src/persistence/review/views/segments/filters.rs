@@ -42,10 +42,25 @@ pub(super) fn retain(
     connection: &Connection,
     project: ExecutionId,
     locale: &str,
-    status: SegmentStatusFilter,
+    query: &SegmentQuery,
     units: &mut Vec<(ExecutionId, u32)>,
 ) -> Result<(), ExecutionError> {
-    if status == SegmentStatusFilter::All {
+    // Untranslated uses the same selection authority as the explicit selection
+    // filter. Evidence for excluded rows is not needed to establish membership.
+    if query.selection != SegmentSelectionFilter::All || query.status == SegmentStatusFilter::Untranslated {
+        let mut statement = connection.prepare(
+            "SELECT DISTINCT unit_id FROM translation_selections WHERE project_id=?1 AND locale=?2",
+        ).map_err(sql)?;
+        let selected = statement.query_map(params![project.to_string(), locale], |row| row.get::<_, String>(0))
+            .map_err(sql)?.map(|row| row.map_err(sql).and_then(parse_id))
+            .collect::<Result<BTreeSet<_>, _>>()?;
+        units.retain(|(unit, _)| {
+            let selected = selected.contains(unit);
+            (query.selection == SegmentSelectionFilter::All || selected == (query.selection == SegmentSelectionFilter::Selected))
+                && (query.status != SegmentStatusFilter::Untranslated || !selected)
+        });
+    }
+    if matches!(query.status, SegmentStatusFilter::All | SegmentStatusFilter::Untranslated) {
         return Ok(());
     }
     let mut matching = BTreeSet::new();
@@ -54,7 +69,7 @@ pub(super) fn retain(
     for batch in units.chunks(100) {
         let wanted = batch.iter().map(|(unit, _)| *unit).collect::<Vec<_>>();
         for row in rows::project(store, connection, project, &wanted, locale)? {
-            if status.matches(&row) {
+            if query.status.matches(&row) {
                 matching.insert(row.content.unit_id);
             }
         }

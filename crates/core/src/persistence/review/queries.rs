@@ -246,6 +246,8 @@ pub(super) fn targets_and_terms_in(
     // original frame at a time within this same read snapshot.
     let mut recorded = BTreeMap::new();
     let mut owners = BTreeMap::new();
+    #[cfg(any(test, feature = "execution-test-host", feature = "legacy-desktop-domain"))]
+    let mut legacy_sources = BTreeSet::new();
     for mut check in checks {
         check_read_cancel(cancellation)?;
         if basis_digest(&check.basis_evidence)? != check.basis {
@@ -268,7 +270,13 @@ pub(super) fn targets_and_terms_in(
         } else {
             #[cfg(any(test, feature = "execution-test-host", feature = "legacy-desktop-domain"))]
             if check.validator_version == CHECK_VERSION {
-                checks::validate_legacy_source(connection, project_id, &check)?;
+                // This validation depends only on the fixed project/snapshot.
+                // Every run still checks its own projection and current basis.
+                let snapshot = check.basis_evidence.source_snapshot_id;
+                if !legacy_sources.contains(&snapshot) {
+                    checks::validate_legacy_source(connection, project_id, &check)?;
+                    legacy_sources.insert(snapshot);
+                }
                 let target = targets
                     .get_mut(&check.unit_id)
                     .ok_or_else(|| failure(ErrorCode::CorruptLedger, "review-unit"))?;
