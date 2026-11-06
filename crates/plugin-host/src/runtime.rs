@@ -489,7 +489,7 @@ mod tests {
         assert_eq!(restored.descriptor(), &approval);
         assert_eq!(restored.environment_digest(), captured.environment_digest());
         let mut unknown = approval.clone();
-        unknown.sdk_version = "0.1.0-alpha.3".into();
+        unknown.sdk_version = "99.0.0".into();
         assert_eq!(
             CapturedRuntime::capture_directories(&tool, &host, &unknown, || true).unwrap_err(),
             HostError::InvalidContract
