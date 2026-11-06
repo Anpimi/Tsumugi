@@ -8,6 +8,9 @@ use tsumugi_core::{
     },
 };
 
+#[path = "paired/maintenance.rs"]
+mod maintenance;
+
 fn mcm(id: &str, module: &str, text: &str) -> sdk::CapturedArtifact {
     let bytes = [
         vec![0xff, 0xfe],
