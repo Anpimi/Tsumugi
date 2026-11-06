@@ -15,6 +15,9 @@ use tsumugi_plugin_sdk as sdk;
 mod core_execution;
 use core_execution::{authorize, execute};
 
+#[path = "skyrim_se/paired.rs"]
+mod paired;
+
 #[path = "support/official.rs"]
 mod official;
 
@@ -601,7 +604,21 @@ fn adopt_source(
         .capture_summary
         .clone()
         .expect("Core must project the captured worker summary before adoption");
-    assert_capture_page(&preview, &preview_summary);
+    let bundle = SourceBundle::from_input(input).unwrap();
+    let expected_coverage: Vec<_> = bundle.files.iter().map(|file| tsumugi_core::content::FileCoverage {
+        artifact_id: file.artifact_id,
+        logical_path: file.logical_path.clone(),
+        role: file.role.clone(),
+        sha256: file.sha256.clone(),
+    }).collect();
+    assert_eq!(preview.coverage, expected_coverage);
+    if bundle.files.len() == 1 {
+        assert_capture_page(&preview, &preview_summary);
+    } else {
+        assert!(!preview_summary.materials.is_empty());
+        assert!(preview_summary.materials.iter().all(|material| bundle.files.iter()
+            .any(|file| file.artifact_id.to_string() == material.source.artifact_id)));
+    }
     let action = store
         .prepare_adoption(
             input.envelope().attempt_id,

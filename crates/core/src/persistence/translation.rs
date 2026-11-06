@@ -1342,6 +1342,9 @@ impl ProjectStore {
             .current_snapshot
             .ok_or_else(|| error(ErrorCode::DependencyConflict, "translation-source"))?;
         let source = self.source_content(current, 0, 1)?;
+        // Mixed captures have several native namespaces. Match the scope fixed
+        // by this import; legacy bundles retain the source's default namespace.
+        let match_namespace = bundle.namespace.as_ref().unwrap_or(&source.namespace);
         let mut matches: BTreeMap<
             (String, tsumugi_plugin_sdk::ContractRef, String),
             Vec<(ExecutionId, ExecutionId, ExecutionId, String)>,
@@ -1354,7 +1357,7 @@ impl ProjectStore {
             )
             .map_err(super::ledger::sql_error)?;
         let source_rows = statement
-            .query_map(params![current.to_string(), source.namespace], |row| {
+            .query_map(params![current.to_string(), match_namespace], |row| {
                 Ok((
                     row.get::<_, String>(0)?,
                     row.get::<_, String>(1)?,
@@ -1436,11 +1439,7 @@ impl ProjectStore {
                 continue;
             };
             let key = (
-                bundle
-                    .namespace
-                    .as_ref()
-                    .unwrap_or(&source.namespace)
-                    .clone(),
+                match_namespace.clone(),
                 bundle.policy.clone(),
                 bundle.native_values[entry.ordinal as usize].clone(),
             );

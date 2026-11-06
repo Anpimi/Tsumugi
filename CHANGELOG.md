@@ -182,6 +182,8 @@ Current workspace version metadata: **`0.2.0-alpha.1`**. Because the published `
 
 ### Fixed
 
+- Match existing translations against the selected native namespace in mixed source captures, so plugin record entries remain available alongside MCM tables without crossing identity scopes.
+
 - Delivery labels saving a completed independent check as “Save check result,” distinguishing it from running the checker again.
 
 - Source adoption and saved source pages reuse binary byte coordinates after complete SDK validation, avoiding another full decode for every field and native label. Text coordinate conversion, captured-byte checks and authorization remain unchanged.
