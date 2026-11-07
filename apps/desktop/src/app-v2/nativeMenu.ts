@@ -1,11 +1,11 @@
-import type { Menu, MenuItem } from "@tauri-apps/api/menu";
+import type { Menu, MenuItem, Submenu } from "@tauri-apps/api/menu";
 import type { WorkbenchCommandDescription } from "../workbenchCommands";
 import type { TranslationKey } from "../i18n/types";
 import { workspaceCommandIds, type WorkspaceCommandId } from "./workspace/workspaceCommands";
 
 type MenuRow = { id: WorkspaceCommandId; text: string; enabled: boolean };
 type MenuResource = { close(): Promise<void> };
-type InstalledMenu = { rows: MenuRow[]; items: MenuItem[]; close(): Promise<void> };
+type InstalledMenu = { rows: MenuRow[]; items: MenuItem[]; submenu: Submenu; enabled: boolean; close(): Promise<void> };
 
 let menuOperations = Promise.resolve();
 
@@ -46,7 +46,8 @@ export function installWorkspaceMenu(translate: (key: TranslationKey) => string,
     }
 
     try {
-      const submenu = await retain(Submenu.new({ text: "Tsumugi", items: rows.map(({ id, text, enabled }) => ({
+      const enabled = rows.length === 0 || rows.some(row => row.enabled);
+      const submenu = await retain(Submenu.new({ text: "Tsumugi", enabled, items: rows.map(({ id, text, enabled }) => ({
         id, text, enabled,
         ...(id === "workspace.close-window" && navigator.platform.includes("Mac") ? { accelerator: "Cmd+Q" } : {}),
         action: () => { if (mounted && !disposed) dispatch(id); },
@@ -65,7 +66,7 @@ export function installWorkspaceMenu(translate: (key: TranslationKey) => string,
       previous = await menu.setAsAppMenu();
       if (previous) resources.push(previous);
       mounted = true;
-      return { rows, items, close };
+      return { rows, items, submenu, enabled, close };
     } finally {
       if (!mounted) await close();
     }
@@ -89,11 +90,18 @@ export function installWorkspaceMenu(translate: (key: TranslationKey) => string,
         installed = await mount(rows);
         return;
       }
-      await settleAll(rows.flatMap(({ enabled }, index) => {
+      const enabled = rows.length === 0 || rows.some(row => row.enabled);
+      // A transient gate can disable every command at once. Keep the item states
+      // and the Edit menu intact while suspending the workspace submenu.
+      if (enabled) await settleAll(rows.flatMap(({ enabled }, index) => {
         const previous = menu.rows[index];
         if (enabled === previous.enabled) return [];
         return [menu.items[index].setEnabled(enabled).then(() => { previous.enabled = enabled; })];
       }));
+      if (enabled !== menu.enabled) {
+        await menu.submenu.setEnabled(enabled);
+        menu.enabled = enabled;
+      }
     }).catch(() => { if (!disposed) failed(); });
   }
 

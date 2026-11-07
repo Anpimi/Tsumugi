@@ -521,10 +521,11 @@ async function openImportWorkspace(opened: ProjectView = project, ports: Partial
   return { close, register, button };
 }
 
-it("keeps the native Edit menu installed through a temporary input reservation", async () => {
+it("suspends the workspace command group while keeping native Edit installed", async () => {
   type NativeItem = { id: string; enabled: boolean };
   const items = new Map<number, NativeItem>();
   const submenus = new Map<number, number[]>();
+  const submenuEnabled = new Map<number, boolean>();
   const menus = new Map<number, number[]>();
   const hostMenu = 1;
   let currentMenu = hostMenu, nextResource = hostMenu;
@@ -533,11 +534,12 @@ it("keeps the native Edit menu installed through a temporary input reservation",
     currentMenu = resource;
     return [previous, String(previous)];
   });
+  const setEnabled = vi.fn<(kind: string, enabled: boolean, previous: boolean | undefined) => void>();
   const gateIntents = vi.spyOn(InteractionGate.prototype, "acquireIntent");
   vi.stubGlobal("isTauri", true);
   mockIPC((command, args) => {
     const { kind, options, rid, enabled } = args as {
-      kind?: string; options?: { items?: (NativeItem | [number, string])[] };
+      kind?: string; options?: { enabled?: boolean; items?: (NativeItem | [number, string])[] };
       rid: number; enabled: boolean;
     };
     if (command === "plugin:menu|new") {
@@ -548,13 +550,18 @@ it("keeps the native Edit menu installed through a temporary input reservation",
         items.set(child, { id: item.id, enabled: item.enabled });
         return child;
       }) ?? [];
-      if (kind === "Submenu") submenus.set(resource, children);
+      if (kind === "Submenu") {
+        submenus.set(resource, children);
+        submenuEnabled.set(resource, options?.enabled ?? true);
+      }
       if (kind === "Menu") menus.set(resource, children);
       return [resource, String(resource)];
     }
     if (command === "plugin:menu|items") return (submenus.get(rid) ?? []).map(child => [child, items.get(child)!.id, "MenuItem"]);
     if (command === "plugin:menu|set_enabled") {
-      items.get(rid)!.enabled = enabled;
+      setEnabled(kind ?? "", enabled, kind === "Submenu" ? submenuEnabled.get(rid) : items.get(rid)?.enabled);
+      if (kind === "Submenu") submenuEnabled.set(rid, enabled);
+      else items.get(rid)!.enabled = enabled;
       return;
     }
     if (command === "plugin:menu|set_as_app_menu") return setAppMenu(rid);
@@ -562,6 +569,7 @@ it("keeps the native Edit menu installed through a temporary input reservation",
   }, { shouldMockEvents: true });
   const enabled = (id: string) => {
     const workspace = menus.get(currentMenu)?.[0];
+    if (workspace !== undefined && submenuEnabled.get(workspace) === false) return false;
     return submenus.get(workspace ?? 0)?.map(resource => items.get(resource)).find(item => item?.id === id)?.enabled;
   };
   try {
@@ -571,14 +579,20 @@ it("keeps the native Edit menu installed through a temporary input reservation",
     if (!(gate instanceof InteractionGate)) throw new Error("Missing workspace interaction gate");
     const installed = currentMenu;
     setAppMenu.mockClear();
+    setEnabled.mockClear();
     let reservation: ReturnType<InteractionGate["acquireIntent"]> = null;
     act(() => { reservation = gate.acquireIntent("editor-paste"); });
     expect(reservation).not.toBeNull();
     await waitFor(() => expect(enabled("workspace.open-project")).toBe(false));
     expect(currentMenu).toBe(installed);
+    expect(setEnabled.mock.calls).toEqual([["Submenu", false, true]]);
     act(() => { reservation!.release(); });
     await waitFor(() => expect(enabled("workspace.open-project")).toBe(true));
     expect(setAppMenu).not.toHaveBeenCalled();
+    expect(setEnabled.mock.lastCall).toEqual(["Submenu", true, false]);
+    // An owner can finish loading during the reservation. Publish any real
+    // per-item changes before restoring the group.
+    expect(setEnabled.mock.calls.slice(1, -1).every(([kind, enabled, previous]) => kind === "MenuItem" && enabled !== previous)).toBe(true);
   } finally {
     cleanup();
     try { await waitFor(() => expect(currentMenu).toBe(hostMenu)); }
