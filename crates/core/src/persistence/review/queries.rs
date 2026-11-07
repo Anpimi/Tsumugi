@@ -25,13 +25,15 @@ impl<'a> TargetRead<'a> {
         self.connection
     }
 
-    pub(in crate::persistence) fn targets(
+    pub(in crate::persistence) fn targets_at(
         &mut self,
         project: ExecutionId,
-        units: &[ExecutionId],
         locale: &str,
+        positions: SourcePositions<'_>,
     ) -> Result<Vec<ReviewTarget>, ExecutionError> {
-        Ok(targets_and_terms_in(self, project, units, locale, None, &Cancellation::default())?.0)
+        Ok(targets_and_terms_in(
+            self, project, &positions.units(), locale, Some(positions), &Cancellation::default(),
+        )?.0)
     }
 }
 

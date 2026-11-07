@@ -32,8 +32,9 @@ fn finding_fixture(count: usize) -> (tempfile::TempDir, ProjectStore, ExecutionI
     let project = ExecutionId::parse(&store.metadata().unwrap().project_id().to_string()).unwrap();
     let source = (0..count).map(|index| (format!("entry-{index:04}"), format!("Source {index}"))).collect::<BTreeMap<_, _>>();
     adopt_source(&mut store, &serde_json::to_vec(&source).unwrap());
-    let (units, complete) = units_in(store.connection().unwrap(), project).unwrap();
-    assert!(complete);
+    let scope = units_in(store.connection().unwrap(), project).unwrap().unwrap();
+    assert!(scope.complete);
+    let units: Vec<_> = scope.members.into_iter().map(|(unit, _)| unit).collect();
     assert_eq!(units.len(), count);
     (directory, store, project, units)
 }
@@ -232,6 +233,8 @@ fn review_finding_projection_batches_targets_without_skipping_empty_units() {
         assert_eq!(original_sql.iter().filter(|sql| sql.contains(marker)).count(), 201, "{marker}");
         assert_eq!(projected_sql.iter().filter(|sql| sql.contains(marker)).count(), 3, "{marker}");
     }
+    assert_eq!(projected_sql.iter().filter(|sql| sql.contains("MIN(o.ordinal)")).count(), 1,
+        "only scope capture needs to scan for canonical positions");
     assert!(projected_sql.len() < 100, "empty finding history must be checked in batches, got {} statements", projected_sql.len());
     assert_eq!(projected_sql.iter().filter(|sql| sql.starts_with("BEGIN")).count(), 1);
     assert_eq!(projected_sql.iter().filter(|sql| sql.starts_with("COMMIT")).count(), 1);

@@ -449,6 +449,7 @@ fn decision_reads(store: &ProjectStore, project: ExecutionId) {
             ("decision_translation_candidate", vec![DecisionSource::TranslationCandidate]),
             ("decision_human_review", vec![DecisionSource::HumanReview]),
             ("decision_review_finding", vec![DecisionSource::ReviewFinding]),
+            ("decision_delivery_blocker", vec![DecisionSource::DeliveryBlocker]),
         ] {
             let query = DecisionQuery { locale: None, sources };
             let page = report_read(store, "retained", round, name, || {

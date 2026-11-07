@@ -1,7 +1,7 @@
 //! Content decisions remain observations of the original translation, review,
 //! and resource authorities. Every action opens that owner's checked reader.
 use super::*;
-use crate::persistence::{resources, translation};
+use crate::persistence::{content::SourcePositions, resources, translation};
 use crate::{ReviewDecisionKind, ReviewFindingDisposition, ReviewRepairStatus, ReviewTarget};
 use rusqlite::{OptionalExtension, params};
 use std::collections::BTreeMap;
@@ -15,23 +15,42 @@ fn identity(raw: String) -> Result<ExecutionId, ExecutionError> {
         .map_err(|_| failure(ErrorCode::CorruptLedger, "decision-content-identity"))
 }
 
+struct UnitScope {
+    snapshot_id: ExecutionId,
+    members: Vec<(ExecutionId, u32)>,
+    complete: bool,
+}
+
+impl UnitScope {
+    fn batches(&self) -> impl Iterator<Item = SourcePositions<'_>> {
+        self.members.chunks(100).map(|members| SourcePositions { snapshot_id: self.snapshot_id, members })
+    }
+}
+
 /// Cap membership as well as returned rows. Unvisited current units are explicit
 /// partial coverage, including when the visited prefix has no pending items.
-fn units_in(c: &Connection, project: ExecutionId) -> Result<(Vec<ExecutionId>, bool), ExecutionError> {
+fn units_in(c: &Connection, project: ExecutionId) -> Result<Option<UnitScope>, ExecutionError> {
+    let snapshot: Option<String> = c.query_row(
+        "SELECT current_snapshot FROM content_scope WHERE row_id=1",
+        [], |row| row.get(0),
+    ).optional().map_err(super::super::ledger::sql_error)?.flatten();
+    let Some(snapshot) = snapshot else { return Ok(None); };
     let mut statement = c.prepare(
-        "SELECT o.unit_id FROM source_effective_occurrences o
-         JOIN content_scope scope ON scope.current_snapshot=o.snapshot_id
+        "SELECT o.unit_id,MIN(o.ordinal) FROM source_effective_occurrences o
          JOIN source_units u ON u.unit_id=o.unit_id AND u.project_id=?1
-         GROUP BY o.unit_id ORDER BY MIN(o.ordinal) LIMIT ?2",
+         WHERE o.snapshot_id=?2 GROUP BY o.unit_id ORDER BY MIN(o.ordinal) LIMIT ?3",
     ).map_err(super::super::ledger::sql_error)?;
-    let mut units = statement.query_map(params![project.to_string(), (SOURCE_LIMIT + 1) as i64], |row| {
-        row.get::<_, String>(0)
+    let mut members = statement.query_map(params![project.to_string(), &snapshot, (SOURCE_LIMIT + 1) as i64], |row| {
+        Ok((row.get::<_, String>(0)?, row.get::<_, u32>(1)?))
     }).map_err(super::super::ledger::sql_error)?
-        .map(|row| identity(row.map_err(super::super::ledger::sql_error)?))
+        .map(|row| {
+            let (unit, ordinal) = row.map_err(super::super::ledger::sql_error)?;
+            Ok((identity(unit)?, ordinal))
+        })
         .collect::<Result<Vec<_>, _>>()?;
-    let complete = units.len() <= SOURCE_LIMIT;
-    units.truncate(SOURCE_LIMIT);
-    Ok((units, complete))
+    let complete = members.len() <= SOURCE_LIMIT;
+    members.truncate(SOURCE_LIMIT);
+    Ok(Some(UnitScope { snapshot_id: identity(snapshot)?, members, complete }))
 }
 
 fn selection_action(c: &Connection, project: ExecutionId, target: &ReviewTarget) -> Result<Option<ExecutionId>, ExecutionError> {
@@ -48,10 +67,13 @@ fn selection_action(c: &Connection, project: ExecutionId, target: &ReviewTarget)
 
 fn candidates(read: &mut review::TargetRead<'_>, project: ExecutionId, locale: &str) -> Result<SourceProjection, ExecutionError> {
     let c = read.connection();
-    let (units, mut complete) = units_in(c, project)?;
+    let Some(scope) = units_in(c, project)? else {
+        return Ok(SourceProjection { items: Vec::new(), complete: true });
+    };
+    let mut complete = scope.complete;
     let mut items = Vec::new();
-    for units in units.chunks(100) {
-        let targets = read.targets(project, units, locale)?;
+    for batch in scope.batches() {
+        let targets = read.targets_at(project, locale, batch)?;
         let (candidates, batch_complete) = translation::pending_candidates_in(
             c, project, locale, &targets, SOURCE_LIMIT - items.len(),
         )?;
@@ -83,10 +105,12 @@ fn candidates(read: &mut review::TargetRead<'_>, project: ExecutionId, locale: &
 
 fn human_review(read: &mut review::TargetRead<'_>, project: ExecutionId, locale: &str) -> Result<SourceProjection, ExecutionError> {
     let c = read.connection();
-    let (units, complete) = units_in(c, project)?;
+    let Some(scope) = units_in(c, project)? else {
+        return Ok(SourceProjection { items: Vec::new(), complete: true });
+    };
     let mut items = Vec::new();
-    for units in units.chunks(100) {
-        for target in read.targets(project, units, locale)? {
+    for batch in scope.batches() {
+        for target in read.targets_at(project, locale, batch)? {
             let (Some(selection_id), Some(revision_id)) = (target.selection_id, target.revision_id) else { continue; };
             if target.current_decision.as_ref().is_some_and(|decision| decision.kind == ReviewDecisionKind::Approve) { continue; }
             let source_action_id = match &target.current_decision {
@@ -108,7 +132,7 @@ fn human_review(read: &mut review::TargetRead<'_>, project: ExecutionId, locale:
             });
         }
     }
-    Ok(SourceProjection { items, complete })
+    Ok(SourceProjection { items, complete: scope.complete })
 }
 
 fn resource_proposals(store: &ProjectStore, c: &Connection, project: ExecutionId, locale: &str) -> Result<SourceProjection, ExecutionError> {
@@ -216,16 +240,20 @@ fn finding_item(project: ExecutionId, unit: ExecutionId, locale: &str, target_ba
 
 fn review_findings(read: &mut review::TargetRead<'_>, project: ExecutionId, locale: &str) -> Result<SourceProjection, ExecutionError> {
     let c = read.connection();
-    let (units, mut complete) = units_in(c, project)?;
+    let Some(scope) = units_in(c, project)? else {
+        return Ok(SourceProjection { items: Vec::new(), complete: true });
+    };
+    let mut complete = scope.complete;
     let mut items = BTreeMap::new();
     let mut visited = 0usize;
-    for (batch_index, batch) in units.chunks(100).enumerate() {
+    for (batch_index, batch) in scope.batches().enumerate() {
         // A failed batch may include corruption beyond the visited prefix.
         // Recheck only actually visited targets so an earlier limit still returns
         // the same partial page, while an encountered invalid target still fails.
-        let targets = read.targets(project, batch, locale).ok();
-        let recorded = review::finding_record_units_in(c, project, locale, batch)?;
-        for (index, unit) in batch.iter().copied().enumerate() {
+        let targets = read.targets_at(project, locale, batch).ok();
+        let units = batch.units();
+        let recorded = review::finding_record_units_in(c, project, locale, &units)?;
+        for (index, unit) in units.into_iter().enumerate() {
             let unit_index = batch_index * 100 + index;
             let individual;
             let target = if let Some(targets) = &targets { &targets[index] } else {
@@ -267,7 +295,7 @@ fn review_findings(read: &mut review::TargetRead<'_>, project: ExecutionId, loca
                     };
                     items.insert(key, item);
                 }
-                if items.len() > SOURCE_LIMIT || visited >= SOURCE_LIMIT && (page.next_offset.is_some() || unit_index + 1 < units.len()) {
+                if items.len() > SOURCE_LIMIT || visited >= SOURCE_LIMIT && (page.next_offset.is_some() || unit_index + 1 < scope.members.len()) {
                     complete = false;
                     let items = items.into_values().take(SOURCE_LIMIT).collect();
                     return Ok(SourceProjection { items, complete });

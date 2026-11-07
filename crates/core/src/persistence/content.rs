@@ -37,6 +37,10 @@ impl SourcePositions<'_> {
         serde_json::to_string(self.members)
             .map_err(|_| failure(ErrorCode::InvalidInput, "source-positions"))
     }
+
+    pub(super) fn units(self) -> Vec<ExecutionId> {
+        self.members.iter().map(|(unit, _)| *unit).collect()
+    }
 }
 
 pub(super) const TABLES:&[(&str,&str)]=&[

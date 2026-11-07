@@ -130,8 +130,7 @@ pub(super) fn project_captured(
     locale: &str,
     positions: SourcePositions<'_>,
 ) -> Result<Vec<SegmentRow>, ExecutionError> {
-    let units = positions.members.iter().map(|(unit, _)| *unit).collect::<Vec<_>>();
-    project_rows(store, read, project, &units, locale, Some(positions))
+    project_rows(store, read, project, &positions.units(), locale, Some(positions))
 }
 
 pub(super) fn project_rows(
