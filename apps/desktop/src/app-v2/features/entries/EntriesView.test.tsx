@@ -246,6 +246,25 @@ it("confirms and advances through the same fixed queue, including its next windo
   expect(h.queue.mock.calls.every(([request]) => request.scopeId === "fixed-scope")).toBe(true);
 });
 
+it("advances after confirmation while an unfocused row releases its input owner", async () => {
+  const h = await harness({ focus: unitA });
+  const field = await screen.findByRole("textbox", { name: i18n.t("workbenchV2.editorLabel", { key: `key.${unitA}` }) });
+  const saved = deferred<TranslationSaveReceipt>();
+  h.ports.save.mockReturnValueOnce(saved.promise);
+  fireEvent.change(field, { target: { value: "Confirmed A" } });
+  let confirming: Promise<void> | undefined;
+  act(() => { confirming = h.ref.current?.confirm(true); });
+  await waitFor(() => expect(h.ports.save).toHaveBeenCalledTimes(1));
+
+  // Virtual rows release their owners on unmount, even if they never held focus.
+  act(() => h.gate.releaseOwner("unfocused-row"));
+  await act(async () => { saved.resolve(h.commit(h.ports.save.mock.calls[0][0])); await confirming; });
+
+  expect(h.ports.clear).toHaveBeenCalledOnce();
+  expect(h.view()).toMatchObject({ focus: "unit-b", editing: true, queueScopeId: "fixed-scope" });
+  expect(await screen.findByRole("textbox", { name: i18n.t("workbenchV2.editorLabel", { key: "key.unit-b" }) })).toHaveFocus();
+});
+
 it("keeps the original editing queue when the adjacent project brief refreshes after confirmation", async () => {
   const h = await harness(), field = await h.open();
   const selection = { kind: "ids" as const, locale: "zh-CN", sourceSnapshotId: "snapshot", unitIds: [unitA, "unit-b"] };

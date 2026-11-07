@@ -47,7 +47,12 @@ export class InteractionGate {
   }
 
   releaseOwner(ownerId: string) {
-    this.update({ composingOwners: this.snapshot.composingOwners.filter(id => id !== ownerId), inputOwner: this.snapshot.inputOwner?.ownerId === ownerId ? null : this.snapshot.inputOwner });
+    const { composingOwners, inputOwner } = this.snapshot;
+    const ownedInput = inputOwner?.ownerId === ownerId;
+    const wasComposing = composingOwners.includes(ownerId);
+    if (!ownedInput && !wasComposing) return;
+    this.update({ composingOwners: wasComposing ? composingOwners.filter(id => id !== ownerId) : composingOwners,
+      inputOwner: ownedInput ? null : inputOwner });
   }
 
   pushDialog(id: string): () => void {

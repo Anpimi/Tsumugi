@@ -194,6 +194,7 @@ Current workspace version metadata: **`0.2.0-alpha.1`**. Because the published `
 - Pending candidate, review, and finding lists reuse the source positions of their bounded entry lists, reducing repeated source scans in Items needing a decision.
 - The Items needing a decision count waits for the first entries view, local draft startup and translation confirmation to settle. Its background reads share one native request at a time, leaving more room for opening and saving.
 - Typing and saving a local draft updates the editor and its status without refreshing unrelated entry rows when their view stays the same.
+- Confirm and next keeps advancing through the fixed queue when an unfocused row leaves the viewport during the save.
 
 - Source impact and maintenance reads batch effective bindings and ancestor lookups within the original read transaction, avoiding per-entry SQL queries while retaining frozen mapping versions and unresolved-match checks.
 
