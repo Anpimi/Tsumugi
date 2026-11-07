@@ -4,6 +4,7 @@ import ProjectMetadataSheet from "./features/settings/ProjectMetadataSheet";
 import { createContext, lazy, Suspense, useCallback, useContext, useEffect, useId, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore, type ComponentProps, type Dispatch, type ReactNode, type SetStateAction } from "react";
 import { RouterProvider } from "@tanstack/react-router";
 import { useStore } from "zustand";
+import { useShallow } from "zustand/react/shallow";
 import { isTauri } from "@tauri-apps/api/core";
 import { open as pickDirectory } from "@tauri-apps/plugin-dialog";
 import { useTranslation } from "react-i18next";
@@ -150,7 +151,6 @@ function useWorkspaceContext() { const value = useContext(WorkspaceContext); if 
 function subscribeWidth(listener: () => void) { window.addEventListener("resize", listener); return () => window.removeEventListener("resize", listener); }
 const noDraftState: TranslationDraftSnapshot = { hydration: "idle", revision: 0, failure: null, retired: false, mutationReserved: false, summaries: [] };
 const noDraftSubscription = () => () => undefined;
-const getNoDraftState = () => noDraftState;
 const getNoCandidateBatchState = () => null;
 
 function KnowledgeLoadFailure({ canRetry, onFailure, onRetry }: { canRetry: boolean; onFailure: () => void; onRetry: () => void }) {
@@ -554,7 +554,22 @@ function WorkspaceShell() {
   useLayoutEffect(() => { if (view?.kind === "runs" || view?.dock === "agent") requestCandidates(); }, [view?.kind, view?.dock, requestCandidates]);
   useLayoutEffect(() => { if (view?.kind === "delivery") requestDelivery(); }, [view?.kind, requestDelivery]);
   const interaction = useSyncExternalStore(gate.subscribe, gate.getSnapshot, gate.getSnapshot);
-  const draftState = useSyncExternalStore(drafts?.subscribe ?? noDraftSubscription, drafts?.getSnapshot ?? getNoDraftState, drafts?.getSnapshot ?? getNoDraftState);
+  const activeDraftKey = recoveryKey ?? (view?.kind === "entries" && view.editing && view.focus
+    ? { projectId: session.project.metadata.projectId, unitId: view.focus, locale: view.locale } : null);
+  const selectDraftState = useShallow((snapshot: TranslationDraftSnapshot) => {
+    let pendingCount = 0, firstPending: DraftKey | undefined;
+    for (const summary of snapshot.summaries) {
+      if (!summary.hasPending) continue;
+      pendingCount++;
+      firstPending ??= summary.key;
+    }
+    return { hydration: snapshot.hydration, retired: snapshot.retired, mutationReserved: snapshot.mutationReserved,
+      firstDraft: snapshot.summaries[0]?.key, pendingCount, firstPending,
+      canConfirm: activeDraftKey !== null && !!drafts?.canConfirm(activeDraftKey),
+      recoverySummaries: recoveryKey ? snapshot.summaries : null };
+  });
+  const draftState = useSyncExternalStore(drafts?.subscribe ?? noDraftSubscription,
+    () => selectDraftState(drafts?.getSnapshot() ?? noDraftState));
   const conversationHydration = useSyncExternalStore(conversations?.subscribe ?? noDraftSubscription,
     () => conversations?.getSnapshot().hydration ?? "idle", () => "idle");
   const candidateBatchState = useSyncExternalStore<CandidateBatchSnapshot | null>(candidateOwners?.batch.subscribe ?? noDraftSubscription,
@@ -597,7 +612,7 @@ function WorkspaceShell() {
   const revealedImportFailure = useRef<typeof lifecycleState.failure>(null);
   const revealedReviewFailure = useRef<typeof lifecycleState.failure>(null);
   const recoveryEntry = recoveryKey ? drafts?.getEntry(recoveryKey) : undefined;
-  const pendingDrafts = draftState.summaries.filter(summary => summary.hasPending);
+  const firstPendingDraft = draftState.firstPending;
   const disabled = readOnly || lifecycleState.phase !== "idle" || !!lifecycleState.pending;
   const sourcePresentation = useRef<{ viewId: string | null; origin: Element | null } | null>(null);
   const [sourceSavedSnapshot, setSourceSavedSnapshot] = useState<string | null>(null);
@@ -665,10 +680,10 @@ function WorkspaceShell() {
     if (!failure || revealedImportFailure.current === failure || failure.code !== "leave-blocked" || failure.ownerId !== "translation-drafts" || !importer) return;
     // The shared draft coordinator may be the first blocked owner while the
     // import owns its reservation. Reveal that original request without routing.
-    if (importer.hasPending() || importer.current().busy && draftState.mutationReserved && !draftState.summaries.some(summary => summary.hasPending)) {
+    if (importer.hasPending() || importer.current().busy && draftState.mutationReserved && !draftState.pendingCount) {
       revealedImportFailure.current = failure; revealImport();
     }
-  }, [lifecycleState.failure, importOwners, draftState.mutationReserved, draftState.summaries, revealImport]);
+  }, [lifecycleState.failure, importOwners, draftState.mutationReserved, draftState.pendingCount, revealImport]);
   const currentScope = () => {
     const current = lifecycle.getSnapshot();
     return !readOnly && current.phase === "idle" && !current.pending && current.session?.project.sessionToken === session.project.sessionToken
@@ -800,9 +815,7 @@ function WorkspaceShell() {
     toggleConversationMode,
     isEditing: () => recoveryKey !== null || !importVisible && !!entries.current?.isEditing(),
     canAdvance: () => recoveryKey === null && !!entries.current?.isEditing(),
-    canConfirm: () => recoveryKey ? !!drafts && !readOnly && !lifecycleState.pending && draftState.hydration === "ready" && !draftState.retired && !draftState.mutationReserved
-      && !!recoveryEntry?.value && !recoveryEntry.value.pending && !recoveryEntry.busy && recoveryEntry.basisCurrent && recoveryEntry.currentFailure === null
-      && !(recoveryEntry.value.merge && recoveryEntry.failure?.kind === "basis-conflict") && recoveryEntry.failure?.kind !== "journal" && recoveryEntry.failure?.kind !== "journal-conflict" : !!entries.current?.canConfirm(),
+    canConfirm: () => recoveryKey ? !readOnly && !lifecycleState.pending && !!drafts?.canConfirm(recoveryKey) : !!entries.current?.canConfirm(),
   };
   useEffect(() => {
     if (!pendingImport || !importOwners) return;
@@ -857,7 +870,7 @@ function WorkspaceShell() {
   useEffect(() => {
     if (!isTauri() || !commandsReady) return;
     return installWorkspaceMenu(dispatcher.list({ source: "native-menu" }), key => t(key), id => dispatcher.dispatch(id, { source: "native-menu", viewId: currentId }), () => setCommandFailed(true));
-  }, [dispatcher, commandsReady, currentId, i18n.resolvedLanguage, settings.bindingsRevision, disabled, interaction.intentOwner, draftState.hydration, draftState.mutationReserved, view?.editing, recoveryKey !== null, actions.current.canConfirm()]);
+  }, [dispatcher, commandsReady, currentId, i18n.resolvedLanguage, settings.bindingsRevision, disabled, interaction.intentOwner, draftState.hydration, draftState.mutationReserved, view?.editing, recoveryKey !== null, draftState.canConfirm]);
   useEffect(() => () => { paletteRelease.current?.(); drawerRelease.current?.(); }, [gate]);
   const activeLocale = view?.locale ?? session.project.metadata.targetLocales[0] ?? "";
   const importNeedsAttention = !!importOwners && (importOwners.imports.current().busy || importOwners.imports.hasPending()
@@ -1500,7 +1513,7 @@ function WorkspaceShell() {
         { id: "source", label: t("sourceMaintenance.title"), onSelect: () => dispatch("source.import-upstream"), disabled: disabled || !commandsReady },
       ]} />
       <span className={styles.breadcrumb}>›</span><Menu label={message("language")} trigger={<Button size="sm" disabled={disabled || view?.kind === "decisions"}>{view?.kind === "decisions" ? message("decisionAllLanguages") : activeLocale}<ChevronDown /></Button>} items={session.project.metadata.targetLocales.map(locale => ({ id: locale, label: locale, onSelect: () => { if (view) void runtime.navigation.update(view.id, { locale }); } }))} />
-      <Button size="sm" disabled={!drafts || draftState.summaries.length === 0} onClick={() => { const first = draftState.summaries[0]; if (first) revealDraft(first.key); }}>{message("draftRecoveryTitle")}</Button>
+      <Button size="sm" disabled={!draftState.firstDraft} onClick={() => { if (draftState.firstDraft) revealDraft(draftState.firstDraft); }}>{message("draftRecoveryTitle")}</Button>
       <Button ref={commandTrigger} className={styles.commandSearch} size="sm" disabled={!commandsReady || disabled} onClick={() => dispatch("workspace.commands")}><Search />{message("commandPlaceholder")}</Button>
       <IconButton label={message("conversationMode")} aria-pressed={conversationMode} disabled={disabled || !commandsReady || !view} onClick={() => dispatch("workspace.conversation-mode")}><Sparkles /></IconButton>
       <IconButton ref={dockTrigger} className={styles.dockToggle} label={message("openAgent")} disabled={disabled || !commandsReady} onClick={() => dispatch("workspace.agent")}><PanelRight /></IconButton>
@@ -1527,7 +1540,7 @@ function WorkspaceShell() {
     {pendingImport && !importOwners ? <Banner>{message("importLoading")}</Banner> : null}
     {draftLoadFailed || draftState.hydration === "failed" ? <Banner tone="error" action={<Button onClick={retryDrafts}>{message("draftIndexRetry")}</Button>}>{message("draftIndexFailed")}</Banner>
       : !drafts || draftState.hydration === "idle" || draftState.hydration === "loading" ? <Banner>{message("draftIndexLoading")}</Banner> : null}
-    {pendingDrafts.length ? <Banner tone="warning" action={<Button onClick={() => revealDraft(pendingDrafts[0].key)}>{message("draftRecoveryOpen")}</Button>}>{message("draftPendingSummary", { count: pendingDrafts.length })}</Banner> : null}
+    {firstPendingDraft ? <Banner tone="warning" action={<Button onClick={() => revealDraft(firstPendingDraft)}>{message("draftRecoveryOpen")}</Button>}>{message("draftPendingSummary", { count: draftState.pendingCount })}</Banner> : null}
     {importNeedsAttention && !importVisible ? <Banner tone="warning" action={<Button onClick={revealImport}>{message("importOpen")}</Button>}>{message("importPendingNotice")}</Banner> : null}
     {reviewBatchOpen && !reviewOwner ? <Banner>{message("reviewLoading")}</Banner> : null}
     {reviewOwner && commandsReady && commands && !reviewBatchOpen && !reviewOwner.state.batchEnded && reviewOwner.state.batchItems.length > 0 ? <Banner
@@ -1654,7 +1667,7 @@ function WorkspaceShell() {
         dispatcher.handleKeyDown(event, currentId, current.inputOwner?.ownerId, "draft-recovery");
       }}>
       {drafts && recoveryKey ? <>
-        {draftState.summaries.length ? <div className={styles.actions}>{draftState.summaries.map(summary => {
+        {draftState.recoverySummaries?.length ? <div className={styles.actions}>{draftState.recoverySummaries.map(summary => {
           const entry = drafts.getEntry(summary.key);
           const shortId = `${summary.key.unitId.slice(0, 8)}…${summary.key.unitId.slice(-6)}`;
           return <Button key={JSON.stringify(summary.key)} title={summary.key.unitId} aria-current={summary.key.unitId === recoveryKey.unitId && summary.key.locale === recoveryKey.locale ? "true" : undefined}

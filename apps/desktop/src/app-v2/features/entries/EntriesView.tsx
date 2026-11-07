@@ -52,12 +52,14 @@ export interface EntriesHandle {
   toggleFocus: () => Promise<void>; isEditing: () => boolean; canConfirm: () => boolean;
 }
 const noSubscription = () => () => {};
-const noDraftSnapshot = () => null;
 
 export default function EntriesView({ project, view, disabled, patch, navigate, drafts, gate, dispatch, onRevealDraft, onSelectedRevision, onImport, onImportSource, onCandidateBatch, candidateBatchTriggerRef, candidateBatchBlocked = false, onReviewBatch, reviewBatchTriggerRef, renderCandidate, commands, ref }: Props) {
   const { t } = useTranslation(undefined, { keyPrefix: "workbenchV2" });
   const reads = useSessionReads();
-  useSyncExternalStore(drafts?.subscribe ?? noSubscription, drafts?.getSnapshot ?? noDraftSnapshot, drafts?.getSnapshot ?? noDraftSnapshot);
+  const importReady = useSyncExternalStore(drafts?.subscribe ?? noSubscription, () => {
+    const state = drafts?.getSnapshot();
+    return state?.hydration === "ready" && !state.retired;
+  });
   useSyncExternalStore(gate.subscribe, gate.getSnapshot, gate.getSnapshot);
   const [captured, setCaptured] = useState<RetainedEntryCapture | null>(null);
   const [captureError, setCaptureError] = useState(false), [capturing, setCapturing] = useState(false), [queueEnd, setQueueEnd] = useState(false);
@@ -142,12 +144,7 @@ export default function EntriesView({ project, view, disabled, patch, navigate, 
   const [revisionFailureUnit, setRevisionFailureUnit] = useState<string | null>(null);
   const selected = current?.rows.find(row => row.content.unitId === view.focus)?.content;
   const isEditing = () => view.editing && key !== null;
-  const canConfirm = () => {
-    const entry = drafts && key ? drafts.getEntry(key) : null, state = drafts?.getSnapshot();
-    return !disabled && isEditing() && state?.hydration === "ready" && !state.retired && !state.mutationReserved
-      && !!entry?.value && entry.basisCurrent && !entry.value.pending && !entry.busy && !entry.currentFailure
-      && !(entry.value.merge && entry.failure?.kind === "basis-conflict") && entry.failure?.kind !== "journal" && entry.failure?.kind !== "journal-conflict";
-  };
+  const canConfirm = () => !disabled && view.editing && key !== null && !!drafts?.canConfirm(key);
   async function refresh() {
     if (disabled || !await navigate({ focus: null, editing: false, focusMode: false, queueActive: false, queueAnchor: null, queueScopeId: null, cursor: null, afterOrdinal: 0 })) return;
     const source = await scope.refetch();
@@ -336,7 +333,7 @@ export default function EntriesView({ project, view, disabled, patch, navigate, 
       ]} />
       <Button size="sm" disabled={disabled} aria-pressed={view.entryPageMode} onClick={() => patch({ entryPageMode: !view.entryPageMode })}>{t(view.entryPageMode ? "entryWindowDisplay" : "entryFullPage")}</Button>
       <Button size="sm" disabled={disabled || !availableLocale} aria-pressed={view.compareSource} onClick={() => patch({ compareSource: !view.compareSource })}>{t("sourceComparisonToggle")}</Button>
-      {onImport ? <Button size="sm" disabled={disabled || !drafts || drafts.getSnapshot().hydration !== "ready" || drafts.getSnapshot().retired} onClick={onImport}>{t("importTitle")}</Button> : null}
+      {onImport ? <Button size="sm" disabled={disabled || !importReady} onClick={onImport}>{t("importTitle")}</Button> : null}
       {current ? <span className={styles.count} title={view.queueActive ? t("fixedQueueHelp") : undefined}>{t(view.queueActive ? "fixedQueue" : "entryCount", { count: current.total })}</span> : null}
       {isEditing() ? <Button size="sm" onClick={() => { void toggleFocus(); }}>{t(view.focusMode ? "editorTableMode" : "editorFocusMode")}</Button> : null}
     </form>

@@ -165,6 +165,11 @@ export class TranslationDrafts {
   inputVersion = () => this.inputRevision;
   subscribe = (listener: () => void) => { this.listeners.add(listener); return () => { this.listeners.delete(listener); }; };
   getEntry = (key: DraftKey): DraftEntry | undefined => this.records.get(identity(key))?.entry;
+  canConfirm(key: DraftKey): boolean {
+    const record = this.records.get(identity(key));
+    return !!record && this.state.hydration === "ready" && !this.kernel.reserved
+      && this.fresh(record) && record.entry.failure?.kind !== "journal";
+  }
   private validKey(key: DraftKey) { return key.projectId === this.context.projectId; }
   private summaries(source: readonly DraftSummary[]): readonly DraftSummary[] {
     // Unopened entries retain the Host's metadata. Loaded entries project their

@@ -1,5 +1,5 @@
 import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
-import { createRef, useState, useSyncExternalStore } from "react";
+import { createRef, useState, useSyncExternalStore, type ComponentProps } from "react";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { i18n } from "../../../i18n";
 import type { workbenchEn } from "../../../i18n/workbench";
@@ -20,6 +20,15 @@ import { createWorkspaceStore, getWorkspaceView, type NewWorkspaceView, type Wor
 import { TranslationDrafts, type TranslationDraftPorts } from "../editor/translationDrafts";
 import ProjectBrief from "../assistant/ProjectBrief";
 import EntriesView, { type EntriesHandle } from "./EntriesView";
+
+const tableRender = vi.hoisted(() => vi.fn());
+vi.mock("./EntriesTable", async original => {
+  const { default: Table } = await original<typeof import("./EntriesTable")>();
+  return { default: (props: ComponentProps<typeof Table>) => {
+    tableRender();
+    return <Table {...props}/>;
+  } };
+});
 
 type WorkbenchTextKey = { [K in keyof typeof workbenchEn]: typeof workbenchEn[K] extends string ? K : never }[keyof typeof workbenchEn];
 const w = (key: WorkbenchTextKey) => i18n.t(`workbenchV2.${key}`);
@@ -207,6 +216,20 @@ it("explains the first source version while retaining empty source text as a rea
   expect(screen.getAllByText(w("sourceComparisonNoPrevious")).length).toBeGreaterThan(0);
   expect(screen.getAllByText(w("sourceComparisonEmptyText")).length).toBeGreaterThan(0);
   expect(h.page.mock.calls.filter(([request]) => request.scopeId === null)).toHaveLength(1);
+});
+
+it("updates and preserves the active text without rendering the entries table again", async () => {
+  const h = await harness(), field = await h.open();
+  const key = { projectId: context.projectId, locale: "zh-CN", unitId: unitA };
+  tableRender.mockClear();
+  await act(async () => {
+    fireEvent.change(field, { target: { value: "Preserved e\u0301 {{name}} 世界" } });
+    expect(await h.drafts.flush(key)).toBe(true);
+  });
+  expect(field).toHaveValue("Preserved e\u0301 {{name}} 世界");
+  expect(h.ports.write).toHaveBeenCalledTimes(1);
+  expect(h.ref.current?.canConfirm()).toBe(true);
+  expect(tableRender).not.toHaveBeenCalled();
 });
 
 it("confirms and advances through the same fixed queue, including its next window", async () => {
