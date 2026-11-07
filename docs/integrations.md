@@ -1,4 +1,4 @@
-# Bundled integrations and compatibility
+# Integrations and compatibility
 
 In **Source content**, you select an installed, approved plugin capability before choosing a source folder. Approving a package, approving a runtime, and authorizing each individual execution are separate steps. The bundled plugin profile ships with the packages listed below; building from source without bundling those resources does not fall back to a built-in implementation. See [plugin installation](plugin-distribution.md) for details on managing packages.
 
@@ -20,6 +20,17 @@ The experimental WebVTT integration implements Caption Profile 1, a focused edit
 1. **Translate and review**: After importing and applying a source snapshot, edit cue translations under **Translations → Edit translations**, run checks and record approvals in **Review and QA**, or import existing translated `.vtt` files through the workflow in [translation import](translation-import.md).
 2. **Build and export**: **Build and export** combines the saved source template with your approved project translations. It replaces only the cue text payloads while preserving timing, cue settings, identifiers, cue ordering, and all other original bytes, without rereading external subtitle files. Enter a valid `.vtt` filename for each target language; empty translations, blank lines, timestamp arrows (`-->`), or markup that could alter the file structure are rejected before a release can be created.
 3. **Update source subtitles**: Choose **Update source content** to compare a new `source.vtt` snapshot. Unchanged cues retain their existing work, while timing or layout modifications require re-verifying source correspondence and review even if the source words are identical. Cues with renamed IDs do not inherit identity automatically from matching text alone. Confirming the continuation appends a new source revision while preserving earlier snapshots, translations, and releases.
+
+## Skyrim SE development package
+
+`skyrim-se 0.1.0-alpha.1` is a separate development package for Apple silicon macOS. Use the matching SDK `0.1.0-alpha.8` Host, SDK Process3 worker, and self-contained format component using codec protocol 4. The complete desktop bundle's catalog remains WebVTT and SMAPI. Check the package identity in **Settings → Extensions** before enabling it and approve the native Host and individual executions through the usual controls.
+
+- **Input** — Select the groups that apply to your Mod. A capture can include one embedded-text or localized ESP, ESM or ESL, the matching `.STRINGS`, `.DLSTRINGS`, and `.ILSTRINGS` tables referenced under `Strings/`, and up to sixteen SkyUI MCM tables under `Interface/Translations/`. Use files from the same Mod version and file-language variant, within a combined 2 MiB raw limit. Capture and independently check the source before applying it.
+- **Scope** — The declared fields include names, descriptions, books, quest objectives and logs, dialogue, message buttons, faction ranks, and selected perk text. Shared Strings IDs are edited as a single value. Script resources, undeclared fields, and XML exchange are outside this native workflow. Capture counts describe the declared projection.
+- **Reuse and maintenance** — In **Entries → Import translations**, choose record text or MCM and capture the translated files against their adopted same-version original. For record text, the package checks that the native fields and nontext content match. Compare the independently checked suggestions before adopting them. For a new upstream version, use **Update source content** and review uncertain matches in the same project. Earlier development captures made with the old domain basis must be re-extracted to use the new worker for review or build.
+- **Build and install** — Run the required format checks and record human approvals. In **Delivery**, select the game loading language separately from the target translation locale. Export the independently checked files to a new directory, keeping the plugin, matching tables, relative paths, and companion report together. Use a separate entry in the Mod manager and keep the original version. A same-named output plugin replaces that file in the selected load order, so check the intended base and any patches before enabling it.
+
+Local native tests exercised a synthetic two-version Mod, including existing translation reuse, reviewed staged outputs, export, and project reopen. Separate format tests covered up to 476 declared fields and 1,977,864 raw bytes in synthetic BOOK records. Full Mod capacity, game loading and display, and Windows desktop processing remain unverified.
 
 ## Execution model and version compatibility
 

@@ -56,7 +56,7 @@ Tsumugi 将通用本地化流程与具体文件格式、领域规则解耦。Rus
 - **[插件 Host](crates/plugin-host/README.md)**（`crates/plugin-host`）：提供插件包检查、本地 Store 与信任管理，以及隔离的原生 / JavaScript 组件通道。
 - **[桌面插件管理](docs/plugin-distribution.zh-CN.md)**：支持显式安装插件包、批准运行环境，并为项目绑定对应领域能力。
 
-目前内置与插件支持覆盖 Stardew Valley SMAPI Mod（`manifest.json` 与平铺 `i18n/*.json`）以及带显式 cue ID 的实验性 WebVTT 纯文本字幕（导入、翻译、更新与导出均保留时间轴、布局及非文本字节）。支持范围与兼容性详见[内置集成说明](docs/integrations.md)与[插件开发指南](docs/plugin-authoring.md)。
+完整 macOS 应用包随附 Stardew Valley SMAPI（`manifest.json` 与平铺 `i18n/*.json`）及带显式 cue ID 的实验性 WebVTT 纯文本字幕插件。[Skyrim SE 开发候选包](docs/integrations.md#skyrim-se-development-package)单独准备，覆盖已声明的记录文本、Strings 表和 SkyUI MCM。详见[集成与兼容性](docs/integrations.md)及[插件开发指南](docs/plugin-authoring.md)。
 
 ### AI 翻译、Arena 与 Agent 工作计划
 

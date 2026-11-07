@@ -56,7 +56,7 @@ Tsumugi separates core localization workflows from format- and domain-specific l
 - **[Plugin Host](crates/plugin-host/README.md)** (`crates/plugin-host`): Package inspection, local Store and trust management, and isolated Native/JavaScript worker channels.
 - **[Desktop Plugin Management](docs/plugin-distribution.md)**: Explicit package installation, runtime approval, and per-project domain binding.
 
-Built-in and plugin-backed workflows currently cover Stardew Valley SMAPI mods (`manifest.json` + flat `i18n/*.json`) and an experimental WebVTT plain-text subtitle profile with explicit cue IDs (preserving timing, layout, and non-text bytes). See [Bundled Integrations and Compatibility](docs/integrations.md) and the [Plugin Authoring Guide](docs/plugin-authoring.md).
+The complete macOS bundle includes Stardew Valley SMAPI (`manifest.json` and flat `i18n/*.json`) and an experimental WebVTT plain-text subtitle profile with explicit cue IDs. The [Skyrim SE development package](docs/integrations.md#skyrim-se-development-package) is prepared separately and covers declared record text, Strings tables, and SkyUI MCM. See [Integrations and compatibility](docs/integrations.md) and the [Plugin Authoring Guide](docs/plugin-authoring.md).
 
 ### AI, Arena, and Agent Work Plans
 
