@@ -637,8 +637,11 @@ function WorkspaceShell() {
   const strategySubscribe = strategyOwner?.subscribe, readStrategyActivity = strategyOwner?.getDecisionActivity;
   const strategyActivity = useMemo(() => strategySubscribe && readStrategyActivity ? { subscribe: strategySubscribe, getDecisionActivity: readStrategyActivity } : null,
     [strategySubscribe, readStrategyActivity]);
+  const draftIndexSettled = draftLoadFailed || draftState.hydration === "ready" || draftState.hydration === "failed";
+  const conversationsSettled = conversationLoadFailed || conversationHydration === "ready" || conversationHydration === "failed";
   const decisionFeed = useDecisionFeed(session.reads, strategyActivity ? [drafts, conversations, resourceActivity, sourceActivity, strategyActivity] : [drafts, conversations, resourceActivity, sourceActivity], view?.kind === "decisions" ? view.decisionCursor : null,
-    view?.kind === "decisions" && !importVisible, !readOnly);
+    { visible: view?.kind === "decisions" && !importVisible, enabled: !disabled, foreground: view?.kind === "delivery",
+      backgroundReady: !!view && draftIndexSettled && conversationsSettled && !draftState.mutationReserved });
   const decisionBadgeId = useId();
   const lastDecisionView = useRef<string | null>(null);
   useEffect(() => { if (view?.kind === "decisions") lastDecisionView.current = view.id; }, [view?.kind, view?.id]);
@@ -1059,7 +1062,7 @@ function WorkspaceShell() {
     dispatch("workspace.decisions");
   }
   function decisionTray() {
-    return <DecisionTray page={decisionFeed.first.data} loading={decisionFeed.first.isFetching} error={decisionFeed.first.error}
+    return <DecisionTray page={decisionFeed.first.data} loading={decisionFeed.firstLoading} error={decisionFeed.first.error}
       disabled={disabled || !commandsReady || interaction.composingOwners.length > 0 || interaction.intentOwner !== null} onOpen={openDecisionsFromTray}/>;
   }
   function conversationFallback(content: ReactNode) {
@@ -1079,7 +1082,7 @@ function WorkspaceShell() {
     }
     return <Suspense fallback={null}><ProjectBrief project={session.project} visible={(view?.dock ?? "agent") === "agent" && (!narrow || drawer)}
       briefEligible={eligible} previousPosition={previousProject?.position} disabled={!allowed()}
-      decisions={{ page: decisionFeed.first.data, loading: decisionFeed.first.isFetching, error: decisionFeed.first.error }}
+      decisions={{ page: decisionFeed.first.data, loading: decisionFeed.firstLoading, error: decisionFeed.first.error }}
       onContinue={position => void openBriefEntries(position.locale, "all", position.unitId).catch(() => setCommandFailed(true))}
       onEntries={(locale, preset) => void openBriefEntries(locale, preset).catch(() => setCommandFailed(true))}
       onImport={() => { if (allowed()) openSource(dialogId); }}
@@ -1563,7 +1566,7 @@ function WorkspaceShell() {
           if (id === "knowledge") { void openKnowledge(event.metaKey || event.ctrlKey).catch(() => setCommandFailed(true)); return; }
           const existing = store.getState().viewOrder.find(key => store.getState().views[key].kind === "entries");
           if (!(event.metaKey || event.ctrlKey) && existing) void runtime.navigation.activate(existing); else dispatch("workspace.new-view");
-        }}>{icon}</IconButton>{id === "decisions" ? <span id={decisionBadgeId} className={styles.activityCount}><DecisionBadge page={decisionFeed.first.data} loading={decisionFeed.first.isFetching} error={decisionFeed.first.error}/></span> : null}</div>)}
+        }}>{icon}</IconButton>{id === "decisions" ? <span id={decisionBadgeId} className={styles.activityCount}><DecisionBadge page={decisionFeed.first.data} loading={decisionFeed.firstLoading} error={decisionFeed.first.error}/></span> : null}</div>)}
         <div className={styles.activityBottom}><IconButton label={message("extensions")} disabled={disabled || !commandsReady} onClick={() => dispatch("workspace.extensions")}><Command /></IconButton><IconButton label={message("settings")} disabled={disabled || !commandsReady} onClick={() => dispatch("workspace.settings")}><Settings /></IconButton></div>
       </nav>
       <WorkspacePanes view={view} compact={compact} wide={wide} disabled={disabled} dockRef={dock} label={message("agent")}
@@ -1626,7 +1629,7 @@ function WorkspaceShell() {
             {deliveryLoadFailed ? <ErrorState title={t("deliveryWorkbench.ownerFailed")} action={canRetryDelivery ? <Button onClick={retryDelivery}>{t("deliveryWorkbench.retryOwner")}</Button> : undefined}/>
               : deliveryOwner && executionTasks && commands ? <DeliveryView project={session.project} owner={deliveryOwner} tasks={executionTasks} commands={commands} gate={gate} viewId={view.id}
               visible={!importVisible} disabled={disabled || !commandsReady}
-              target={view.deliveryTarget} inbox={{ page: decisionFeed.first.data, loading: decisionFeed.first.isFetching, failure: decisionFeed.first.error, current: decisionFeed.current, retry: () => { void decisionFeed.refresh(); } }}
+              target={view.deliveryTarget} inbox={{ page: decisionFeed.first.data, loading: decisionFeed.firstLoading, failure: decisionFeed.first.error, current: decisionFeed.current, retry: () => { void decisionFeed.refresh(); } }}
               onOpenDecision={openDeliveryDecision}
               onOpenEntry={async (unitId, locale) => decisionCurrent() && gate.canDispatch({ viewId: currentId, source: "button" }) ? inspectReview(unitId, locale) : false}
               onOpenDecisions={() => { void openDecisions().catch(() => setCommandFailed(true)); }} onOpenKnowledge={() => { void openKnowledge().catch(() => setCommandFailed(true)); }}

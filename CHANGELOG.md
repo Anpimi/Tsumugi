@@ -192,6 +192,7 @@ Current workspace version metadata: **`0.2.0-alpha.1`**. Because the published `
 - Segment status filters and pages reuse the source positions already established for the current list, reducing repeated source scans when reviewing large projects.
 - Current review and decision views look up saved QA, approvals, and waivers by the requested entries and their review basis, reducing work as review history grows.
 - Pending candidate, review, and finding lists reuse the source positions of their bounded entry lists, reducing repeated source scans in Items needing a decision.
+- The Items needing a decision count waits for local draft startup and translation confirmation to settle. Its background reads share one native request at a time, leaving more room for opening and saving.
 
 - Source impact and maintenance reads batch effective bindings and ancestor lookups within the original read transaction, avoiding per-entry SQL queries while retaining frozen mapping versions and unresolved-match checks.
 
