@@ -4,6 +4,7 @@ import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { useSourceDraftSession } from "./SourceDraftSession";
 import SourceDraftRecovery from "./SourceDraftRecovery";
+import SourceCorrectionPanel from "./app-v2/features/source/SourceCorrectionPanel";
 import { sourceDraftCommands, canonicalSourceDraft } from "./sourceDraftCommands";
 import { sourceCommands } from "./sourceCommands";
 import { startupCommands } from "./startupCommands";
@@ -236,6 +237,56 @@ it("validates correction A before journaling, checkpoints it before dispatch, an
   expect(correct).toHaveBeenCalledOnce(); await act(async () => { await owner.flush(); });
   const head = await sourceDraftCommands.read({ sessionToken: project.sessionToken, key });
   expect(head.value?.pending).toBeNull(); expect(head.value?.correction?.reason).toBe("Newer B 👩🏽‍💻\n人工理由");
+});
+
+it("refreshes a completed correction before explicitly submitting newer input without discarding its draft", async () => {
+  const basis = sourceCorrectionBasisFixture(key.projectId), reply = deferred<SourceLineageCorrectionReceipt>();
+  const read = vi.spyOn(sourceCommands, "correctionBasis").mockResolvedValue(basis);
+  vi.mocked(executionCommands.identity).mockResolvedValueOnce(id(2140)).mockResolvedValueOnce(id(2141));
+  vi.spyOn(sourceCommands, "validateCorrection").mockResolvedValue(null);
+  const correct = vi.spyOn(sourceCommands, "correctLineage").mockReturnValueOnce(reply.promise)
+    .mockImplementation(async request => sourceCorrectionReceiptFixture(request));
+  const binding = basis.bindings[0], row = sourcePageFixture().rows[0];
+  const currentRow = { ...row, occurrenceId: binding.occurrenceId, unitId: binding.unitId, sourceRevisionId: binding.sourceRevisionId,
+    occurrence: { ...row.occurrence, ordinal: basis.ordinal } };
+  function Correction() {
+    const value = useSourceDraftSession(); useLayoutEffect(() => { owner = value; });
+    return <SourceCorrectionPanel project={project} owner={value} snapshotId={basis.snapshotId} row={currentRow} visible current={() => true}/>;
+  }
+  renderWorkbench(<Correction/>, project); const user = userEvent.setup();
+  await waitFor(() => expect(owner.journal.hydration).toBe("ready"));
+  const label = (name: string) => i18n.t(`sourceMaintenance.${name}`);
+  await user.click(screen.getByRole("button", { name: label("correctionOpen") }));
+  await user.selectOptions(screen.getByRole("combobox", { name: label("correctionCandidate") }), basis.candidates[0].old.occurrenceId!);
+  await user.selectOptions(screen.getByRole("combobox", { name: label("correctionDecision") }), "reject");
+  fireEvent.change(screen.getByRole("textbox", { name: label("actor") }), { target: { value: "Reviewer" } });
+  const reason = screen.getByRole("textbox", { name: label("correctionReason") });
+  fireEvent.change(reason, { target: { value: "Reject suggestion A" } });
+  const confirmation = screen.getByRole("checkbox", { name: label("correctionConfirm") });
+  await user.click(confirmation); await user.click(screen.getByRole("button", { name: label("correctionApply") }));
+  await waitFor(() => expect(correct).toHaveBeenCalledOnce());
+  await user.selectOptions(screen.getByRole("combobox", { name: label("correctionDecision") }), "continue");
+  fireEvent.change(reason, { target: { value: "Explicit continuation B 👩🏽‍💻" } });
+  const original = correct.mock.calls[0][0];
+  const recorded = sourceCorrectionReceiptFixture(original);
+  const fresh = { ...basis, mappingRevision: recorded.mappingRevision, bindings: recorded.currentBindings,
+    originChain: basis.originChain.map(origin => ({ ...origin, mappingRevision: recorded.mappingRevision })) };
+  await act(async () => { reply.resolve(recorded); });
+  await waitFor(() => expect(owner.current().pendingCorrection).toBeNull());
+  expect(confirmation).toBeDisabled(); expect(reason).toHaveValue("Explicit continuation B 👩🏽‍💻");
+  read.mockResolvedValueOnce(basis).mockResolvedValueOnce(fresh);
+  await user.click(screen.getByRole("button", { name: label("correctionRefresh") }));
+  await waitFor(() => expect(owner.current().correctionLoading).toBe(false));
+  expect(confirmation).toBeDisabled(); expect(correct).toHaveBeenCalledOnce();
+  await user.click(screen.getByRole("button", { name: label("correctionRefresh") }));
+  await waitFor(() => expect(confirmation).toBeEnabled());
+  expect(read).toHaveBeenCalledTimes(3); expect(reason).toHaveValue("Explicit continuation B 👩🏽‍💻");
+  expect(screen.getByRole("button", { name: label("correctionApply") })).toBeDisabled();
+  await user.click(confirmation); await user.click(screen.getByRole("button", { name: label("correctionApply") }));
+  await waitFor(() => expect(correct).toHaveBeenCalledTimes(2));
+  expect(correct.mock.calls[1][0].correction).toMatchObject({ basis: fresh, decision: "continue", reason: "Explicit continuation B 👩🏽‍💻" });
+  expect(correct.mock.calls[1][0].correction.actionId).not.toBe(original.correction.actionId);
+  expect(screen.queryByRole("button", { name: label("correctionDiscardConfirm") })).not.toBeInTheDocument();
 });
 
 it("restores correction B and original request A without observing or replaying, then settles only an explicit original-request check", async () => {
