@@ -190,6 +190,7 @@ Current workspace version metadata: **`0.2.0-alpha.1`**. Because the published `
 
 - The untranslated and needs review segment filters reuse current selection membership, and saved legacy QA rows share frozen source-input validation within each read, reducing repeated work while preserving current evidence and fixed scope checks.
 - Segment status filters and pages reuse the source positions already established for the current list, reducing repeated source scans when reviewing large projects.
+- Current review and decision views look up saved QA, approvals, and waivers by the requested entries and their review basis, reducing work as review history grows.
 
 - Source impact and maintenance reads batch effective bindings and ancestor lookups within the original read transaction, avoiding per-entry SQL queries while retaining frozen mapping versions and unresolved-match checks.
 

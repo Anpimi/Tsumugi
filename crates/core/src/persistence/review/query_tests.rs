@@ -10,11 +10,21 @@ mod performance;
 thread_local! {
     static SQL: RefCell<Vec<String>> = const { RefCell::new(Vec::new()) };
     static SQL_TIME: RefCell<Duration> = const { RefCell::new(Duration::ZERO) };
+    static SQL_PROFILE: RefCell<Option<BTreeMap<String, (usize, Duration)>>> = const { RefCell::new(None) };
 }
 fn traced(event: TraceEvent<'_>) {
     match event {
         TraceEvent::Stmt(_, sql) => SQL.with(|statements| statements.borrow_mut().push(sql.to_owned())),
-        TraceEvent::Profile(_, elapsed) => SQL_TIME.with(|total| *total.borrow_mut() += elapsed),
+        TraceEvent::Profile(statement, elapsed) => {
+            SQL_TIME.with(|total| *total.borrow_mut() += elapsed);
+            SQL_PROFILE.with(|profile| {
+                if let Some(profile) = profile.borrow_mut().as_mut() {
+                    let (calls, total) = profile.entry(statement.sql().into_owned()).or_default();
+                    *calls += 1;
+                    *total += elapsed;
+                }
+            });
+        }
         _ => {}
     }
 }

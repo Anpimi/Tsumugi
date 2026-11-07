@@ -68,7 +68,9 @@ fn json_rows<T: DeserializeOwned>(
         .collect()
 }
 
-const WANTED: &str = "WITH wanted AS MATERIALIZED (
+// Membership lets SQLite probe a set of unit/basis pairs instead of joining
+// each record in the locale's history against every requested unit.
+const WANTED: &str = "WITH wanted AS (
     SELECT json_extract(value,'$[0]') AS unit_id,
            json_extract(value,'$[1]') AS basis FROM json_each(?3))";
 
@@ -258,8 +260,9 @@ pub(super) fn targets_and_terms_in(
     let decisions: Vec<ReviewDecision> = json_rows(connection, &format!(
         "{WANTED}, latest AS (
          SELECT r.*,ROW_NUMBER() OVER(PARTITION BY r.unit_id ORDER BY r.rowid DESC) position
-         FROM review_decisions r JOIN wanted w ON w.unit_id=r.unit_id AND w.basis=r.basis
-         WHERE r.project_id=?1 AND r.locale=?2)
+         FROM review_decisions r
+         WHERE r.project_id=?1 AND r.locale=?2
+           AND (r.unit_id,r.basis) IN (SELECT unit_id,basis FROM wanted))
          SELECT json_object('decisionId',decision_id,'actionId',action_id,'unitId',unit_id,
             'locale',locale,'basis',basis,'basisEvidence',json(basis_json),'selectionId',selection_id,
             'revisionId',revision_id,'sourceRevisionId',source_revision_id,'actor',actor,
@@ -280,8 +283,9 @@ pub(super) fn targets_and_terms_in(
         &format!(
             "{WANTED}, latest AS (
          SELECT r.*,ROW_NUMBER() OVER(PARTITION BY r.unit_id ORDER BY r.rowid DESC) position
-         FROM review_checks r JOIN wanted w ON w.unit_id=r.unit_id AND w.basis=r.basis
-         WHERE r.project_id=?1 AND r.locale=?2 AND r.purpose='qa')
+         FROM review_checks r
+         WHERE r.project_id=?1 AND r.locale=?2 AND r.purpose='qa'
+           AND (r.unit_id,r.basis) IN (SELECT unit_id,basis FROM wanted))
          SELECT json_object('runId',run_id,'actionId',action_id,'unitId',unit_id,
             'locale',locale,'basis',basis,'basisEvidence',json(basis_json),
             'validatorVersion',validator_version,'outcome','completed','rules',json(rules_json),
@@ -427,8 +431,9 @@ pub(super) fn targets_and_terms_in(
     let waivers: Vec<Waiver> = json_rows(connection, &format!(
         "{WANTED}, latest AS (
          SELECT r.*,ROW_NUMBER() OVER(PARTITION BY r.unit_id,r.issue_id ORDER BY r.rowid DESC) position
-         FROM review_waivers r JOIN wanted w ON w.unit_id=r.unit_id AND w.basis=r.basis
-         WHERE r.project_id=?1 AND r.locale=?2 AND r.policy_version=?4)
+         FROM review_waivers r
+         WHERE r.project_id=?1 AND r.locale=?2 AND r.policy_version=?4
+           AND (r.unit_id,r.basis) IN (SELECT unit_id,basis FROM wanted))
          SELECT json_object('waiverId',waiver_id,'actionId',action_id,'unitId',unit_id,
             'locale',locale,'basis',basis,'issueId',issue_id,'grant',json('true'),
             'previousWaiverId',previous_waiver_id,'policyVersion',policy_version,

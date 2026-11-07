@@ -10,6 +10,9 @@ fn report_read<T: Serialize>(
     operation: &str,
     read: impl FnOnce() -> T,
 ) -> T {
+    if std::env::var_os("TSUMUGI_PERFORMANCE_SQL_PROFILE").is_some() {
+        SQL_PROFILE.with(|profile| *profile.borrow_mut() = Some(BTreeMap::new()));
+    }
     let (value, statements, elapsed) = measure(store, read);
     println!(
         "{}",
@@ -18,12 +21,24 @@ fn report_read<T: Serialize>(
         "sqlite_profile_us": SQL_TIME.with(|total| total.borrow().as_micros()),
         "payload_bytes": serde_json::to_vec(&value).unwrap().len()})
     );
+    if let Some(profile) = SQL_PROFILE.with(|profile| profile.borrow_mut().take()) {
+        let mut statements: Vec<_> = profile.into_iter().collect();
+        statements.sort_by_key(|(_, (_, elapsed))| std::cmp::Reverse(*elapsed));
+        let top: Vec<_> = statements.into_iter().take(10).map(|(sql, (calls, elapsed))| {
+            json!({"sql": sql, "calls": calls, "elapsed_us": elapsed.as_micros()})
+        }).collect();
+        println!(
+            "{}",
+            json!({"phase": phase, "round": round, "operation": "sql_profile", "read": operation, "top": top})
+        );
+    }
     if std::env::var_os("TSUMUGI_PERFORMANCE_QUERY_PLAN").is_some() && round == 0 {
         for query in statements
             .iter()
             .filter(|query| {
                 query.contains("MIN(o.ordinal) OVER")
                     || query.contains("first_occurrences AS MATERIALIZED")
+                    || query.contains("IN (SELECT unit_id,basis FROM wanted)")
             })
             .collect::<BTreeSet<_>>()
         {
