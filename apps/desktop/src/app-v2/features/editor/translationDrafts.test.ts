@@ -198,6 +198,34 @@ it("projects new local input into recovery summaries and removes it after checke
   expect(h.owner.getSnapshot().summaries).toEqual([]);
 });
 
+it("updates one sorted recovery summary while preserving unopened drafts and published snapshots", async () => {
+  const h = harness();
+  const earlier = { key: { ...key, unitId: "00000000-0000-4000-8000-000000000000" }, revision: "3", editSeq: "2",
+    sourceRevisionId: initial.sourceRevisionId, hasPending: false };
+  const later = { ...earlier, key: { ...key, unitId: "ffffffff-ffff-4fff-8fff-ffffffffffff" } };
+  h.ports.list.mockResolvedValueOnce({ items: [earlier, later], next: null });
+  await h.ready();
+  const listed = h.owner.getSnapshot().summaries;
+  expect(listed).toEqual([earlier, later]);
+  const token = h.owner.reserveMutation();
+  expect(token).not.toBeNull();
+  expect(h.owner.getSnapshot().summaries).toBe(listed);
+  h.owner.releaseMutation(token!);
+
+  expect(h.owner.edit(key, "New draft between two unopened drafts")).toBe(true);
+  const edited = h.owner.getSnapshot().summaries;
+  expect(edited.map(summary => summary.key)).toEqual([earlier.key, key, later.key]);
+  expect(edited[0]).toBe(listed[0]);
+  expect(edited[2]).toBe(listed[1]);
+  expect(await h.owner.flush(key)).toBe(true);
+  expect(edited[1]).toMatchObject({ revision: "0", editSeq: "1" });
+  expect(h.owner.getSnapshot().summaries[1]).toMatchObject({ revision: "1", editSeq: "1" });
+  expect(await h.owner.discard(key)).toBe(true);
+  expect(h.owner.getSnapshot().summaries).toEqual(listed);
+  expect(h.owner.getEntry(earlier.key)).toBeUndefined();
+  expect(h.owner.getEntry(later.key)).toBeUndefined();
+});
+
 it("keeps ordinary listed drafts recoverable when current source metadata no longer exists", async () => {
   const h = harness(retained());
   h.setCurrent({ kind: "unavailable", reason: "source-missing" });
