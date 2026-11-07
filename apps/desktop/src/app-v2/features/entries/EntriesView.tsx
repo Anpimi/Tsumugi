@@ -37,6 +37,7 @@ type Props = {
   onSelectedRevision?: (scope: SelectedRevisionScope) => boolean;
   onImport?: () => void;
   onImportSource?: () => void;
+  onInitialReadSettled?: () => void;
   onCandidateBatch?: (mode: "stage" | "reject" | "restore", selection: WorkspaceSelection) => void;
   candidateBatchTriggerRef?: Ref<HTMLButtonElement>;
   candidateBatchBlocked?: boolean;
@@ -53,7 +54,7 @@ export interface EntriesHandle {
 }
 const noSubscription = () => () => {};
 
-export default function EntriesView({ project, view, disabled, patch, navigate, drafts, gate, dispatch, onRevealDraft, onSelectedRevision, onImport, onImportSource, onCandidateBatch, candidateBatchTriggerRef, candidateBatchBlocked = false, onReviewBatch, reviewBatchTriggerRef, renderCandidate, commands, ref }: Props) {
+export default function EntriesView({ project, view, disabled, patch, navigate, drafts, gate, dispatch, onRevealDraft, onSelectedRevision, onImport, onImportSource, onInitialReadSettled, onCandidateBatch, candidateBatchTriggerRef, candidateBatchBlocked = false, onReviewBatch, reviewBatchTriggerRef, renderCandidate, commands, ref }: Props) {
   const { t } = useTranslation(undefined, { keyPrefix: "workbenchV2" });
   const reads = useSessionReads();
   const importReady = useSyncExternalStore(drafts?.subscribe ?? noSubscription, () => {
@@ -245,6 +246,8 @@ export default function EntriesView({ project, view, disabled, patch, navigate, 
   const failed = scope.isError || captureError || result.isError;
   const stalePage = isCommandError(result.error) && result.error.code === "dependency-conflict";
   const loading = !failed && !empty && (scope.isPending || capturing || !!capture && result.isPending);
+  const readSettled = !configuredQuery || !availableLocale || failed || empty || !loading && current !== null;
+  useEffect(() => { if (readSettled) onInitialReadSettled?.(); }, [readSettled, onInitialReadSettled]);
   const searchTooLong = new TextEncoder().encode(view.searchInput).length > 256;
   function openEditor(unitId: string) {
     setQueueEnd(false);

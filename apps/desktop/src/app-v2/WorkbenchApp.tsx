@@ -654,9 +654,12 @@ function WorkspaceShell() {
     [strategySubscribe, readStrategyActivity]);
   const draftIndexSettled = draftLoadFailed || draftState.hydration === "ready" || draftState.hydration === "failed";
   const conversationsSettled = conversationLoadFailed || conversationHydration === "ready" || conversationHydration === "failed";
+  const [entriesReadSettled, setEntriesReadSettled] = useState(false);
+  const settleEntriesRead = useCallback(() => setEntriesReadSettled(true), []);
+  const waitingForEntries = view?.kind === "entries" && !importVisible && !entriesReadSettled;
   const decisionFeed = useDecisionFeed(session.reads, strategyActivity ? [drafts, conversations, resourceActivity, sourceActivity, strategyActivity] : [drafts, conversations, resourceActivity, sourceActivity], view?.kind === "decisions" ? view.decisionCursor : null,
     { visible: view?.kind === "decisions" && !importVisible, enabled: !disabled, foreground: view?.kind === "delivery",
-      backgroundReady: !!view && draftIndexSettled && conversationsSettled && !draftState.mutationReserved });
+      backgroundReady: !!view && !waitingForEntries && draftIndexSettled && conversationsSettled && !draftState.mutationReserved });
   const decisionBadgeId = useId();
   const lastDecisionView = useRef<string | null>(null);
   useEffect(() => { if (view?.kind === "decisions") lastDecisionView.current = view.id; }, [view?.kind, view?.id]);
@@ -1605,7 +1608,7 @@ function WorkspaceShell() {
             {view ? <IconButton size="xs" label={message(view.pinned ? "unpinView" : "pinView")} disabled={disabled || !commandsReady} onClick={() => dispatch("workspace.pin-view")}><Pin /></IconButton> : null}
           </div>
           {view?.kind === "entries" && view.runReturn ? <div className={appStyles.runReturn}><Button size="sm" disabled={disabled} onClick={() => void returnToRun().catch(() => setCommandFailed(true))}>{t("runsView.return")}</Button></div> : null}
-          {importVisible ? importPanel() : view ? view.kind === "entries" ? <FeatureBoundary key={view.id} fallback={<ErrorState title={message("featureFailed")} description={message("featureFailedHelp")} />}><Suspense fallback={<LoadingState label={message("loadingEntries")} />}><EntriesView ref={entries} commands={commandsReady ? commands : null} project={session.project} view={view} drafts={commandsReady ? drafts : null} gate={gate} dispatch={dispatchEditor} onRevealDraft={revealDraft} onSelectedRevision={conversations ? scope => {
+          {importVisible ? importPanel() : view ? view.kind === "entries" ? <FeatureBoundary key={view.id} onFailure={settleEntriesRead} fallback={<ErrorState title={message("featureFailed")} description={message("featureFailedHelp")} />}><Suspense fallback={<LoadingState label={message("loadingEntries")} />}><EntriesView ref={entries} commands={commandsReady ? commands : null} project={session.project} view={view} drafts={commandsReady ? drafts : null} gate={gate} dispatch={dispatchEditor} onRevealDraft={revealDraft} onInitialReadSettled={entriesReadSettled ? undefined : settleEntriesRead} onSelectedRevision={conversations ? scope => {
             if (disabled || store.getState().activeViewId !== view.id) return false;
             const prepared = conversations.beginSelectedRevision(scope);
             store.getState().patch(view.id, { dock: "agent", dockOpen: true });

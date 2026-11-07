@@ -14,6 +14,7 @@ import { pluginSourceInventory, pluginSourcePackage, pluginSourceRequest, plugin
 import { startupCommands } from "../startupCommands";
 import type { SourceOwner } from "./features/source/sourceTypes";
 import { segmentCommands, type SegmentPage } from "../segmentCommands";
+import { decisionCommands } from "../decisionCommands";
 import { draftCommands } from "../draftCommands";
 import { conversationCommands } from "../conversationCommands";
 import { canonicalConversationDraft, conversationDraftCommands } from "../conversationDraftCommands";
@@ -517,6 +518,27 @@ async function openImportWorkspace(opened: ProjectView = project, ports: Partial
   await waitFor(() => expect(button).toBeEnabled());
   return { close, register, button };
 }
+
+it("lets the first entries read finish before starting the passive decision count", async () => {
+  let finishPage!: (value: SegmentPage) => void;
+  const firstPage = new Promise<SegmentPage>(resolve => { finishPage = resolve; });
+  const readEntries = vi.mocked(segmentCommands.page).mockReturnValue(firstPage);
+  const readDecisions = vi.spyOn(decisionCommands, "page").mockRejectedValue(new Error("No decision fixture"));
+  await openImportWorkspace();
+  await waitFor(() => expect(readEntries).toHaveBeenCalled());
+
+  vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+  try {
+    await act(async () => { await vi.advanceTimersByTimeAsync(500); });
+    expect(readDecisions).not.toHaveBeenCalled();
+  } finally {
+    vi.useRealTimers();
+  }
+
+  await act(async () => { finishPage(page); });
+  expect(await screen.findByText(page.rows[0].content.sourcePreview)).toBeVisible();
+  await waitFor(() => expect(readDecisions).toHaveBeenCalled());
+});
 
 it("creates an empty project without restoring the previous project's focused route or extra view", async () => {
   const created: ProjectView = { ...project, locator: "/synthetic/new-empty", sessionToken: "created-session",
