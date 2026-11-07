@@ -43,6 +43,8 @@ The desktop application tracks its bundled plugins in [`bundled-plugins.macos-aa
 
 The catalog also locks the target platform, runtime profile, and SDK process protocol. Both the build script and the desktop installer verify these exact pins rather than assuming compatibility from matching `0.1.0-alpha.1` version strings.
 
+The application build uses the SDK's supported Process3 versions to check the catalog. A compatible older package keeps its exact SDK artifact, source commit, and package and transport digests.
+
 The pinned WebVTT and SMAPI packages preserve source-extraction context facts and source revisions via the SDK helpers, and the WebVTT package also supports importing existing translated captions from a target-language `.vtt` file (with independent semantic checks and per-entry adoption). When updating a bundled plugin, update its source commit, SDK artifact, transport SHA-256, and `packageDigest` together.
 
 ### Plugin release archives

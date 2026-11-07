@@ -18,10 +18,9 @@ pub const MAX_RUNTIME_ARTIFACT_BYTES: usize = 256 * 1024 * 1024;
 
 pub const NATIVE_HOST_ENVIRONMENT_PROTOCOL: u32 = 1;
 
-// The supported historical SDKs use the same Process-3 transport. Their exact
-// descriptors and digests remain readable; capture/dispatch still require the
-// independently approved runtime bytes and the actual current Host identity.
-fn supported_sdk(version: &str) -> bool {
+/// Whether the SDK version uses the supported Process-3 transport.
+/// Package and runtime identities still require independent verification.
+pub fn supports_process_sdk(version: &str) -> bool {
     version == crate::SDK_VERSION
         || matches!(
             version,
@@ -77,7 +76,7 @@ impl NativeHostEnvironmentDescriptor {
     pub fn validate(&self) -> Result<(), ContractError> {
         if self.protocol_version != NATIVE_HOST_ENVIRONMENT_PROTOCOL
             || self.process_protocol != PROCESS_PROTOCOL
-            || !supported_sdk(&self.sdk_version)
+            || !supports_process_sdk(&self.sdk_version)
         {
             return Err(ContractError::at(
                 ContractErrorCode::UnsupportedProtocol,
@@ -236,7 +235,7 @@ impl RuntimeEnvironmentDescriptor {
     pub fn validate(&self) -> Result<(), ContractError> {
         if self.protocol_version != RUNTIME_ENVIRONMENT_PROTOCOL
             || self.process_protocol != PROCESS_PROTOCOL
-            || !supported_sdk(&self.sdk_version)
+            || !supports_process_sdk(&self.sdk_version)
         {
             return Err(ContractError::at(
                 ContractErrorCode::UnsupportedProtocol,

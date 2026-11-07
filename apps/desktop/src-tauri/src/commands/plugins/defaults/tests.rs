@@ -38,7 +38,7 @@ fn bundled_selection_refuses_duplicates_paths_wrong_sdk_and_unpinned_provenance(
         match mutation {
             0 => changed.packages.push(changed.packages[0].clone()),
             1 => changed.packages[0].id = "../outside".into(),
-            2 => changed.packages[0].sdk_version = "other".into(),
+            2 => changed.packages[0].sdk_version = "99.0.0".into(),
             3 => changed.packages[0].package_digest = "invalid".into(),
             4 => changed.packages[0].source_commit = "main".into(),
             5 => changed.packages[0].source_repository = "file:///local".into(),

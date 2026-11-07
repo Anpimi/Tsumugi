@@ -75,7 +75,7 @@ impl BundleSelection {
                     .source_commit
                     .bytes()
                     .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
-                || pin.sdk_version != sdk::SDK_VERSION
+                || !sdk::supports_process_sdk(&pin.sdk_version)
                 || pin.archive_name != format!("{}.tar", pin.id)
             {
                 return Err("invalid bundled provenance or compatibility");

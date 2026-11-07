@@ -25,6 +25,17 @@ struct Materials {
     rules: [&'static str; 2],
 }
 
+fn assert_exported_report(destination: &Path, number: usize, locale: &str, output: &str) {
+    let report_path = format!("tsumugi-release/locale-{number}-{locale}.json");
+    let report: Value = serde_json::from_slice(&fs::read(destination.join(report_path)).unwrap())
+        .unwrap();
+    assert_eq!(report["format"], "tsumugi-release-report");
+    assert_eq!(report["formatVersion"], 1);
+    assert_eq!(report["targetLanguage"], locale);
+    assert_eq!(report["files"].as_array().unwrap().len(), 1);
+    assert_eq!(report["files"][0]["path"], output);
+}
+
 struct OwnedTemporary(tempfile::TempDir);
 impl OwnedTemporary {
     fn path(&self) -> &Path {
@@ -443,7 +454,7 @@ fn journey(material: Materials, reopen_before_publication: bool) {
         ),
     )
     .unwrap();
-    assert_eq!(preview["files"].as_array().unwrap().len(), 2);
+    assert_eq!(preview["files"].as_array().unwrap().len(), 4);
     assert!(
         preview["files"]
             .as_array()
@@ -458,10 +469,11 @@ fn journey(material: Materials, reopen_before_publication: bool) {
     );
     let delivery = call(&window, "export_release", export.clone()).unwrap();
     assert_eq!(delivery["state"], "succeeded");
-    assert_eq!(delivery["files"].as_array().unwrap().len(), 2);
+    assert_eq!(delivery["files"].as_array().unwrap().len(), 4);
     assert_eq!(call(&window, "export_release", export).unwrap(), delivery);
-    for (_, path, bytes) in &expected {
+    for (index, (locale, path, bytes)) in expected.iter().enumerate() {
         assert_eq!(fs::read(destination.join(path)).unwrap(), *bytes);
+        assert_exported_report(&destination, index + 1, locale, path);
     }
     call(
         &window,
@@ -480,8 +492,9 @@ fn journey(material: Materials, reopen_before_publication: bool) {
         releases
     );
     assert_artifacts(&state);
-    for (_, path, bytes) in &expected {
+    for (index, (locale, path, bytes)) in expected.iter().enumerate() {
         assert_eq!(fs::read(destination.join(path)).unwrap(), *bytes);
+        assert_exported_report(&destination, index + 1, locale, path);
     }
     assert_eq!(
         call(&window, "read_plugin_inventory", json!({})).unwrap(),

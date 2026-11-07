@@ -353,8 +353,9 @@ fn build_and_export(
         "preview_delivery",
         json!({"releaseId":release["releaseId"],"selectionId":selection}),
     );
-    assert_eq!(preview["files"].as_array().unwrap().len(), 1);
-    assert_eq!(preview["files"][0]["state"], "absent");
+    let files = preview["files"].as_array().unwrap();
+    assert_eq!(files.len(), 2);
+    assert!(files.iter().all(|file| file["state"] == "absent"));
     assert_eq!(fs::read_dir(&destination).unwrap().count(), 0);
     let export = scoped(
         context,
@@ -363,8 +364,10 @@ fn build_and_export(
     );
     let delivery = call(window, "export_release", export.clone()).unwrap();
     assert_eq!(delivery["state"], "succeeded");
+    assert_eq!(delivery["files"].as_array().unwrap().len(), 2);
     assert_eq!(call(window, "export_release", export).unwrap(), delivery);
     assert_eq!(fs::read(destination.join("zh-CN.vtt")).unwrap(), expected);
+    assert_exported_report(&destination, 1, LOCALE, "zh-CN.vtt");
     Release {
         view: release,
         delivery,
@@ -409,6 +412,7 @@ fn assert_release(window: &TestWindow, state: &AppState, context: &Value, releas
         fs::read(release.destination.join("zh-CN.vtt")).unwrap(),
         release.expected
     );
+    assert_exported_report(&release.destination, 1, LOCALE, "zh-CN.vtt");
 }
 
 #[test]
