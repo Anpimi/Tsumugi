@@ -23,7 +23,7 @@ fn report_read<T: Serialize>(
             .iter()
             .filter(|query| {
                 query.contains("MIN(o.ordinal) OVER")
-                    || query.contains("JOIN wanted ON wanted.unit_id=o.unit_id GROUP BY")
+                    || query.contains("first_occurrences AS MATERIALIZED")
             })
             .collect::<BTreeSet<_>>()
         {

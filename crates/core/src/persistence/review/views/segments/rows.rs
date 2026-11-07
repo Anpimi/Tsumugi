@@ -123,12 +123,24 @@ fn term_summary(resolution: &resources::TermResolution) -> SegmentTermSummary {
     }
 }
 
-pub(super) fn project(
+pub(super) fn project_captured(
+    store: &ProjectStore,
+    read: &mut queries::TargetRead<'_>,
+    project: ExecutionId,
+    locale: &str,
+    positions: SourcePositions<'_>,
+) -> Result<Vec<SegmentRow>, ExecutionError> {
+    let units = positions.members.iter().map(|(unit, _)| *unit).collect::<Vec<_>>();
+    project_rows(store, read, project, &units, locale, Some(positions))
+}
+
+pub(super) fn project_rows(
     store: &ProjectStore,
     read: &mut queries::TargetRead<'_>,
     project: ExecutionId,
     units: &[ExecutionId],
     locale: &str,
+    positions: Option<SourcePositions<'_>>,
 ) -> Result<Vec<SegmentRow>, ExecutionError> {
     let connection = read.connection();
     let (targets, terms) = queries::targets_and_terms_in(
@@ -136,6 +148,7 @@ pub(super) fn project(
         project,
         units,
         locale,
+        positions,
         &Cancellation::default(),
     )?;
     if targets.is_empty() {
@@ -144,7 +157,7 @@ pub(super) fn project(
     let mut candidates = translation::candidate_summaries(connection, project, units, locale)?;
     let mut protections = application::protection_summaries(connection, project, units, locale)?;
     let mut impacts = store
-        .capture_resource_impacts(project, locale, Some(units))?
+        .capture_resource_impacts_in(project, locale, Some(units), positions)?
         .evaluate()?
         .into_iter()
         .map(|item| (item.unit_id, item))

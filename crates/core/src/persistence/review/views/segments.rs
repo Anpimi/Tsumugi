@@ -1,6 +1,7 @@
 //! Strict pages share the existing review scope and committed change clock.
 use super::*;
 use crate::execution::Revision;
+use crate::persistence::content::SourcePositions;
 mod filters;
 mod queue;
 mod rows;
@@ -160,7 +161,7 @@ impl ProjectStore {
                 // This establishes the SQLite read snapshot before sampling its clock.
                 let mut scope =
                     self.capture_review_read_scope(connection, project_id, locale, &query.text)?;
-                filters::retain(self, &mut read, project_id, locale, query, &mut scope.units)?;
+                filters::retain(self, &mut read, query, &mut scope)?;
                 let (epoch, sequence, data_version) = stamp(self, connection)?;
                 let read_version = digest(&(
                     &fingerprint,
@@ -195,14 +196,14 @@ impl ProjectStore {
                     .find_map(|(offset, token)| (*token == cursor).then_some(*offset))
                     .ok_or_else(|| failure(ErrorCode::DependencyConflict, "segment-cursor"))?,
             };
-            let units = scope
-                .units
-                .iter()
-                .skip(offset)
-                .take(limit as usize)
-                .map(|(unit, _)| *unit)
-                .collect::<Vec<_>>();
-            let rows = rows::project(self, &mut read, project_id, &units, locale)?;
+            // A new scope was captured in this snapshot. A retained scope has
+            // passed the strict read clock check, so its positions are current.
+            let members = scope.units.get(offset..).unwrap_or_default();
+            let positions = SourcePositions {
+                snapshot_id: scope.snapshot_id,
+                members: &members[..members.len().min(limit as usize)],
+            };
+            let rows = rows::project_captured(self, &mut read, project_id, locale, positions)?;
             let mut page = SegmentPage {
                 project_id,
                 locale: locale.to_owned(),

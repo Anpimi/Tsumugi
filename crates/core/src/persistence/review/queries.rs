@@ -2,6 +2,7 @@
 //! evidence in batches; revision history is available through its separate API.
 
 use super::*;
+use crate::persistence::content::SourcePositions;
 use serde::de::DeserializeOwned;
 
 /// Compact validation identities shared by bounded batches in one read snapshot.
@@ -30,7 +31,7 @@ impl<'a> TargetRead<'a> {
         units: &[ExecutionId],
         locale: &str,
     ) -> Result<Vec<ReviewTarget>, ExecutionError> {
-        Ok(targets_and_terms_in(self, project, units, locale, &Cancellation::default())?.0)
+        Ok(targets_and_terms_in(self, project, units, locale, None, &Cancellation::default())?.0)
     }
 }
 
@@ -101,7 +102,7 @@ pub(super) fn targets_in_with_cancel(
     locale: &str,
     cancellation: &Cancellation,
 ) -> Result<Vec<ReviewTarget>, ExecutionError> {
-    Ok(targets_and_terms_in(&mut TargetRead::new(connection), project_id, units, locale, cancellation)?.0)
+    Ok(targets_and_terms_in(&mut TargetRead::new(connection), project_id, units, locale, None, cancellation)?.0)
 }
 
 pub(super) fn targets_and_terms_in(
@@ -109,6 +110,7 @@ pub(super) fn targets_and_terms_in(
     project_id: ExecutionId,
     units: &[ExecutionId],
     locale: &str,
+    positions: Option<SourcePositions<'_>>,
     cancellation: &Cancellation,
 ) -> Result<(Vec<ReviewTarget>, BTreeMap<ExecutionId, resources::TermResolution>), ExecutionError> {
     let connection = read.connection();
@@ -123,14 +125,24 @@ pub(super) fn targets_and_terms_in(
     let project = project_id.to_string();
     let unit_json = serde_json::to_string(units)
         .map_err(|_| failure(ErrorCode::InvalidInput, "review-units"))?;
+    let (first_occurrences, captured) = match positions {
+        Some(positions) => (
+            SourcePositions::FIRST_OCCURRENCES,
+            Some((positions.encode()?, positions.snapshot_id.to_string())),
+        ),
+        None => (
+            "wanted AS MATERIALIZED (SELECT value AS unit_id FROM json_each(?3)),
+             first_occurrences AS MATERIALIZED (
+               SELECT o.snapshot_id,o.unit_id,MIN(o.ordinal) AS ordinal
+               FROM source_effective_occurrences o JOIN content_scope c ON c.current_snapshot=o.snapshot_id
+               JOIN wanted ON wanted.unit_id=o.unit_id GROUP BY o.snapshot_id,o.unit_id)",
+            None,
+        ),
+    };
     let terms = resources::current_terms_in(connection, project_id, locale)?;
     let mut statement = connection
-        .prepare(
-            "WITH wanted AS MATERIALIZED (SELECT value AS unit_id FROM json_each(?2)),
-         first_occurrences AS MATERIALIZED (
-           SELECT o.snapshot_id,o.unit_id,MIN(o.ordinal) AS ordinal
-           FROM source_effective_occurrences o JOIN content_scope c ON c.current_snapshot=o.snapshot_id
-           JOIN wanted ON wanted.unit_id=o.unit_id GROUP BY o.snapshot_id,o.unit_id)
+        .prepare(&format!(
+            "WITH {first_occurrences}
          SELECT o.unit_id,o.snapshot_id,o.revision_id,o.native_key,r.text,
                 s.event_id,s.revision_id,tr.text,cc.revision_id
          FROM first_occurrences first
@@ -139,15 +151,19 @@ pub(super) fn targets_and_terms_in(
          JOIN source_units u ON u.unit_id=o.unit_id AND u.project_id=?1
          JOIN source_revisions r ON r.revision_id=o.revision_id
          JOIN content_scope c ON c.current_snapshot=o.snapshot_id
-         LEFT JOIN translation_selections s ON s.unit_id=o.unit_id AND s.locale=?3
+         LEFT JOIN translation_selections s ON s.unit_id=o.unit_id AND s.locale=?2
            AND s.sequence=(SELECT MAX(t.sequence) FROM translation_selections t
-                           WHERE t.unit_id=o.unit_id AND t.locale=?3)
+                           WHERE t.unit_id=o.unit_id AND t.locale=?2)
          LEFT JOIN translation_revisions tr ON tr.revision_id=s.revision_id
-         LEFT JOIN context_current cc ON cc.unit_id=o.unit_id AND cc.locale=?3",
-        )
+         LEFT JOIN context_current cc ON cc.unit_id=o.unit_id AND cc.locale=?2",
+        ))
         .map_err(sql)?;
+    let arguments: &[&dyn rusqlite::ToSql] = match &captured {
+        Some((members, snapshot)) => &[&project, &locale, members, snapshot],
+        None => &[&project, &locale, &unit_json],
+    };
     let raw = statement
-        .query_map(params![project, unit_json, locale], |row| {
+        .query_map(arguments, |row| {
             Ok((
                 row.get::<_, String>(0)?,
                 row.get::<_, String>(1)?,

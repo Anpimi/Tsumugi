@@ -40,10 +40,8 @@ impl SegmentStatusFilter {
 pub(super) fn retain(
     store: &ProjectStore,
     read: &mut queries::TargetRead<'_>,
-    project: ExecutionId,
-    locale: &str,
     query: &SegmentQuery,
-    units: &mut Vec<(ExecutionId, u32)>,
+    scope: &mut ReadScope,
 ) -> Result<(), ExecutionError> {
     let connection = read.connection();
     // These presets require absent/present selection before other evidence can
@@ -57,10 +55,10 @@ pub(super) fn retain(
         let mut statement = connection.prepare(
             "SELECT DISTINCT unit_id FROM translation_selections WHERE project_id=?1 AND locale=?2",
         ).map_err(sql)?;
-        let selected = statement.query_map(params![project.to_string(), locale], |row| row.get::<_, String>(0))
+        let selected = statement.query_map(params![scope.project_id.to_string(), &scope.locale], |row| row.get::<_, String>(0))
             .map_err(sql)?.map(|row| row.map_err(sql).and_then(parse_id))
             .collect::<Result<BTreeSet<_>, _>>()?;
-        units.retain(|(unit, _)| {
+        scope.units.retain(|(unit, _)| {
             let selected = selected.contains(unit);
             (query.selection == SegmentSelectionFilter::All || selected == (query.selection == SegmentSelectionFilter::Selected))
                 && required_selection.is_none_or(|required| selected == required)
@@ -72,14 +70,14 @@ pub(super) fn retain(
     let mut matching = BTreeSet::new();
     // The scope is already bounded by the review owner. Keep projection memory
     // bounded as well, without individual row reads or browser-side membership.
-    for batch in units.chunks(100) {
-        let wanted = batch.iter().map(|(unit, _)| *unit).collect::<Vec<_>>();
-        for row in rows::project(store, read, project, &wanted, locale)? {
+    for members in scope.units.chunks(100) {
+        let positions = SourcePositions { snapshot_id: scope.snapshot_id, members };
+        for row in rows::project_captured(store, read, scope.project_id, &scope.locale, positions)? {
             if query.status.matches(&row) {
                 matching.insert(row.content.unit_id);
             }
         }
     }
-    units.retain(|(unit, _)| matching.contains(unit));
+    scope.units.retain(|(unit, _)| matching.contains(unit));
     Ok(())
 }

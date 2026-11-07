@@ -72,8 +72,10 @@ impl ProjectStore {
                 .take(limit as usize)
                 .map(|(unit, _)| *unit)
                 .collect::<Vec<_>>();
-            let rows = rows::project(
-                self, &mut queries::TargetRead::new(connection), project_id, &units, locale,
+            // Local edits can change the effective source positions while the
+            // original queue membership stays usable.
+            let rows = rows::project_rows(
+                self, &mut queries::TargetRead::new(connection), project_id, &units, locale, None,
             )?;
             let mut window = SegmentQueueWindow {
                 project_id,

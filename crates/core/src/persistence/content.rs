@@ -20,6 +20,25 @@ mod publication;
 mod start_fence_tests;
 pub(in crate::persistence) mod validation_history;
 
+/// Canonical effective occurrence positions established by the current read.
+#[derive(Clone, Copy)]
+pub(super) struct SourcePositions<'a> {
+    pub snapshot_id: ExecutionId,
+    pub members: &'a [(ExecutionId, u32)],
+}
+
+impl SourcePositions<'_> {
+    pub(super) const FIRST_OCCURRENCES: &str = "first_occurrences AS MATERIALIZED (
+        SELECT ?4 AS snapshot_id,json_extract(value,'$[0]') AS unit_id,
+               json_extract(value,'$[1]') AS ordinal
+        FROM json_each(?3))";
+
+    pub(super) fn encode(self) -> Result<String, ExecutionError> {
+        serde_json::to_string(self.members)
+            .map_err(|_| failure(ErrorCode::InvalidInput, "source-positions"))
+    }
+}
+
 pub(super) const TABLES:&[(&str,&str)]=&[
     ("source_sets","CREATE TABLE source_sets (
         set_id TEXT PRIMARY KEY NOT NULL, project_id TEXT NOT NULL,

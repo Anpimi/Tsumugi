@@ -730,6 +730,8 @@ fn status_filter_batches_share_source_proofs_but_a_new_read_revalidates_them() {
         let (_, statements, _) = measure(&store, || store.read_segment_page(project, "zh-CN", &query, None, None, 50).unwrap());
         let proofs = statements.iter().filter(|sql| sql.contains("SELECT attempt_id FROM source_snapshots WHERE snapshot_id=")).count();
         assert_eq!(proofs, 1, "each bounded filter batch repeated the same frozen source proof: {status:?}");
+        let position_scans = statements.iter().filter(|sql| sql.contains("MIN(o.ordinal)")).count();
+        assert_eq!(position_scans, 1, "only scope capture should scan for canonical positions: {status:?}");
     }
     let attempt = store.source_content(snapshot, 0, 1).unwrap().attempt_id;
     let original = store.execution_input(attempt).unwrap();

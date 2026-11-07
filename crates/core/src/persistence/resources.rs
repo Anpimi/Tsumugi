@@ -1,6 +1,6 @@
 //! Project-local resource facts. SQLite remains the only authority for adoption.
 
-use super::{ProjectStore, translation::TranslationOrigin};
+use super::{ProjectStore, content::SourcePositions, translation::TranslationOrigin};
 use crate::execution::{
     ConflictEvidence, ErrorCode, ExecutionError, ExecutionId, MAX_INPUT_BYTES, codec,
 };
@@ -2062,15 +2062,39 @@ impl ProjectStore {
         locale: &str,
         units: Option<&[ExecutionId]>,
     ) -> Result<CapturedResourceImpacts, ExecutionError> {
+        self.capture_resource_impacts_in(project_id, locale, units, None)
+    }
+
+    pub(super) fn capture_resource_impacts_in(
+        &self,
+        project_id: ExecutionId,
+        locale: &str,
+        units: Option<&[ExecutionId]>,
+        positions: Option<SourcePositions<'_>>,
+    ) -> Result<CapturedResourceImpacts, ExecutionError> {
         if units
             .is_some_and(|u| u.len() > 100 || u.iter().collect::<BTreeSet<_>>().len() != u.len())
         {
             return Err(failure(ErrorCode::InvalidInput, "impact-units"));
         }
-        let wanted = units
-            .map(serde_json::to_string)
-            .transpose()
-            .map_err(|_| failure(ErrorCode::InvalidInput, "impact-units"))?;
+        let (first_occurrences, wanted, snapshot) = match positions {
+            Some(positions) => (
+                SourcePositions::FIRST_OCCURRENCES,
+                Some(positions.encode()?),
+                Some(positions.snapshot_id.to_string()),
+            ),
+            None => (
+                "first_occurrences AS MATERIALIZED (
+                   SELECT o.snapshot_id,o.unit_id,MIN(o.ordinal) AS ordinal
+                   FROM source_effective_occurrences o
+                   JOIN content_scope c ON c.current_snapshot=o.snapshot_id
+                   WHERE (?3 IS NULL OR o.unit_id IN (SELECT value FROM json_each(?3)))
+                   GROUP BY o.snapshot_id,o.unit_id)",
+                units.map(serde_json::to_string).transpose()
+                    .map_err(|_| failure(ErrorCode::InvalidInput, "impact-units"))?,
+                None,
+            ),
+        };
         let connection = self
             .connection()
             .map_err(|_| failure(ErrorCode::StorageFailed, "impact-read"))?;
@@ -2130,13 +2154,8 @@ impl ProjectStore {
             return Err(failure(ErrorCode::LimitExceeded, "impact-history-budget"));
         }
         let mut selected_statement = connection
-            .prepare(
-                "WITH first_occurrences AS MATERIALIZED (
-                   SELECT o.snapshot_id,o.unit_id,MIN(o.ordinal) AS ordinal
-                   FROM source_effective_occurrences o
-                   JOIN content_scope c ON c.current_snapshot=o.snapshot_id
-                   WHERE (?3 IS NULL OR o.unit_id IN (SELECT value FROM json_each(?3)))
-                   GROUP BY o.snapshot_id,o.unit_id)
+            .prepare(&format!(
+                "WITH {first_occurrences}
                  SELECT o.unit_id,o.revision_id,o.native_key,r.text,s.event_id,s.revision_id,
                         COALESCE(b.last_change_rowid,0)
                  FROM first_occurrences first
@@ -2151,10 +2170,15 @@ impl ProjectStore {
                    AND s.sequence=(SELECT MAX(x.sequence) FROM translation_selections x
                                    WHERE x.unit_id=s.unit_id AND x.locale=s.locale)
                  ORDER BY o.unit_id LIMIT 2001",
-            )
+            ))
             .map_err(sql)?;
+        let project = project_id.to_string();
+        let arguments: &[&dyn rusqlite::ToSql] = match &snapshot {
+            Some(snapshot) => &[&project, &locale, &wanted, snapshot],
+            None => &[&project, &locale, &wanted],
+        };
         let selections = selected_statement
-            .query_map(params![project_id.to_string(), locale, wanted], |row| {
+            .query_map(arguments, |row| {
                 Ok((
                     row.get::<_, String>(0)?,
                     row.get::<_, String>(1)?,
@@ -3661,6 +3685,20 @@ mod tests {
         assert_eq!(first.source_text, rows[0].occurrence.text);
         assert_eq!(first.selection_event_id, old.event_id);
         assert_eq!(first.translation_revision_id, old.revision_id);
+        let query = crate::persistence::review::SegmentQuery {
+            text: rows[1].occurrence.key.clone(),
+            selection: crate::persistence::review::SegmentSelectionFilter::All,
+            status: crate::persistence::review::SegmentStatusFilter::Affected,
+        };
+        let page = store.read_segment_page(project, "zh-CN", &query, None, None, 1).unwrap();
+        assert_eq!(page.total, 1);
+        let row = &page.rows[0];
+        assert_eq!(row.content.unit_id, shared);
+        assert_eq!(row.content.native_key, rows[0].occurrence.key);
+        assert_eq!(row.content.source_revision_id, first.source_revision_id);
+        assert!(row.applicability.resource_impact.is_some());
+        let queue = store.read_segment_queue_window(project, "zh-CN", page.scope_id, None, 1).unwrap();
+        assert_eq!(queue.rows, page.rows);
         for unit in [shared, tail] {
             let subset = store.capture_resource_impacts(project, "zh-CN", Some(&[unit]))
                 .unwrap().evaluate().unwrap();
