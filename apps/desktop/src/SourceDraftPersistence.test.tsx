@@ -29,7 +29,10 @@ const project: ProjectView = { ...wire.session, locator: "/synthetic/source-pers
   metadata: { projectId: wire.session.projectId, displayName: "Source journal", sourceLocale: "en", targetLocales: ["zh-CN"], metadataRevision: "1" } };
 const key = { projectId: project.metadata.projectId }, preview = sourcePageFixture();
 let owner: ReturnType<typeof useSourceDraftSession>;
-const t = (key: "actor" | "recoveryTitle" | "recoveryCheck" | "recoveryPreparation") => i18n.t(`sourceMaintenance.${key}`);
+type SourceLabel = "actor" | "recoveryTitle" | "recoveryCheck" | "recoveryPreparation"
+  | "correctionOpen" | "correctionCandidate" | "correctionDecision" | "correctionReason" | "correctionConfirm"
+  | "correctionApply" | "correctionRefresh" | "correctionDiscardConfirm";
+const t = (key: SourceLabel) => i18n.t(`sourceMaintenance.${key}`);
 function Probe() {
   const value = useSourceDraftSession(); useLayoutEffect(() => { owner = value; });
   return <><SourceDraftRecovery owner={value}/><Field label={t("actor")}><TextInput value={value.state.actor} onChange={event => value.edit("actor", event.target.value)}/></Field></>;
@@ -255,17 +258,16 @@ it("refreshes a completed correction before explicitly submitting newer input wi
   }
   renderWorkbench(<Correction/>, project); const user = userEvent.setup();
   await waitFor(() => expect(owner.journal.hydration).toBe("ready"));
-  const label = (name: string) => i18n.t(`sourceMaintenance.${name}`);
-  await user.click(screen.getByRole("button", { name: label("correctionOpen") }));
-  await user.selectOptions(screen.getByRole("combobox", { name: label("correctionCandidate") }), basis.candidates[0].old.occurrenceId!);
-  await user.selectOptions(screen.getByRole("combobox", { name: label("correctionDecision") }), "reject");
-  fireEvent.change(screen.getByRole("textbox", { name: label("actor") }), { target: { value: "Reviewer" } });
-  const reason = screen.getByRole("textbox", { name: label("correctionReason") });
+  await user.click(screen.getByRole("button", { name: t("correctionOpen") }));
+  await user.selectOptions(screen.getByRole("combobox", { name: t("correctionCandidate") }), basis.candidates[0].old.occurrenceId!);
+  await user.selectOptions(screen.getByRole("combobox", { name: t("correctionDecision") }), "reject");
+  fireEvent.change(screen.getByRole("textbox", { name: t("actor") }), { target: { value: "Reviewer" } });
+  const reason = screen.getByRole("textbox", { name: t("correctionReason") });
   fireEvent.change(reason, { target: { value: "Reject suggestion A" } });
-  const confirmation = screen.getByRole("checkbox", { name: label("correctionConfirm") });
-  await user.click(confirmation); await user.click(screen.getByRole("button", { name: label("correctionApply") }));
+  const confirmation = screen.getByRole("checkbox", { name: t("correctionConfirm") });
+  await user.click(confirmation); await user.click(screen.getByRole("button", { name: t("correctionApply") }));
   await waitFor(() => expect(correct).toHaveBeenCalledOnce());
-  await user.selectOptions(screen.getByRole("combobox", { name: label("correctionDecision") }), "continue");
+  await user.selectOptions(screen.getByRole("combobox", { name: t("correctionDecision") }), "continue");
   fireEvent.change(reason, { target: { value: "Explicit continuation B 👩🏽‍💻" } });
   const original = correct.mock.calls[0][0];
   const recorded = sourceCorrectionReceiptFixture(original);
@@ -275,18 +277,18 @@ it("refreshes a completed correction before explicitly submitting newer input wi
   await waitFor(() => expect(owner.current().pendingCorrection).toBeNull());
   expect(confirmation).toBeDisabled(); expect(reason).toHaveValue("Explicit continuation B 👩🏽‍💻");
   read.mockResolvedValueOnce(basis).mockResolvedValueOnce(fresh);
-  await user.click(screen.getByRole("button", { name: label("correctionRefresh") }));
+  await user.click(screen.getByRole("button", { name: t("correctionRefresh") }));
   await waitFor(() => expect(owner.current().correctionLoading).toBe(false));
   expect(confirmation).toBeDisabled(); expect(correct).toHaveBeenCalledOnce();
-  await user.click(screen.getByRole("button", { name: label("correctionRefresh") }));
+  await user.click(screen.getByRole("button", { name: t("correctionRefresh") }));
   await waitFor(() => expect(confirmation).toBeEnabled());
   expect(read).toHaveBeenCalledTimes(3); expect(reason).toHaveValue("Explicit continuation B 👩🏽‍💻");
-  expect(screen.getByRole("button", { name: label("correctionApply") })).toBeDisabled();
-  await user.click(confirmation); await user.click(screen.getByRole("button", { name: label("correctionApply") }));
+  expect(screen.getByRole("button", { name: t("correctionApply") })).toBeDisabled();
+  await user.click(confirmation); await user.click(screen.getByRole("button", { name: t("correctionApply") }));
   await waitFor(() => expect(correct).toHaveBeenCalledTimes(2));
   expect(correct.mock.calls[1][0].correction).toMatchObject({ basis: fresh, decision: "continue", reason: "Explicit continuation B 👩🏽‍💻" });
   expect(correct.mock.calls[1][0].correction.actionId).not.toBe(original.correction.actionId);
-  expect(screen.queryByRole("button", { name: label("correctionDiscardConfirm") })).not.toBeInTheDocument();
+  expect(screen.queryByRole("button", { name: t("correctionDiscardConfirm") })).not.toBeInTheDocument();
 });
 
 it("restores correction B and original request A without observing or replaying, then settles only an explicit original-request check", async () => {
