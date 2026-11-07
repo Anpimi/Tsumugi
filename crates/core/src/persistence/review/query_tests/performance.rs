@@ -1,4 +1,5 @@
 use super::*;
+use super::super::tests::{adopt_source_files, adopt_translation_files};
 use serde_json::json;
 use std::path::Path;
 
@@ -90,10 +91,25 @@ fn reopen(path: &Path, phase: &str) -> ProjectStore {
     unreachable!()
 }
 
+struct ReadSample {
+    total: u32,
+    next_page_first_key: &'static str,
+    search: &'static str,
+    search_total: u32,
+}
+
+const CAPACITY_SAMPLE: ReadSample = ReadSample {
+    total: 2000,
+    next_page_first_key: "entry-0050",
+    search: "needle",
+    search_total: 20,
+};
+
 fn sequence(
     store: &mut ProjectStore,
     project: ExecutionId,
     phase: &str,
+    sample: &ReadSample,
     selected: usize,
     save: bool,
 ) {
@@ -108,7 +124,7 @@ fn sequence(
                 .read_segment_page(project, "zh-CN", &query, None, None, 50)
                 .unwrap()
         });
-        assert_eq!(first.total, 2000);
+        assert_eq!(first.total, sample.total);
         assert_eq!(first.rows.len(), 50);
         let second = report_read(store, phase, round, "next_page", || {
             store
@@ -122,14 +138,14 @@ fn sequence(
                 )
                 .unwrap()
         });
-        assert_eq!(second.rows[0].content.native_key, "entry-0050");
+        assert_eq!(second.rows[0].content.native_key, sample.next_page_first_key);
         let found = report_read(store, phase, round, "search", || {
             store
                 .read_segment_page(
                     project,
                     "zh-CN",
                     &SegmentQuery {
-                        text: "needle".into(),
+                        text: sample.search.into(),
                         ..query.clone()
                     },
                     None,
@@ -138,7 +154,7 @@ fn sequence(
                 )
                 .unwrap()
         });
-        assert_eq!(found.total, 20);
+        assert_eq!(found.total, sample.search_total);
         let untranslated = report_read(store, phase, round, "untranslated_filter", || {
             store
                 .read_segment_page(
@@ -154,7 +170,7 @@ fn sequence(
                 )
                 .unwrap()
         });
-        assert_eq!(untranslated.total as usize, 2000 - selected);
+        assert_eq!(untranslated.total as usize, sample.total as usize - selected);
         for (operation, status) in [
             ("needs_review_filter", SegmentStatusFilter::NeedsReview),
             ("issues_filter", SegmentStatusFilter::Issues),
@@ -175,7 +191,7 @@ fn sequence(
                     )
                     .unwrap()
             });
-            assert!(page.total <= 2000);
+            assert!(page.total <= sample.total);
             if status == SegmentStatusFilter::NeedsReview {
                 assert!(page.total as usize <= selected);
                 assert!(page.rows.iter().all(|row| {
@@ -353,13 +369,13 @@ fn measure_supported_source_and_history() {
     counts(&store, "initial");
     drop(store);
     let mut store = reopen(&path, "initial");
-    sequence(&mut store, project, "initial", selected.len(), true);
+    sequence(&mut store, project, "initial", &CAPACITY_SAMPLE, selected.len(), true);
     counts(&store, "initial_after_sequence");
     append_history(&mut store, project, &selected, "grown", 5);
     counts(&store, "grown");
     drop(store);
     let mut store = reopen(&path, "grown");
-    sequence(&mut store, project, "grown", selected.len(), true);
+    sequence(&mut store, project, "grown", &CAPACITY_SAMPLE, selected.len(), true);
     counts(&store, "grown_after_sequence");
     drop(store);
     if output.is_some() {
@@ -367,6 +383,65 @@ fn measure_supported_source_and_history() {
             "{}",
             json!({"operation": "retained_project", "directory": directory.keep()})
         );
+    }
+}
+
+/// Measure the ordinary review workflow with the pinned, unmodified SMAPI
+/// source and translation fixture, including its own manifest.
+#[test]
+#[ignore = "explicit local measurements of the representative SMAPI fixture"]
+fn measure_lookup_source_and_translation() {
+    let output = std::env::var_os("TSUMUGI_PERFORMANCE_OUTPUT");
+    let directory = match &output {
+        Some(output) => tempfile::tempdir_in(output).unwrap(),
+        None => tempfile::tempdir().unwrap(),
+    };
+    let path = directory.path().join("project");
+    let manifest = include_bytes!("../../../../tests/fixtures/stardew-lookup/manifest.json");
+    let source = include_bytes!("../../../../tests/fixtures/stardew-lookup/i18n/default.json");
+    let translation = include_bytes!("../../../../tests/fixtures/stardew-lookup/i18n/zh.json");
+    let mut store = ProjectStore::create(
+        &path,
+        crate::ProjectMetadata::create("Lookup Anything measurement", "en", ["zh-CN"]).unwrap(),
+    ).unwrap();
+    let project = parse_id(store.metadata().unwrap().project_id().to_string()).unwrap();
+    let started = Instant::now();
+    adopt_source_files(&mut store, manifest, source);
+    println!("{}", json!({"phase": "lookup", "operation": "source_capture_and_adoption",
+        "manifest_bytes": manifest.len(), "source_bytes": source.len(), "elapsed_us": started.elapsed().as_micros()}));
+    let started = Instant::now();
+    adopt_translation_files(&mut store, translation);
+    println!("{}", json!({"phase": "lookup", "operation": "translation_capture_and_adoption",
+        "translation_bytes": translation.len(), "elapsed_us": started.elapsed().as_micros()}));
+    counts(&store, "lookup_imported");
+    drop(store);
+    let mut store = reopen(&path, "lookup");
+    let sample = ReadSample { total: 532, next_page_first_key: "bundle-area.vault",
+        search: "generic.percent-chance-of", search_total: 1 };
+    sequence(&mut store, project, "lookup", &sample, sample.total as usize, true);
+    counts(&store, "lookup_after_sequence");
+    drop(store);
+    if output.is_some() {
+        println!("{}", json!({"operation": "retained_project", "directory": directory.keep()}));
+    }
+}
+
+fn decision_reads(store: &ProjectStore, project: ExecutionId) {
+    use crate::{DecisionQuery, DecisionSource};
+    for round in 0..3 {
+        for (name, sources) in [
+            ("decision_page", vec![]),
+            ("decision_translation_candidate", vec![DecisionSource::TranslationCandidate]),
+            ("decision_human_review", vec![DecisionSource::HumanReview]),
+            ("decision_review_finding", vec![DecisionSource::ReviewFinding]),
+        ] {
+            let query = DecisionQuery { locale: None, sources };
+            let page = report_read(store, "retained", round, name, || {
+                store.decision_page(project, &query, None, 50, |_| false).unwrap()
+            });
+            assert_eq!(page.project_id, project);
+            assert!(page.items.len() <= 50);
+        }
     }
 }
 
@@ -419,11 +494,14 @@ fn measure_retained_supported_reads() {
             })
             .unwrap()
         });
+    } else if std::env::var_os("TSUMUGI_PERFORMANCE_DECISIONS").is_some() {
+        decision_reads(&store, project);
     } else {
         sequence(
             &mut store,
             project,
             "retained",
+            &CAPACITY_SAMPLE,
             usize::try_from(selected).unwrap(),
             false,
         );

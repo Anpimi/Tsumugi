@@ -2005,7 +2005,7 @@ pub(super) mod tests {
         time::{Duration, Instant},
     };
 
-    fn adopt_source_files(store: &mut ProjectStore, manifest: &[u8], bytes: &[u8]) {
+    pub(super) fn adopt_source_files(store: &mut ProjectStore, manifest: &[u8], bytes: &[u8]) {
         let mut runtime = ExecutionRuntime::new(store).unwrap();
         adopt_source_files_in_runtime(store, &mut runtime, manifest, bytes, Vec::new());
     }
@@ -2073,7 +2073,7 @@ pub(super) mod tests {
         );
     }
 
-    fn adopt_translation_files(store: &mut ProjectStore, bytes: &[u8]) {
+    pub(super) fn adopt_translation_files(store: &mut ProjectStore, bytes: &[u8]) {
         let snapshot = store.content_scope().unwrap().current_snapshot.unwrap();
         let bundle = TranslationBundle::capture("i18n/zh.json", bytes, "zh-CN", snapshot).unwrap();
         let input = bundle
