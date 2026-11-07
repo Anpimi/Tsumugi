@@ -54,7 +54,7 @@ fn semantic_findings(store: &mut ProjectStore, project: ExecutionId, unit: Execu
 
 fn read(store: &ProjectStore, project: ExecutionId, source: DecisionSource) -> SourceProjection {
     let c = store.connection().unwrap();
-    review::read_snapshot(c, |c| super::project(store, c, project, "zh-CN", source)).unwrap()
+    review::read_snapshot(c, |c| super::project(store, &mut review::TargetRead::new(c), project, "zh-CN", source)).unwrap()
 }
 
 /// Save an original typed synthetic result through the normal ledger and
@@ -232,6 +232,7 @@ fn review_finding_projection_batches_targets_without_skipping_empty_units() {
         assert_eq!(original_sql.iter().filter(|sql| sql.contains(marker)).count(), 201, "{marker}");
         assert_eq!(projected_sql.iter().filter(|sql| sql.contains(marker)).count(), 3, "{marker}");
     }
+    assert!(projected_sql.len() < 100, "empty finding history must be checked in batches, got {} statements", projected_sql.len());
     assert_eq!(projected_sql.iter().filter(|sql| sql.starts_with("BEGIN")).count(), 1);
     assert_eq!(projected_sql.iter().filter(|sql| sql.starts_with("COMMIT")).count(), 1);
 }
@@ -263,6 +264,6 @@ fn review_finding_limit_keeps_unvisited_batch_corruption_outside_the_partial_pag
     let c = store.connection().unwrap();
     assert_eq!(c.execute("UPDATE review_decisions SET basis_json='{}' WHERE project_id=?1 AND unit_id=?2 AND locale='zh-CN'",
         params![project.to_string(), units[0].to_string()]).unwrap(), 1);
-    let failure = review::read_snapshot(c, |c| super::project(&store, c, project, "zh-CN", DecisionSource::ReviewFinding)).err().unwrap();
+    let failure = review::read_snapshot(c, |c| super::project(&store, &mut review::TargetRead::new(c), project, "zh-CN", DecisionSource::ReviewFinding)).err().unwrap();
     assert_eq!(failure.code, ErrorCode::CorruptLedger);
 }

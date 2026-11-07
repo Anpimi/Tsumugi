@@ -38,13 +38,13 @@ pub use checks::{SegmentQaCounts, SegmentQaSummary};
 mod actions;
 pub use actions::{ReviewDecisionActionRead, ReviewWaiverActionRead, ReviewFallbackActionRead};
 mod findings;
-pub(super) use findings::findings_in;
+pub(super) use findings::{finding_record_units_in, findings_in};
 pub use findings::{
     AdvisoryFinding, ReviewFindingDecision, ReviewFindingDisposition, ReviewFindingRepair,
     ReviewFindingView, ReviewFindingWrite, ReviewRepairStatus,
 };
 mod queries;
-pub(super) use queries::{read_snapshot, targets_in};
+pub(super) use queries::{TargetRead, read_snapshot, targets_in};
 #[cfg(test)]
 mod query_tests;
 mod views;

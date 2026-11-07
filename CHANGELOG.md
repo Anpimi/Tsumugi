@@ -182,6 +182,8 @@ Current workspace version metadata: **`0.2.0-alpha.1`**. Because the published `
 
 ### Fixed
 
+- The decision inbox checks for review history in batches and reuses captured source validation during each read, reducing work during project opening and translation confirmation.
+
 - Resource impact subsets group only the requested source entries, avoiding repeated full-scope grouping in status filters while retaining the original limits and evidence.
 
 - Opening projects batches historical translation source bindings and action proofs while retaining every revision identity, ordinal and selection-chain check.

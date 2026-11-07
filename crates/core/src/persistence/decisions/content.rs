@@ -46,11 +46,12 @@ fn selection_action(c: &Connection, project: ExecutionId, target: &ReviewTarget)
         .and_then(identity).map(Some)
 }
 
-fn candidates(c: &Connection, project: ExecutionId, locale: &str) -> Result<SourceProjection, ExecutionError> {
+fn candidates(read: &mut review::TargetRead<'_>, project: ExecutionId, locale: &str) -> Result<SourceProjection, ExecutionError> {
+    let c = read.connection();
     let (units, mut complete) = units_in(c, project)?;
     let mut items = Vec::new();
     for units in units.chunks(100) {
-        let targets = review::targets_in(c, project, units, locale)?;
+        let targets = read.targets(project, units, locale)?;
         let (candidates, batch_complete) = translation::pending_candidates_in(
             c, project, locale, &targets, SOURCE_LIMIT - items.len(),
         )?;
@@ -80,11 +81,12 @@ fn candidates(c: &Connection, project: ExecutionId, locale: &str) -> Result<Sour
     Ok(SourceProjection { items, complete })
 }
 
-fn human_review(c: &Connection, project: ExecutionId, locale: &str) -> Result<SourceProjection, ExecutionError> {
+fn human_review(read: &mut review::TargetRead<'_>, project: ExecutionId, locale: &str) -> Result<SourceProjection, ExecutionError> {
+    let c = read.connection();
     let (units, complete) = units_in(c, project)?;
     let mut items = Vec::new();
     for units in units.chunks(100) {
-        for target in review::targets_in(c, project, units, locale)? {
+        for target in read.targets(project, units, locale)? {
             let (Some(selection_id), Some(revision_id)) = (target.selection_id, target.revision_id) else { continue; };
             if target.current_decision.as_ref().is_some_and(|decision| decision.kind == ReviewDecisionKind::Approve) { continue; }
             let source_action_id = match &target.current_decision {
@@ -212,7 +214,8 @@ fn finding_item(project: ExecutionId, unit: ExecutionId, locale: &str, target_ba
     })
 }
 
-fn review_findings(c: &Connection, project: ExecutionId, locale: &str) -> Result<SourceProjection, ExecutionError> {
+fn review_findings(read: &mut review::TargetRead<'_>, project: ExecutionId, locale: &str) -> Result<SourceProjection, ExecutionError> {
+    let c = read.connection();
     let (units, mut complete) = units_in(c, project)?;
     let mut items = BTreeMap::new();
     let mut visited = 0usize;
@@ -220,7 +223,8 @@ fn review_findings(c: &Connection, project: ExecutionId, locale: &str) -> Result
         // A failed batch may include corruption beyond the visited prefix.
         // Recheck only actually visited targets so an earlier limit still returns
         // the same partial page, while an encountered invalid target still fails.
-        let targets = review::targets_in(c, project, batch, locale).ok();
+        let targets = read.targets(project, batch, locale).ok();
+        let recorded = review::finding_record_units_in(c, project, locale, batch)?;
         for (index, unit) in batch.iter().copied().enumerate() {
             let unit_index = batch_index * 100 + index;
             let individual;
@@ -228,6 +232,7 @@ fn review_findings(c: &Connection, project: ExecutionId, locale: &str) -> Result
                 individual = review::target_in(c, project, unit, locale)?;
                 &individual
             };
+            if !recorded.contains(&unit) { continue; }
             let mut offset = 0;
             loop {
                 let limit = (SOURCE_LIMIT - visited).min(50) as u32;
@@ -277,7 +282,8 @@ fn review_findings(c: &Connection, project: ExecutionId, locale: &str) -> Result
 #[cfg(test)]
 mod tests;
 
-pub(super) fn project(store: &ProjectStore, c: &Connection, project: ExecutionId, locale: &str, source: DecisionSource) -> Result<SourceProjection, ExecutionError> {
+pub(super) fn project(store: &ProjectStore, read: &mut review::TargetRead<'_>, project: ExecutionId, locale: &str, source: DecisionSource) -> Result<SourceProjection, ExecutionError> {
+    let c = read.connection();
     let metadata = super::super::read_metadata_from(c)
         .map_err(|_| failure(ErrorCode::StorageFailed, "decision-content-project"))?;
     if metadata.project_id().to_string() != project.to_string()
@@ -285,10 +291,10 @@ pub(super) fn project(store: &ProjectStore, c: &Connection, project: ExecutionId
         return Err(failure(ErrorCode::DependencyConflict, "decision-content-locale"));
     }
     match source {
-        DecisionSource::TranslationCandidate => candidates(c, project, locale),
+        DecisionSource::TranslationCandidate => candidates(read, project, locale),
         DecisionSource::ResourceProposal => all_resource_proposals(store, c, project, locale),
-        DecisionSource::HumanReview => human_review(c, project, locale),
-        DecisionSource::ReviewFinding => review_findings(c, project, locale),
+        DecisionSource::HumanReview => human_review(read, project, locale),
+        DecisionSource::ReviewFinding => review_findings(read, project, locale),
         _ => Err(failure(ErrorCode::InvalidInput, "decision-content-source")),
     }
 }

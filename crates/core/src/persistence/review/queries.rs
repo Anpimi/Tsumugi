@@ -5,14 +5,14 @@ use super::*;
 use serde::de::DeserializeOwned;
 
 /// Compact validation identities shared by bounded batches in one read snapshot.
-pub(super) struct TargetRead<'a> {
+pub(in crate::persistence) struct TargetRead<'a> {
     connection: &'a Connection,
     #[cfg(any(test, feature = "execution-test-host", feature = "legacy-desktop-domain"))]
     legacy_sources: BTreeSet<ExecutionId>,
 }
 
 impl<'a> TargetRead<'a> {
-    pub(super) fn new(connection: &'a Connection) -> Self {
+    pub(in crate::persistence) fn new(connection: &'a Connection) -> Self {
         Self {
             connection,
             #[cfg(any(test, feature = "execution-test-host", feature = "legacy-desktop-domain"))]
@@ -20,8 +20,17 @@ impl<'a> TargetRead<'a> {
         }
     }
 
-    pub(super) fn connection(&self) -> &'a Connection {
+    pub(in crate::persistence) fn connection(&self) -> &'a Connection {
         self.connection
+    }
+
+    pub(in crate::persistence) fn targets(
+        &mut self,
+        project: ExecutionId,
+        units: &[ExecutionId],
+        locale: &str,
+    ) -> Result<Vec<ReviewTarget>, ExecutionError> {
+        Ok(targets_and_terms_in(self, project, units, locale, &Cancellation::default())?.0)
     }
 }
 

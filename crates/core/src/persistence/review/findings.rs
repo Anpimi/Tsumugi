@@ -465,6 +465,29 @@ impl ProjectStore {
     }
 }
 
+/// The findings, history and repairs pages are empty without a check or
+/// finding-decision record. Callers still validate every visited target.
+pub(in crate::persistence) fn finding_record_units_in(
+    c: &Connection,
+    project: ExecutionId,
+    locale: &str,
+    units: &[ExecutionId],
+) -> Result<BTreeSet<ExecutionId>, ExecutionError> {
+    let wanted = serde_json::to_string(units)
+        .map_err(|_| failure(ErrorCode::InvalidInput, "review-finding-units"))?;
+    let mut statement = c.prepare(
+        "SELECT wanted.value FROM json_each(?3) wanted
+         WHERE EXISTS(SELECT 1 FROM review_checks r
+             WHERE r.project_id=?1 AND r.locale=?2 AND r.unit_id=wanted.value)
+            OR EXISTS(SELECT 1 FROM review_finding_decisions d
+             WHERE d.project_id=?1 AND d.locale=?2 AND d.unit_id=wanted.value)",
+    ).map_err(sql)?;
+    statement.query_map(params![project.to_string(), locale, wanted], |row| row.get::<_, String>(0))
+        .map_err(sql)?
+        .map(|row| parse_id(row.map_err(sql)?))
+        .collect()
+}
+
 /// Borrow a target validated by the original reader in this same SQLite snapshot.
 /// Batch callers retain the snapshot across all offsets and target projections.
 pub(in crate::persistence) fn findings_in(

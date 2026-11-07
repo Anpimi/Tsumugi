@@ -225,6 +225,7 @@ impl ProjectStore {
             } else { Vec::new() };
             let activity = RefCell::new(BTreeMap::new());
             let observe = |attempt| *activity.borrow_mut().entry(attempt).or_insert_with(|| active(attempt));
+            let mut targets = review::TargetRead::new(c);
             for source in DecisionSource::ALL {
                 if !query.sources.is_empty() && !query.sources.contains(&source) { continue; }
                 let mut local_reason = None;
@@ -252,7 +253,7 @@ impl ProjectStore {
                     DecisionSource::HumanReview | DecisionSource::ReviewFinding => {
                         let locales = query.locale.clone().map(|locale| vec![locale]).unwrap_or_else(||
                             metadata.target_locales().iter().map(|locale| locale.as_str().to_owned()).collect());
-                        locales.iter().map(|locale| content::project(self, c, project, locale, source)).collect::<Vec<_>>()
+                        locales.iter().map(|locale| content::project(self, &mut targets, project, locale, source)).collect::<Vec<_>>()
                     }
                     _ => vec![recovery::project(self, c, project, query.locale.as_deref(), source, &observe)],
                 };
