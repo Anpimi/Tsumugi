@@ -3,6 +3,7 @@ import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testi
 import userEvent from "@testing-library/user-event";
 import { StrictMode, useCallback, useLayoutEffect, type ComponentProps } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { clearMocks, mockIPC } from "@tauri-apps/api/mocks";
 import { i18n } from "../i18n";
 import { SessionReads } from "../sessionReads";
 import { sourceCommands, type SourceContextPage } from "../sourceCommands";
@@ -42,6 +43,7 @@ import { fixtureIdentity } from "../testSupport/executionFixture";
 import { installResourceDraftPortsFixture } from "../testSupport/resourceDraftFixture";
 import { installSourceDraftPortsFixture } from "../testSupport/sourceDraftFixture";
 import { translationCaptureFixture, translationImportChoice, translationSelectionFixture } from "../testSupport/translationFixture";
+import { InteractionGate } from "./workspace/interactionGate";
 
 vi.mock("./platform/useProjectLifecycle", async original => ({ ...await original<object>(), useNativeProjectClose: () => ({ state: "ready" }) }));
 vi.mock("@tauri-apps/api/path", () => ({ sep: () => "/", join: async (...parts: string[]) => parts.join("/") }));
@@ -518,6 +520,71 @@ async function openImportWorkspace(opened: ProjectView = project, ports: Partial
   await waitFor(() => expect(button).toBeEnabled());
   return { close, register, button };
 }
+
+it("keeps the native Edit menu installed through a temporary input reservation", async () => {
+  type NativeItem = { id: string; enabled: boolean };
+  const items = new Map<number, NativeItem>();
+  const submenus = new Map<number, number[]>();
+  const menus = new Map<number, number[]>();
+  const hostMenu = 1;
+  let currentMenu = hostMenu, nextResource = hostMenu;
+  const setAppMenu = vi.fn((resource: number) => {
+    const previous = currentMenu;
+    currentMenu = resource;
+    return [previous, String(previous)];
+  });
+  const gateIntents = vi.spyOn(InteractionGate.prototype, "acquireIntent");
+  vi.stubGlobal("isTauri", true);
+  mockIPC((command, args) => {
+    const { kind, options, rid, enabled } = args as {
+      kind?: string; options?: { items?: (NativeItem | [number, string])[] };
+      rid: number; enabled: boolean;
+    };
+    if (command === "plugin:menu|new") {
+      const resource = ++nextResource;
+      const children = options?.items?.map(item => {
+        if (Array.isArray(item)) return item[0];
+        const child = ++nextResource;
+        items.set(child, { id: item.id, enabled: item.enabled });
+        return child;
+      }) ?? [];
+      if (kind === "Submenu") submenus.set(resource, children);
+      if (kind === "Menu") menus.set(resource, children);
+      return [resource, String(resource)];
+    }
+    if (command === "plugin:menu|items") return (submenus.get(rid) ?? []).map(child => [child, items.get(child)!.id, "MenuItem"]);
+    if (command === "plugin:menu|set_enabled") {
+      items.get(rid)!.enabled = enabled;
+      return;
+    }
+    if (command === "plugin:menu|set_as_app_menu") return setAppMenu(rid);
+    return null;
+  }, { shouldMockEvents: true });
+  const enabled = (id: string) => {
+    const workspace = menus.get(currentMenu)?.[0];
+    return submenus.get(workspace ?? 0)?.map(resource => items.get(resource)).find(item => item?.id === id)?.enabled;
+  };
+  try {
+    await openImportWorkspace();
+    await waitFor(() => expect(enabled("workspace.open-project")).toBe(true));
+    const gate = gateIntents.mock.contexts.find((_, index) => gateIntents.mock.calls[index][0] === "restore");
+    if (!(gate instanceof InteractionGate)) throw new Error("Missing workspace interaction gate");
+    const installed = currentMenu;
+    setAppMenu.mockClear();
+    let reservation: ReturnType<InteractionGate["acquireIntent"]> = null;
+    act(() => { reservation = gate.acquireIntent("editor-paste"); });
+    expect(reservation).not.toBeNull();
+    await waitFor(() => expect(enabled("workspace.open-project")).toBe(false));
+    expect(currentMenu).toBe(installed);
+    act(() => { reservation!.release(); });
+    await waitFor(() => expect(enabled("workspace.open-project")).toBe(true));
+    expect(setAppMenu).not.toHaveBeenCalled();
+  } finally {
+    cleanup();
+    try { await waitFor(() => expect(currentMenu).toBe(hostMenu)); }
+    finally { clearMocks(); vi.unstubAllGlobals(); }
+  }
+});
 
 it("lets the first entries read finish before starting the passive decision count", async () => {
   let finishPage!: (value: SegmentPage) => void;

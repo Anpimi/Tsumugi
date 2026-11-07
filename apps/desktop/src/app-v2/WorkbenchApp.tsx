@@ -870,9 +870,15 @@ function WorkspaceShell() {
     document.addEventListener("keydown", onKeyDown);
     return () => document.removeEventListener("keydown", onKeyDown);
   }, [dispatcher, currentId, gate, store, runtime]);
+  const nativeMenu = useRef<ReturnType<typeof installWorkspaceMenu> | null>(null);
   useEffect(() => {
     if (!isTauri() || !commandsReady) return;
-    return installWorkspaceMenu(dispatcher.list({ source: "native-menu" }), key => t(key), id => dispatcher.dispatch(id, { source: "native-menu", viewId: currentId }), () => setCommandFailed(true));
+    const menu = installWorkspaceMenu(key => t(key), id => dispatcher.dispatch(id, { source: "native-menu", viewId: currentId }), () => setCommandFailed(true));
+    nativeMenu.current = menu;
+    return () => { nativeMenu.current = null; menu.dispose(); };
+  }, [dispatcher, commandsReady, currentId, i18n.resolvedLanguage, settings.bindingsRevision]);
+  useEffect(() => {
+    nativeMenu.current?.update(dispatcher.list({ source: "native-menu" }));
   }, [dispatcher, commandsReady, currentId, i18n.resolvedLanguage, settings.bindingsRevision, disabled, interaction.intentOwner, draftState.hydration, draftState.mutationReserved, view?.editing, recoveryKey !== null, draftState.canConfirm]);
   useEffect(() => () => { paletteRelease.current?.(); drawerRelease.current?.(); }, [gate]);
   const activeLocale = view?.locale ?? session.project.metadata.targetLocales[0] ?? "";
