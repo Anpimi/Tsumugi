@@ -182,6 +182,8 @@ Current workspace version metadata: **`0.2.0-alpha.1`**. Because the published `
 
 ### Fixed
 
+- Adopting and editing a candidate returns keyboard focus to the translation editor when the entry is already open for editing.
+
 - Work-plan setup explains when a proposal's project materials have changed and directs you back to the conversation to prepare a new question. Any preview and consent for the stale proposal are cleared.
 
 - The decision inbox checks for review history in batches and reuses captured source validation during each read, reducing work during project opening and translation confirmation.

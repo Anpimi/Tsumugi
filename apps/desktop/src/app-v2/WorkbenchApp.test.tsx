@@ -990,7 +990,7 @@ describe("real-port workspace assembly", () => {
     expect(lifecycle.getSnapshot().failure).toBeNull();
   });
 
-  it("dispatches platform Save from the editor with desktop browser suppression and respects target cancellation", async () => {
+  it("dispatches platform Save and returns focus when a saved candidate reuses the editor", async () => {
     const retained: unknown = structuredClone(draftFixture.responses.read);
     if (!validateResponseRead(retained) || !retained.head.value || retained.current.kind !== "current") throw new Error("Invalid editor save fixture");
     retained.head.value.pending = null;
@@ -1034,7 +1034,24 @@ describe("real-port workspace assembly", () => {
       current.basis = { sourceRevisionId: request.sourceRevisionId, selectionId: selection.eventId, revisionId: selection.revisionId, text: request.text };
       return receipt;
     });
+    const candidate = { ...translationFixture.receipt.revision, unitId: key.unitId, locale: key.locale,
+      sourceRevisionId: current.basis.sourceRevisionId, sourceSnapshotId: captured.sourceSnapshotId,
+      revisionId: fixtureIdentity(98601), originKind: "ai" as const, text: "Saved candidate {{name}}", candidateDecision: null };
+    const history = () => ({ unitId: key.unitId, locale: key.locale, current: { ...translationFixture.receipt.selection, unitId: key.unitId, locale: key.locale },
+      currentText: current.basis.text, rows: [candidate], total: "1", nextOrdinal: null });
+    vi.spyOn(translationCommands, "history").mockImplementation(async () => history());
+    vi.spyOn(reviewCommands, "editorSnapshot").mockImplementation(async () => ({
+      readVersion: "candidate-editor-read",
+      target: reviewTargetFixture({ unitId: key.unitId, locale: key.locale, sourceSnapshotId: captured.sourceSnapshotId,
+        sourceRevisionId: current.basis.sourceRevisionId, nativeKey, sourceText: current.sourceText,
+        selectionId: current.basis.selectionId, revisionId: current.basis.revisionId, translationText: current.basis.text }),
+      context: null,
+      terms: { unitId: key.unitId, locale: key.locale, sourceRevisionId: current.basis.sourceRevisionId, entries: [] },
+      translations: history(),
+    }));
     const removeDesktopBehavior = installDesktopBehavior();
+    const width = Object.getOwnPropertyDescriptor(window, "innerWidth");
+    Object.defineProperty(window, "innerWidth", { configurable: true, writable: true, value: 1440 });
     try {
       await openImportWorkspace(opened);
       const edit = await screen.findByRole("button", { name: i18n.t("workbenchV2.entryEdit", { key: nativeKey }) });
@@ -1061,7 +1078,22 @@ describe("real-port workspace assembly", () => {
       await waitFor(() => expect(head.value).toBeNull());
       expect(screen.getByRole("textbox", { name: i18n.t("workbenchV2.editorLabel", { key: nativeKey }) })).toBe(input);
       expect(input).toHaveValue(text); expect(input).toHaveFocus();
-    } finally { removeDesktopBehavior(); }
+
+      fireEvent.click(screen.getByRole("button", { name: i18n.t("workbenchV2.showEntryDetails", { key: nativeKey }) }));
+      const historyTab = await screen.findByRole("tab", { name: i18n.t("workbenchV2.history") });
+      fireEvent.mouseDown(historyTab, { button: 0, ctrlKey: false });
+      const stage = await screen.findByRole("button", { name: i18n.t("workbenchV2.candidateEdit") });
+      await waitFor(() => expect(stage).toBeEnabled());
+      stage.focus();
+      expect(stage).toHaveFocus();
+      fireEvent.click(stage);
+      await waitFor(() => expect(input).toHaveValue(candidate.text));
+      expect(screen.getByRole("textbox", { name: i18n.t("workbenchV2.editorLabel", { key: nativeKey }) })).toBe(input);
+      await waitFor(() => expect(input).toHaveFocus());
+    } finally {
+      if (width) Object.defineProperty(window, "innerWidth", width);
+      removeDesktopBehavior();
+    }
   });
 
   it("keeps the editor focused on a narrow workspace until details are explicitly requested", async () => {

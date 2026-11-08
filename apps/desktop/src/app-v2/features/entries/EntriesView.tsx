@@ -47,7 +47,7 @@ type Props = {
   ref?: Ref<EntriesHandle>;
 };
 export interface EntriesHandle {
-  refresh: () => void; focusSearch: () => void;
+  refresh: () => void; focusSearch: () => void; focusEditor: () => void;
   confirm: (advance: boolean) => Promise<void>; exitEditor: () => Promise<void>;
   openReviewEditor: (input: EntryReviewEditorRequest, proof: () => boolean, beforeNavigate?: () => void) => Promise<boolean>;
   toggleFocus: () => Promise<void>; isEditing: () => boolean; canConfirm: () => boolean;
@@ -236,7 +236,8 @@ export default function EntriesView({ project, view, disabled, patch, navigate, 
       if (mounted.current && live.current.id === view.id && live.current.focus === view.focus && live.current.editing) table.current?.focusEditor();
     });
   }
-  useImperativeHandle(ref, () => ({ refresh: () => { void refresh(); }, focusSearch: () => { if (view.focusMode) void navigate({ focusMode: false }).then(ok => { if (ok) searchInput.current?.focus(); }); else searchInput.current?.focus(); }, confirm, exitEditor, toggleFocus, isEditing, canConfirm, openReviewEditor }));
+  useImperativeHandle(ref, () => ({ refresh: () => { void refresh(); }, focusSearch: () => { if (view.focusMode) void navigate({ focusMode: false }).then(ok => { if (ok) searchInput.current?.focus(); }); else searchInput.current?.focus(); },
+    focusEditor: () => table.current?.focusEditor(), confirm, exitEditor, toggleFocus, isEditing, canConfirm, openReviewEditor }));
   useLayoutEffect(() => {
     if (rowFocus && current?.rows.some(row => row.content.unitId === rowFocus) && !view.editing && view.focus === rowFocus) {
       table.current?.focusRow(rowFocus); setRowFocus(null);
