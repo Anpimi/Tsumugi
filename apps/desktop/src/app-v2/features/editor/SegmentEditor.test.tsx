@@ -381,6 +381,7 @@ it("pastes the original decomposed Mac text and line endings through native inse
   const editor = await pasteEditor(), raw = "e\u0301 {{name}}\r\n👩🏽‍💻 مرحبا 日本語";
   expect(fireEvent.paste(editor.field, { clipboardData: { getData: () => raw.replace(/\r\n/g, "\n").normalize("NFC") } })).toBe(false);
   expect(editor.readText).toHaveBeenCalledTimes(1); expect(editor.field).toHaveValue("Left replace right");
+  expect(screen.queryByText(w("editorPasteReading"))).not.toBeInTheDocument();
   expect(editor.drafts.getSnapshot().mutationReserved).toBe(false);
   expect(editor.gate.getSnapshot().intentOwner).not.toBeNull();
   await act(async () => { editor.clipboard.resolve(raw); await editor.clipboard.promise; await editor.drafts.flush(key); });
@@ -450,12 +451,26 @@ it("clears stale paste feedback when ordinary typing continues after cancellatio
 
 it("cancels a pending paste from its keyboard reachable action and ignores the later clipboard result", async () => {
   const editor = await pasteEditor(); fireEvent.paste(editor.field, { clipboardData: { getData: () => "é" } });
-  const cancel = screen.getByRole("button", { name: w("editorPasteCancel") });
+  const cancel = await screen.findByRole("button", { name: w("editorPasteCancel") });
+  expect(screen.getByText(w("editorPasteReading"))).toBeVisible();
   act(() => cancel.focus()); fireEvent.click(cancel);
   expect(screen.getByText(w("editorPasteCancelled"))).toBeVisible(); expect(editor.field).toHaveFocus();
   expect(editor.gate.getSnapshot().intentOwner).toBeNull();
   await act(async () => { editor.clipboard.resolve("e\u0301"); await editor.clipboard.promise; });
   expect(editor.insertText).not.toHaveBeenCalled(); expect(editor.field).toHaveValue("Left replace right");
+});
+
+it("cancels immediately with Escape before showing the slow-read controls", async () => {
+  const editor = await pasteEditor();
+  fireEvent.paste(editor.field, { clipboardData: { getData: () => "é" } });
+  expect(fireEvent.keyDown(editor.field, { key: "Escape" })).toBe(false);
+  expect(editor.field).toHaveFocus();
+  expect(editor.gate.getSnapshot().intentOwner).toBeNull();
+  expect(screen.getByText(w("editorPasteCancelled"))).toBeVisible();
+  await act(async () => { editor.clipboard.resolve("e\u0301"); await editor.clipboard.promise; });
+  expect(editor.insertText).not.toHaveBeenCalled();
+  expect(editor.field).toHaveValue("Left replace right");
+  expect(screen.queryByText(w("editorPasteReading"))).not.toBeInTheDocument();
 });
 
 it("keeps actual partial native input without assigning a fallback value", async () => {
@@ -466,6 +481,7 @@ it("keeps actual partial native input without assigning a fallback value", async
     return false;
   });
   fireEvent.paste(editor.field, { clipboardData: { getData: () => "é" } });
+  expect(await screen.findByText(w("editorPasteReading"))).toBeVisible();
   await act(async () => { editor.clipboard.resolve("e\u0301"); await editor.clipboard.promise; await editor.drafts.flush(key); });
   expect(editor.field).toHaveValue("Partial native input"); expect(editor.drafts.getEntry(key)?.value?.text).toBe("Partial native input");
   expect(readingDuringInsertion).toEqual([true]);
