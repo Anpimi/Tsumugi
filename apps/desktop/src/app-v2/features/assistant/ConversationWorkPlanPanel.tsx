@@ -24,7 +24,7 @@ import { Field, TextInput } from "../../../design-system/Field";
 import { Banner, LoadingState } from "../../../design-system/Feedback";
 import type { InteractionGate } from "../../workspace/interactionGate";
 import type { ConversationInput, ConversationSession } from "./ConversationSession";
-import { workPlanMinutesValid, type ProposalWorkPlanTools } from "./proposalWorkPlan";
+import { workPlanMaterialStale, workPlanMinutesValid, type ProposalWorkPlanTools } from "./proposalWorkPlan";
 import styles from "./ConversationWorkPlanPanel.module.css";
 import { ConversationRunPanel } from "./ConversationRunPanel";
 
@@ -85,7 +85,8 @@ export function ConversationWorkPlanPanel({ owner, input, visible, disabled, gat
   const disposeProof = () => { proof.current?.dispose(); proof.current = null; };
   const invalidate = () => { disposeProof(); owner.invalidateWorkPlan(conversationId); };
   const pending = !!input.value.pending || !!input.failure;
-  const blocked = disabled || !open || (!!input.busy || input.journalBusy) || pending || !!workPlan.busy;
+  const stale = workPlanMaterialStale(workPlan.failure);
+  const blocked = disabled || !open || (!!input.busy || input.journalBusy) || pending || stale || !!workPlan.busy;
   const unsavedProposal = !!revision && !!input.value.proposalEdits?.some(edit => edit.proposalId === revision.proposalId);
   const unresolved = proposal?.questions.length ?? 0;
   const connectionCurrent = connectionConfigCurrent(facts.current(), workPlan.config)
@@ -268,7 +269,7 @@ export function ConversationWorkPlanPanel({ owner, input, visible, disabled, gat
       {!valid ? <p role="status">{t("planConfigHelp")}</p> : null}
       {!connectionCurrent ? <p role="status">{t("planConnectionChanged")}</p> : null}
       <p>{t("planPreparationHelp")}</p>
-      {workPlan.failure ? <Banner tone="error"><p>{t("planFailure")}</p><CommandFailureDetails failure={workPlan.failure}/></Banner> : null}
+      {workPlan.failure ? <Banner tone="error"><p>{t(stale ? "planStaleMaterial" : "planFailure")}</p><CommandFailureDetails failure={workPlan.failure}/></Banner> : null}
       {captureFailure ? <Banner tone="error"><p>{t("planToolCaptureFailed")}</p><CommandFailureDetails failure={captureFailure}/></Banner> : null}
       <div className={styles.actions}><Button size="sm" pending={workPlan.busy === "prepare"} disabled={blocked || !valid || !connectionCurrent || !strategyDefaultReady || !!unresolved || unsavedProposal}
         onClick={event => void prepare(event.currentTarget)}>{t("planPrepare")}</Button></div>
