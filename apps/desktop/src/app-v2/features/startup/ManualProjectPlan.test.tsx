@@ -25,14 +25,14 @@ function fixture(options: { drop?: { dropTicket: string; folderName: string } | 
   const ports = { create: vi.fn(async (_request: CreateProjectRequest) => project), open: vi.fn(async (_request: { locator: string }) => project),
     stopCleanup: vi.fn(async ({ actionId }: { actionId: string }) => ({ actionId, state: "stopped" as const })) };
   const controller = new ProjectLifecycle(ports), gate = new InteractionGate();
-  const onCreated = vi.fn((_request: StartupClaimRequest) => {}), onDropConsumed = vi.fn();
+  const onCreated = vi.fn((_request: StartupClaimRequest) => {}), onDropHandled = vi.fn();
   let setDrop!: (drop: { dropTicket: string; folderName: string } | null) => void, setVisible!: (visible: boolean) => void;
   function Harness() {
     const [open, setOpen] = useState(true), [drop, changeDrop] = useState(options.drop ?? null);
     setDrop = changeDrop; setVisible = setOpen;
-    return <ManualProjectPlan controller={controller} gate={gate} open={open} onOpenChange={setOpen} native drop={drop} onDropConsumed={onDropConsumed} onCreated={onCreated}/>;
+    return <ManualProjectPlan controller={controller} gate={gate} open={open} onOpenChange={setOpen} native drop={drop} onDropHandled={onDropHandled} onCreated={onCreated}/>;
   }
-  render(<ApplicationReadProvider><Harness/></ApplicationReadProvider>); return { controller, ports, onCreated, onDropConsumed, setDrop: (drop: { dropTicket: string; folderName: string } | null) => setDrop(drop), setVisible: (open: boolean) => setVisible(open) };
+  render(<ApplicationReadProvider><Harness/></ApplicationReadProvider>); return { controller, ports, onCreated, onDropHandled, setDrop: (drop: { dropTicket: string; folderName: string } | null) => setDrop(drop), setVisible: (open: boolean) => setVisible(open) };
 }
 async function fill() {
   const user = userEvent.setup();
@@ -188,12 +188,13 @@ it("rejects a preflight from a different runtime and keeps the source plan for r
 });
 
 it("uses an opaque native drop ticket and removes an older preflight even when the new drop fails", async () => {
-  nativeSourceReads(); const { controller, setDrop, onDropConsumed } = fixture(), user = await fill(); await checkedSource(user);
+  nativeSourceReads(); const { controller, setDrop, onDropHandled } = fixture(), user = await fill(); await checkedSource(user);
+  onDropHandled.mockClear();
   vi.spyOn(startupCommands, "droppedDirectory").mockRejectedValueOnce(new Error("Selection expired"));
   act(() => setDrop({ dropTicket: "00000000-0000-4000-8000-000000002222", folderName: "New folder B" }));
   await screen.findByText(t("sourceSelectionFailed"));
   expect(startupCommands.droppedDirectory).toHaveBeenCalledExactlyOnceWith({ dropTicket: "00000000-0000-4000-8000-000000002222" });
-  expect(onDropConsumed).toHaveBeenCalledOnce(); expect(screen.queryByText(t("sourceReady"))).not.toBeInTheDocument();
+  expect(onDropHandled).toHaveBeenCalledOnce(); expect(screen.queryByText(t("sourceReady"))).not.toBeInTheDocument();
   expect(screen.getByRole("button", { name: t("create") })).toBeDisabled(); expect(screen.getByRole("textbox", { name: t("name") })).toHaveValue("A human project"); controller.dispose();
 });
 

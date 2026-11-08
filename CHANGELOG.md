@@ -182,7 +182,7 @@ Current workspace version metadata: **`0.2.0-alpha.1`**. Because the published `
 
 ### Fixed
 
-- Source import offers the folder picker again after rejecting a drop of multiple items. The selected importer and runtime are retained.
+- Source import offers the folder picker again after rejecting a drop of multiple items. The selected importer and runtime are retained. New-project setup shows the rejection in the project form and lets an open folder picker finish.
 
 - Adopting and editing a candidate returns keyboard focus to the translation editor when the entry is already open for editing.
 

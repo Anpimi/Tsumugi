@@ -14,7 +14,7 @@ import { sourceDraftValue } from "../sourceDraftJournal";
 import { sourceDraftStateFixture } from "../testSupport/sourceDraftStateFixture";
 import { pluginCommands } from "../pluginCommands";
 import { pluginSourceInventory, pluginSourcePackage, pluginSourceRequest, pluginSourceView, pluginSourceWorkflow } from "../testSupport/pluginSourceFixture";
-import { startupCommands } from "../startupCommands";
+import { startupCommands, type StartupDropEvent } from "../startupCommands";
 import type { SourceOwner } from "./features/source/sourceTypes";
 import { segmentCommands, type SegmentPage } from "../segmentCommands";
 import { decisionCommands } from "../decisionCommands";
@@ -460,6 +460,54 @@ it("recovers an initial delivery load failure without moving another workspace v
   expect(controller.getSnapshot().session?.project.sessionToken).toBe(project.sessionToken);
   errors.mockRestore();
 }, 15000);
+
+it("shows startup drop rejection inside the plan and discards the invalidated invitation", async () => {
+  let deliver: ((event: StartupDropEvent) => void) | undefined;
+  const native = vi.spyOn(tauriCore, "isTauri").mockReturnValue(true);
+  const listen = vi.spyOn(tauriEvents, "listen").mockImplementation(async (event, handler) => {
+    if (event !== "startup-native-drop") return () => {};
+    const send = (payload: StartupDropEvent) => handler({ event, id: 1, payload });
+    deliver = send;
+    return () => { if (deliver === send) deliver = undefined; };
+  });
+  const dropped = vi.spyOn(startupCommands, "droppedDirectory").mockRejectedValue(new Error("Invalidated drop ticket"));
+  const choose = vi.spyOn(startupCommands, "chooseDirectory").mockResolvedValue({
+    selectionId: fixtureIdentity(907), folderName: "Recovered source",
+  });
+  vi.spyOn(pluginCommands, "inventory").mockResolvedValue(pluginSourceInventory);
+  vi.spyOn(pluginCommands, "package").mockResolvedValue(pluginSourcePackage);
+  controller = new ProjectLifecycle();
+  try {
+    render(<StrictMode><WorkbenchApp controller={controller} native/></StrictMode>);
+    fireEvent.click(screen.getByRole("button", { name: i18n.t("startup.manual") }));
+    const plan = await screen.findByRole("dialog", { name: i18n.t("startup.title") });
+    const name = within(plan).getByRole("textbox", { name: i18n.t("startup.name") });
+    fireEvent.change(name, { target: { value: "Retained project name" } });
+    await waitFor(() => expect(deliver).toBeTypeOf("function"));
+
+    fireEvent.compositionStart(name);
+    await act(async () => { deliver?.({ kind: "ready", dropTicket: fixtureIdentity(908), folderName: "Invalidated source" }); });
+    expect(within(plan).getByText(i18n.t("startup.sourceFolder", { folder: "Invalidated source" }))).toBeVisible();
+    expect(dropped).not.toHaveBeenCalled();
+    await act(async () => { deliver?.({ kind: "rejected", error: {
+      code: "invalid-input", stage: "execution-read", outcome: "rejected", recoveryRequired: false, reason: "native-drop-one-directory",
+    } }); });
+    fireEvent.compositionEnd(name);
+
+    expect(dropped).not.toHaveBeenCalled();
+    expect(within(plan).getByText(i18n.t("startup.sourceSelectionFailed"))).toBeVisible();
+    expect(name).toHaveValue("Retained project name");
+    expect(within(plan).queryByText(i18n.t("startup.sourceFolder", { folder: "Invalidated source" }))).not.toBeInTheDocument();
+    const picker = within(plan).getByRole("button", { name: i18n.t("startup.chooseSourceFolder") });
+    await waitFor(() => expect(picker).toBeEnabled());
+    fireEvent.click(picker);
+    expect(await within(plan).findByText(i18n.t("startup.sourceFolder", { folder: "Recovered source" }))).toBeVisible();
+    expect(choose).toHaveBeenCalledOnce();
+    expect(dropped).not.toHaveBeenCalled();
+    expect(within(plan).queryByText(i18n.t("startup.sourceSelectionFailed"))).not.toBeInTheDocument();
+    expect(name).toHaveValue("Retained project name");
+  } finally { cleanup(); listen.mockRestore(); native.mockRestore(); }
+});
 
 it("opens the real manual creation entry and adopts only its acknowledged project session", async () => {
   const create = vi.fn(async () => project);

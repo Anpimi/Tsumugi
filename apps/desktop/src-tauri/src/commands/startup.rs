@@ -1,6 +1,6 @@
 //! Native directory preparation before a project exists. No plugin is executed.
 use super::*;
-use std::time::Instant;
+use std::{path::PathBuf, time::Instant};
 use tauri::{Emitter, Manager};
 use tauri_plugin_dialog::DialogExt;
 use tsumugi_core::execution::ExecutionId;
@@ -64,6 +64,20 @@ impl StartupSession {
     fn begin(&mut self, window: String) -> ExecutionId {
         self.epoch = ExecutionId::new(); self.drop = None; self.inspection = None;
         let picker = ExecutionId::new(); self.picker = Some((window, picker)); picker
+    }
+    fn register_drop(
+        &mut self, window: String, paths: Vec<PathBuf>, now: Instant,
+    ) -> Result<StartupDropEvent, CommandError> {
+        let epoch = ExecutionId::new();
+        let scope = Scope { window, epoch };
+        let (drop_ticket, folder_name) = native_directory::Drop::register(&mut self.drop, scope, paths, now).map_err(|_| {
+            let mut error = CommandError::simple(CommandErrorCode::InvalidInput, CommandStage::ExecutionRead);
+            error.reason = Some("native-drop-one-directory".into());
+            error
+        })?;
+        self.epoch = epoch;
+        self.picker = None;
+        Ok(StartupDropEvent::Ready { drop_ticket, folder_name })
     }
     fn finish(&mut self, window: &str, picker: ExecutionId, selected: Option<Arc<Selection>>) -> Result<Option<StartupDirectory>, CommandError> {
         if self.picker.as_ref() != Some(&(window.to_owned(), picker)) { return Err(stale()); }
@@ -261,12 +275,7 @@ pub(super) fn on_window_event<R: tauri::Runtime>(window: &tauri::Window<R>, even
         if destroyed { sessions.startup.clear_window(&owner); return Ok(None); }
         if sessions.active.is_some() { return Ok(None); }
         empty(sessions)?;
-        sessions.startup.epoch = ExecutionId::new(); sessions.startup.picker = None;
-        let scope = Scope { window: owner, epoch: sessions.startup.epoch };
-        let (drop_ticket, folder_name) = native_directory::Drop::register(&mut sessions.startup.drop, scope, paths.expect("native event"), now).map_err(|_| {
-            let mut error = CommandError::simple(CommandErrorCode::InvalidInput, CommandStage::ExecutionRead); error.reason = Some("native-drop-one-directory".into()); error
-        })?;
-        Ok(Some(StartupDropEvent::Ready { drop_ticket, folder_name }))
+        sessions.startup.register_drop(owner, paths.expect("native event"), now).map(Some)
     });
     let window = window.clone();
     match admitted {

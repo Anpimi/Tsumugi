@@ -31,9 +31,10 @@ const emptySource = (): StartupSourcePlan => ({ directory: null, folderName: "",
 const dirty = (draft: Draft) => !!(draft.name || draft.parent || draft.folder || draft.source || draft.targets.length || draft.target || draft.sourcePlan);
 const languages = ["en-US", "zh-Hans", "zh-Hant", "ja-JP", "ko-KR", "es-ES", "fr-FR", "de-DE", "pt-BR"];
 
-export default function ManualProjectPlan({ controller, gate, open, onOpenChange, native, drop, onDropConsumed, onCreated }: {
+export default function ManualProjectPlan({ controller, gate, open, onOpenChange, native, drop, dropFailure, onDropHandled, onCreated }: {
   controller: ProjectLifecycle; gate: InteractionGate; open: boolean; onOpenChange: (open: boolean) => void; native: boolean;
-  drop?: { dropTicket: string; folderName: string } | null; onDropConsumed?: () => void; onCreated?: (request: StartupClaimRequest) => void;
+  drop?: { dropTicket: string; folderName: string } | null; dropFailure?: CommandFailure | null;
+  onDropHandled?: () => void; onCreated?: (request: StartupClaimRequest) => void;
 }) {
   const { t, i18n } = useTranslation(undefined, { keyPrefix: "startup" });
   const lifecycle = useProjectLifecycle(controller), [draft, setDraft] = useState<Draft>(empty), current = useRef(draft);
@@ -109,10 +110,15 @@ export default function ManualProjectPlan({ controller, gate, open, onOpenChange
       && plan.directory.selectionId === plan.preflight.directory.selectionId && sameSourceEnvironment(plan.preflight.source, source);
   }
   const sourceReady = readySource(draft.sourcePlan, sourceRequest(draft.sourcePlan));
+  const sourcePlan = draft.sourcePlan;
+  const visibleSourcePlan = dropFailure && sourcePlan && !sourcePlan.directory && !sourcePlan.expired
+    ? { ...sourcePlan, folderName: "" } : sourcePlan;
   async function chooseSource(ticket?: string, folderName = "") {
     if (!native || blocked() || composing.current) return;
     const before = current.current.sourcePlan ?? emptySource();
-    const selectedPlan = { ...before, directory: null, preflight: null, folderName: folderName || before.folderName, expired: !!before.directory || before.expired };
+    const expired = !!before.directory || before.expired;
+    const selectedPlan = { ...before, directory: null, preflight: null, folderName: folderName || (expired ? before.folderName : ""), expired };
+    onDropHandled?.();
     edit({ sourcePlan: selectedPlan });
     const frame = current.current, flight = ++sourceFlight.current;
     sourceWorking.current = true; setSourceOperation("selecting"); setSourceFailure(null);
@@ -139,10 +145,10 @@ export default function ManualProjectPlan({ controller, gate, open, onOpenChange
     // An effect replay must not consume a one-use native invitation before cleanup.
     void Promise.resolve().then(() => {
       if (!active || !mounted.current || !openRef.current || consumedDrop.current === drop.dropTicket || blocked() || composing.current) return;
-      consumedDrop.current = drop.dropTicket; onDropConsumed?.(); void chooseSource(drop.dropTicket, drop.folderName);
+      consumedDrop.current = drop.dropTicket; void chooseSource(drop.dropTicket, drop.folderName);
     });
     return () => { active = false; };
-  }, [open, native, drop, onDropConsumed, sourceOperation, inventory.isFetching, lifecycle.phase, lifecycle.pending, compositionRevision]);
+  }, [open, native, drop, onDropHandled, sourceOperation, inventory.isFetching, lifecycle.phase, lifecycle.pending, compositionRevision]);
   function changeSource(choice: string, runtime: string) {
     if (blocked() || composing.current || !current.current.sourcePlan) return;
     edit({ sourcePlan: { ...current.current.sourcePlan, choice, runtime, preflight: null } }); setSourceFailure(null);
@@ -211,10 +217,11 @@ export default function ManualProjectPlan({ controller, gate, open, onOpenChange
         {changed ? <Banner tone="warning">{t("changed")}</Banner> : null}
         {pendingCreation ? <Banner tone="warning" action={<Button disabled={preparing || lifecycle.phase !== "idle"} onClick={() => void controller.openCreatedProject()}>{t("openDestination")}</Button>}>{t("unknown")}<p>{t("unknownLocation", { path: pendingCreation.locator })}</p></Banner>
           : failure ? <Banner tone="error">{t("createFailed")}<CommandFailureDetails failure={commandFailure(cause)}/></Banner> : null}
-        <StartupSourcePreparation plan={draft.sourcePlan} inventory={inventory.data} loading={inventory.isFetching} inventoryFailed={!!inventory.error} failure={sourceFailure}
+        {dropFailure ? <Banner tone="error">{t("sourceSelectionFailed")}<CommandFailureDetails failure={dropFailure}/></Banner> : null}
+        <StartupSourcePreparation plan={visibleSourcePlan} inventory={inventory.data} loading={inventory.isFetching} inventoryFailed={!!inventory.error} failure={sourceFailure}
           busy={busy} native={native} checking={sourceOperation === "checking"} selecting={sourceOperation === "selecting"} ready={sourceReady}
           onChoose={() => void chooseSource()} onRefresh={() => void refreshSources()} onChange={changeSource} onCheck={() => void checkSource()}
-          onManual={() => { if (!busy && !sourceWorking.current && !leaveRef.current && !composing.current) { sourceFlight.current++; edit({ sourcePlan: null }); setSourceFailure(null); } }}/>
+          onManual={() => { if (!busy && !sourceWorking.current && !leaveRef.current && !composing.current) { onDropHandled?.(); sourceFlight.current++; edit({ sourcePlan: null }); setSourceFailure(null); } }}/>
         <Field label={t("name")} required error={error("name", "displayName")}><TextInput value={draft.name} readOnly={busy} onChange={event => edit({ name: event.target.value })}/></Field>
         <Field label={t("parent")} required error={error("parent", "destination")}><TextInput value={draft.parent} readOnly={busy} onChange={event => edit({ parent: event.target.value })}/></Field>
         <Button disabled={!native || busy} onClick={() => void chooseParent()}>{t("chooseParent")}</Button>

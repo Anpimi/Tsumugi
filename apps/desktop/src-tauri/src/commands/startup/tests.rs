@@ -53,6 +53,30 @@ fn call(window: &tauri::WebviewWindow<tauri::test::MockRuntime>, command: &str, 
         .map(|response| response.deserialize::<Value>().unwrap())
 }
 
+#[test]
+fn a_rejected_drop_retires_the_unclaimed_ticket_without_superseding_the_folder_picker() {
+    let mut owner = StartupSession::default();
+    let now = Instant::now();
+    let wrong_count = || vec![PathBuf::from("/first"), PathBuf::from("/second")];
+    owner.register_drop("main".into(), vec![PathBuf::from("/original")], now).unwrap();
+    let drop_epoch = owner.epoch;
+    assert!(owner.drop.is_some());
+    let rejected = owner.register_drop("main".into(), wrong_count(), now).unwrap_err();
+    assert_eq!(rejected.reason.as_deref(), Some("native-drop-one-directory"));
+    assert!(owner.drop.is_none());
+    assert_eq!(owner.epoch, drop_epoch);
+
+    let picker = owner.begin("main".into());
+    let picker_epoch = owner.epoch;
+    assert!(owner.register_drop("main".into(), wrong_count(), now).is_err());
+    assert_eq!(owner.epoch, picker_epoch);
+    assert!(owner.finish("main", picker, None).unwrap().is_none());
+
+    let picker = owner.begin("main".into());
+    owner.register_drop("main".into(), vec![PathBuf::from("/replacement")], now).unwrap();
+    assert!(owner.finish("main", picker, None).is_err());
+}
+
 #[cfg(target_os = "macos")]
 fn install_metadata_runtime(fixture: &plugins::InstalledPluginFixture) -> (PluginSourceRequest, tsumugi_plugin_host::RuntimeApproval) {
     let approval = fixture.install_metadata_runtime("0.1.0-alpha.1");

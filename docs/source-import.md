@@ -6,6 +6,8 @@ The source import workflow imports and maintains project source snapshots using 
 
 Before importing source files, open **Extensions** to review, install, and enable the source package, and independently approve and install its required runtime (the initial bundled JavaScript runtime targets Apple silicon Macs running macOS 13.5 or later). Each executable role—producer, semantic checker, and format reviewer—maintains its own `Project` or `Attempt` execution binding.
 
+When preparing a new project from the welcome screen, choose a source folder in the project form or drop one folder. If a drop contains multiple items, the form keeps your settings and shows how to choose again. A folder picker that is already open can still finish.
+
 To import a source snapshot, choose **Import an upstream version** in the Project menu, or **Import source content** in an empty Entries view:
 
 1. **Select format and directory**: Select the installed source format and runtime, click **Choose source folder**, and confirm the project’s source language. When the desktop receives a native folder drop, choose **Use the dropped folder**. If the drop contained multiple items, drop one folder again or use the folder picker. The importer and runtime selections stay in place. The package's declarative source Resource defines the relative file paths, byte limits, and revision rules. The application never infers a parser from plugin names or file extensions.

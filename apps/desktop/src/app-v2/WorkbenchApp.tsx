@@ -1769,7 +1769,11 @@ export default function WorkbenchApp({ controller: suppliedController, native = 
       if (!validateResponseStartupDropEvent(event.payload)) { setStartupDropFailure(commandFailure(new Error("Invalid native startup drop"))); return; }
       if (event.payload.kind === "ready") {
         setStartupDrop({ dropTicket: event.payload.dropTicket, folderName: event.payload.folderName }); setStartupDropFailure(null); setCreatePanel(true);
-      } else setStartupDropFailure(commandFailure(event.payload.error));
+      } else {
+        const error = event.payload.error;
+        if (error.code === "invalid-input" && error.reason === "native-drop-one-directory") setStartupDrop(null);
+        setStartupDropFailure(commandFailure(error));
+      }
     })).then(remove => { if (alive) unlisten = remove; else remove(); }).catch(error => { if (alive) setStartupDropFailure(commandFailure(error)); });
     return () => { alive = false; unlisten?.(); };
   }, [native, presentation, controller, restorePanel]);
@@ -1836,7 +1840,7 @@ export default function WorkbenchApp({ controller: suppliedController, native = 
           startupHandoff={startupHandoff?.projectId === presentation.project.metadata.projectId && startupHandoff.sessionToken === presentation.project.sessionToken ? startupHandoff : null} onStartupHandled={() => setStartupHandoff(null)}/>
       </SessionReadProvider> : <WorkspaceWelcome recent={recent} restoreCandidate={restoreCandidate} native={native} blocked={blocked || createPanel || openPanel || restorePanel} gate={gate}
         onOpen={path => void open(path)} onChoose={() => setCreatePanel(true)} onManual={() => setCreatePanel(true)} onOpenExisting={() => setOpenPanel(true)} onRestore={() => setRestorePanel(true)}/>}
-      {startupDropFailure ? <Banner tone="error" action={<Button disabled={!native || blocked} onClick={() => setCreatePanel(true)}>{startup("chooseSourceFolder")}</Button>}>{startup("sourceSelectionFailed")}<CommandFailureDetails failure={startupDropFailure}/></Banner> : null}
+      {startupDropFailure && !createPanel ? <Banner tone="error" action={<Button disabled={!native || blocked} onClick={() => setCreatePanel(true)}>{startup("chooseSourceFolder")}</Button>}>{startup("sourceSelectionFailed")}<CommandFailureDetails failure={startupDropFailure}/></Banner> : null}
       <Dialog open={openPanel} onOpenChange={setOpenPanel} title={t("openProject")} description={t("welcomeHelp")} closeLabel={t("close")}>{openForm}</Dialog>
       <Dialog open={restorePanel} onOpenChange={open => { if (!busy) setRestorePanel(open); }} title={startup("restoreTitle")}
         description={startup("restoreHelp")} closeLabel={startup("close")} closeDisabled={busy}>
@@ -1851,7 +1855,8 @@ export default function WorkbenchApp({ controller: suppliedController, native = 
           <Button variant="primary" type="submit" pending={busy} disabled={blocked || restoreFailure === "restoreUnknown" || !isSafeChildDirectoryName(restoreName)}>{startup("restoreChoose")}</Button>
         </form>
       </Dialog>
-      <ManualProjectPlan controller={controller} gate={gate} open={createPanel} onOpenChange={setCreatePanel} native={native} drop={startupDrop} onDropConsumed={() => setStartupDrop(null)} onCreated={setStartupHandoff}/>
+      <ManualProjectPlan controller={controller} gate={gate} open={createPanel} onOpenChange={setCreatePanel} native={native}
+        drop={startupDrop} dropFailure={startupDropFailure} onDropHandled={() => { setStartupDrop(null); setStartupDropFailure(null); }} onCreated={setStartupHandoff}/>
       <Dialog open={!!stop} onOpenChange={value => { if (!value && stop) { stop.resolve(false); setStop(null); } }} title={t("stopTitle")} description={t("stopHelp")} closeLabel={t("stay")} footer={<><Button onClick={() => { stop?.resolve(false); setStop(null); }}>{t("stay")}</Button><Button variant="danger" onClick={() => { if (stop) stop.resolve(stop.current()); setStop(null); }}>{t("stopAndLeave")}</Button></>}>{t("stopHelp")}</Dialog>
       <Dialog open={discard} onOpenChange={setDiscard} title={t("discardRetained")} description={t("discardHelp")} closeLabel={t("stay")} footer={<><Button onClick={() => setDiscard(false)}>{t("stay")}</Button><Button variant="danger" onClick={() => { controller.discardRetained(); setDiscard(false); }}>{t("discardRetained")}</Button></>}>{t("discardHelp")}</Dialog>
     </div>
