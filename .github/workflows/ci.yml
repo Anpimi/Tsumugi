@@ -74,6 +74,7 @@ jobs:
       - name: Check editing, adoption, review and delivery behavior
         run: >-
           pnpm --dir apps/desktop test --maxWorkers=2
+          src/app-v2/WorkbenchApp.test.tsx
           src/TranslationDraftSession.test.tsx
           src/app-v2/features/editor/translationDrafts.test.ts
           src/app-v2/features/editor/SegmentEditor.test.tsx

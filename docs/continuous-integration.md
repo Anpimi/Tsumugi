@@ -16,7 +16,7 @@ approvals and local project data are not cached.
 
 | Job | Environment | Scope |
 | --- | --- | --- |
-| Frontend build and behavior | Ubuntu 24.04 | TypeScript/Vite build and focused editing, import, source, review, release, conversation and IPC tests |
+| Frontend build and behavior | Ubuntu 24.04 | TypeScript/Vite build and focused workbench, editing, import, source, review, release, conversation and IPC tests |
 | Rust, process channels and generated contracts | macOS 15 arm64 | SDK contract tests with schema support, Core library tests, Host library and actual conformance subprocess tests, all four contract generators in check mode, SDK JavaScript receivers, and both JavaScript runtime builds/tests |
 
 Each command is an ordinary workflow step. A failed command fails its job;
@@ -41,6 +41,7 @@ The frontend job runs:
 ```sh
 pnpm --dir apps/desktop build
 pnpm --dir apps/desktop test --maxWorkers=2 \
+  src/app-v2/WorkbenchApp.test.tsx \
   src/TranslationDraftSession.test.tsx \
   src/app-v2/features/editor/translationDrafts.test.ts \
   src/app-v2/features/editor/SegmentEditor.test.tsx \
