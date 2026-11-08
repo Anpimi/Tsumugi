@@ -997,6 +997,11 @@ describe("real-port workspace assembly", () => {
     let head = retained.head;
     const current = retained.current, key = head.key, nativeKey = current.nativeKey;
     const opened = { ...project, metadata: { ...project.metadata, projectId: key.projectId } };
+    const readPending = vi.fn(() => false);
+    vi.mocked(draftCommands.list).mockResolvedValue({ items: Array.from({ length: 96 }, (_, index) => ({
+      key: { ...key, unitId: fixtureIdentity(97000 + index) }, revision: "3", editSeq: "2",
+      sourceRevisionId: current.basis.sourceRevisionId, get hasPending() { return readPending(); },
+    })), next: null });
     const row = { ...structuredClone(page.rows[0]), protection: { ...page.rows[0].protection, unitId: key.unitId },
       content: { ...page.rows[0].content, unitId: key.unitId, sourceSnapshotId: translationFixture.start.expectedSourceSnapshotId,
         sourceRevisionId: current.basis.sourceRevisionId, nativeKey, selectionId: null, revisionId: null, translationPreview: null } };
@@ -1036,7 +1041,11 @@ describe("real-port workspace assembly", () => {
       await waitFor(() => expect(edit).toBeEnabled()); fireEvent.click(edit);
       const input = await screen.findByRole("textbox", { name: i18n.t("workbenchV2.editorLabel", { key: nativeKey }) });
       const text = "Save {{name}} — é 👩🏽‍💻\n第二行保持完整";
+      expect(readPending).toHaveBeenCalled();
+      readPending.mockClear();
       expect(input).toHaveFocus(); fireEvent.change(input, { target: { value: text } });
+      await waitFor(() => expect(head.value?.text).toBe(text));
+      expect(readPending.mock.calls.length).toBe(0);
       await waitFor(() => expect(screen.getByRole("button", { name: i18n.t("workbenchV2.editorConfirm") })).toBeEnabled());
       const modifier = navigator.platform.includes("Mac") ? { metaKey: true } : { ctrlKey: true };
       input.addEventListener("keydown", event => event.preventDefault(), { once: true });

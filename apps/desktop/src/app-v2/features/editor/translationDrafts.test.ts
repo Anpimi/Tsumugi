@@ -154,9 +154,12 @@ it("observes decision activity across the durable dispatch gap and receipt resol
   expect(acknowledgedBeforeDispatch).toBe(true);
   const active = h.owner.getDecisionActivity();
   expect(active.ownerId).toBe(writerId); expect(BigInt(active.revision)).toBeGreaterThan(BigInt(idle.revision));
+  expect(h.owner.getSnapshot()).toMatchObject({ pendingCount: 1, firstPending: key });
   h.owner.edit(key, "Newer B"); expect(h.owner.getDecisionActivity()).toBe(active);
+  expect(h.owner.getSnapshot()).toMatchObject({ pendingCount: 1, firstPending: key });
   business.resolve(); await resolving.promise;
   expect(h.owner.getEntry(key)?.value).toMatchObject({ text: "Newer B", pending: null });
+  expect(h.owner.getSnapshot()).toMatchObject({ pendingCount: 0, firstPending: undefined });
   expect(h.owner.getDecisionActivity()).toBe(active);
   resolveAck.resolve(); await saving;
   expect(h.owner.getDecisionActivity().actions).toEqual([]);

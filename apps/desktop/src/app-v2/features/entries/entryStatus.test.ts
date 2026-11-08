@@ -234,7 +234,8 @@ it("subscribes to the entity snapshot and leaves an unrelated row notification o
   const drafts: EntryStatusProps["drafts"] = {
     subscribe: listener => { listeners.add(listener); return () => { listeners.delete(listener); }; },
     getEntry: requested => requested.projectId === key.projectId && requested.unitId === key.unitId && requested.locale === key.locale ? entry : undefined,
-    getSnapshot: () => ({ hydration: "ready", revision: 0, failure: null, retired: false, mutationReserved: false, summaries: [] }),
+    getSnapshot: () => ({ hydration: "ready", revision: 0, failure: null, retired: false, mutationReserved: false,
+      summaries: [], pendingCount: 0, firstPending: undefined }),
   };
   const props: EntryStatusProps = { row, projectId: key.projectId, drafts };
   const ui = render(createElement(Profiler, { id: "entry-status", onRender }, createElement(EntryStatus, props)));
@@ -260,7 +261,8 @@ it("uses stable retained metadata until the owner loads the entity, without read
   const drafts: EntryStatusProps["drafts"] = {
     subscribe: listener => { listeners.add(listener); return () => { listeners.delete(listener); }; },
     getEntry: () => entry,
-    getSnapshot: () => ({ hydration: "ready", revision: 1, failure: null, retired: false, mutationReserved: false, summaries: [summary] }),
+    getSnapshot: () => ({ hydration: "ready", revision: 1, failure: null, retired: false, mutationReserved: false,
+      summaries: [summary], pendingCount: 0, firstPending: undefined }),
   };
   render(createElement(Profiler, { id: "retained-status", onRender }, createElement(EntryStatus, { row, projectId: key.projectId, drafts })));
   expect(screen.getByRole("img", { name: w("entryStatusRetainedDraft") })).toHaveAttribute("data-state", "draft");

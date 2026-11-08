@@ -149,7 +149,8 @@ type SessionContext = { previousProject: RecentProject | null; session: ProjectS
 const WorkspaceContext = createContext<SessionContext | null>(null);
 function useWorkspaceContext() { const value = useContext(WorkspaceContext); if (!value) throw new Error("A project workspace is required"); return value; }
 function subscribeWidth(listener: () => void) { window.addEventListener("resize", listener); return () => window.removeEventListener("resize", listener); }
-const noDraftState: TranslationDraftSnapshot = { hydration: "idle", revision: 0, failure: null, retired: false, mutationReserved: false, summaries: [] };
+const noDraftState: TranslationDraftSnapshot = { hydration: "idle", revision: 0, failure: null, retired: false,
+  mutationReserved: false, summaries: [], pendingCount: 0, firstPending: undefined };
 const noDraftSubscription = () => () => undefined;
 const getNoCandidateBatchState = () => null;
 
@@ -556,18 +557,12 @@ function WorkspaceShell() {
   const interaction = useSyncExternalStore(gate.subscribe, gate.getSnapshot, gate.getSnapshot);
   const activeDraftKey = recoveryKey ?? (view?.kind === "entries" && view.editing && view.focus
     ? { projectId: session.project.metadata.projectId, unitId: view.focus, locale: view.locale } : null);
-  const selectDraftState = useShallow((snapshot: TranslationDraftSnapshot) => {
-    let pendingCount = 0, firstPending: DraftKey | undefined;
-    for (const summary of snapshot.summaries) {
-      if (!summary.hasPending) continue;
-      pendingCount++;
-      firstPending ??= summary.key;
-    }
-    return { hydration: snapshot.hydration, retired: snapshot.retired, mutationReserved: snapshot.mutationReserved,
-      firstDraft: snapshot.summaries[0]?.key, pendingCount, firstPending,
-      canConfirm: activeDraftKey !== null && !!drafts?.canConfirm(activeDraftKey),
-      recoverySummaries: recoveryKey ? snapshot.summaries : null };
-  });
+  const selectDraftState = useShallow((snapshot: TranslationDraftSnapshot) => ({
+    hydration: snapshot.hydration, retired: snapshot.retired, mutationReserved: snapshot.mutationReserved,
+    firstDraft: snapshot.summaries[0]?.key, pendingCount: snapshot.pendingCount, firstPending: snapshot.firstPending,
+    canConfirm: activeDraftKey !== null && !!drafts?.canConfirm(activeDraftKey),
+    recoverySummaries: recoveryKey ? snapshot.summaries : null,
+  }));
   const draftState = useSyncExternalStore(drafts?.subscribe ?? noDraftSubscription,
     () => selectDraftState(drafts?.getSnapshot() ?? noDraftState));
   const conversationHydration = useSyncExternalStore(conversations?.subscribe ?? noDraftSubscription,

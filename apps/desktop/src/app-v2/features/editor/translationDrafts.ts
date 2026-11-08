@@ -40,6 +40,8 @@ export interface TranslationDraftSnapshot {
   retired: boolean;
   mutationReserved: boolean;
   summaries: readonly DraftSummary[];
+  pendingCount: number;
+  firstPending: DraftKey | undefined;
 }
 export interface TranslationDraftPorts {
   read: typeof draftCommands.read;
@@ -140,6 +142,16 @@ function compareSummaries(a: DraftSummary, b: DraftSummary): number {
   return a.key.locale.localeCompare(b.key.locale) || a.key.unitId.localeCompare(b.key.unitId);
 }
 
+function summarizePending(summaries: readonly DraftSummary[]) {
+  let pendingCount = 0, firstPending: DraftKey | undefined;
+  for (const summary of summaries) {
+    if (!summary.hasPending) continue;
+    pendingCount++;
+    firstPending ??= summary.key;
+  }
+  return { pendingCount, firstPending };
+}
+
 /** A project-session owner. Views borrow entries; they never own their lifetime. */
 export class TranslationDrafts {
   private readonly context: SessionRequest;
@@ -154,7 +166,8 @@ export class TranslationDrafts {
   private inputRevision = 0;
   private retiredReservation = false;
   private navigationReservation: symbol | null = null;
-  private state: TranslationDraftSnapshot = { hydration: "idle", revision: 0, failure: null, retired: false, mutationReserved: false, summaries: [] };
+  private state: TranslationDraftSnapshot = { hydration: "idle", revision: 0, failure: null, retired: false,
+    mutationReserved: false, summaries: [], pendingCount: 0, firstPending: undefined };
 
   constructor(private readonly options: TranslationDraftOptions) {
     this.context = Object.freeze({ ...options.context });
@@ -191,21 +204,22 @@ export class TranslationDrafts {
     }
     return [...projection.values()].sort(compareSummaries);
   }
-  private updateSummary(entry: DraftEntry): readonly DraftSummary[] {
+  private updateSummary(entry: DraftEntry): Partial<TranslationDraftSnapshot> {
     const { summaries } = this.state;
     const index = summaries.findIndex(summary => sameDraftKey(summary.key, entry.key));
     const previous = summaries[index], next = summarizeDraft(entry);
-    if (!next) return previous ? summaries.filter((_, position) => position !== index) : summaries;
-    if (previous && previous.revision === next.revision && previous.editSeq === next.editSeq
-      && previous.sourceRevisionId === next.sourceRevisionId && previous.hasPending === next.hasPending) return summaries;
+    if (!previous && !next) return {};
+    if (previous && next && previous.revision === next.revision && previous.editSeq === next.editSeq
+      && previous.sourceRevisionId === next.sourceRevisionId && previous.hasPending === next.hasPending) return {};
 
     const updated = [...summaries];
-    if (previous) updated[index] = next;
+    if (!next) updated.splice(index, 1);
+    else if (previous) updated[index] = next;
     else {
       const before = updated.findIndex(summary => compareSummaries(summary, next) > 0);
       updated.splice(before < 0 ? updated.length : before, 0, next);
     }
-    return updated;
+    return { summaries: updated, ...((previous?.hasPending ?? false) !== (next?.hasPending ?? false) ? summarizePending(updated) : {}) };
   }
   private notify(patch: Partial<TranslationDraftSnapshot> = {}) {
     if (!this.kernel.live) return;
@@ -227,7 +241,7 @@ export class TranslationDrafts {
     entry.basisCurrent = entry.value !== null && entry.current.kind === "current" && sameDraftBasis(entry.value.basis, entry.current.basis);
     entry.journalPending = record.needsWrite || record.writing;
     record.entry = immutableEntry(entry);
-    this.notify({ summaries: this.updateSummary(record.entry) });
+    this.notify(this.updateSummary(record.entry));
   }
   private pending() { return [...this.records.values()].some(record => record.entry.value?.pending); }
 
@@ -261,7 +275,7 @@ export class TranslationDrafts {
         basisCurrent: !!value && view.current.kind === "current" && sameDraftBasis(value.basis, view.current.basis), newerInputAfterConfirmation: false } };
     created.entry = immutableEntry(created.entry);
     this.records.set(id, created);
-    this.notify({ summaries: this.updateSummary(created.entry) });
+    this.notify(this.updateSummary(created.entry));
     return created.entry;
   }
 
@@ -283,7 +297,8 @@ export class TranslationDrafts {
           }
           after = page.next;
         } while (after !== null);
-        this.notify({ hydration: "ready", summaries: this.hydrateSummaries(summaries), failure: null }); return true;
+        const hydrated = this.hydrateSummaries(summaries);
+        this.notify({ hydration: "ready", summaries: hydrated, ...summarizePending(hydrated), failure: null }); return true;
       } catch (cause) {
         this.notify({ hydration: "failed", failure: { kind: "read", cause } }); return false;
       }
