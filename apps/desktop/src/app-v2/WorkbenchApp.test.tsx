@@ -159,7 +159,8 @@ it.each([1440, 900])("keeps the conversation owner, both inputs and return focus
     const table = screen.getByRole("region", { name: i18n.t("workbenchV2.entriesTableLabel") });
     table.scrollTop = 120; fireEvent.scroll(table);
     if (width <= 1100) fireEvent.click(screen.getByRole("button", { name: i18n.t("workbenchV2.openAgent") }));
-    const picker = await screen.findByRole("button", { name: i18n.t("conversation.chooseThread") });
+    // The conversation panel loads lazily on the first project open.
+    const picker = await screen.findByRole("button", { name: i18n.t("conversation.chooseThread") }, { timeout: 5000 });
     await waitFor(() => expect(picker).toBeEnabled()); picker.focus(); fireEvent.keyDown(picker, { key: "ArrowDown" });
     fireEvent.click(await screen.findByRole("menuitem", { name: "Layout conversation" }));
     const composer = await screen.findByRole("textbox", { name: i18n.t("conversation.message") }) as HTMLTextAreaElement;
@@ -224,10 +225,14 @@ it("shows the offline project brief and continues the previous entry without sub
   const plan = vi.spyOn(conversationCommands, "preparePlanning");
   await openImportWorkspace();
   fireEvent.click(screen.getByRole("button", { name: i18n.t("workbenchV2.openAgent") }));
-  const brief = within(await screen.findByRole("region", { name: "项目简报" }, { timeout: 5000 }));
-  expect(brief.getByText("仅使用项目记录生成，不调用模型。")).toBeVisible();
-  const continueEntry = brief.getByRole("button", { name: `继续 ${position.nativeKey} · ${position.locale}` });
-  await waitFor(() => expect(continueEntry).toBeEnabled()); fireEvent.click(continueEntry);
+  // The lazy conversation panel can replace the fallback brief while it loads.
+  const brief = () => within(screen.getByRole("region", { name: "项目简报" }));
+  const continueEntry = () => brief().getByRole("button", { name: `继续 ${position.nativeKey} · ${position.locale}` });
+  await waitFor(() => {
+    expect(brief().getByText("仅使用项目记录生成，不调用模型。")).toBeVisible();
+    expect(continueEntry()).toBeEnabled();
+  }, { timeout: 5000 });
+  fireEvent.click(continueEntry());
   await screen.findByText("Actual source from the read port");
   await waitFor(() => expect(readRecentProject(project.locator)?.position?.unitId).toBe(position.unitId));
   await waitFor(() => expect(segmentCommands.queueWindow).toHaveBeenCalledWith(expect.objectContaining({ anchorUnitId: position.unitId, locale: position.locale })));
