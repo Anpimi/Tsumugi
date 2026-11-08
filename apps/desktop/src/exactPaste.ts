@@ -1,5 +1,8 @@
 import { textareaDisplayText } from "./reviewDiagnosticNavigation";
 
+export const exactPastePresentationDelayMs = 100;
+export function exactPasteIntentId(inputOwner: string) { return `${inputOwner}-paste`; }
+
 export interface ExactPasteResult { text: string; matches: boolean }
 
 /** Start during the paste gesture: WebKit's event text may already be normalized. */

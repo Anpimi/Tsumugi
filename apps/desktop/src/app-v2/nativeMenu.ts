@@ -1,4 +1,5 @@
 import type { Menu, MenuItem, Submenu } from "@tauri-apps/api/menu";
+import { exactPastePresentationDelayMs } from "../exactPaste";
 import type { WorkbenchCommandDescription } from "../workbenchCommands";
 import type { TranslationKey } from "../i18n/types";
 import { workspaceCommandIds, type WorkspaceCommandId } from "./workspace/workspaceCommands";
@@ -6,8 +7,13 @@ import { workspaceCommandIds, type WorkspaceCommandId } from "./workspace/worksp
 type MenuRow = { id: WorkspaceCommandId; text: string; enabled: boolean };
 type MenuResource = { close(): Promise<void> };
 type InstalledMenu = { rows: MenuRow[]; items: MenuItem[]; submenu: Submenu; enabled: boolean; close(): Promise<void> };
+type PasteSuspension = { timer?: ReturnType<typeof setTimeout> };
 
 let menuOperations = Promise.resolve();
+
+function sameMenuStructure(current: MenuRow[], desired: MenuRow[]): boolean {
+  return current.length === desired.length && current.every((row, index) => row.id === desired[index].id && row.text === desired[index].text);
+}
 
 async function settleAll<T>(operations: Promise<T>[]): Promise<T[]> {
   // Finish every operation before a later refresh or cleanup touches the same handles.
@@ -22,6 +28,7 @@ export function installWorkspaceMenu(translate: (key: TranslationKey) => string,
   let disposed = false, scheduled = false;
   let desired: MenuRow[] = [];
   let installed: InstalledMenu | undefined;
+  let pasteSuspension: PasteSuspension | undefined;
 
   async function mount(rows: MenuRow[]): Promise<InstalledMenu | undefined> {
     const { Menu, MenuItem, Submenu, PredefinedMenuItem } = await import("@tauri-apps/api/menu");
@@ -72,19 +79,14 @@ export function installWorkspaceMenu(translate: (key: TranslationKey) => string,
     }
   }
 
-  function update(commands: WorkbenchCommandDescription[]) {
-    if (disposed) return;
-    desired = commands.flatMap(command => {
-      const id = workspaceCommandIds.find(value => value === command.id);
-      return id ? [{ id, text: translate(command.nameKey), enabled: command.availability.enabled }] : [];
-    });
-    if (scheduled) return;
+  function schedule() {
+    if (scheduled || pasteSuspension?.timer !== undefined) return;
     scheduled = true;
     menuOperations = menuOperations.then(async () => {
       scheduled = false;
-      if (disposed) return;
+      if (disposed || pasteSuspension?.timer !== undefined) return;
       const rows = desired, menu = installed;
-      if (!menu || menu.rows.length !== rows.length || menu.rows.some((row, index) => row.id !== rows[index].id || row.text !== rows[index].text)) {
+      if (!menu || !sameMenuStructure(menu.rows, rows)) {
         installed = undefined;
         await menu?.close();
         installed = await mount(rows);
@@ -105,9 +107,33 @@ export function installWorkspaceMenu(translate: (key: TranslationKey) => string,
     }).catch(() => { if (!disposed) failed(); });
   }
 
+  function update(commands: WorkbenchCommandDescription[], transientPaste = false) {
+    if (disposed) return;
+    desired = commands.flatMap(command => {
+      const id = workspaceCommandIds.find(value => value === command.id);
+      return id ? [{ id, text: translate(command.nameKey), enabled: command.availability.enabled }] : [];
+    });
+    const defer = transientPaste && installed?.enabled && sameMenuStructure(installed.rows, desired)
+      && desired.length > 0 && desired.every(row => !row.enabled);
+    if (!defer) {
+      clearTimeout(pasteSuspension?.timer);
+      pasteSuspension = undefined;
+    } else if (!pasteSuspension) {
+      // Dispatch uses the live gate. Only delay updating the native presentation.
+      const suspension: PasteSuspension = {};
+      suspension.timer = setTimeout(() => {
+        suspension.timer = undefined;
+        schedule();
+      }, exactPastePresentationDelayMs);
+      pasteSuspension = suspension;
+    }
+    schedule();
+  }
+
   return { update, dispose: () => {
     if (disposed) return;
     disposed = true;
+    clearTimeout(pasteSuspension?.timer);
     menuOperations = menuOperations.then(async () => { await installed?.close(); installed = undefined; }).catch(failed);
   } };
 }

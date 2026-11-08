@@ -182,6 +182,8 @@ Current workspace version metadata: **`0.2.0-alpha.1`**. Because the published `
 
 ### Fixed
 
+- Brief clipboard reads in the translation editor no longer toggle the macOS workspace menu while paste is in progress.
+
 - The decision inbox checks for review history in batches and reuses captured source validation during each read, reducing work during project opening and translation confirmation.
 
 - Resource impact subsets group only the requested source entries, avoiding repeated full-scope grouping in status filters while retaining the original limits and evidence.

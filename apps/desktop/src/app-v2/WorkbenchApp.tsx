@@ -16,6 +16,7 @@ import { SessionReadProvider, useSessionReadStatus } from "../SessionReadProvide
 import { isSafeChildDirectoryName } from "../projectLocation";
 import { CommandFailureDetails } from "../CommandFailure";
 import { executionContext } from "../executionCommands";
+import { exactPasteIntentId } from "../exactPaste";
 import { ExecutionTaskHandleProvider, type useExecutionTaskSession } from "../ExecutionTaskSession";
 import { readRecentProjects, readRecentProject, readLastOpenProject, rememberProject, type RecentProject } from "../recentProjects";
 import { Button, IconButton } from "../design-system/Button";
@@ -872,9 +873,11 @@ function WorkspaceShell() {
     nativeMenu.current = menu;
     return () => { nativeMenu.current = null; menu.dispose(); };
   }, [dispatcher, commandsReady, currentId, i18n.resolvedLanguage, settings.bindingsRevision]);
+  const pasteOwnsWorkspace = interaction.inputOwner !== null && interaction.intentOwner === exactPasteIntentId(interaction.inputOwner.ownerId);
   useEffect(() => {
-    nativeMenu.current?.update(dispatcher.list({ source: "native-menu" }));
-  }, [dispatcher, commandsReady, currentId, i18n.resolvedLanguage, settings.bindingsRevision, disabled, interaction.intentOwner, draftState.hydration, draftState.mutationReserved, view?.editing, recoveryKey !== null, draftState.canConfirm]);
+    const transientPaste = pasteOwnsWorkspace && !disabled && draftState.hydration === "ready" && !draftState.mutationReserved;
+    nativeMenu.current?.update(dispatcher.list({ source: "native-menu" }), transientPaste);
+  }, [dispatcher, commandsReady, currentId, i18n.resolvedLanguage, settings.bindingsRevision, disabled, interaction.intentOwner, pasteOwnsWorkspace, draftState.hydration, draftState.mutationReserved, view?.editing, recoveryKey !== null, draftState.canConfirm]);
   useEffect(() => () => { paletteRelease.current?.(); drawerRelease.current?.(); }, [gate]);
   const activeLocale = view?.locale ?? session.project.metadata.targetLocales[0] ?? "";
   const importNeedsAttention = !!importOwners && (importOwners.imports.current().busy || importOwners.imports.hasPending()
