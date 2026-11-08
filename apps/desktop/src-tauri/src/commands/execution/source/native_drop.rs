@@ -3,7 +3,7 @@
 use super::*;
 use crate::commands::plugins::PluginSourceRequest;
 use std::{path::PathBuf, time::Instant};
-use tauri::{Emitter, Manager};
+use tauri::Manager;
 
 #[cfg(test)]
 const TICKET_LIFETIME: Duration = crate::commands::native_directory::LIFETIME;
@@ -116,14 +116,16 @@ pub(in crate::commands) fn on_window_event<R: tauri::Runtime>(
         tauri::WindowEvent::Destroyed => None,
         _ => return,
     };
-    let destroyed = paths.is_none();
     let dropped_at = Instant::now();
     let label = window.label().to_owned();
-    let registered = window.state::<AppState>().sessions.callback().submit(
+    let reject: fn(CommandError) -> NativeSourceDropEvent = |error| NativeSourceDropEvent::Rejected { error };
+    crate::commands::native_directory::submit_window_update(
+        window,
+        EVENT,
         "source_native_drop",
-        CommandStage::ExecutionRead,
+        paths.is_some().then_some(reject),
         move |sessions| {
-            if destroyed {
+            let Some(paths) = paths else {
                 if let Some(host) = sessions.active.as_mut().and_then(|active| active.execution.as_mut()) {
                     if host.source.plugin.native_drop.clear_window(&label)
                         .is_some_and(|picker| host.source.picker == Some(picker))
@@ -132,7 +134,7 @@ pub(in crate::commands) fn on_window_event<R: tauri::Runtime>(
                     }
                 }
                 return Ok(None);
-            }
+            };
             let Some(active) = sessions.active.as_ref() else { return Ok(None); };
             let token = active.token.clone();
             let project = ExecutionId::parse(&active.store.metadata()
@@ -148,28 +150,10 @@ pub(in crate::commands) fn on_window_event<R: tauri::Runtime>(
                 generation: host.runtime.generation(),
             };
             host.source.plugin.native_drop
-                .register(scope, paths.expect("native drop paths"), dropped_at)
+                .register(scope, paths, dropped_at)
                 .map(Some)
         },
     );
-    let window = window.clone();
-    match registered {
-        Ok(registered) => {
-            tauri::async_runtime::spawn(async move {
-                match registered.await {
-                    Ok(Some(event)) => { let _ = window.emit(EVENT, event); }
-                    Err(error) if !destroyed => {
-                        let _ = window.emit(EVENT, NativeSourceDropEvent::Rejected { error });
-                    }
-                    _ => {}
-                }
-            });
-        }
-        Err(error) if !destroyed => {
-            let _ = window.emit(EVENT, NativeSourceDropEvent::Rejected { error });
-        }
-        Err(_) => {}
-    }
 }
 
 #[tauri::command]

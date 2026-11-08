@@ -1,6 +1,53 @@
 //! A native invitation is scoped, short-lived and consumed before directory authorization.
+use super::{AppState, CommandError, CommandStage, SessionManager};
+use serde::Serialize;
 use std::{path::PathBuf, time::{Duration, Instant}};
+use tauri::{Emitter, Manager};
 use tsumugi_core::execution::ExecutionId;
+
+pub(super) fn submit_window_update<R, E>(
+    window: &tauri::Window<R>,
+    event_name: &'static str,
+    operation: &'static str,
+    reject: Option<fn(CommandError) -> E>,
+    update: impl FnOnce(&mut SessionManager) -> Result<Option<E>, CommandError> + Send + 'static,
+) where
+    R: tauri::Runtime,
+    E: Clone + Serialize + Send + 'static,
+{
+    let callback = window.state::<AppState>().sessions.callback();
+    let event_window = window.clone();
+    let admitted = callback.submit(operation, CommandStage::ExecutionRead, move |sessions| {
+        let event = match update(sessions) {
+            Ok(event) => event,
+            Err(error) => {
+                let error = error.report(operation, ExecutionId::new());
+                reject.map(|rejected| rejected(error))
+            }
+        };
+        if let Some(event) = event {
+            // Queue notifications from the same owner that updates the ticket.
+            // Independent reply waiters can resume out of order.
+            let window = event_window.clone();
+            let _ = event_window.run_on_main_thread(move || {
+                let _ = window.emit(event_name, event);
+            });
+        }
+        Ok(())
+    });
+    let Some(reject) = reject else { return; };
+    match admitted {
+        Ok(reply) => {
+            let window = window.clone();
+            tauri::async_runtime::spawn(async move {
+                if let Err(error) = reply.await {
+                    let _ = window.emit(event_name, reject(error));
+                }
+            });
+        }
+        Err(error) => { let _ = window.emit(event_name, reject(error)); }
+    }
+}
 
 pub(super) const LIFETIME: Duration = Duration::from_secs(60);
 pub(super) trait Scope: PartialEq { fn window(&self) -> &str; }

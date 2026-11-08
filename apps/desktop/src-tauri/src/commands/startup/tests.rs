@@ -77,6 +77,58 @@ fn a_rejected_drop_retires_the_unclaimed_ticket_without_superseding_the_folder_p
     assert!(owner.finish("main", picker, None).is_err());
 }
 
+#[test]
+fn consecutive_startup_drops_publish_in_ticket_order() {
+    use std::sync::mpsc;
+    use tauri::{Listener, Manager};
+
+    let app = tauri::test::mock_builder().manage(AppState::default())
+        .build(tauri::test::mock_context(tauri::test::noop_assets())).unwrap();
+    let webview = tauri::WebviewWindowBuilder::new(&app, "main", tauri::WebviewUrl::App("index.html".into()))
+        .build().unwrap();
+    let window = webview.as_ref().window();
+    let (send, receive) = mpsc::channel();
+    window.listen(EVENT, move |event| {
+        send.send(serde_json::from_str::<StartupDropEvent>(event.payload()).unwrap()).unwrap();
+    });
+    for paths in [
+        vec!["/fixtures/initial"],
+        vec!["/fixtures/extra", "/fixtures/other"],
+        vec!["/fixtures/latest"],
+    ] {
+        on_window_event(&window, &tauri::WindowEvent::DragDrop(tauri::DragDropEvent::Drop {
+            paths: paths.into_iter().map(PathBuf::from).collect(),
+            position: tauri::PhysicalPosition::new(0.0, 0.0),
+        }));
+    }
+
+    // MockRuntime delivers scheduled main-thread work inline before it runs
+    // an event loop. The owner barrier also waits for each publication.
+    let events = app.state::<AppState>().sessions.with(move |_| receive.try_iter().collect::<Vec<_>>());
+    let [
+        StartupDropEvent::Ready { drop_ticket: initial, folder_name: initial_name },
+        StartupDropEvent::Rejected { error },
+        StartupDropEvent::Ready { drop_ticket: latest, folder_name: latest_name },
+    ] = events.as_slice() else {
+        panic!("expected ready, rejection, and replacement, got {events:?}");
+    };
+    assert_eq!(initial_name, "initial");
+    assert_eq!(error.reason.as_deref(), Some("native-drop-one-directory"));
+    assert!(error.diagnostic_id.is_some());
+    assert_eq!(latest_name, "latest");
+
+    let (initial, latest) = (*initial, *latest);
+    app.state::<AppState>().sessions.with(move |sessions| {
+        let scope = Scope { window: "main".into(), epoch: sessions.startup.epoch };
+        let slot = &mut sessions.startup.drop;
+        assert!(native_directory::Drop::consume(slot, initial, &scope, Instant::now()).is_err());
+        assert_eq!(
+            native_directory::Drop::consume(slot, latest, &scope, Instant::now()).unwrap(),
+            PathBuf::from("/fixtures/latest"),
+        );
+    });
+}
+
 #[cfg(target_os = "macos")]
 fn install_metadata_runtime(fixture: &plugins::InstalledPluginFixture) -> (PluginSourceRequest, tsumugi_plugin_host::RuntimeApproval) {
     let approval = fixture.install_metadata_runtime("0.1.0-alpha.1");

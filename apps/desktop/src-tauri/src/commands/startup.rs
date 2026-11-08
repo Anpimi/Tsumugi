@@ -1,7 +1,7 @@
 //! Native directory preparation before a project exists. No plugin is executed.
 use super::*;
 use std::{path::PathBuf, time::Instant};
-use tauri::{Emitter, Manager};
+use tauri::Manager;
 use tauri_plugin_dialog::DialogExt;
 use tsumugi_core::execution::ExecutionId;
 use execution::source::{capture::{DeclaredMaterial, Selection}, plugin::PluginSourceSelection};
@@ -270,23 +270,24 @@ pub(super) fn on_window_event<R: tauri::Runtime>(window: &tauri::Window<R>, even
         tauri::WindowEvent::Destroyed => None,
         _ => return,
     };
-    let owner = window.label().to_owned(); let destroyed = paths.is_none(); let now = Instant::now();
-    let admitted = window.state::<AppState>().sessions.callback().submit("startup.native.drop", CommandStage::ExecutionRead, move |sessions| {
-        if destroyed { sessions.startup.clear_window(&owner); return Ok(None); }
-        if sessions.active.is_some() { return Ok(None); }
-        empty(sessions)?;
-        sessions.startup.register_drop(owner, paths.expect("native event"), now).map(Some)
-    });
-    let window = window.clone();
-    match admitted {
-        Ok(admitted) => { tauri::async_runtime::spawn(async move { match admitted.await {
-            Ok(Some(event)) => { let _ = window.emit(EVENT, event); }
-            Err(error) if !destroyed => { let _ = window.emit(EVENT, StartupDropEvent::Rejected { error }); }
-            _ => {}
-        } }); }
-        Err(error) if !destroyed => { let _ = window.emit(EVENT, StartupDropEvent::Rejected { error }); }
-        _ => {}
-    }
+    let owner = window.label().to_owned();
+    let now = Instant::now();
+    let reject: fn(CommandError) -> StartupDropEvent = |error| StartupDropEvent::Rejected { error };
+    native_directory::submit_window_update(
+        window,
+        EVENT,
+        "startup.native.drop",
+        paths.is_some().then_some(reject),
+        move |sessions| {
+            let Some(paths) = paths else {
+                sessions.startup.clear_window(&owner);
+                return Ok(None);
+            };
+            if sessions.active.is_some() { return Ok(None); }
+            empty(sessions)?;
+            sessions.startup.register_drop(owner, paths, now).map(Some)
+        },
+    );
 }
 
 #[cfg(test)]
