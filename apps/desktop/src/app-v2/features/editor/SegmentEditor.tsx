@@ -31,6 +31,7 @@ export interface SegmentEditorProps {
   ref?: Ref<SegmentEditorHandle>;
 }
 type PasteFeedback = "editorPasteReading" | "editorPasteCancelled" | "editorPasteUnavailable" | "editorPasteFailed" | "editorPasteChanged" | "editorPasteComposition" | "editorPasteBusy" | "editorPasteUnconfirmed";
+const pasteFeedbackDelayMs = 100;
 interface PasteFlight {
   field: HTMLTextAreaElement;
   key: DraftKey;
@@ -41,6 +42,7 @@ interface PasteFlight {
   end: number;
   direction: HTMLTextAreaElement["selectionDirection"];
   intent: InteractionIntent;
+  feedbackTimer?: ReturnType<typeof setTimeout>;
   valid: boolean;
   applying: boolean;
 }
@@ -88,9 +90,14 @@ export default function SegmentEditor({ drafts, draftKey, viewId, gate, disabled
     mounted.current = true;
     return () => { mounted.current = false; };
   }, []);
-  useLayoutEffect(() => () => {
-    copySequence.current++; composing.current = false; gate.releaseOwner(ownerId);
-    const flight = pasteFlight.current; pasteFlight.current = null; flight?.intent.release();
+  useLayoutEffect(() => {
+    setPasteFeedback(null);
+    return () => {
+      copySequence.current++; composing.current = false; gate.releaseOwner(ownerId);
+      const flight = pasteFlight.current; pasteFlight.current = null;
+      clearTimeout(flight?.feedbackTimer);
+      flight?.intent.release();
+    };
   }, [drafts, gate, ownerId, viewId, identity]);
   useImperativeHandle(ref, () => ({ focus: () => field.current?.focus() }), []);
   useLayoutEffect(() => {
@@ -165,6 +172,7 @@ export default function SegmentEditor({ drafts, draftKey, viewId, gate, disabled
 
   function finishPaste(flight: PasteFlight, feedback: PasteFeedback | null) {
     if (pasteFlight.current !== flight) return;
+    clearTimeout(flight.feedbackTimer);
     pasteFlight.current = null; flight.intent.release();
     if (mounted.current) setPasteFeedback(feedback);
   }
@@ -196,10 +204,14 @@ export default function SegmentEditor({ drafts, draftKey, viewId, gate, disabled
     const flight: PasteFlight = { field: control, key: { ...draftKey }, value: current.value, currentBasis: current.current.basis,
       text: control.value, start: control.selectionStart, end: control.selectionEnd, direction: control.selectionDirection,
       intent, valid: true, applying: false };
-    pasteFlight.current = flight; setPasteFeedback("editorPasteReading");
+    pasteFlight.current = flight; setPasteFeedback(null);
     try {
       const reading = readExactPaste(event.clipboardData);
       if (!reading) { finishPaste(flight, "editorPasteUnavailable"); return; }
+      // Quick reads need no temporary banner or editor row resize.
+      flight.feedbackTimer = setTimeout(() => {
+        if (pasteFlight.current === flight) setPasteFeedback("editorPasteReading");
+      }, pasteFeedbackDelayMs);
       void reading.then(({ text, matches }) => {
         if (pasteFlight.current !== flight) return;
         if (!pasteCurrent(flight) || !matches) { finishPaste(flight, "editorPasteChanged"); return; }
@@ -253,7 +265,13 @@ export default function SegmentEditor({ drafts, draftKey, viewId, gate, disabled
       const flight = pasteFlight.current, control = event.currentTarget;
       if (flight && !flight.applying && (control.selectionStart !== flight.start || control.selectionEnd !== flight.end || control.selectionDirection !== flight.direction)) cancelPaste("editorPasteChanged");
     }}
-    onKeyDown={event => { if (composing.current || event.nativeEvent.isComposing || event.nativeEvent.keyCode === 229) event.stopPropagation(); }} /> : null;
+    onKeyDown={event => {
+      if (composing.current || event.nativeEvent.isComposing || event.nativeEvent.keyCode === 229) {
+        event.stopPropagation();
+      } else if (event.key === "Escape" && pasteFlight.current) {
+        event.preventDefault(); event.stopPropagation(); cancelPaste();
+      }
+    }} /> : null;
 
   return <>
     {snapshot.retired ? <Banner tone="warning">{t("editorSessionRetired")}</Banner> : null}
