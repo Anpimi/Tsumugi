@@ -83,7 +83,7 @@ export interface CandidateBatchStageResult extends RevisionStageResult { key: Dr
 interface RecordState {
   entry: DraftEntry;
   needsWrite: boolean;
-  writing: boolean;
+  clearing: boolean;
   scheduled: boolean;
   flush: Promise<boolean> | null;
   reading: Promise<DraftEntry | undefined> | null;
@@ -239,7 +239,7 @@ export class TranslationDrafts {
     if (!this.kernel.live) return;
     const entry = { ...record.entry, ...patch };
     entry.basisCurrent = entry.value !== null && entry.current.kind === "current" && sameDraftBasis(entry.value.basis, entry.current.basis);
-    entry.journalPending = record.needsWrite || record.writing;
+    entry.journalPending = record.needsWrite || record.clearing;
     record.entry = immutableEntry(entry);
     this.notify(this.updateSummary(record.entry));
   }
@@ -268,7 +268,7 @@ export class TranslationDrafts {
     const value = view.head.value ?? (view.current.kind === "current"
       ? { basis: view.current.basis, text: view.current.basis.text ?? "", editSeq: "0", pending: null,
         ...(view.current.reuseOrigin ? { reuseOrigin: view.current.reuseOrigin } : {}) } : null);
-    const created: RecordState = { needsWrite: false, writing: false, scheduled: false, flush: null, reading: null, writeAttempt: null, clearAttempt: null,
+    const created: RecordState = { needsWrite: false, clearing: false, scheduled: false, flush: null, reading: null, writeAttempt: null, clearAttempt: null,
       entry: { key: { ...key }, head: view.head, value, current: view.current,
         durableSeq: view.head.value?.editSeq ?? null, journalPending: false, busy: false, checking: false,
         recovery: value?.pending ? "unchecked" : null, replayAllowed: false, failure: null, currentFailure: null,
@@ -404,7 +404,7 @@ export class TranslationDrafts {
         if (!attempt) return false;
         const { value, expectedRevision } = attempt;
         record.writeAttempt = attempt;
-        record.writing = true; this.update(record);
+        // The draft stays pending until the acknowledgement settles this write.
         try {
           const head = await this.ports.write({ sessionToken: this.context.sessionToken,
             write: { key: record.entry.key, expectedRevision, writerId: this.writerId, value } });
@@ -416,7 +416,7 @@ export class TranslationDrafts {
         } catch (cause) {
           if (!hasUnknownOutcome(cause)) record.writeAttempt = null;
           this.update(record, { failure: { kind: "journal", cause } }); return false;
-        } finally { record.writing = false; this.update(record); }
+        }
       }
       return this.kernel.live && !record.needsWrite;
     }).catch(() => false);
@@ -776,7 +776,7 @@ export class TranslationDrafts {
     if ((record.writeAttempt || record.clearAttempt) && !await this.flush(record.entry.key)) return false;
     return this.kernel.enqueue(identity(record.entry.key), async () => {
       if (record.entry.value !== value || value.pending || record.entry.failure?.kind === "journal-conflict") return false;
-      record.writing = true; this.update(record);
+      record.clearing = true; this.update(record);
       try {
         record.clearAttempt = { expectedRevision: record.entry.head.revision };
         const head = await this.ports.clear({ sessionToken: this.context.sessionToken,
@@ -798,7 +798,7 @@ export class TranslationDrafts {
         if (!hasUnknownOutcome(cause)) record.clearAttempt = null;
         this.update(record, { failure: { kind: "journal", cause } }); return false;
       }
-      finally { record.writing = false; this.update(record); }
+      finally { record.clearing = false; this.update(record); }
     }).catch(() => false);
   }
 

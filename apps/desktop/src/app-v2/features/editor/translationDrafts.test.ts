@@ -196,6 +196,33 @@ it("retires decision activity immediately and ignores a late old submission ackn
   expect(h.owner.getEntry(key)?.value?.pending?.request.actionId).toBe(request.actionId);
 });
 
+it.each(["acknowledged", "rejected"] as const)("publishes a journal write once when %s", async outcome => {
+  const h = harness(); await h.ready();
+  const started = deferred<void>(), reply = deferred<void>();
+  h.ports.write.mockImplementationOnce(async request => {
+    started.resolve(); await reply.promise;
+    if (outcome === "rejected") throw rejected;
+    return h.commitWrite(request);
+  });
+  const published: { journalPending: boolean; durableSeq: string | null; failure: string | null }[] = [];
+  const unsubscribe = h.owner.subscribe(() => {
+    const entry = h.owner.getEntry(key)!;
+    published.push({ journalPending: entry.journalPending, durableSeq: entry.durableSeq, failure: entry.failure?.kind ?? null });
+  });
+  h.owner.edit(key, "Exact e\u0301 {{name}} 世界");
+  const flush = h.owner.flush(key);
+  await started.promise;
+  const whileWriting = published.slice();
+  reply.resolve();
+  const success = outcome === "acknowledged";
+  expect(await flush).toBe(success);
+  unsubscribe();
+  const input = { journalPending: true, durableSeq: null, failure: null };
+  expect(whileWriting).toEqual([input]);
+  expect(published).toEqual([input, { journalPending: !success, durableSeq: success ? "1" : null, failure: success ? null : "journal" }]);
+  expect(h.owner.getEntry(key)?.value?.text).toBe("Exact e\u0301 {{name}} 世界");
+});
+
 it("shares one immutable entity across views and never acknowledges B with A's delayed journal acknowledgement", async () => {
   const h = harness(); await h.ready();
   const viewA = h.owner.getEntry(key), viewB = h.owner.getEntry({ ...key });
