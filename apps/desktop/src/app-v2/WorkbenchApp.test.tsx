@@ -165,7 +165,8 @@ it.each([1440, 900])("keeps the conversation owner, both inputs and return focus
     const table = screen.getByRole("region", { name: i18n.t("workbenchV2.entriesTableLabel") });
     table.scrollTop = 120; fireEvent.scroll(table);
     if (width <= 1100) fireEvent.click(screen.getByRole("button", { name: i18n.t("workbenchV2.openAgent") }));
-    const picker = await screen.findByRole("button", { name: i18n.t("conversation.chooseThread") });
+    // The conversation panel loads lazily on the first project open.
+    const picker = await screen.findByRole("button", { name: i18n.t("conversation.chooseThread") }, { timeout: 5000 });
     await waitFor(() => expect(picker).toBeEnabled()); picker.focus(); fireEvent.keyDown(picker, { key: "ArrowDown" });
     fireEvent.click(await screen.findByRole("menuitem", { name: "Layout conversation" }));
     const composer = await screen.findByRole("textbox", { name: i18n.t("conversation.message") }) as HTMLTextAreaElement;
