@@ -50,17 +50,23 @@ const noSubscription = () => () => {};
 const noSnapshot = () => null;
 const estimatedRowHeight = 112;
 
-function EntrySource({ summary, active, drafts, projectId, locale, comparison, diagnosticFocus, diagnosticCurrent, onDiagnosticFocus, gate, viewId, disabled }: {
+const EntrySource = memo(function EntrySource({ summary, active, drafts, projectId, locale, comparison, diagnosticFocus, diagnosticCurrent, onDiagnosticFocus, gate, viewId, disabled }: {
   summary: SegmentRow; active: boolean; drafts: TranslationDrafts | null; projectId: string; locale: string; comparison: SourceVersionComparison | undefined;
   diagnosticFocus?: EntryDiagnosticFocus | null; diagnosticCurrent?: () => boolean; onDiagnosticFocus?: (id: string, applied: boolean) => void;
   gate: InteractionGate; viewId: string; disabled: boolean;
 }) {
   const { t } = useTranslation(undefined, { keyPrefix: "workbenchV2" });
-  useSyncExternalStore(active && drafts ? drafts.subscribe : noSubscription, active && drafts ? drafts.getSnapshot : noSnapshot, noSnapshot);
-  useSyncExternalStore(active ? gate.subscribe : noSubscription, active ? gate.getSnapshot : noSnapshot, noSnapshot);
-  const field = useRef<HTMLTextAreaElement>(null), consumed = useRef(new Set<string>()), ownerId = `entry-source-${useId()}`;
+  const key = { projectId, unitId: summary.content.unitId, locale };
   const sourceFocus = diagnosticFocus?.unitId === summary.content.unitId && diagnosticFocus.locale === locale && diagnosticFocus.location.field === "source" ? diagnosticFocus : null;
-  const current = active ? drafts?.getEntry({ projectId, unitId: summary.content.unitId, locale })?.current : null;
+  const locatingSource = active && sourceFocus?.status === "pending";
+  useSyncExternalStore(active && drafts ? drafts.subscribe : noSubscription, () => {
+    if (!active || !drafts) return null;
+    // A pending diagnostic also depends on the edit generation and retirement.
+    return locatingSource ? drafts.getSnapshot() : drafts.getEntry(key)?.current ?? null;
+  }, noSnapshot);
+  useSyncExternalStore(locatingSource ? gate.subscribe : noSubscription, locatingSource ? gate.getSnapshot : noSnapshot, noSnapshot);
+  const field = useRef<HTMLTextAreaElement>(null), consumed = useRef(new Set<string>()), ownerId = `entry-source-${useId()}`;
+  const current = active ? drafts?.getEntry(key)?.current : null;
   const complete = current?.kind === "current";
   function reject() {
     if (!sourceFocus || sourceFocus.status !== "pending" || consumed.current.has(sourceFocus.id)) return;
@@ -81,7 +87,7 @@ function EntrySource({ summary, active, drafts, projectId, locale, comparison, d
     if (!permitted() || document.activeElement !== document.body && document.activeElement !== control) { reject(); return; }
     if (!drafts || !current) return;
     consumed.current.add(focus.id);
-    const key = { projectId, unitId: summary.content.unitId, locale }, selection = diagnosticTextareaSelection(focus.sourceText, focus.location.range);
+    const selection = diagnosticTextareaSelection(focus.sourceText, focus.location.range);
     if (!control || !selection || !control.isConnected || control.closest("[hidden], [inert]") || control.value !== selection.text
       || !diagnosticDraftCurrent(drafts, key, focus, true)) { onDiagnosticFocus?.(focus.id, false); return; }
     control.focus({ preventScroll: true });
@@ -105,7 +111,7 @@ function EntrySource({ summary, active, drafts, projectId, locale, comparison, d
     </div>
   </div>;
   return <><TokenizedText text={complete ? current.sourceText : summary.content.sourcePreview} />{summary.sourceTruncated && !complete ? <span title={t("textShortened")}>…</span> : null}</>;
-}
+});
 
 const EntryContent = memo(function EntryContent({ summary, active, focused, projectId, sourceLocale, locale, viewId, drafts, gate, disabled, dispatch, editorRef, comparison, renderCandidate, onDetails, diagnosticFocus, diagnosticCurrent, onDiagnosticFocus }: {
   summary: SegmentRow; active: boolean; focused: boolean; projectId: string; sourceLocale: string; locale: string; viewId: string;
@@ -115,6 +121,7 @@ const EntryContent = memo(function EntryContent({ summary, active, focused, proj
 }) {
   const { t, i18n } = useTranslation(undefined, { keyPrefix: "workbenchV2" });
   const row = summary.content;
+  const sourceFocus = active && focused && diagnosticFocus?.location.field === "source" ? diagnosticFocus : null;
   const [copyResult, setCopyResult] = useState<{ key: string; result: "copied" | "failed" } | null>(null);
   const copySequence = useRef(0);
   useEffect(() => () => { copySequence.current++; }, [row.nativeKey]);
@@ -132,7 +139,8 @@ const EntryContent = memo(function EntryContent({ summary, active, focused, proj
   }
   return <>
     <div className={styles.source} lang={sourceLocale}><EntrySource summary={summary} active={active} drafts={drafts} projectId={projectId} locale={locale} comparison={comparison}
-      diagnosticFocus={active && focused ? diagnosticFocus : null} diagnosticCurrent={diagnosticCurrent} onDiagnosticFocus={onDiagnosticFocus} gate={gate} viewId={viewId} disabled={disabled}/>
+      diagnosticFocus={sourceFocus} diagnosticCurrent={sourceFocus?.status === "pending" ? diagnosticCurrent : undefined}
+      onDiagnosticFocus={sourceFocus?.status === "pending" ? onDiagnosticFocus : undefined} gate={gate} viewId={viewId} disabled={disabled}/>
       <div className={styles.sourceActions}>{focused ? <Button size="xs" className={styles.key} disabled={disabled}
         aria-label={t("copyEntryKey", { key: row.nativeKey })} title={t("copyEntryKey", { key: row.nativeKey })} lang={i18n.resolvedLanguage}
         onClick={() => { void copyKey(); }}><span lang={sourceLocale}>{row.nativeKey}</span></Button> : null}

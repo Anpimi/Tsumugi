@@ -22,11 +22,19 @@ import ProjectBrief from "../assistant/ProjectBrief";
 import EntriesView, { type EntriesHandle } from "./EntriesView";
 
 const tableRender = vi.hoisted(() => vi.fn());
+const textRender = vi.hoisted(() => vi.fn<(text: string) => void>());
 vi.mock("./EntriesTable", async original => {
   const { default: Table } = await original<typeof import("./EntriesTable")>();
   return { default: (props: ComponentProps<typeof Table>) => {
     tableRender();
     return <Table {...props}/>;
+  } };
+});
+vi.mock("../../../design-system/TokenizedText", async original => {
+  const module = await original<typeof import("../../../design-system/TokenizedText")>();
+  return { ...module, TokenizedText: (props: ComponentProps<typeof module.TokenizedText>) => {
+    textRender(props.text);
+    return <module.TokenizedText {...props}/>;
   } };
 });
 
@@ -230,6 +238,36 @@ it("updates and preserves the active text without rendering the entries table ag
   expect(h.ports.write).toHaveBeenCalledTimes(1);
   expect(h.ref.current?.canConfirm()).toBe(true);
   expect(tableRender).not.toHaveBeenCalled();
+});
+
+it("keeps the loaded source stable through paste ownership and draft writes while refreshing changed source", async () => {
+  const h = await harness(), field = await h.open();
+  const key = { projectId: context.projectId, locale: "zh-CN", unitId: unitA };
+  const source = `Complete source ${unitA}`, translation = "Preserved e\u0301 {{name}} 世界";
+  expect(screen.getByText(source)).toBeVisible();
+  textRender.mockClear();
+
+  await act(async () => {
+    const paste = h.gate.acquireIntent("editor-paste");
+    expect(paste?.current()).toBe(true);
+    fireEvent.change(field, { target: { value: translation } });
+    expect(await h.drafts.flush(key)).toBe(true);
+    paste?.release();
+  });
+  expect(field).toHaveValue(translation);
+  expect(h.ports.write).toHaveBeenCalledTimes(1);
+  expect(textRender).not.toHaveBeenCalledWith(source);
+
+  const read = h.ports.read.getMockImplementation()!;
+  h.ports.read.mockImplementationOnce(async request => {
+    const loaded = await read(request);
+    if (loaded.current.kind !== "current") throw new Error("Expected the current source");
+    return { ...loaded, current: { ...loaded.current, sourceText: "Updated source",
+      basis: { ...loaded.current.basis, sourceRevisionId: "changed-source" } } };
+  });
+  await act(async () => { await h.drafts.open(key); });
+  expect(screen.getByText("Updated source")).toBeVisible();
+  expect(field).toHaveValue(translation);
 });
 
 it("confirms and advances through the same fixed queue, including its next window", async () => {
