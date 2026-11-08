@@ -5,6 +5,7 @@ import { type DraftBasis, type DraftHead, type DraftKey, type DraftPending, type
 import type { TmSuggestion } from "../../../resourceCommands";
 import type { CandidateDecision, TranslationHistory, TranslationSaveRequest, TranslationSaveReceipt, TranslationSelectRequest, TranslationSelection, TranslationRevision } from "../../../translationCommands";
 import { TranslationDrafts, type TranslationDraftPorts } from "./translationDrafts";
+import { DecisionActivityMemo } from "../../workspace/decisionActivity";
 import { translationMemoryEntryFixture, translationMemoryReuseFixture } from "../../../testSupport/translationMemoryFixture";
 import { reviewTargetFixture } from "../../../testSupport/reviewFixture";
 
@@ -103,6 +104,31 @@ function harness(head: DraftHead = { key, revision: "0", writerId: null, value: 
     setCurrent: (value: DraftReadView["current"]) => { current = copy(value); }, commitWrite, commitClear, receipts,
     ready: async () => { expect(await owner.initialize()).toBe(true); expect(await owner.open(key)).toBeDefined(); } };
 }
+
+it.each([1, 128])("keeps editing independent of decision activity with %i loaded drafts", async count => {
+  const h = harness();
+  await h.ready();
+  const read = h.ports.read.getMockImplementation()!;
+  h.ports.read.mockImplementation(async request => {
+    const view = await read(request);
+    return { ...view, head: { ...view.head, key: request.key } };
+  });
+  const others = Array.from({ length: count - 1 }, (_, index) => ({
+    ...key, unitId: `10000000-0000-4000-8000-${String(index).padStart(12, "0")}`,
+  }));
+  await Promise.all(others.map(async other => expect(await h.owner.open(other)).toBeDefined()));
+  const before = h.owner.getDecisionActivity();
+  const observe = vi.spyOn(DecisionActivityMemo.prototype, "observe");
+  try {
+    expect(h.owner.edit(key, "Preserved e\u0301 {{name}} 世界")).toBe(true);
+    expect(await h.owner.flush(key)).toBe(true);
+    expect(h.disk().value?.text).toBe("Preserved e\u0301 {{name}} 世界");
+    expect(h.owner.getDecisionActivity()).toBe(before);
+    expect(observe.mock.calls.length).toBe(0);
+  } finally {
+    observe.mockRestore();
+  }
+});
 
 it("observes decision activity across the durable dispatch gap and receipt resolution while retaining newer input", async () => {
   const h = harness(); await h.ready(); h.owner.edit(key, "Submitted A"); await h.owner.flush(key);
