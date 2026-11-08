@@ -7,6 +7,7 @@ import type { Requests } from "../../../generated/conversations.requests";
 import type { Responses } from "../../../generated/conversations.responses";
 import { validateResponseConversationWritten } from "../../../generated/draft.validators";
 import { i18n } from "../../../i18n";
+import type { CommandError } from "../../../projectCommands";
 import { SessionReadProvider } from "../../../SessionReadProvider";
 import { SessionReads } from "../../../sessionReads";
 import { connectionFixture } from "../../../testSupport/connectionFixture";
@@ -45,9 +46,10 @@ function harness({ questions = false, unknown = false } = {}) {
     links: Responses["proposalWorkPlanLink"][];
     authorizations: Requests["authorizeProposalWorkPlan"]["authorization"][];
     recovery: "pending" | "recorded";
+    validationFailure: CommandError | null;
   } = {
     head: { key, revision: "0", writerId: null, value: null },
-    revisions: [structuredClone(fixture.revision)], links: [], authorizations: [], recovery: "pending",
+    revisions: [structuredClone(fixture.revision)], links: [], authorizations: [], recovery: "pending", validationFailure: null,
   };
   function link(authorization: Requests["authorizeProposalWorkPlan"]["authorization"]): Responses["proposalWorkPlanLink"] {
     return { ...key, proposalId: authorization.proposal.proposalId, revisionId: authorization.proposal.revisionId,
@@ -62,6 +64,7 @@ function harness({ questions = false, unknown = false } = {}) {
     if (command === "read_conversation_proposal_revisions") return { ...key, rows: structuredClone(state.revisions), nextAfter: null };
     if (command === "read_conversation_proposal_work_plans") return { ...key, rows: structuredClone(state.links), nextAfter: null };
     if (command === "read_conversation_proposal" || command === "validate_conversation_proposal") {
+      if (command === "validate_conversation_proposal" && state.validationFailure) throw state.validationFailure;
       const revision = request.revisionId === null ? state.revisions.at(-1) : state.revisions.find(item => item.revisionId === request.revisionId);
       if (!revision) throw new Error("Synthetic proposal version not found");
       return structuredClone(revision);
@@ -192,6 +195,39 @@ it("reviews saved scope, material, budget and effects before recording one confi
   expect(h.state.head.value?.pending).toBeNull();
   expect(within(await screen.findByRole("region", { name: i18n.t("conversation.planHistory") })).getByText("根据第 1 版提议确认")).toBeInTheDocument();
   expectKnownWorkPlanCommands();
+});
+
+it.each(["prepare", "confirm"] as const)("explains stale proposal material during %s and returns focus to the proposal", async step => {
+  const h = harness(), session = await h.open(), { panel, entry } = await reviewSavedPlan();
+  await chooseConnection(panel);
+  const prepareButton = panel.getByRole("button", { name: i18n.t("conversation.planPrepare") });
+  const budget = panel.getByRole("spinbutton", { name: i18n.t("ai.maxRequests") });
+  fireEvent.change(budget, { target: { value: "3" } });
+  let action = prepareButton;
+  if (step === "confirm") {
+    await prepare(panel);
+    fireEvent.click(finalConsent(panel));
+    action = panel.getByRole("button", { name: i18n.t("conversation.planConfirmAndStart") });
+  }
+  h.state.validationFailure = { code: "dependency-conflict", stage: "execution-read", outcome: "rejected",
+    reason: "conversation-planning-current", recoveryRequired: false, recoveryGuidance: "review-current" };
+  expect(action).toBeEnabled();
+  action.focus();
+  fireEvent.click(action);
+  await panel.findByText(/这份提议引用的项目材料已变化/);
+  expect(panel.queryByText(i18n.t("conversation.planPending"))).not.toBeInTheDocument();
+  expect(prepareButton).toBeDisabled();
+  expect(budget).toHaveValue(3);
+  expect(panel.queryByRole("region", { name: i18n.t("conversation.planPreview") })).not.toBeInTheDocument();
+  const input = session.owner.getSnapshot().inputs.get(conversationId);
+  expect(input?.value.pending).toBeNull();
+  expect(input?.workPlan.consent).toBe(false);
+  expect(calls("authorize_conversation_proposal_work_plan")).toHaveLength(0);
+  expect(calls("start_work_plan")).toHaveLength(0);
+  const close = panel.getByRole("button", { name: i18n.t("conversation.planClose") });
+  close.focus();
+  fireEvent.click(close);
+  expect(entry).toHaveFocus();
 });
 
 it("requires renewed consent after duration, configuration and source changes, and closes hidden preparation safely", async () => {

@@ -15,7 +15,7 @@ import { reviewCommands } from "../../../reviewCommands";
 import { editableProposal, validProposalContent, type ProposalContent } from "./proposalDraft";
 import { newProposalMember } from "./proposalRecipe";
 import { isCommandError } from "../../../projectCommands";
-import { emptyExecutionConsent, workPlanInput, workPlanMinutesValid, type ConversationWorkPlanInput, type ProposalWorkPlanTools, type ProposalWorkPlanConfirmation } from "./proposalWorkPlan";
+import { emptyExecutionConsent, workPlanInput, workPlanMaterialStale, workPlanMinutesValid, type ConversationWorkPlanInput, type ProposalWorkPlanTools, type ProposalWorkPlanConfirmation } from "./proposalWorkPlan";
 import type { WorkPlanExecutionConsent } from "../../../WorkPlanExecutionReview";
 import type { PlanToolDraft } from "../../../WorkPlanToolChoice";
 import type { PluginTextReviewSelection } from "../../../pluginCommands";
@@ -476,7 +476,7 @@ export class ConversationSession {
   async prepareWorkPlan(conversationId: string, selectedTools: ProposalWorkPlanTools = null, current: () => boolean = () => true) {
     const record = this.records.get(conversationId), before = record?.input.workPlan, revision = before?.revision;
     if (!record || !before || !revision || !this.kernel.live || record.action || record.input.busy || record.input.value.pending || record.input.failure
-      || [...this.records.values()].some(other => other.input.workPlan.busy) || before.strategyDefault !== "ready"
+      || [...this.records.values()].some(other => other.input.workPlan.busy) || before.strategyDefault !== "ready" || workPlanMaterialStale(before.failure)
       || revision.content.kind !== "proposal" || revision.content.questions.length || record.input.value.proposalEdits?.some(edit => edit.proposalId === revision.proposalId)
       || !validAiLimits(before.config) || !before.config.endpoint.trim() || !before.config.model.trim() || revision.content.unitIds.length > before.config.maxItems
       || !!before.toolDraft !== !!selectedTools || !current()) return;
@@ -539,7 +539,11 @@ export class ConversationSession {
       if (!this.kernel.live) return;
       record.submitting = null;
       if (record.input.value.pending) this.update(record, { busy: null, outcome: "unknown", failure: { kind: "action", cause: commandFailure(error) } });
-      else if (live()) this.update(record, { workPlan: { ...record.input.workPlan, failure: commandFailure(error) } });
+      else if (live()) {
+        const failure = commandFailure(error);
+        this.update(record, { workPlan: { ...record.input.workPlan, failure,
+          ...(workPlanMaterialStale(failure) ? { prepared: null, consent: false, executionConsent: emptyExecutionConsent() } : {}) } });
+      }
     } finally {
       record.action = false; record.submitting = null;
       if (this.kernel.live) { this.update(record, { workPlan: { ...record.input.workPlan, busy: null } }); if (record.input.dirty && !record.input.failure && !record.job) void this.persist(record); }

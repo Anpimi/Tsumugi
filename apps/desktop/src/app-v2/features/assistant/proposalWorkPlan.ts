@@ -32,3 +32,7 @@ export function workPlanInput(): ConversationWorkPlanInput {
     prepared: null, consent: false, executionConsent: emptyExecutionConsent(), minutes: 60, busy: null, failure: null };
 }
 export function workPlanMinutesValid(minutes: number) { return Number.isInteger(minutes) && minutes >= 1 && minutes <= 1440; }
+export function workPlanMaterialStale(failure: CommandFailure | null): boolean {
+  return !!failure && typeof failure !== "string" && failure.code === "dependency-conflict"
+    && failure.outcome === "rejected" && failure.reason === "conversation-planning-current";
+}
