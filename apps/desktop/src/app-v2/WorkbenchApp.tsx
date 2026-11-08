@@ -1098,9 +1098,18 @@ function WorkspaceShell() {
     if (!gate.canDispatch({ viewId: currentId, source: "button", dialogId: parentDialogId })) return false;
     if (parentDialogId === "workspace-dock" && narrow && drawer) closeDrawer();
     const target = { entryMode: "table" as const, locale, focus: unitId, editing: true, queueActive: true, queueAnchor: unitId, focusMode: false };
+    const origin = document.activeElement;
     try {
-      return view?.kind === "entries" ? await runtime.navigation.update(view.id, target)
-        : await runtime.navigation.open({ kind: "entries", ...target });
+      if (view?.kind !== "entries") return await runtime.navigation.open({ kind: "entries", ...target });
+      const reusedEditor = view.entryMode === "table" && view.editing && view.focus === unitId && view.locale === locale;
+      const accepted = await runtime.navigation.update(view.id, target);
+      if (accepted && reusedEditor && !session.reads.retired) {
+        const state = store.getState(), current = state.views[view.id];
+        if (state.activeViewId === view.id && current?.editing && current.focus === unitId && current.locale === locale
+          && (document.activeElement === origin || document.activeElement === document.body)
+          && gate.canDispatch({ viewId: view.id, source: "button" })) entries.current?.focusEditor();
+      }
+      return accepted;
     } catch { setCommandFailed(true); return false; }
   }
   async function openEntryContext(unitId: string, locale: string): Promise<boolean> {

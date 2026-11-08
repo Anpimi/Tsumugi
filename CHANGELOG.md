@@ -160,6 +160,8 @@ Current workspace version metadata: **`0.2.0-alpha.1`**. Because the published `
 
 ### Fixed
 
+- Adopting and editing a candidate returns keyboard focus to the translation editor when the entry is already open for editing.
+
 - Execution details retain the measured size and limit when a team model request exceeds capacity. The details explain how to reduce the shared material before preparing again.
 
 - Assistant preparation checks the size of the complete request, including message formatting and model settings. If the request is too large, the panel shows the measured size and limit before sending.
