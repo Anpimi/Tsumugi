@@ -201,6 +201,7 @@ Current workspace version metadata: **`0.2.0-alpha.1`**. Because the published `
 - Publish each local draft write's result together with its saved or failed status.
 - Confirm and next keeps advancing through the fixed queue when an unfocused row leaves the viewport during the save.
 - Keep the native Edit menu in place and suspend workspace commands as a group when they are temporarily unavailable during paste or translation confirmation.
+- Update the affected buttons and menu during paste without refreshing the entry table for the temporary interaction lock.
 - Avoid flashing a progress banner during quick macOS clipboard reads. Escape cancels a pending paste, and slower reads also show a Cancel button.
 
 - Source impact and maintenance reads batch effective bindings and ancestor lookups within the original read transaction, avoiding per-entry SQL queries while retaining frozen mapping versions and unresolved-match checks.

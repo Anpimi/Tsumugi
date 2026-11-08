@@ -48,6 +48,14 @@ import { InteractionGate } from "./workspace/interactionGate";
 vi.mock("./platform/useProjectLifecycle", async original => ({ ...await original<object>(), useNativeProjectClose: () => ({ state: "ready" }) }));
 vi.mock("@tauri-apps/api/path", () => ({ sep: () => "/", join: async (...parts: string[]) => parts.join("/") }));
 const ownerLoad = vi.hoisted(() => ({ execution: null as Promise<void> | null, knowledge: null as Promise<void> | null, source: null as Promise<void> | null, sourceValue: null as SourceOwner | null, deliveryFail: false }));
+const entriesPresentation = vi.hoisted(() => vi.fn());
+vi.mock("./features/entries/EntriesView", async original => {
+  const module = await original<typeof import("./features/entries/EntriesView")>(), Actual = module.default;
+  return { ...module, default: function EntriesPresentationProbe(props: ComponentProps<typeof Actual>) {
+    useLayoutEffect(() => { entriesPresentation(); });
+    return <Actual {...props}/>;
+  } };
+});
 vi.mock("./features/delivery/DeliveryOwnerHost", async original => {
   const module = await original<typeof import("./features/delivery/DeliveryOwnerHost")>(), Actual = module.default;
   return { ...module, default: (props: ComponentProps<typeof Actual>) => {
@@ -541,6 +549,7 @@ it("suspends the workspace command group while keeping native Edit installed", a
   });
   const setEnabled = vi.fn<(kind: string, enabled: boolean, previous: boolean | undefined) => void>();
   const gateIntents = vi.spyOn(InteractionGate.prototype, "acquireIntent");
+  vi.spyOn(decisionCommands, "page").mockRejectedValue(new Error("No decision fixture"));
   vi.stubGlobal("isTauri", true);
   mockIPC((command, args) => {
     const { kind, options, rid, enabled } = args as {
@@ -579,19 +588,30 @@ it("suspends the workspace command group while keeping native Edit installed", a
   };
   try {
     await openImportWorkspace();
+    expect(await screen.findByText(page.rows[0].content.sourcePreview, {}, { timeout: 5000 })).toBeVisible();
+    await screen.findByLabelText(i18n.t("workbenchV2.decisionsBadgeError"), {}, { timeout: 5000 });
     await waitFor(() => expect(enabled("workspace.open-project")).toBe(true));
+    const activity = within(screen.getByRole("navigation", { name: i18n.t("workbenchV2.activity") }));
+    const entries = () => activity.getByRole("button", { name: i18n.t("workbenchV2.entries") });
+    expect(entries()).toBeEnabled();
     const gate = gateIntents.mock.contexts.find((_, index) => gateIntents.mock.calls[index][0] === "restore");
     if (!(gate instanceof InteractionGate)) throw new Error("Missing workspace interaction gate");
     const installed = currentMenu;
     setAppMenu.mockClear();
     setEnabled.mockClear();
+    entriesPresentation.mockClear();
     let reservation: ReturnType<InteractionGate["acquireIntent"]> = null;
     act(() => { reservation = gate.acquireIntent("editor-paste"); });
     expect(reservation).not.toBeNull();
+    expect(entries()).toHaveAttribute("aria-disabled", "true");
+    expect(entriesPresentation).not.toHaveBeenCalled();
     await waitFor(() => expect(enabled("workspace.open-project")).toBe(false));
     expect(currentMenu).toBe(installed);
     expect(setEnabled.mock.calls).toEqual([["Submenu", false, true]]);
+    entriesPresentation.mockClear();
     act(() => { reservation!.release(); });
+    expect(entries()).toBeEnabled();
+    expect(entriesPresentation).not.toHaveBeenCalled();
     await waitFor(() => expect(enabled("workspace.open-project")).toBe(true));
     expect(setAppMenu).not.toHaveBeenCalled();
     expect(setEnabled.mock.lastCall).toEqual(["Submenu", true, false]);
