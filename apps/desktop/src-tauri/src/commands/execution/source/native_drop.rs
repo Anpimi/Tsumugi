@@ -7,7 +7,7 @@ use tauri::Manager;
 
 #[cfg(test)]
 const TICKET_LIFETIME: Duration = crate::commands::native_directory::LIFETIME;
-const EVENT: &str = "source-native-drop";
+pub(in crate::commands) const DROP_EVENT: &str = "source-native-drop";
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(super) struct DropScope {
@@ -100,60 +100,36 @@ request!(
     }
 );
 
-/// Call only from Tauri's native window callback. No command registers paths.
-pub(in crate::commands) fn on_window_event<R: tauri::Runtime>(
-    window: &tauri::Window<R>,
-    event: &tauri::WindowEvent,
-) {
-    if window.label() != "main" {
-        return;
-    }
-    let paths = match event {
-        tauri::WindowEvent::DragDrop(tauri::DragDropEvent::Drop { paths, .. }) => {
-            // Do not copy an unbounded native list just to reject its arity.
-            Some(if paths.len() == 1 { paths.clone() } else { Vec::new() })
-        }
-        tauri::WindowEvent::Destroyed => None,
-        _ => return,
-    };
-    let dropped_at = Instant::now();
-    let label = window.label().to_owned();
-    let reject: fn(CommandError) -> NativeSourceDropEvent = |error| NativeSourceDropEvent::Rejected { error };
-    crate::commands::native_directory::submit_window_update(
+pub(in crate::commands) fn register_window_drop(
+    sessions: &mut SessionManager,
+    token: &str,
+    window: String,
+    paths: Vec<PathBuf>,
+    dropped_at: Instant,
+) -> Result<NativeSourceDropEvent, CommandError> {
+    let active = sessions.active_mut(token, CommandStage::ExecutionRead)?;
+    let project = ExecutionId::parse(&active.store.metadata()
+        .map_err(|error| map_persistence_error(error, CommandStage::ExecutionRead))?
+        .project_id().to_string()).map_err(map_source)?;
+    let (host, _) = active.execution_parts()?;
+    host.allow_mutation()?;
+    let scope = DropScope {
         window,
-        EVENT,
-        "source_native_drop",
-        paths.is_some().then_some(reject),
-        move |sessions| {
-            let Some(paths) = paths else {
-                if let Some(host) = sessions.active.as_mut().and_then(|active| active.execution.as_mut()) {
-                    if host.source.plugin.native_drop.clear_window(&label)
-                        .is_some_and(|picker| host.source.picker == Some(picker))
-                    {
-                        host.source.stop();
-                    }
-                }
-                return Ok(None);
-            };
-            let Some(active) = sessions.active.as_ref() else { return Ok(None); };
-            let token = active.token.clone();
-            let project = ExecutionId::parse(&active.store.metadata()
-                .map_err(|error| map_persistence_error(error, CommandStage::ExecutionRead))?
-                .project_id().to_string()).map_err(map_source)?;
-            let active = authorized(sessions, &token, project, CommandStage::ExecutionRead)?;
-            let (host, _) = active.execution_parts()?;
-            host.allow_mutation()?;
-            let scope = DropScope {
-                window: label,
-                session_token: token,
-                project_id: project,
-                generation: host.runtime.generation(),
-            };
-            host.source.plugin.native_drop
-                .register(scope, paths, dropped_at)
-                .map(Some)
-        },
-    );
+        session_token: token.to_owned(),
+        project_id: project,
+        generation: host.runtime.generation(),
+    };
+    host.source.plugin.native_drop.register(scope, paths, dropped_at)
+}
+
+pub(in crate::commands) fn clear_window(sessions: &mut SessionManager, label: &str) {
+    if let Some(host) = sessions.active.as_mut().and_then(|active| active.execution.as_mut()) {
+        if host.source.plugin.native_drop.clear_window(label)
+            .is_some_and(|picker| host.source.picker == Some(picker))
+        {
+            host.source.stop();
+        }
+    }
 }
 
 #[tauri::command]

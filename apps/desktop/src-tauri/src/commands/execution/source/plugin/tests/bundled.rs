@@ -180,7 +180,7 @@ fn journey(material: Materials, reopen_before_publication: bool) {
     let listener = window.listen("startup-native-drop", move |event| {
         sender.send(serde_json::from_str::<Value>(event.payload()).unwrap()).unwrap();
     });
-    crate::commands::startup::on_window_event(
+    crate::commands::handle_window_event(
         &window.as_ref().window(),
         &tauri::WindowEvent::DragDrop(tauri::DragDropEvent::Drop {
             paths: vec![directory.clone()],

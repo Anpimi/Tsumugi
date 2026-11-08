@@ -1197,6 +1197,14 @@ pub async fn close_project(
         .await
 }
 
+fn handle_window_event<R: tauri::Runtime>(window: &tauri::Window<R>, event: &tauri::WindowEvent) {
+    use tauri::Manager;
+    native_directory::on_window_event(window, event);
+    if window.label() == "main" && matches!(event, tauri::WindowEvent::Destroyed) {
+        window.state::<AppState>().disconnect_change_events();
+    }
+}
+
 pub fn register_commands<R: tauri::Runtime>(builder: tauri::Builder<R>) -> tauri::Builder<R> {
     let builder = builder.manage(AppState::default()).setup(|app| {
         use tauri::Manager;
@@ -1225,14 +1233,7 @@ pub fn register_commands<R: tauri::Runtime>(builder: tauri::Builder<R>) -> tauri
         Ok(())
     });
     builder
-        .on_window_event(|window, event| {
-            use tauri::Manager;
-            startup::on_window_event(window, event);
-            execution::source::native_drop::on_window_event(window, event);
-            if window.label() == "main" && matches!(event, tauri::WindowEvent::Destroyed) {
-                window.state::<AppState>().disconnect_change_events();
-            }
-        })
+        .on_window_event(handle_window_event)
         .invoke_handler(execution::handler())
 }
 
@@ -1460,6 +1461,48 @@ mod tests {
     use super::*;
     use serde_json::json;
     use tempfile::TempDir;
+
+    #[test]
+    fn native_drop_in_active_project_uses_the_last_available_session_permit() {
+        use std::{sync::mpsc, time::Duration};
+        use tauri::{Listener, Manager};
+
+        let directory = temporary_directory("native-drop-permit");
+        let app = tauri::test::mock_builder()
+            .manage(AppState::default())
+            .build(tauri::test::mock_context(tauri::test::noop_assets()))
+            .unwrap();
+        let window = tauri::WebviewWindowBuilder::new(&app, "main", tauri::WebviewUrl::App("index.html".into()))
+            .build().unwrap();
+        let state = app.state::<AppState>();
+        let request = create_request(&directory.path().join("project"));
+        let project = state.sessions.with(move |sessions| sessions.create(request).unwrap());
+        let (send, receive) = mpsc::channel();
+        window.listen("source-native-drop", move |event| {
+            send.send(serde_json::from_str::<serde_json::Value>(event.payload()).unwrap()).unwrap();
+        });
+
+        let pause = state.sessions.pause();
+        let mut held = Vec::new();
+        while let Ok(lease) = state.sessions.lease(CommandStage::ExecutionRead) {
+            held.push(lease);
+        }
+        drop(held.pop().expect("at least one spare permit"));
+        handle_window_event(
+            &window.as_ref().window(),
+            &tauri::WindowEvent::DragDrop(tauri::DragDropEvent::Drop {
+                paths: vec![directory.path().to_owned()],
+                position: tauri::PhysicalPosition::new(0.0, 0.0),
+            }),
+        );
+        drop(held);
+        drop(pause);
+
+        let event = receive.recv_timeout(Duration::from_secs(5)).unwrap();
+        assert_eq!(event["kind"], "ready", "{event}");
+        assert_eq!(event["projectId"], project.metadata.project_id);
+        assert_eq!(event["sessionToken"], project.session_token);
+    }
 
     fn package_operation() -> plugins::packages::MutationRequest {
         plugins::packages::MutationRequest::Install(plugins::PluginInstallRequest {

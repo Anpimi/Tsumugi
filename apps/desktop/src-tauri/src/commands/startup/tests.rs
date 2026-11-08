@@ -88,7 +88,7 @@ fn consecutive_startup_drops_publish_in_ticket_order() {
         .build().unwrap();
     let window = webview.as_ref().window();
     let (send, receive) = mpsc::channel();
-    window.listen(EVENT, move |event| {
+    window.listen(DROP_EVENT, move |event| {
         send.send(serde_json::from_str::<StartupDropEvent>(event.payload()).unwrap()).unwrap();
     });
     for paths in [
@@ -96,7 +96,7 @@ fn consecutive_startup_drops_publish_in_ticket_order() {
         vec!["/fixtures/extra", "/fixtures/other"],
         vec!["/fixtures/latest"],
     ] {
-        on_window_event(&window, &tauri::WindowEvent::DragDrop(tauri::DragDropEvent::Drop {
+        super::super::handle_window_event(&window, &tauri::WindowEvent::DragDrop(tauri::DragDropEvent::Drop {
             paths: paths.into_iter().map(PathBuf::from).collect(),
             position: tauri::PhysicalPosition::new(0.0, 0.0),
         }));

@@ -7,7 +7,7 @@ use tsumugi_core::execution::ExecutionId;
 use execution::source::{capture::{DeclaredMaterial, Selection}, plugin::PluginSourceSelection};
 use plugins::{PluginSourceRequest, PluginSourceView};
 
-const EVENT: &str = "startup-native-drop";
+pub(super) const DROP_EVENT: &str = "startup-native-drop";
 
 fn stale() -> CommandError {
     let mut error = CommandError::simple(CommandErrorCode::DependencyConflict, CommandStage::ExecutionRead);
@@ -88,7 +88,7 @@ impl StartupSession {
             StartupDirectory { selection_id: id, folder_name }
         }))
     }
-    fn clear_window(&mut self, window: &str) {
+    pub(super) fn clear_window(&mut self, window: &str) {
         let owns = self.picker.as_ref().is_some_and(|(owner, _)| owner == window)
             || self.chosen.as_ref().is_some_and(|chosen| chosen.window == window)
             || self.handoff.as_ref().is_some_and(|handoff| handoff.chosen.window == window);
@@ -263,31 +263,11 @@ pub async fn claim_startup_source_directory<R: tauri::Runtime>(
     }).await
 }
 
-pub(super) fn on_window_event<R: tauri::Runtime>(window: &tauri::Window<R>, event: &tauri::WindowEvent) {
-    if window.label() != "main" { return; }
-    let paths = match event {
-        tauri::WindowEvent::DragDrop(tauri::DragDropEvent::Drop { paths, .. }) => Some(if paths.len() == 1 { paths.clone() } else { Vec::new() }),
-        tauri::WindowEvent::Destroyed => None,
-        _ => return,
-    };
-    let owner = window.label().to_owned();
-    let now = Instant::now();
-    let reject: fn(CommandError) -> StartupDropEvent = |error| StartupDropEvent::Rejected { error };
-    native_directory::submit_window_update(
-        window,
-        EVENT,
-        "startup.native.drop",
-        paths.is_some().then_some(reject),
-        move |sessions| {
-            let Some(paths) = paths else {
-                sessions.startup.clear_window(&owner);
-                return Ok(None);
-            };
-            if sessions.active.is_some() { return Ok(None); }
-            empty(sessions)?;
-            sessions.startup.register_drop(owner, paths, now).map(Some)
-        },
-    );
+pub(super) fn register_window_drop(
+    sessions: &mut SessionManager, window: String, paths: Vec<PathBuf>, now: Instant,
+) -> Result<StartupDropEvent, CommandError> {
+    empty(sessions)?;
+    sessions.startup.register_drop(window, paths, now)
 }
 
 #[cfg(test)]
