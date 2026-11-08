@@ -161,6 +161,8 @@ Current workspace version metadata: **`0.2.0-alpha.1`**. Because the published `
 
 ### Fixed
 
+- Source import offers the folder picker again after rejecting a drop of multiple items. The selected importer and runtime are retained.
+
 - Execution details retain the measured size and limit when a team model request exceeds capacity. The details explain how to reduce the shared material before preparing again.
 
 - Assistant preparation checks the size of the complete request, including message formatting and model settings. If the request is too large, the panel shows the measured size and limit before sending.

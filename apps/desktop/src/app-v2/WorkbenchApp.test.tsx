@@ -1,16 +1,18 @@
 import { RECENT_PROJECTS_STORAGE_KEY, readRecentProject } from "../recentProjects";
+import * as tauriCore from "@tauri-apps/api/core";
+import * as tauriEvents from "@tauri-apps/api/event";
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { StrictMode, useCallback, useLayoutEffect, type ComponentProps } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { i18n } from "../i18n";
 import { SessionReads } from "../sessionReads";
-import { sourceCommands, type SourceContextPage } from "../sourceCommands";
+import { sourceCommands, type NativeSourceDropEvent, type SourceContextPage } from "../sourceCommands";
 import { sourceDraftCommands } from "../sourceDraftCommands";
 import { sourceDraftValue } from "../sourceDraftJournal";
 import { sourceDraftStateFixture } from "../testSupport/sourceDraftStateFixture";
 import { pluginCommands } from "../pluginCommands";
-import { pluginSourceInventory, pluginSourcePackage, pluginSourceRequest, pluginSourceWorkflow } from "../testSupport/pluginSourceFixture";
+import { pluginSourceInventory, pluginSourcePackage, pluginSourceRequest, pluginSourceView, pluginSourceWorkflow } from "../testSupport/pluginSourceFixture";
 import { startupCommands } from "../startupCommands";
 import type { SourceOwner } from "./features/source/sourceTypes";
 import { segmentCommands, type SegmentPage } from "../segmentCommands";
@@ -37,13 +39,17 @@ import WorkbenchApp from "./WorkbenchApp";
 import { ProjectLifecycle, type ProjectLifecyclePorts } from "./platform/projectLifecycle";
 import type { TranslationImportPanelProps } from "./features/import/TranslationImportPanel";
 import { Button } from "../design-system/Button";
+import * as nativeMenu from "./nativeMenu";
 import { fixtureIdentity } from "../testSupport/executionFixture";
 import { installResourceDraftPortsFixture } from "../testSupport/resourceDraftFixture";
 import { installSourceDraftPortsFixture } from "../testSupport/sourceDraftFixture";
 import { translationCaptureFixture, translationImportChoice, translationSelectionFixture } from "../testSupport/translationFixture";
 
 vi.mock("./platform/useProjectLifecycle", async original => ({ ...await original<object>(), useNativeProjectClose: () => ({ state: "ready" }) }));
+vi.mock("@tauri-apps/api/core", { spy: true });
+vi.mock("@tauri-apps/api/event", { spy: true });
 vi.mock("@tauri-apps/api/path", () => ({ sep: () => "/", join: async (...parts: string[]) => parts.join("/") }));
+vi.mock("./nativeMenu", { spy: true });
 const ownerLoad = vi.hoisted(() => ({ execution: null as Promise<void> | null, knowledge: null as Promise<void> | null, source: null as Promise<void> | null, sourceValue: null as SourceOwner | null, deliveryFail: false }));
 vi.mock("./features/delivery/DeliveryOwnerHost", async original => {
   const module = await original<typeof import("./features/delivery/DeliveryOwnerHost")>(), Actual = module.default;
@@ -439,6 +445,63 @@ async function openImportWorkspace(opened: ProjectView = project, ports: Partial
   await waitFor(() => expect(button).toBeEnabled());
   return { close, register, button };
 }
+
+it("uses the folder picker after a rejected native drop invalidates the offered folder", async () => {
+  let deliver: ((event: NativeSourceDropEvent) => void) | undefined;
+  const native = vi.spyOn(tauriCore, "isTauri").mockReturnValue(true);
+  const menu = vi.spyOn(nativeMenu, "installWorkspaceMenu").mockReturnValue(() => {});
+  const listen = vi.spyOn(tauriEvents, "listen").mockImplementation(async (event, handler) => {
+    if (event !== "source-native-drop") return () => {};
+    const send = (payload: NativeSourceDropEvent) => handler({ event, id: 1, payload });
+    deliver = send;
+    return () => { if (deliver === send) deliver = undefined; };
+  });
+  vi.spyOn(pluginCommands, "inventory").mockResolvedValue(pluginSourceInventory);
+  vi.spyOn(pluginCommands, "package").mockResolvedValue(pluginSourcePackage);
+  vi.spyOn(pluginCommands, "source").mockResolvedValue(pluginSourceView);
+  const choose = vi.spyOn(sourceCommands, "selectPlugin").mockResolvedValue(pluginSourceWorkflow.selection);
+  const selectDropped = vi.spyOn(sourceCommands, "selectDropped").mockResolvedValue(pluginSourceWorkflow.selection);
+  const send = (event: NativeSourceDropEvent) => act(() => deliver?.(event));
+  const ready = (folderName: string, dropTicket: string) => send({
+    kind: "ready", projectId: project.metadata.projectId, sessionToken: project.sessionToken, folderName, dropTicket,
+  });
+  const invalidDrop = () => send({ kind: "rejected", error: {
+    code: "invalid-input", stage: "execution-read", outcome: "rejected", recoveryRequired: false, reason: "native-drop-one-directory",
+  } });
+  try {
+    await openImportWorkspace();
+    await waitFor(() => expect(deliver).toBeTypeOf("function"));
+    ready("First source", fixtureIdentity(923));
+    const sheet = await screen.findByRole("dialog", { name: i18n.t("sourceMaintenance.title") });
+    const importer = await within(sheet).findByRole("combobox", { name: i18n.t("source.integration") });
+    await waitFor(() => expect(importer).toBeEnabled());
+    const choice = `${pluginSourceRequest.package.packageDigest}:${pluginSourceRequest.resourceId}`;
+    fireEvent.change(importer, { target: { value: choice } });
+    const runtime = within(sheet).getByRole("combobox", { name: i18n.t("sourcePlugin.runtime") });
+    fireEvent.change(runtime, { target: { value: pluginSourceRequest.environmentDigest } });
+    const dropButton = { name: i18n.t("sourceMaintenance.useDroppedFolder") };
+    await waitFor(() => expect(within(sheet).getByRole("button", dropButton)).toBeEnabled());
+
+    invalidDrop();
+    expect(within(sheet).queryByRole("button", dropButton)).not.toBeInTheDocument();
+    expect(within(sheet).getByText(i18n.t("sourceMaintenance.dropFailed"))).toBeVisible();
+    expect(within(sheet).queryByText(i18n.t("sourceMaintenance.droppedFolder", { folder: "First source" }))).not.toBeInTheDocument();
+    expect(importer).toHaveValue(choice);
+    expect(runtime).toHaveValue(pluginSourceRequest.environmentDigest);
+    expect(choose).not.toHaveBeenCalled();
+    expect(selectDropped).not.toHaveBeenCalled();
+
+    ready("New source", fixtureIdentity(924));
+    expect(within(sheet).getByText(i18n.t("sourceMaintenance.droppedFolder", { folder: "New source" }))).toBeVisible();
+    expect(within(sheet).queryByText(i18n.t("sourceMaintenance.dropFailed"))).not.toBeInTheDocument();
+    invalidDrop();
+    fireEvent.click(within(sheet).getByRole("button", { name: i18n.t("sourceMaintenance.chooseFolder") }));
+    await waitFor(() => expect(choose).toHaveBeenCalledOnce());
+    expect(selectDropped).not.toHaveBeenCalled();
+  } finally {
+    listen.mockRestore(); native.mockRestore(); menu.mockRestore();
+  }
+});
 
 it("creates an empty project without restoring the previous project's focused route or extra view", async () => {
   const created: ProjectView = { ...project, locator: "/synthetic/new-empty", sessionToken: "created-session",
