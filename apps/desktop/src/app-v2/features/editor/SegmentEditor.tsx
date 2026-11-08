@@ -1,7 +1,7 @@
 import { useEffect, useId, useImperativeHandle, useLayoutEffect, useRef, useState, useSyncExternalStore, type ClipboardEvent, type Ref } from "react";
 import { useTranslation } from "react-i18next";
 import { sameDraftBasis, type DraftBasis, type DraftKey, type DraftValue } from "../../../draftCommands";
-import { exactPasteIntentId, exactPastePresentationDelayMs, readExactPaste } from "../../../exactPaste";
+import { readExactPaste } from "../../../exactPaste";
 import { diagnosticTextareaSelection, textareaDisplayText } from "../../../reviewDiagnosticNavigation";
 import { Button } from "../../../design-system/Button";
 import { Banner, ErrorState, LoadingState } from "../../../design-system/Feedback";
@@ -31,6 +31,7 @@ export interface SegmentEditorProps {
   ref?: Ref<SegmentEditorHandle>;
 }
 type PasteFeedback = "editorPasteReading" | "editorPasteCancelled" | "editorPasteUnavailable" | "editorPasteFailed" | "editorPasteChanged" | "editorPasteComposition" | "editorPasteBusy" | "editorPasteUnconfirmed";
+const pasteFeedbackDelayMs = 100;
 interface PasteFlight {
   field: HTMLTextAreaElement;
   key: DraftKey;
@@ -198,7 +199,7 @@ export default function SegmentEditor({ drafts, draftKey, viewId, gate, disabled
       setPasteFeedback("editorPasteUnavailable"); return;
     }
     // This owns navigation only; a formal confirmation may still be awaiting A.
-    const intent = gate.acquireIntent(exactPasteIntentId(ownerId));
+    const intent = gate.acquireIntent(`${ownerId}-paste`);
     if (!intent) { setPasteFeedback("editorPasteBusy"); return; }
     const flight: PasteFlight = { field: control, key: { ...draftKey }, value: current.value, currentBasis: current.current.basis,
       text: control.value, start: control.selectionStart, end: control.selectionEnd, direction: control.selectionDirection,
@@ -210,7 +211,7 @@ export default function SegmentEditor({ drafts, draftKey, viewId, gate, disabled
       // Quick reads need no temporary banner or editor row resize.
       flight.feedbackTimer = setTimeout(() => {
         if (pasteFlight.current === flight) setPasteFeedback("editorPasteReading");
-      }, exactPastePresentationDelayMs);
+      }, pasteFeedbackDelayMs);
       void reading.then(({ text, matches }) => {
         if (pasteFlight.current !== flight) return;
         if (!pasteCurrent(flight) || !matches) { finishPaste(flight, "editorPasteChanged"); return; }
