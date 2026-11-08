@@ -182,6 +182,8 @@ Current workspace version metadata: **`0.2.0-alpha.1`**. Because the published `
 
 ### Fixed
 
+- Source import offers the folder picker again after rejecting a drop of multiple items. The selected importer and runtime are retained.
+
 - Adopting and editing a candidate returns keyboard focus to the translation editor when the entry is already open for editing.
 
 - Work-plan setup explains when a proposal's project materials have changed and directs you back to the conversation to prepare a new question. Any preview and consent for the stale proposal are cleared.

@@ -388,7 +388,11 @@ function ProjectWorkspace({ session, lifecycle, gate, readOnly, requestOpen, req
       if (value.kind === "ready") {
         if (value.projectId !== session.project.metadata.projectId || value.sessionToken !== session.project.sessionToken) return;
         setSourceDrop({ dropTicket: value.dropTicket, folderName: value.folderName }); setSourceTarget(null); setSourceDropFailure(null); setSourceOpen(true);
-      } else { setSourceDropFailure(commandFailure(value.error)); setSourceOpen(true); }
+      } else {
+        // A rejected drop with the wrong item count invalidates the pending Host ticket.
+        if (value.error.code === "invalid-input" && value.error.reason === "native-drop-one-directory") setSourceDrop(null);
+        setSourceDropFailure(commandFailure(value.error)); setSourceOpen(true);
+      }
     })).then(remove => { if (live) unlisten = remove; else remove(); }).catch(error => { if (live) setSourceDropFailure(commandFailure(error)); });
     return () => { live = false; unlisten?.(); };
   }, [session.project.sessionToken, session.project.metadata.projectId, session.reads, readOnly]);
