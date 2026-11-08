@@ -198,6 +198,9 @@ Current workspace version metadata: **`0.2.0-alpha.1`**. Because the published `
 - Typing and saving a local draft updates the editor and its status without refreshing unrelated entry rows when their view stays the same.
 - Keep the active row's unchanged source text out of translation input, paste and draft-write updates.
 - Editing a translation updates its recovery summary without rebuilding the full local draft list.
+- Update translation confirmation activity when a submission changes, removing a scan of loaded drafts from typing and local draft saves.
+- Reuse the pending-request count and recovery target during draft edits.
+- Publish each local draft write's result together with its saved or failed status.
 - Confirm and next keeps advancing through the fixed queue when an unfocused row leaves the viewport during the save.
 - Keep the native Edit menu in place and suspend workspace commands as a group when they are temporarily unavailable during paste or translation confirmation.
 - Complete macOS builds accept the pinned WebVTT and SMAPI packages when their SDK remains supported by Process3.

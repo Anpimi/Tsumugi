@@ -42,6 +42,7 @@ The frontend job runs:
 pnpm --dir apps/desktop build
 pnpm --dir apps/desktop test --maxWorkers=2 \
   src/TranslationDraftSession.test.tsx \
+  src/app-v2/features/editor/translationDrafts.test.ts \
   src/app-v2/features/editor/SegmentEditor.test.tsx \
   src/TranslationImportSession.test.tsx \
   src/SourceDraftSession.test.tsx \
