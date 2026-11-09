@@ -154,6 +154,15 @@ const noDraftState: TranslationDraftSnapshot = { hydration: "idle", revision: 0,
 const noDraftSubscription = () => () => undefined;
 const getNoCandidateBatchState = () => null;
 
+function DraftRecoveryButton({ drafts, revealDraft }: { drafts: TranslationDrafts | null; revealDraft: (key: DraftKey) => void }) {
+  const { t } = useTranslation(undefined, { keyPrefix: "workbenchV2" });
+  const available = useSyncExternalStore(drafts?.subscribe ?? noDraftSubscription, () => Boolean(drafts?.getSnapshot().summaries.length));
+  return <Button size="sm" disabled={!available} onClick={() => {
+    const first = drafts?.getSnapshot().summaries[0];
+    if (first) revealDraft(first.key);
+  }}>{t("draftRecoveryTitle")}</Button>;
+}
+
 function InteractionBlocked({ gate, children }: { gate: InteractionGate; children: (blocked: boolean) => ReactNode }) {
   const blocked = useSyncExternalStore(gate.subscribe, () => {
     const { intentOwner, composingOwners } = gate.getSnapshot();
@@ -594,7 +603,7 @@ function WorkspaceShell() {
     ? { projectId: session.project.metadata.projectId, unitId: view.focus, locale: view.locale } : null);
   const selectDraftState = useShallow((snapshot: TranslationDraftSnapshot) => ({
     hydration: snapshot.hydration, retired: snapshot.retired, mutationReserved: snapshot.mutationReserved,
-    firstDraft: snapshot.summaries[0]?.key, pendingCount: snapshot.pendingCount, firstPending: snapshot.firstPending,
+    pendingCount: snapshot.pendingCount, firstPending: snapshot.firstPending,
     canConfirm: activeDraftKey !== null && !!drafts?.canConfirm(activeDraftKey),
     recoverySummaries: recoveryKey ? snapshot.summaries : null,
   }));
@@ -1544,7 +1553,7 @@ function WorkspaceShell() {
         { id: "source", label: t("sourceMaintenance.title"), onSelect: () => dispatch("source.import-upstream"), disabled: disabled || !commandsReady },
       ]} />
       <span className={styles.breadcrumb}>›</span><Menu label={message("language")} trigger={<Button size="sm" disabled={disabled || view?.kind === "decisions"}>{view?.kind === "decisions" ? message("decisionAllLanguages") : activeLocale}<ChevronDown /></Button>} items={session.project.metadata.targetLocales.map(locale => ({ id: locale, label: locale, onSelect: () => { if (view) void runtime.navigation.update(view.id, { locale }); } }))} />
-      <Button size="sm" disabled={!draftState.firstDraft} onClick={() => { if (draftState.firstDraft) revealDraft(draftState.firstDraft); }}>{message("draftRecoveryTitle")}</Button>
+      <DraftRecoveryButton drafts={drafts} revealDraft={revealDraft}/>
       <Button ref={commandTrigger} className={styles.commandSearch} size="sm" disabled={!commandsReady || disabled} onClick={() => dispatch("workspace.commands")}><Search />{message("commandPlaceholder")}</Button>
       <IconButton label={message("conversationMode")} aria-pressed={conversationMode} disabled={disabled || !commandsReady || !view} onClick={() => dispatch("workspace.conversation-mode")}><Sparkles /></IconButton>
       <IconButton ref={dockTrigger} className={styles.dockToggle} label={message("openAgent")} disabled={disabled || !commandsReady} onClick={() => dispatch("workspace.agent")}><PanelRight /></IconButton>

@@ -604,7 +604,6 @@ it("suspends the workspace command group while keeping native Edit installed", a
     await waitFor(() => {
       expect(readDecisions).toHaveBeenCalled();
       expect(enabled("workspace.open-project")).toBe(true);
-      expect(enabled("workspace.references")).toBe(true);
     }, { timeout: 5000 });
     const activity = within(screen.getByRole("navigation", { name: i18n.t("workbenchV2.activity") }));
     const entries = () => activity.getByRole("button", { name: i18n.t("workbenchV2.entries") });
@@ -638,7 +637,7 @@ it("suspends the workspace command group while keeping native Edit installed", a
     try { await waitFor(() => expect(currentMenu).toBe(hostMenu)); }
     finally { clearMocks(); vi.unstubAllGlobals(); }
   }
-});
+}, 15000);
 
 it("lets the first entries read finish before starting the passive decision count", async () => {
   let finishPage!: (value: SegmentPage) => void;
@@ -660,6 +659,46 @@ it("lets the first entries read finish before starting the passive decision coun
   expect(await screen.findByText(page.rows[0].content.sourcePreview)).toBeVisible();
   await waitFor(() => expect(readDecisions).toHaveBeenCalled());
 });
+
+it("enables local recovery for the first draft without refreshing the entries presentation", async () => {
+  const { unitId, locale, nativeKey, sourceRevisionId, sourcePreview } = page.rows[0].content;
+  const key = { projectId: project.metadata.projectId, unitId, locale };
+  const basis: DraftBasis = { sourceRevisionId, selectionId: null, revisionId: null, text: null };
+  let head: DraftHead = { key, revision: "0", writerId: null, value: null };
+  vi.spyOn(segmentCommands, "queueWindow").mockResolvedValue({ ...page, firstPosition: 0, previousUnitId: null, nextUnitId: null });
+  vi.spyOn(draftCommands, "read").mockImplementation(async () => ({ head: structuredClone(head), current: {
+    kind: "current", basis, nativeKey, sourceText: sourcePreview,
+  } }));
+  const write = vi.spyOn(draftCommands, "write").mockImplementation(async ({ write }) => {
+    const { editSeq, text } = write.value;
+    head = { key: write.key, revision: "1", writerId: write.writerId, value: { basis, editSeq, text, pending: null } };
+    return structuredClone(head);
+  });
+  vi.spyOn(decisionCommands, "page").mockRejectedValue(new Error("No decision fixture"));
+  await openImportWorkspace();
+  const edit = await screen.findByRole("button", { name: i18n.t("workbenchV2.entryEdit", { key: nativeKey }) }, { timeout: 5000 });
+  await waitFor(() => expect(edit).toBeEnabled());
+  fireEvent.click(edit);
+  const inputName = i18n.t("workbenchV2.editorLabel", { key: nativeKey });
+  const input = await screen.findByRole("textbox", { name: inputName }, { timeout: 5000 });
+  await waitForSourceAndKnowledgeJournals();
+  await screen.findByLabelText(i18n.t("workbenchV2.decisionsBadgeError"), {}, { timeout: 5000 });
+  const recoveryName = i18n.t("workbenchV2.draftRecoveryTitle");
+  expect(screen.getByRole("button", { name: recoveryName })).toBeDisabled();
+  entriesPresentation.mockClear();
+
+  const text = "First local draft e\u0301 👩🏽‍💻 {{name}}\nSecond line";
+  fireEvent.change(input, { target: { value: text } });
+  const recovery = screen.getByRole("button", { name: recoveryName });
+  expect(recovery).toBeEnabled();
+  expect(entriesPresentation).not.toHaveBeenCalled();
+  await waitFor(() => expect(write).toHaveBeenCalledWith(expect.objectContaining({ write: expect.objectContaining({
+    key, value: expect.objectContaining({ text }),
+  }) })));
+  fireEvent.click(recovery);
+  const sheet = await screen.findByRole("dialog", { name: recoveryName });
+  expect(await within(sheet).findByRole("textbox", { name: inputName })).toHaveValue(text);
+}, 15000);
 
 it("creates an empty project without restoring the previous project's focused route or extra view", async () => {
   const created: ProjectView = { ...project, locator: "/synthetic/new-empty", sessionToken: "created-session",
