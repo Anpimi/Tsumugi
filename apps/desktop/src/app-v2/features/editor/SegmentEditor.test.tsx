@@ -1,5 +1,5 @@
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
-import { StrictMode, createRef } from "react";
+import { Profiler, StrictMode, createRef } from "react";
 import { canonicalTranslationReuse } from "../../../translationReuse";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { i18n } from "../../../i18n";
@@ -155,6 +155,42 @@ it("uses the entry label, keeps disabled text selectable, and delegates all conf
   ui.rerender(<SegmentEditor {...h.props} disabled ref={ref} />);
   expect(input()).toHaveAttribute("readonly"); expect(input()).not.toBeDisabled();
   act(() => ref.current?.focus()); expect(input()).toHaveFocus();
+});
+
+it("skips editor commits for another entry's draft while observing active edits and session controls", async () => {
+  const h = harness(draftHead()); await h.ready();
+  const commits = vi.fn();
+  await act(async () => { render(<Profiler id="segment-editor" onRender={commits}><SegmentEditor {...h.props}/></Profiler>); });
+  const field = input(), confirm = screen.getByRole("button", { name: w("editorConfirm") });
+  const otherKey = { ...key, unitId: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaab" };
+  h.ports.read.mockResolvedValueOnce({ head: { key: otherKey, revision: "0", writerId: null, value: null }, current: currentView() });
+  h.ports.write.mockImplementationOnce(async ({ write }) => ({ key: otherKey, revision: "1", writerId: write.writerId, value: copy(write.value) as DraftValue }));
+  commits.mockClear();
+
+  await act(async () => { await h.drafts.open(otherKey); });
+  await act(async () => {
+    h.drafts.edit(otherKey, "Other entry e\u0301 👩🏽‍💻");
+    await h.drafts.flush(otherKey);
+  });
+
+  expect(h.ports.write).toHaveBeenCalledOnce();
+  expect(h.drafts.getEntry(otherKey)?.head.value?.text).toBe("Other entry e\u0301 👩🏽‍💻");
+  expect(commits).not.toHaveBeenCalled();
+  expect(field).toHaveValue("Retained input"); expect(field).toHaveFocus();
+
+  fireEvent.change(field, { target: { value: "Current entry e\u0301 👩🏽‍💻" } });
+  await act(async () => { await h.drafts.flush(key); });
+  expect(field).toHaveValue("Current entry e\u0301 👩🏽‍💻");
+  expect(h.drafts.getEntry(key)?.head.value?.text).toBe("Current entry e\u0301 👩🏽‍💻");
+  expect(commits).toHaveBeenCalled();
+  expect(confirm).toBeEnabled();
+  act(() => {
+    const reservation = h.drafts.reserveMutation();
+    expect(reservation).not.toBeNull();
+  });
+  expect(confirm).toBeDisabled(); expect(field).not.toHaveAttribute("readonly");
+  act(() => h.drafts.retire());
+  expect(field).toHaveAttribute("readonly");
 });
 
 it("limits recovery presentation to confirmation without promising advance", async () => {
