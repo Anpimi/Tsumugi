@@ -1,4 +1,4 @@
-import { useEffect, useId, useImperativeHandle, useLayoutEffect, useRef, useState, useSyncExternalStore, type ClipboardEvent, type Ref } from "react";
+import { useEffect, useId, useImperativeHandle, useLayoutEffect, useRef, useState, useSyncExternalStore, type ClipboardEvent, type ReactNode, type Ref } from "react";
 import { useTranslation } from "react-i18next";
 import { sameDraftBasis, type DraftBasis, type DraftKey, type DraftValue } from "../../../draftCommands";
 import { readExactPaste } from "../../../exactPaste";
@@ -57,6 +57,11 @@ export function diagnosticDraftCurrent(drafts: TranslationDrafts, key: DraftKey,
     && (source || focus.translationText !== null && value.text === focus.translationText);
 }
 
+function EditorIntentControls({ gate, children }: { gate: InteractionGate; children: (occupied: boolean) => ReactNode }) {
+  const occupied = useSyncExternalStore(gate.subscribe, () => gate.getSnapshot().intentOwner !== null);
+  return children(occupied);
+}
+
 /** Views borrow the session's entity draft; mounting an editor never owns its lifetime. */
 export default function SegmentEditor({ drafts, draftKey, viewId, gate, disabled, nativeKey, autoFocus = true, allowAdvance = true,
   diagnosticFocus, diagnosticCurrent, onDiagnosticFocus, dispatch, ref }: SegmentEditorProps) {
@@ -67,7 +72,9 @@ export default function SegmentEditor({ drafts, draftKey, viewId, gate, disabled
     if (retired) return "retired";
     return hydration === "ready" && !mutationReserved ? "ready" : "blocked";
   });
-  const interaction = useSyncExternalStore(gate.subscribe, gate.getSnapshot, gate.getSnapshot);
+  const diagnosticInteraction = useSyncExternalStore(gate.subscribe, () => (
+    diagnosticFocus?.status === "pending" && diagnosticFocus.location.field === "translation" ? gate.getSnapshot() : null
+  ));
   const retired = draftAvailability === "retired", value = entry?.value;
   const reuseOrigin = value?.reuseOrigin ?? (value && entry?.current.kind === "current" && sameDraftBasis(value.basis, entry.current.basis) ? entry.current.reuseOrigin : null);
   const identity = JSON.stringify([draftKey.projectId, draftKey.unitId, draftKey.locale]);
@@ -139,7 +146,7 @@ export default function SegmentEditor({ drafts, draftKey, viewId, gate, disabled
     if (!permitted() || document.activeElement !== control || !control.isConnected || !diagnosticDraftCurrent(drafts, draftKey, focus)) { onDiagnosticFocus?.(focus.id, false); return; }
     control.setSelectionRange(selection.start, selection.end);
     onDiagnosticFocus?.(focus.id, true);
-  }, [diagnosticFocus, diagnosticCurrent, onDiagnosticFocus, entry, draftAvailability, interaction, disabled, identity]);
+  }, [diagnosticFocus, diagnosticCurrent, onDiagnosticFocus, entry, draftAvailability, diagnosticInteraction, disabled, identity]);
   useLayoutEffect(() => {
     const flight = pasteFlight.current;
     if (flight && !flight.applying && !pasteCurrent(flight)) cancelPaste("editorPasteChanged");
@@ -160,9 +167,9 @@ export default function SegmentEditor({ drafts, draftKey, viewId, gate, disabled
   const journalConflict = entry.failure?.kind === "journal-conflict";
   const mergeChanged = !!value?.merge && entry.failure?.kind === "basis-conflict";
   const basisChanged = !!value && entry.current.kind === "current" && !entry.basisCurrent;
-  const blocked = disabled || draftAvailability !== "ready" || interaction.intentOwner !== null;
-  const canConfirm = !mergeChanged && !blocked && !!value && entry.basisCurrent && !pending && !entry.busy && entry.currentFailure === null && !journalFailed && !journalConflict;
-  const canRestore = !blocked && !!value && !pending && !entry.busy && !journalConflict && entry.current.kind === "current" && entry.currentFailure === null;
+  const draftBlocked = disabled || draftAvailability !== "ready";
+  const canConfirm = !mergeChanged && !draftBlocked && !!value && entry.basisCurrent && !pending && !entry.busy && entry.currentFailure === null && !journalFailed && !journalConflict;
+  const canRestore = !draftBlocked && !!value && !pending && !entry.busy && !journalConflict && entry.current.kind === "current" && entry.currentFailure === null;
   const showRestore = canRestore && (!!value?.merge || value?.text !== (value?.basis.text ?? "") || basisChanged);
   const restoring = restore?.identity === identity && restore.sequence === value?.editSeq
     && entry.current.kind === "current" && sameDraftBasis(restore.basis, entry.current.basis);
@@ -283,9 +290,13 @@ export default function SegmentEditor({ drafts, draftKey, viewId, gate, disabled
     {entry.current.kind === "unavailable" ? <Banner tone="warning">{t(entry.current.reason === "source-missing" ? "editorSourceMissing" : "editorLocaleRemoved")}</Banner> : null}
     {entry.currentFailure !== null ? <Banner tone="error" role="alert" action={<Button size="sm" disabled={readonly || entry.busy} onClick={retryRead}>{t("editorRetryRead")}</Button>}>{t("editorReadFailedHelp")}</Banner> : null}
     {reuseOrigin ? <TranslationReuseReference origin={reuseOrigin} locale={draftKey.locale} disabled={readonly}/> : null}
-    {value?.merge ? <Banner tone={mergeChanged ? "warning" : "info"} action={<Button size="sm" disabled={blocked || pending || entry.busy || journalConflict} onClick={() => { void drafts.refreshMerge(draftKey); }}>{t("editorMergeRefresh")}</Button>}>{t(mergeChanged ? "editorMergeChanged" : "editorMergeDraft")}</Banner> : null}
+    {value?.merge ? <Banner tone={mergeChanged ? "warning" : "info"} action={<EditorIntentControls gate={gate}>{occupied =>
+      <Button size="sm" disabled={occupied || draftBlocked || pending || entry.busy || journalConflict} onClick={() => { void drafts.refreshMerge(draftKey); }}>{t("editorMergeRefresh")}</Button>
+    }</EditorIntentControls>}>{t(mergeChanged ? "editorMergeChanged" : "editorMergeDraft")}</Banner> : null}
     {basisChanged ? <>
-      <Banner tone="warning" action={<Button size="sm" disabled={blocked || pending || entry.busy || journalConflict || entry.currentFailure !== null} onClick={() => { void drafts.rebase(draftKey); }}>{t(value?.merge ? "editorMergeRefresh" : "editorRebase")}</Button>}>{t("editorBasisChanged")}</Banner>
+      <Banner tone="warning" action={<EditorIntentControls gate={gate}>{occupied =>
+        <Button size="sm" disabled={occupied || draftBlocked || pending || entry.busy || journalConflict || entry.currentFailure !== null} onClick={() => { void drafts.rebase(draftKey); }}>{t(value?.merge ? "editorMergeRefresh" : "editorRebase")}</Button>
+      }</EditorIntentControls>}>{t("editorBasisChanged")}</Banner>
       <div role="group" aria-label={t("editorCurrentSelection")}><p className={styles.editHint}>{t("editorCurrentSelection")}</p><div>{entry.current.kind === "current" && entry.current.basis.text !== null
         ? entry.current.basis.text === "" ? t("editorEmptySelection") : <TokenizedText text={entry.current.basis.text} />
         : t("editorNoSelection")}</div></div>
@@ -295,7 +306,9 @@ export default function SegmentEditor({ drafts, draftKey, viewId, gate, disabled
     {status ? <p className={styles.editHint} id={`${ownerId}-status`} role="status">{t(status)}</p> : null}
     {pending ? <Banner tone="warning" action={<div className={styles.actions}>
       <Button size="sm" disabled={readonly || entry.busy} onClick={() => { void drafts.recover(draftKey); }}>{t("editorCheckResult")}</Button>
-      {entry.replayAllowed ? <Button size="sm" disabled={blocked || entry.busy || journalConflict || journalFailed} onClick={() => { void drafts.replay(draftKey); }}>{t("editorReplay")}</Button> : null}
+      {entry.replayAllowed ? <EditorIntentControls gate={gate}>{occupied =>
+        <Button size="sm" disabled={occupied || draftBlocked || entry.busy || journalConflict || journalFailed} onClick={() => { void drafts.replay(draftKey); }}>{t("editorReplay")}</Button>
+      }</EditorIntentControls> : null}
     </div>}>{t(entry.recovery === "mismatch" ? "editorMismatch" : entry.failure?.kind === "recovery" ? "editorRecoveryFailed" : "editorPendingHelp")}</Banner> : null}
     {journalFailed ? <Banner tone="error" role="alert" action={<Button size="sm" disabled={readonly || entry.busy} onClick={() => { void drafts.flush(draftKey); }}>{t("editorRetryPreserve")}</Button>}>{t("editorJournalFailed")}</Banner> : null}
     {journalConflict ? <Banner tone="error" role="alert" action={<Button size="sm" disabled={readonly || entry.busy} onClick={retryRead}>{t("editorRetryRead")}</Button>}>{t("editorJournalConflict")}</Banner> : null}
@@ -303,17 +316,19 @@ export default function SegmentEditor({ drafts, draftKey, viewId, gate, disabled
     {copyResult ? <p className={styles.editHint} role="status">{t(copyResult === "copied" ? "editorCopied" : "editorCopyFailed")}</p> : null}
     {pasteFeedback ? <Banner tone={pasteFeedback === "editorPasteFailed" ? "error" : pasteFeedback === "editorPasteReading" || pasteFeedback === "editorPasteCancelled" ? "info" : "warning"} role="status"
       action={pasteFlight.current ? <Button size="sm" onClick={() => { cancelPaste(); field.current?.focus(); }}>{t("editorPasteCancel")}</Button> : undefined}>{t(pasteFeedback)}</Banner> : null}
-    {restoring && canRestore ? <Banner tone="warning" role="alert">
-      <p>{t("editorRestoreQuestion")}</p><p>{t("editorRestoreHelp")}</p>
-      <div className={styles.actions}><Button size="sm" onClick={() => setRestore(null)}>{t("editorKeepDraft")}</Button><Button size="sm" variant="danger" onClick={() => { setRestore(null); void drafts.discard(draftKey); }}>{t("editorRestoreNow")}</Button></div>
-    </Banner> : null}
-    <div className={styles.actions}>
-      {value ? <Button size="sm" onClick={() => { void copyDraft(); }}>{t("editorCopy")}</Button> : null}
-      {showRestore ? <Button size="sm" onClick={() => { if (value && entry.current.kind === "current") setRestore({ identity, sequence: value.editSeq, basis: entry.current.basis }); }}>{t("editorRestore")}</Button> : null}
-      {exit}
-      <Button size="sm" disabled={!canConfirm} onClick={() => dispatch("translation.confirm", "button", ownerId)}>{t("editorConfirm")}</Button>
-      {allowAdvance ? <Button size="sm" variant="primary" disabled={!canConfirm} pending={entry.busy && !entry.checking} onClick={() => dispatch("translation.confirm-next", "button", ownerId)}>{t("confirmNext")}</Button> : null}
-    </div>
+    <EditorIntentControls gate={gate}>{occupied => <>
+      {restoring && canRestore && !occupied ? <Banner tone="warning" role="alert">
+        <p>{t("editorRestoreQuestion")}</p><p>{t("editorRestoreHelp")}</p>
+        <div className={styles.actions}><Button size="sm" onClick={() => setRestore(null)}>{t("editorKeepDraft")}</Button><Button size="sm" variant="danger" onClick={() => { setRestore(null); void drafts.discard(draftKey); }}>{t("editorRestoreNow")}</Button></div>
+      </Banner> : null}
+      <div className={styles.actions}>
+        {value ? <Button size="sm" onClick={() => { void copyDraft(); }}>{t("editorCopy")}</Button> : null}
+        {showRestore && !occupied ? <Button size="sm" onClick={() => { if (value && entry.current.kind === "current") setRestore({ identity, sequence: value.editSeq, basis: entry.current.basis }); }}>{t("editorRestore")}</Button> : null}
+        {exit}
+        <Button size="sm" disabled={occupied || !canConfirm} onClick={() => dispatch("translation.confirm", "button", ownerId)}>{t("editorConfirm")}</Button>
+        {allowAdvance ? <Button size="sm" variant="primary" disabled={occupied || !canConfirm} pending={entry.busy && !entry.checking} onClick={() => dispatch("translation.confirm-next", "button", ownerId)}>{t("confirmNext")}</Button> : null}
+      </div>
+    </>}</EditorIntentControls>
     <p className={styles.editHint} id={`${ownerId}-hint`}>{t(allowAdvance ? "editorHint" : "editorRecoveryHint", { modifier: navigator.platform.startsWith("Mac") ? "⌘" : "Ctrl" })}</p>
   </>;
 }
