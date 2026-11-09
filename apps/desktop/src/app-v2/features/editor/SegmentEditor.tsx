@@ -61,9 +61,14 @@ export function diagnosticDraftCurrent(drafts: TranslationDrafts, key: DraftKey,
 export default function SegmentEditor({ drafts, draftKey, viewId, gate, disabled, nativeKey, autoFocus = true, allowAdvance = true,
   diagnosticFocus, diagnosticCurrent, onDiagnosticFocus, dispatch, ref }: SegmentEditorProps) {
   const { t } = useTranslation(undefined, { keyPrefix: "workbenchV2" });
-  const snapshot = useSyncExternalStore(drafts.subscribe, drafts.getSnapshot, drafts.getSnapshot);
+  const entry = useSyncExternalStore(drafts.subscribe, () => drafts.getEntry(draftKey));
+  const draftAvailability = useSyncExternalStore(drafts.subscribe, () => {
+    const { retired, hydration, mutationReserved } = drafts.getSnapshot();
+    if (retired) return "retired";
+    return hydration === "ready" && !mutationReserved ? "ready" : "blocked";
+  });
   const interaction = useSyncExternalStore(gate.subscribe, gate.getSnapshot, gate.getSnapshot);
-  const entry = drafts.getEntry(draftKey), value = entry?.value;
+  const retired = draftAvailability === "retired", value = entry?.value;
   const reuseOrigin = value?.reuseOrigin ?? (value && entry?.current.kind === "current" && sameDraftBasis(value.basis, entry.current.basis) ? entry.current.reuseOrigin : null);
   const identity = JSON.stringify([draftKey.projectId, draftKey.unitId, draftKey.locale]);
   const ownerId = `segment-editor-${useId()}`;
@@ -80,11 +85,11 @@ export default function SegmentEditor({ drafts, draftKey, viewId, gate, disabled
   useEffect(() => {
     let current = true;
     setRead({ identity, failed: false });
-    if (!snapshot.retired) void drafts.open({ projectId: draftKey.projectId, unitId: draftKey.unitId, locale: draftKey.locale }).then(result => {
+    if (!retired) void drafts.open({ projectId: draftKey.projectId, unitId: draftKey.unitId, locale: draftKey.locale }).then(result => {
       if (current) setRead({ identity, failed: result === undefined });
     });
     return () => { current = false; };
-  }, [drafts, draftKey.projectId, draftKey.unitId, draftKey.locale, identity, readAttempt, snapshot.retired]);
+  }, [drafts, draftKey.projectId, draftKey.unitId, draftKey.locale, identity, readAttempt, retired]);
 
   useEffect(() => {
     mounted.current = true;
@@ -104,8 +109,8 @@ export default function SegmentEditor({ drafts, draftKey, viewId, gate, disabled
     if (firstLoaded.current.drafts !== drafts) firstLoaded.current = { drafts, keys: new Set() };
     if (!entry || firstLoaded.current.keys.has(identity)) return;
     firstLoaded.current.keys.add(identity);
-    if (autoFocus && !diagnosticFocus && !disabled && !snapshot.retired && gate.getSnapshot().visibleViewId === viewId) field.current?.focus();
-  }, [drafts, entry !== undefined, identity, autoFocus, disabled, snapshot.retired, gate, viewId, diagnosticFocus]);
+    if (autoFocus && !diagnosticFocus && !disabled && !retired && gate.getSnapshot().visibleViewId === viewId) field.current?.focus();
+  }, [drafts, entry !== undefined, identity, autoFocus, disabled, retired, gate, viewId, diagnosticFocus]);
   function rejectDiagnostic() {
     if (diagnosticFocus?.status !== "pending" || diagnosticFocus.location.field !== "translation" || located.current.has(diagnosticFocus.id)) return;
     located.current.add(diagnosticFocus.id); onDiagnosticFocus?.(diagnosticFocus.id, false);
@@ -134,18 +139,18 @@ export default function SegmentEditor({ drafts, draftKey, viewId, gate, disabled
     if (!permitted() || document.activeElement !== control || !control.isConnected || !diagnosticDraftCurrent(drafts, draftKey, focus)) { onDiagnosticFocus?.(focus.id, false); return; }
     control.setSelectionRange(selection.start, selection.end);
     onDiagnosticFocus?.(focus.id, true);
-  }, [diagnosticFocus, diagnosticCurrent, onDiagnosticFocus, snapshot.revision, interaction, disabled, identity, entry !== undefined]);
+  }, [diagnosticFocus, diagnosticCurrent, onDiagnosticFocus, entry, draftAvailability, interaction, disabled, identity]);
   useLayoutEffect(() => {
     const flight = pasteFlight.current;
     if (flight && !flight.applying && !pasteCurrent(flight)) cancelPaste("editorPasteChanged");
-  }, [snapshot.revision, disabled, identity]);
+  }, [entry, retired, disabled, identity]);
 
-  const readonly = disabled || snapshot.retired;
+  const readonly = disabled || retired;
   const retryRead = () => setReadAttempt(attempt => attempt + 1);
   const exit = <Button size="sm" disabled={disabled} onClick={() => dispatch("translation.exit-editor", "button", ownerId)}>{t("editorExit")}</Button>;
   if (!entry) return <>
-    {read.identity === identity && read.failed || snapshot.retired
-      ? <ErrorState title={t("editorReadFailed")} description={t(snapshot.retired ? "editorSessionRetired" : "editorReadFailedHelp")} action={!snapshot.retired ? <Button onClick={retryRead}>{t("editorRetryRead")}</Button> : undefined} />
+    {read.identity === identity && read.failed || retired
+      ? <ErrorState title={t("editorReadFailed")} description={t(retired ? "editorSessionRetired" : "editorReadFailedHelp")} action={!retired ? <Button onClick={retryRead}>{t("editorRetryRead")}</Button> : undefined} />
       : <LoadingState label={t("editorLoading")} />}
     <div className={styles.editActions}>{exit}</div>
   </>;
@@ -155,7 +160,7 @@ export default function SegmentEditor({ drafts, draftKey, viewId, gate, disabled
   const journalConflict = entry.failure?.kind === "journal-conflict";
   const mergeChanged = !!value?.merge && entry.failure?.kind === "basis-conflict";
   const basisChanged = !!value && entry.current.kind === "current" && !entry.basisCurrent;
-  const blocked = readonly || snapshot.hydration !== "ready" || snapshot.mutationReserved || interaction.intentOwner !== null;
+  const blocked = disabled || draftAvailability !== "ready" || interaction.intentOwner !== null;
   const canConfirm = !mergeChanged && !blocked && !!value && entry.basisCurrent && !pending && !entry.busy && entry.currentFailure === null && !journalFailed && !journalConflict;
   const canRestore = !blocked && !!value && !pending && !entry.busy && !journalConflict && entry.current.kind === "current" && entry.currentFailure === null;
   const showRestore = canRestore && (!!value?.merge || value?.text !== (value?.basis.text ?? "") || basisChanged);
@@ -168,7 +173,7 @@ export default function SegmentEditor({ drafts, draftKey, viewId, gate, disabled
         : value.text !== (value.basis.text ?? "") ? "editorNotPreserved" : null
     : null;
   const status = entry.checking ? "editorChecking" : entry.busy ? "editorConfirming" : pending ? "editorPending" : entry.newerInputAfterConfirmation ? "editorNewerInput"
-    : localStatus ?? (value && entry.basisCurrent && entry.currentFailure === null && !journalFailed && !journalConflict && !snapshot.retired ? "editorReady" : null);
+    : localStatus ?? (value && entry.basisCurrent && entry.currentFailure === null && !journalFailed && !journalConflict && !retired ? "editorReady" : null);
 
   function finishPaste(flight: PasteFlight, feedback: PasteFeedback | null) {
     if (pasteFlight.current !== flight) return;
@@ -274,7 +279,7 @@ export default function SegmentEditor({ drafts, draftKey, viewId, gate, disabled
     }} /> : null;
 
   return <>
-    {snapshot.retired ? <Banner tone="warning">{t("editorSessionRetired")}</Banner> : null}
+    {retired ? <Banner tone="warning">{t("editorSessionRetired")}</Banner> : null}
     {entry.current.kind === "unavailable" ? <Banner tone="warning">{t(entry.current.reason === "source-missing" ? "editorSourceMissing" : "editorLocaleRemoved")}</Banner> : null}
     {entry.currentFailure !== null ? <Banner tone="error" role="alert" action={<Button size="sm" disabled={readonly || entry.busy} onClick={retryRead}>{t("editorRetryRead")}</Button>}>{t("editorReadFailedHelp")}</Banner> : null}
     {reuseOrigin ? <TranslationReuseReference origin={reuseOrigin} locale={draftKey.locale} disabled={readonly}/> : null}
