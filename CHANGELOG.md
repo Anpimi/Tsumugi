@@ -185,7 +185,7 @@ Current workspace version metadata: **`0.2.0-alpha.1`**. Because the published `
 - Open the project's current saved source from the upstream import sheet after restoring a backup or opening the project without a local import receipt.
 - After rereading a source match, the correction panel stops asking you to reread it and keeps your newer edits visible for confirmation.
 
-- Delivery shows when the selected build was saved and offers a direct switch to a newer saved build. Existing export preparation stays with its original build until you clear it or finish the export.
+- Delivery shows when the selected build was saved and whether it uses the project's current saved source. If a newer build is available, you can switch to it explicitly. Existing export preparation stays with its original build until you clear it or finish the export.
 
 - Match existing translations against the selected native namespace in mixed source captures, so plugin record entries remain available alongside MCM tables without crossing identity scopes.
 
