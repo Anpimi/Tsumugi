@@ -29,7 +29,15 @@ When a project already has an adopted source snapshot, use **Import an upstream 
 - **Change classification**: The comparison identifies unchanged strings, same-key text edits, reordered entries, additions, removals, candidate renames, and ambiguous (`1:N` or `N:1`) mappings. Identical text under a different key is surfaced as a candidate rename and requires a reviewer's name and reason to confirm or reject; unresolved or rejected items become new content units.
 - **Continuation rules**: Under the versioned revision policy, an unchanged string with the same key keeps its content unit, source revision, and existing translation approvals/QA even if reordered. A same-key string whose source text changed requires an explicit continuation decision to retain its content unit, and its prior translation approval and QA checks are invalidated until re-verified in the entry’s **Issues** tab.
 - **Impact estimation and work queue**: Before applying the update, **Review what will be kept** summarizes per-language effects across the complete snapshot. After applying, the source brief shows current impact and **View affected entries** opens the related entries for review and editing.
-- **Snapshot history and identity correction**: **Source snapshot history** retains all verified snapshots, file fingerprints, and continuation decisions. To amend an earlier identity decision, reimport the current source files, select the earlier snapshot as the historical comparison basis, and record the updated continuation or rejection decision (reimporting identical files without an identity change is rejected as a no-op). To review a match in the current snapshot, open **Import an upstream version**, choose **View current saved source**, and select the entry. This path works after restoring a project backup. **Correct this entry match** opens the correction form. Saved translations and approvals remain with their original entries.
+- **Source snapshot history** retains verified snapshots, file fingerprints, and earlier match decisions.
+
+### Correcting a saved entry match
+
+From **Import an upstream version**, choose **View current saved source**, select the entry, and open **Correct this entry match**. This uses the current snapshot saved in the project, including after you restore a backup.
+
+Choose the older entry and the match decision, then give your name and reason. Review the match and the saved work on both sides, select the confirmation checkbox, and choose **Record this entry correction**. If the form asks you to refresh, choose **Read the match and saved work again** and review the updated information before confirming.
+
+A correction adds a match decision to the current snapshot's history. Each entry keeps its translations and approvals. To reuse a translation, select it in the editor and review it against the current source.
 
 ### Optional maintenance notice
 
