@@ -10,7 +10,7 @@ import { PluginBuildControls, type BuildWorkbenchParts } from "../../../PluginBu
 import { ReleaseDraftHandleProvider, type useReleaseDraftSession } from "../../../ReleaseDraftSession";
 import { ExecutionTaskHandleProvider, type useExecutionTaskSession } from "../../../ExecutionTaskSession";
 import { executionContext } from "../../../executionCommands";
-import { releaseCommands, type DeliveryView as DeliveryRecord } from "../../../releaseCommands";
+import { releaseCommands, type DeliveryView as DeliveryRecord, type ReleaseView } from "../../../releaseCommands";
 import { useSessionQuery, useSessionReads } from "../../../SessionReadProvider";
 import type { DecisionItem, DecisionPage } from "../../../decisionCommands";
 import type { ProjectView } from "../../../projectCommands";
@@ -49,6 +49,7 @@ export function DeliveryView(props: DeliveryViewProps) {
   const [primaryMode, setPrimaryMode] = useState<"build" | "export">(owner.chosen ? "export" : "build");
   const [expanded, setExpanded] = useState<Step[]>(() => owner.checkReview && !owner.checkAttempt || owner.workflow?.review?.phase === "prepared" && !owner.workflow.start && !owner.workflow.stop ? ["verification"] : owner.prepared && !owner.attempt ? ["build"] : []), [settingsOpen, setSettingsOpen] = useState(false);
   const selectedTarget = useRef<string | null>(null), mounted = useRef(false);
+  const exportStep = useRef<HTMLButtonElement>(null);
   const decisionFlight = useRef(0), currentView = useRef({ visible, sessionToken: project.sessionToken, viewId });
   currentView.current = { visible, sessionToken: project.sessionToken, viewId };
   const [decisionChanged, setDecisionChanged] = useState(false);
@@ -64,6 +65,8 @@ export function DeliveryView(props: DeliveryViewProps) {
   const { releasesRead, deliveriesRead, commandScope } = delivery;
   const { chosen, selection, preview, overwrite, result, pending, busy } = owner;
   const releases = releasesRead.data ?? [], deliveries = deliveriesRead.data ?? [];
+  const latestSaved = releasesRead.isSuccess ? releases[0] : undefined;
+  const newerSaved = latestSaved && chosen && Date.parse(latestSaved.createdAt) > Date.parse(chosen.createdAt) ? latestSaved : null;
   const targetRead = useSessionQuery({ key: ["delivery-navigation-record", target], scopes: ["release"], enabled: visible && !!target,
     read: async () => {
       if (!target) throw new Error("No delivery navigation target");
@@ -86,6 +89,12 @@ export function DeliveryView(props: DeliveryViewProps) {
   }, [target, targetRecord, targetRead.isFetching, targetRead.error, releasesRead.dataUpdatedAt, releasesRead.isFetching, releasesRead.error, visible, disabled, originalWorkKept, chosen?.releaseId, interaction]);
 
   function reveal(step: Step) { if (canInteract()) setExpanded(current => current.includes(step) ? current : [...current, step]); }
+  function chooseForExport(record: ReleaseView) {
+    if (!canInteract() || !commands.dispatch("release.choose-release", commandScope, delivery.recordPayload(record))) return false;
+    setPrimaryMode("export");
+    reveal("export");
+    return true;
+  }
   function toggle(step: Step) { if (canInteract()) { if (step === "export") setPrimaryMode("export"); else if (step === "build" || step === "verification" || step === "readiness") setPrimaryMode("build"); setExpanded(current => current.includes(step) ? current.filter(item => item !== step) : [...current, step]); } }
   const isExpanded = (step: Step) => expanded.includes(step) || step === "export" && !!target || step === "history" && !!owner.savedAttempt;
   function dispatchExport() {
@@ -128,14 +137,15 @@ export function DeliveryView(props: DeliveryViewProps) {
   }
   function formatDate(value: string) {
     const date = new Date(value);
-    return Number.isFinite(date.getTime()) ? new Intl.DateTimeFormat(i18n.resolvedLanguage, { dateStyle: "medium", timeStyle: "short" }).format(date) : value;
+    return Number.isFinite(date.getTime()) ? new Intl.DateTimeFormat(i18n.resolvedLanguage, { dateStyle: "medium", timeStyle: "medium" }).format(date) : value;
   }
+  const chosenLabel = chosen ? t("chosenRecord", { date: formatDate(chosen.createdAt) }) : null;
   const history = <>
     <div className={styles.actions}><Button variant="secondary" disabled={!canInteract() || releasesRead.isFetching} onClick={() => { if (canInteract()) void releasesRead.refetch(); }}>{t("refreshHistory")}</Button></div>
     {releasesRead.isPending ? <p role="status">{t("loading")}</p> : releases.length === 0 && !releasesRead.error ? <p>{t("noHistory")}</p> : null}
     <ul className={styles.historyList}>{releases.map(record => <li key={record.releaseId}>
       <Button variant="ghost" aria-pressed={chosen?.releaseId === record.releaseId} disabled={!delivery.recordAvailability(delivery.recordPayload(record)).enabled || owner.deliveryDirty && chosen?.releaseId !== record.releaseId}
-        onClick={() => { if (canInteract()) { if (commands.dispatch("release.choose-release", commandScope, delivery.recordPayload(record))) { setPrimaryMode("export"); reveal("export"); } } }}>{t("chooseRecord", { date: formatDate(record.createdAt) })}</Button>
+        onClick={() => chooseForExport(record)}>{t("chooseRecord", { date: formatDate(record.createdAt) })}</Button>
       <Button variant="secondary" disabled={!delivery.savedBuildAvailability(delivery.recordPayload(record)).enabled}
         onClick={() => { if (canInteract() && commands.dispatch("release.open-saved-build", commandScope, delivery.recordPayload(record))) reveal("history"); }}>{t("viewRecord", { date: formatDate(record.createdAt) })}</Button>
       {record.exceptions.some(item => item.kind === "source-retained") ? <p>{global("releaseScope.retainedCount", { count: record.exceptions.filter(item => item.kind === "source-retained").length })}</p> : null}
@@ -156,7 +166,7 @@ export function DeliveryView(props: DeliveryViewProps) {
       {originalWorkKept ? <Banner tone="info">{t("ownerKept")} <Button variant="link" disabled={!canInteract()} onClick={() => reveal("build")}>{t("backToDelivery")}</Button></Banner> : null}
     </section> : null}
     {chosen ? <>
-      <h3>{t("chosenRecord")}</h3>
+      <h3>{chosenLabel}</h3>
       {chosen.exceptions.some(item => item.kind === "source-retained") ? <Banner tone="info">{global("releaseScope.ready", { count: chosen.exceptions.filter(item => item.kind === "source-retained").length })}</Banner> : null}
       <ul className={styles.fileList}>{chosen.artifacts.map(file => <li key={`${file.locale}:${file.fileName}`}><code>{file.fileName}</code><span>{file.locale} · {file.entryCount}</span></li>)}</ul>
       <div className={styles.actions}>
@@ -223,11 +233,19 @@ export function DeliveryView(props: DeliveryViewProps) {
       {deliveryFailure ? <Banner tone={pendingExport ? "warning" : "error"} role="alert"><p>{global("release.error", { reason: global(deliveryReason) })}</p><CommandFailureDetails failure={deliveryFailure}/></Banner> : null}
       {historyFailure ? <Banner tone="warning" role="alert"><p>{t("historyFailed")}</p><CommandFailureDetails failure={commandFailure(historyFailure)}/><Button variant="secondary" disabled={!canInteract()} onClick={() => { if (canInteract()) { void releasesRead.refetch(); if (chosen) void deliveriesRead.refetch(); } }}>{t("retryOwner")}</Button></Banner> : null}
       {parts.feedback}{parts.recovery}
+      {newerSaved ? <Banner role="status" action={
+        <Button variant="secondary" disabled={!delivery.recordAvailability(delivery.recordPayload(newerSaved)).enabled}
+          onClick={() => { if (chooseForExport(newerSaved)) exportStep.current?.focus(); }}>{t("useNewerBuild")}</Button>
+      }>
+        <p>{t("newerBuildAvailable", { date: formatDate(newerSaved.createdAt) })}</p>
+        {owner.deliveryDirty && !pendingExport ? <p>{t("clearBeforeSwitching")}</p> : null}
+      </Banner> : null}
       <div className={styles.settings}><Button variant="ghost" aria-expanded={settingsOpen} aria-controls={`${id}-settings`} disabled={!canInteract()} onClick={() => { if (canInteract()) { setPrimaryMode("build"); setSettingsOpen(value => !value); } }}>{t("settings")}<ChevronDown aria-hidden="true"/></Button><span>{settings}</span></div>
       <section hidden={!settingsOpen} className={styles.settingsBody} id={`${id}-settings`} aria-label={t("settings")}>{parts.settings}</section>
       <ol className={styles.stepper}>{steps.map((step, index) => <li key={step}>
         <span className={styles.number} aria-hidden="true">{index + 1}</span><div className={styles.stepContent}>
-          <div className={styles.stepHeader}><h2><Button variant="ghost" disabled={!canInteract()} aria-expanded={isExpanded(step)} aria-controls={`${id}-${step}`} onClick={() => toggle(step)}>{t(step)}<ChevronDown aria-hidden="true"/></Button></h2><p>{summary[step]}</p></div>
+          <div className={styles.stepHeader}><h2><Button ref={step === "export" ? exportStep : undefined} variant="ghost" disabled={!canInteract()} aria-expanded={isExpanded(step)} aria-controls={`${id}-${step}`} onClick={() => toggle(step)}>{t(step)}<ChevronDown aria-hidden="true"/></Button></h2><p>{summary[step]}</p>
+            {step === "export" && chosenLabel && !isExpanded(step) ? <p>{chosenLabel}</p> : null}</div>
           <section hidden={!isExpanded(step)} id={`${id}-${step}`} className={styles.stepBody} aria-label={t(step)}>{contents[step]}</section>
         </div>
       </li>)}</ol>

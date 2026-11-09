@@ -182,6 +182,8 @@ Current workspace version metadata: **`0.2.0-alpha.1`**. Because the published `
 
 ### Fixed
 
+- Delivery shows when the selected build was saved and offers a direct switch to a newer saved build. Existing export preparation stays with its original build until you clear it or finish the export.
+
 - Match existing translations against the selected native namespace in mixed source captures, so plugin record entries remain available alongside MCM tables without crossing identity scopes.
 
 - Delivery labels saving a completed independent check as “Save check result,” distinguishing it from running the checker again.

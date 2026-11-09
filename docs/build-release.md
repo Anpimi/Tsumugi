@@ -37,7 +37,7 @@ In **History**, **View build details from …** opens the full saved build and a
 
 ## Exporting release files to disk
 
-1. In **Delivery**, refresh **History** and select a saved build. Its saved evidence includes the input digest, source-file digests, builder and checker versions, review basis, and any recorded source fallbacks or QA waivers.
+1. In **Delivery**, select a saved build from **History** and confirm its saved time in **Export**. If a newer build is available, choose **Use newer build for export** to switch to it. Clear any unsubmitted export settings or resolve a pending export before switching. The saved evidence includes the input digest, source-file digests, builder and checker versions, review basis, and any recorded source fallbacks or QA waivers.
 2. Choose a local export folder and click **Check folder**. Tsumugi compares the release's relative file paths against the destination directory, recognizing existing identical files and requiring explicit confirmation before overwriting differing files.
 3. Confirm the export. If a destination file changes after the preview, the export stops and requests a fresh destination check. Export history records the target directory, per-file status, and observed file digests. Always verify exported files before using them in another application.
 

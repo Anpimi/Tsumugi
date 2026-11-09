@@ -21,9 +21,11 @@ vi.mock("@tauri-apps/api/core", () => ({ invoke }));
 const project: ProjectView = { locator: "/synthetic/delivery", sessionToken: wire.requests.session.sessionToken, reconciliationState: "settled",
   metadata: { projectId: wire.requests.session.projectId, displayName: "Delivery sample", sourceLocale: "en-US", targetLocales: ["zh-CN", "fr-FR"], metadataRevision: "1" } };
 const release = wire.responses.releases[0];
+const newerRelease = { ...release, releaseId: id(750), attemptId: id(751), actionId: id(752), sourceSnapshotId: id(753), createdAt: "2026-10-05T00:00:00Z" };
 const w = (key: keyof typeof deliveryWorkbenchEn, values: Record<string, string | number> = {}) => i18n.t(`deliveryWorkbench.${key}`, values);
 let registry: ReturnType<typeof useWorkbenchCommands>;
 let gate: InteractionGate, owner: ReturnType<typeof useReleaseDraftSession>, stored: ExportRecord | null, serial: number;
+let releases: typeof wire.responses.releases;
 let installed: boolean, loseExport: boolean, readAttempts: number, prepared: PluginBuildPrepareRequest | null;
 function Harness({ visible = true, target = null, inbox, onOpenDecision }: { visible?: boolean; target?: DeliveryViewProps["target"]; project?: ProjectView; inbox?: DeliveryViewProps["inbox"]; onOpenDecision?: DeliveryViewProps["onOpenDecision"] }) {
   owner = useReleaseDraftSession();
@@ -37,10 +39,10 @@ function mainAction() {
   if (!header) throw new Error("Delivery header required");
   return within(header).getByRole("button");
 }
-function recordName() {
-  const date = new Intl.DateTimeFormat(i18n.resolvedLanguage, { dateStyle: "medium", timeStyle: "short" }).format(new Date(release.createdAt));
-  return w("chooseRecord", { date });
+function releaseDate(record = release) {
+  return new Intl.DateTimeFormat(i18n.resolvedLanguage, { dateStyle: "medium", timeStyle: "medium" }).format(new Date(record.createdAt));
 }
+function recordName() { return w("chooseRecord", { date: releaseDate() }); }
 async function chooseSaved() {
   const user = userEvent.setup();
   const view = render(<Harness project={project}/>);
@@ -59,20 +61,20 @@ async function prepareExport(user: ReturnType<typeof userEvent.setup>) {
 }
 beforeEach(async () => {
   await i18n.changeLanguage("en-US"); gate = new InteractionGate(); gate.setVisibleOwner("delivery-view");
-  stored = null; serial = 720; installed = false; loseExport = false; readAttempts = 0; prepared = null;
+  releases = [release]; stored = null; serial = 720; installed = false; loseExport = false; readAttempts = 0; prepared = null;
   invoke.mockReset().mockImplementation(async (command: string, args: { request: Record<string, unknown> }) => {
     const request = args?.request;
-    if (command === "list_releases") return [release];
+    if (command === "list_releases") return releases;
     if (command === "read_saved_plugin_build") return { ...structuredClone(savedPluginBuild), projectId: project.metadata.projectId, attemptId: request.attemptId };
-    if (command === "list_deliveries") return stored ? [stored] : [];
+    if (command === "list_deliveries") return stored && stored.releaseId === request.releaseId ? [stored] : [];
     if (command === "read_plugin_inventory") return installed ? pluginBuildInventory : { ...pluginBuildInventory, packages: [], packageDecisions: [], runtimes: [], runtimeDecisions: [] };
     if (command === "read_plugin_package") return pluginBuildPackage;
     if (command === "read_plugin_build") return pluginBuildView;
     if (command === "create_execution_identity") return id(serial++);
     if (command === "choose_delivery_folder") return wire.responses.selection;
-    if (command === "preview_delivery") return wire.responses.preview;
+    if (command === "preview_delivery") return { ...wire.responses.preview, releaseId: request.releaseId };
     if (command === "export_release") {
-      stored = { ...wire.responses.delivery, actionId: String(request.actionId), state: "succeeded", files: wire.responses.delivery.files.map(file => ({ ...file, state: "succeeded", actualSha256: file.expectedSha256 })) };
+      stored = { ...wire.responses.delivery, actionId: String(request.actionId), releaseId: String(request.releaseId), state: "succeeded", files: wire.responses.delivery.files.map(file => ({ ...file, state: "succeeded", actualSha256: file.expectedSha256 })) };
       if (loseExport) throw { code: "outcome-unknown" };
       return stored;
     }
@@ -109,6 +111,52 @@ it.each([
   expect(call?.[1].request).toEqual({ ...wire.requests.export, projectId: project.metadata.projectId, sessionToken: project.sessionToken, actionId: id(720) });
   expect(invoke.mock.calls.filter(([command]) => command === "export_release")).toHaveLength(1);
   expect(invoke.mock.calls.some(([command]) => ["prepare_plugin_build", "start_plugin_build", "start_ai_translation", "prepare_artifact_check"].includes(command))).toBe(false);
+});
+
+it("identifies an older export selection and uses a newer saved build only when requested", async () => {
+  const { user } = await chooseSaved();
+  await prepareExport(user);
+  await user.click(screen.getByRole("checkbox", { name: w("overwrite") }));
+  await user.click(mainAction());
+  await screen.findByText(w("exported"));
+
+  releases = [newerRelease, release];
+  await user.click(screen.getByRole("button", { name: w("refreshHistory") }));
+  const useNewer = await screen.findByRole("button", { name: "Use newer build for export" });
+  expect(screen.getByRole("heading", { name: `Selected build from ${releaseDate()}` })).toBeVisible();
+  expect(screen.getByText(`A newer build was saved on ${releaseDate(newerRelease)}.`)).toBeVisible();
+  expect(owner.current().chosen?.releaseId).toBe(release.releaseId);
+
+  await user.click(useNewer);
+  expect(within(screen.getByRole("heading", { name: w("export"), level: 2 })).getByRole("button")).toHaveFocus();
+  expect(screen.getByRole("heading", { name: `Selected build from ${releaseDate(newerRelease)}` })).toBeVisible();
+  expect(owner.current()).toMatchObject({ selection: null, preview: null, overwrite: false, result: null });
+  expect(invoke.mock.calls.filter(([command]) => command === "choose_delivery_folder")).toHaveLength(1);
+
+  await prepareExport(user);
+  await user.click(screen.getByRole("checkbox", { name: w("overwrite") }));
+  await user.click(mainAction());
+  await screen.findByText(w("exported"));
+  expect(invoke.mock.calls.filter(([command]) => command === "export_release").map(([, args]) => args.request.releaseId))
+    .toEqual([release.releaseId, newerRelease.releaseId]);
+});
+
+it("preserves an unsubmitted export preview when a newer saved build appears", async () => {
+  const { user } = await chooseSaved();
+  await prepareExport(user);
+  await user.click(screen.getByRole("checkbox", { name: w("overwrite") }));
+  const before = owner.current();
+  releases = [newerRelease, release];
+  await user.click(screen.getByRole("button", { name: w("refreshHistory") }));
+  const useNewer = await screen.findByRole("button", { name: "Use newer build for export" });
+  expect(useNewer).toBeDisabled();
+  expect(owner.current()).toBe(before);
+
+  await user.click(screen.getByRole("button", { name: w("clearDestination") }));
+  expect(useNewer).toBeEnabled();
+  await user.click(useNewer);
+  expect(owner.current().chosen?.releaseId).toBe(newerRelease.releaseId);
+  expect(invoke.mock.calls.some(([command]) => command === "export_release")).toBe(false);
 });
 
 it("clears only an unsubmitted export setup while keeping the saved release and newer build input", async () => {
@@ -208,8 +256,7 @@ it.each(["en-US", "zh-CN"])("opens the full saved build evidence through History
   const user = userEvent.setup(); render(<Harness project={project}/>);
   const history = await screen.findByRole("button", { name: w("history") });
   await waitFor(() => expect(history).toBeEnabled()); await user.click(history);
-  const date = new Intl.DateTimeFormat(i18n.resolvedLanguage, { dateStyle: "medium", timeStyle: "short" }).format(new Date(release.createdAt));
-  await user.click(await screen.findByRole("button", { name: w("viewRecord", { date }) }));
+  await user.click(await screen.findByRole("button", { name: w("viewRecord", { date: releaseDate() }) }));
   expect(await screen.findByRole("heading", { name: i18n.t("releasePlugin.savedTitle") })).toBeVisible();
   const artifact = savedPluginBuild.locales[0].result?.artifacts[0];
   if (!artifact) throw new Error("Expected complete saved artifact evidence");
