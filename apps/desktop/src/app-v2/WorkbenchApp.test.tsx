@@ -3,7 +3,7 @@ import * as tauriCore from "@tauri-apps/api/core";
 import * as tauriEvents from "@tauri-apps/api/event";
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { StrictMode, useCallback, useLayoutEffect, type ComponentProps } from "react";
+import { StrictMode, useCallback, useLayoutEffect, useState, type ComponentProps } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { clearMocks, mockIPC } from "@tauri-apps/api/mocks";
 import { i18n } from "../i18n";
@@ -15,6 +15,7 @@ import { sourceDraftStateFixture } from "../testSupport/sourceDraftStateFixture"
 import { pluginCommands } from "../pluginCommands";
 import { pluginSourceInventory, pluginSourcePackage, pluginSourceRequest, pluginSourceView, pluginSourceWorkflow } from "../testSupport/pluginSourceFixture";
 import { startupCommands, type StartupDropEvent } from "../startupCommands";
+import type { KnowledgeOwner } from "./features/knowledge/knowledgeTypes";
 import type { SourceOwner } from "./features/source/sourceTypes";
 import { segmentCommands, type SegmentPage } from "../segmentCommands";
 import { decisionCommands } from "../decisionCommands";
@@ -40,6 +41,7 @@ import { projectCommands, type ProjectView } from "../projectCommands";
 import WorkbenchApp from "./WorkbenchApp";
 import { ProjectLifecycle, type ProjectLifecyclePorts } from "./platform/projectLifecycle";
 import type { TranslationImportPanelProps } from "./features/import/TranslationImportPanel";
+import * as applicationSettings from "./features/settings/ApplicationSettings";
 import { Button } from "../design-system/Button";
 import * as nativeMenu from "./nativeMenu";
 import { fixtureIdentity } from "../testSupport/executionFixture";
@@ -53,7 +55,16 @@ vi.mock("@tauri-apps/api/core", { spy: true });
 vi.mock("@tauri-apps/api/event", { spy: true });
 vi.mock("@tauri-apps/api/path", () => ({ sep: () => "/", join: async (...parts: string[]) => parts.join("/") }));
 vi.mock("./nativeMenu", { spy: true });
-const ownerLoad = vi.hoisted(() => ({ execution: null as Promise<void> | null, knowledge: null as Promise<void> | null, source: null as Promise<void> | null, sourceValue: null as SourceOwner | null, deliveryFail: false }));
+const ownerLoad = vi.hoisted(() => ({ execution: null as Promise<void> | null, knowledge: null as Promise<void> | null, source: null as Promise<void> | null,
+  knowledgeValue: null as KnowledgeOwner | null, sourceValue: null as SourceOwner | null, deliveryFail: false }));
+const entriesPresentation = vi.hoisted(() => vi.fn());
+vi.mock("./features/entries/EntriesView", async original => {
+  const module = await original<typeof import("./features/entries/EntriesView")>(), Actual = module.default;
+  return { ...module, default: function EntriesPresentationProbe(props: ComponentProps<typeof Actual>) {
+    useLayoutEffect(() => { entriesPresentation(); });
+    return <Actual {...props}/>;
+  } };
+});
 vi.mock("./features/delivery/DeliveryOwnerHost", async original => {
   const module = await original<typeof import("./features/delivery/DeliveryOwnerHost")>(), Actual = module.default;
   return { ...module, default: (props: ComponentProps<typeof Actual>) => {
@@ -71,8 +82,9 @@ vi.mock("./features/execution/ExecutionOwnerHost", async original => {
 vi.mock("./features/knowledge/KnowledgeOwnerHost", async original => {
   const module = await original<typeof import("./features/knowledge/KnowledgeOwnerHost")>(), Actual = module.default;
   return { ...module, default: (props: ComponentProps<typeof Actual>) => {
+    const publish = useCallback((owner: KnowledgeOwner | null) => { ownerLoad.knowledgeValue = owner; props.onOwner(owner); }, [props.onOwner]);
     if (ownerLoad.knowledge) throw ownerLoad.knowledge;
-    return <Actual {...props}/>;
+    return <Actual {...props} onOwner={publish}/>;
   } };
 });
 vi.mock("./features/source/SourceOwnerHost", async original => {
@@ -122,7 +134,7 @@ const page: SegmentPage = {
 let controller: ProjectLifecycle;
 beforeEach(async () => {
   ownerLoad.execution = null; ownerLoad.knowledge = null; ownerLoad.source = null;
-  ownerLoad.sourceValue = null;
+  ownerLoad.knowledgeValue = null; ownerLoad.sourceValue = null;
   ownerLoad.deliveryFail = false;
   installResourceDraftPortsFixture();
   installSourceDraftPortsFixture();
@@ -231,10 +243,14 @@ it("shows the offline project brief and continues the previous entry without sub
   const plan = vi.spyOn(conversationCommands, "preparePlanning");
   await openImportWorkspace();
   fireEvent.click(screen.getByRole("button", { name: i18n.t("workbenchV2.openAgent") }));
-  const brief = within(await screen.findByRole("region", { name: "项目简报" }, { timeout: 5000 }));
-  expect(brief.getByText("仅使用项目记录生成，不调用模型。")).toBeVisible();
-  const continueEntry = brief.getByRole("button", { name: `继续 ${position.nativeKey} · ${position.locale}` });
-  await waitFor(() => expect(continueEntry).toBeEnabled()); fireEvent.click(continueEntry);
+  // The lazy conversation panel can replace the fallback brief while it loads.
+  const brief = () => within(screen.getByRole("region", { name: "项目简报" }));
+  const continueEntry = () => brief().getByRole("button", { name: `继续 ${position.nativeKey} · ${position.locale}` });
+  await waitFor(() => {
+    expect(brief().getByText("仅使用项目记录生成，不调用模型。")).toBeVisible();
+    expect(continueEntry()).toBeEnabled();
+  }, { timeout: 5000 });
+  fireEvent.click(continueEntry());
   await screen.findByText("Actual source from the read port");
   await waitFor(() => expect(readRecentProject(project.locator)?.position?.unitId).toBe(position.unitId));
   await waitFor(() => expect(segmentCommands.queueWindow).toHaveBeenCalledWith(expect.objectContaining({ anchorUnitId: position.unitId, locale: position.locale })));
@@ -576,7 +592,14 @@ async function openImportWorkspace(opened: ProjectView = project, ports: Partial
   return { close, register, button };
 }
 
-it("suspends the workspace command group while keeping native Edit installed", async () => {
+function waitForSourceAndKnowledgeJournals() {
+  return waitFor(() => {
+    expect(ownerLoad.sourceValue?.journal.hydration).toBe("ready");
+    expect(ownerLoad.knowledgeValue?.journal.hydration).toBe("ready");
+  }, { timeout: 5000 });
+}
+
+it("updates native command readiness and suspends the workspace group without replacing Edit", async () => {
   type NativeItem = { id: string; enabled: boolean };
   const items = new Map<number, NativeItem>();
   const submenus = new Map<number, number[]>();
@@ -591,7 +614,20 @@ it("suspends the workspace command group while keeping native Edit installed", a
   });
   const setEnabled = vi.fn<(kind: string, enabled: boolean, previous: boolean | undefined) => void>();
   const gateIntents = vi.spyOn(InteractionGate.prototype, "acquireIntent");
+  const readSettings = applicationSettings.useApplicationSettings;
+  const showReferences = new Set<(visible: boolean) => void>();
+  const settingsSpy = vi.spyOn(applicationSettings, "useApplicationSettings").mockImplementation(function useDeferredReferenceCommands() {
+    const settings = readSettings(), [visible, setVisible] = useState(false);
+    useLayoutEffect(() => {
+      showReferences.add(setVisible);
+      return () => { showReferences.delete(setVisible); };
+    }, []);
+    return visible ? settings : { ...settings, openReferences: undefined, openMcpQuery: undefined, openMcpShare: undefined };
+  });
+  // Hold the independent background read so it cannot commit while measuring the gate update.
+  const readDecisions = vi.spyOn(decisionCommands, "page").mockReturnValue(new Promise(() => {}));
   vi.stubGlobal("isTauri", true);
+  vi.stubGlobal("innerWidth", 1440);
   mockIPC((command, args) => {
     const { kind, options, rid, enabled } = args as {
       kind?: string; options?: { enabled?: boolean; items?: (NativeItem | [number, string])[] };
@@ -629,31 +665,75 @@ it("suspends the workspace command group while keeping native Edit installed", a
   };
   try {
     await openImportWorkspace();
-    await waitFor(() => expect(enabled("workspace.open-project")).toBe(true));
+    expect(await screen.findByText(page.rows[0].content.sourcePreview, {}, { timeout: 5000 })).toBeVisible();
+    await waitForSourceAndKnowledgeJournals();
+    await screen.findByRole("button", { name: i18n.t("conversation.chooseThread") }, { timeout: 5000 });
+    await waitFor(() => {
+      expect(readDecisions).toHaveBeenCalled();
+      expect(enabled("workspace.open-project")).toBe(true);
+    }, { timeout: 5000 });
+    const activity = within(screen.getByRole("navigation", { name: i18n.t("workbenchV2.activity") }));
+    const entries = () => activity.getByRole("button", { name: i18n.t("workbenchV2.entries") });
+    expect(entries()).toBeEnabled();
     const gate = gateIntents.mock.contexts.find((_, index) => gateIntents.mock.calls[index][0] === "restore");
     if (!(gate instanceof InteractionGate)) throw new Error("Missing workspace interaction gate");
+    // The lazy conversation panel registers its own command. Let the menu
+    // include it before checking that availability-only changes keep Edit.
+    const setup = { intent: null as ReturnType<InteractionGate["acquireIntent"]> };
+    act(() => { setup.intent = gate.acquireIntent("menu-fixture"); });
+    if (!setup.intent) throw new Error("Workspace interaction gate is still busy");
+    await waitFor(() => expect(enabled("workspace.open-project")).toBe(false));
+    act(setup.intent.release);
+    await waitFor(() => expect(enabled("workspace.open-project")).toBe(true));
+    expect(enabled("conversation.new-thread")).toBeDefined();
     const installed = currentMenu;
     setAppMenu.mockClear();
     setEnabled.mockClear();
+    const referenceCommands = ["workspace.references", "workspace.mcp-query", "workspace.mcp-share"];
+    for (const command of referenceCommands) expect(enabled(command)).toBe(false);
+    act(() => { showReferences.forEach(show => show(true)); });
+    await waitFor(() => { for (const command of referenceCommands) expect(enabled(command)).toBe(true); });
+    expect(currentMenu).toBe(installed);
+    expect(setAppMenu).not.toHaveBeenCalled();
+    setEnabled.mockClear();
+    entriesPresentation.mockClear();
     let reservation: ReturnType<InteractionGate["acquireIntent"]> = null;
     act(() => { reservation = gate.acquireIntent("editor-paste"); });
     expect(reservation).not.toBeNull();
+    expect(entries()).toHaveAttribute("aria-disabled", "true");
+    expect(entriesPresentation).not.toHaveBeenCalled();
     await waitFor(() => expect(enabled("workspace.open-project")).toBe(false));
     expect(currentMenu).toBe(installed);
     expect(setEnabled.mock.calls).toEqual([["Submenu", false, true]]);
+    entriesPresentation.mockClear();
     act(() => { reservation!.release(); });
+    expect(entries()).toBeEnabled();
+    expect(entriesPresentation).not.toHaveBeenCalled();
     await waitFor(() => expect(enabled("workspace.open-project")).toBe(true));
     expect(setAppMenu).not.toHaveBeenCalled();
     expect(setEnabled.mock.lastCall).toEqual(["Submenu", true, false]);
     // An owner can finish loading during the reservation. Publish any real
     // per-item changes before restoring the group.
     expect(setEnabled.mock.calls.slice(1, -1).every(([kind, enabled, previous]) => kind === "MenuItem" && enabled !== previous)).toBe(true);
+
+    setEnabled.mockClear();
+    act(() => gate.setComposing("test-editor", true));
+    await waitFor(() => expect(enabled("workspace.open-project")).toBe(false));
+    act(() => gate.setComposing("test-editor", false));
+    await waitFor(() => expect(enabled("workspace.open-project")).toBe(true));
+    let closeDialog!: () => void;
+    act(() => { closeDialog = gate.pushDialog("test-dialog"); });
+    await waitFor(() => expect(enabled("workspace.open-project")).toBe(false));
+    act(closeDialog);
+    await waitFor(() => expect(enabled("workspace.open-project")).toBe(true));
+    expect(setEnabled.mock.calls).toEqual([["Submenu", false, true], ["Submenu", true, false], ["Submenu", false, true], ["Submenu", true, false]]);
+    expect(setAppMenu).not.toHaveBeenCalled();
   } finally {
     cleanup();
     try { await waitFor(() => expect(currentMenu).toBe(hostMenu)); }
-    finally { clearMocks(); vi.unstubAllGlobals(); }
+    finally { settingsSpy.mockRestore(); clearMocks(); vi.unstubAllGlobals(); }
   }
-});
+}, 15000);
 
 it("lets the first entries read finish before starting the passive decision count", async () => {
   let finishPage!: (value: SegmentPage) => void;
@@ -732,6 +812,46 @@ it("uses the folder picker after a rejected native drop invalidates the offered 
     listen.mockRestore(); native.mockRestore(); menu.mockRestore();
   }
 });
+
+it("enables local recovery for the first draft without refreshing the entries presentation", async () => {
+  const { unitId, locale, nativeKey, sourceRevisionId, sourcePreview } = page.rows[0].content;
+  const key = { projectId: project.metadata.projectId, unitId, locale };
+  const basis: DraftBasis = { sourceRevisionId, selectionId: null, revisionId: null, text: null };
+  let head: DraftHead = { key, revision: "0", writerId: null, value: null };
+  vi.spyOn(segmentCommands, "queueWindow").mockResolvedValue({ ...page, firstPosition: 0, previousUnitId: null, nextUnitId: null });
+  vi.spyOn(draftCommands, "read").mockImplementation(async () => ({ head: structuredClone(head), current: {
+    kind: "current", basis, nativeKey, sourceText: sourcePreview,
+  } }));
+  const write = vi.spyOn(draftCommands, "write").mockImplementation(async ({ write }) => {
+    const { editSeq, text } = write.value;
+    head = { key: write.key, revision: "1", writerId: write.writerId, value: { basis, editSeq, text, pending: null } };
+    return structuredClone(head);
+  });
+  vi.spyOn(decisionCommands, "page").mockRejectedValue(new Error("No decision fixture"));
+  await openImportWorkspace();
+  const edit = await screen.findByRole("button", { name: i18n.t("workbenchV2.entryEdit", { key: nativeKey }) }, { timeout: 5000 });
+  await waitFor(() => expect(edit).toBeEnabled());
+  fireEvent.click(edit);
+  const inputName = i18n.t("workbenchV2.editorLabel", { key: nativeKey });
+  const input = await screen.findByRole("textbox", { name: inputName }, { timeout: 5000 });
+  await waitForSourceAndKnowledgeJournals();
+  await screen.findByLabelText(i18n.t("workbenchV2.decisionsBadgeError"), {}, { timeout: 5000 });
+  const recoveryName = i18n.t("workbenchV2.draftRecoveryTitle");
+  expect(screen.getByRole("button", { name: recoveryName })).toBeDisabled();
+  entriesPresentation.mockClear();
+
+  const text = "First local draft e\u0301 👩🏽‍💻 {{name}}\nSecond line";
+  fireEvent.change(input, { target: { value: text } });
+  const recovery = screen.getByRole("button", { name: recoveryName });
+  expect(recovery).toBeEnabled();
+  expect(entriesPresentation).not.toHaveBeenCalled();
+  await waitFor(() => expect(write).toHaveBeenCalledWith(expect.objectContaining({ write: expect.objectContaining({
+    key, value: expect.objectContaining({ text }),
+  }) })));
+  fireEvent.click(recovery);
+  const sheet = await screen.findByRole("dialog", { name: recoveryName });
+  expect(await within(sheet).findByRole("textbox", { name: inputName })).toHaveValue(text);
+}, 15000);
 
 it("creates an empty project without restoring the previous project's focused route or extra view", async () => {
   const created: ProjectView = { ...project, locator: "/synthetic/new-empty", sessionToken: "created-session",

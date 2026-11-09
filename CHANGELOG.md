@@ -199,7 +199,7 @@ Current workspace version metadata: **`0.2.0-alpha.1`**. Because the published `
 - Current review and decision views look up saved QA, approvals, and waivers by the requested entries and their review basis, reducing work as review history grows.
 - Pending candidate, review, and finding lists reuse the source positions of their bounded entry lists, reducing repeated source scans in Items needing a decision.
 - The Items needing a decision count waits for the first entries view, local draft startup and translation confirmation to settle. Its background reads share one native request at a time, leaving more room for opening and saving.
-- Typing and saving a local draft updates the editor and its status without refreshing unrelated entry rows when their view stays the same.
+- Typing and saving a local draft updates the editor and its status without refreshing unrelated entry rows when their view stays the same. The recovery button updates independently when the first draft becomes available.
 - Keep the active row's unchanged source text out of translation input, paste and draft-write updates.
 - Editing a translation updates its recovery summary without rebuilding the full local draft list.
 - Update translation confirmation activity when a submission changes, removing a scan of loaded drafts from typing and local draft saves.
@@ -208,6 +208,8 @@ Current workspace version metadata: **`0.2.0-alpha.1`**. Because the published `
 - Confirm and next keeps advancing through the fixed queue when an unfocused row leaves the viewport during the save.
 - Keep the native Edit menu in place and suspend workspace commands as a group when they are temporarily unavailable during paste or translation confirmation.
 - Complete macOS builds accept the pinned WebVTT and SMAPI packages when their SDK remains supported by Process3.
+- Enable the native reference commands when the project reference tools are ready. The native workspace menu also follows input composition and open dialogs.
+- Update the affected buttons and menu during paste without refreshing the entry table for the temporary interaction lock.
 - Avoid flashing a progress banner during quick macOS clipboard reads. Escape cancels a pending paste, and slower reads also show a Cancel button.
 
 - Source impact and maintenance reads batch effective bindings and ancestor lookups within the original read transaction, avoiding per-entry SQL queries while retaining frozen mapping versions and unresolved-match checks.

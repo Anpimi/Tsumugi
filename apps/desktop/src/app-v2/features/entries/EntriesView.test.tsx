@@ -246,14 +246,19 @@ it("keeps the loaded source stable through paste ownership and draft writes whil
   const source = `Complete source ${unitA}`, translation = "Preserved e\u0301 {{name}} 世界";
   expect(screen.getByText(source)).toBeVisible();
   textRender.mockClear();
+  tableRender.mockClear();
 
+  let paste: ReturnType<InteractionGate["acquireIntent"]> = null;
+  act(() => { paste = h.gate.acquireIntent("editor-paste"); });
+  expect(paste!.current()).toBe(true);
+  expect(tableRender).not.toHaveBeenCalled();
   await act(async () => {
-    const paste = h.gate.acquireIntent("editor-paste");
-    expect(paste?.current()).toBe(true);
     fireEvent.change(field, { target: { value: translation } });
     expect(await h.drafts.flush(key)).toBe(true);
-    paste?.release();
   });
+  tableRender.mockClear();
+  act(() => { paste!.release(); });
+  expect(tableRender).not.toHaveBeenCalled();
   expect(field).toHaveValue(translation);
   expect(h.ports.write).toHaveBeenCalledTimes(1);
   expect(textRender).not.toHaveBeenCalledWith(source);

@@ -1,5 +1,5 @@
 import { rememberProjectActivity } from "../../../recentProjects";
-import { useEffect, useImperativeHandle, useLayoutEffect, useRef, useState, useSyncExternalStore, type ReactNode, type Ref } from "react";
+import { useEffect, useImperativeHandle, useLayoutEffect, useRef, useState, useSyncExternalStore, type ComponentProps, type ReactNode, type Ref } from "react";
 import { useTranslation } from "react-i18next";
 import { CheckSquare, ChevronDown, Layers, RefreshCw, Search, X } from "lucide-react";
 import type { ProjectView } from "../../../projectCommands";
@@ -54,6 +54,11 @@ export interface EntriesHandle {
 }
 const noSubscription = () => () => {};
 
+function EntryActionButton({ gate, viewId, disabled, ...props }: ComponentProps<typeof Button> & { gate: InteractionGate; viewId: string }) {
+  const canDispatch = useSyncExternalStore(gate.subscribe, () => gate.canDispatch({ viewId, source: "button" }));
+  return <Button {...props} disabled={disabled || !canDispatch}/>;
+}
+
 export default function EntriesView({ project, view, disabled, patch, navigate, drafts, gate, dispatch, onRevealDraft, onSelectedRevision, onImport, onImportSource, onInitialReadSettled, onCandidateBatch, candidateBatchTriggerRef, candidateBatchBlocked = false, onReviewBatch, reviewBatchTriggerRef, renderCandidate, commands, ref }: Props) {
   const { t } = useTranslation(undefined, { keyPrefix: "workbenchV2" });
   const reads = useSessionReads();
@@ -61,7 +66,6 @@ export default function EntriesView({ project, view, disabled, patch, navigate, 
     const state = drafts?.getSnapshot();
     return state?.hydration === "ready" && !state.retired;
   });
-  useSyncExternalStore(gate.subscribe, gate.getSnapshot, gate.getSnapshot);
   const [captured, setCaptured] = useState<RetainedEntryCapture | null>(null);
   const [captureError, setCaptureError] = useState(false), [capturing, setCapturing] = useState(false), [queueEnd, setQueueEnd] = useState(false);
   const request = useRef(0), selectionRequest = useRef(0);
@@ -357,23 +361,23 @@ export default function EntriesView({ project, view, disabled, patch, navigate, 
     {view.focusMode ? <div className={styles.actions}><Button size="sm" onClick={() => { void toggleFocus(); }}>{t("editorTableMode")}</Button></div> : null}
     {searchTooLong ? <Banner id={`entry-search-error-${view.id}`} tone="error">{t("searchTooLong")}</Banner> : null}
     {reviewNotice ? <Banner tone={reviewNotice === "reviewEditorFailed" ? "error" : "info"} role="status">{t(reviewNotice)}</Banner> : null}
-    {view.reviewNavigation ? <Banner action={<Button size="sm" disabled={!commands || disabled || openingReview.current || !gate.canDispatch({ viewId: view.id, source: "button" })}
-      onClick={() => commands?.dispatch("review.entry-return-to-queue", { ...reads.context, area: "translation" })}>{t("reviewEditorReturn")}</Button>}>
+    {view.reviewNavigation ? <Banner action={<EntryActionButton gate={gate} viewId={view.id} size="sm" disabled={!commands || disabled || openingReview.current}
+      onClick={() => commands?.dispatch("review.entry-return-to-queue", { ...reads.context, area: "translation" })}>{t("reviewEditorReturn")}</EntryActionButton>}>
       {t(view.reviewNavigation.focus?.status === "stale" ? "reviewEditorLocationChanged" : "reviewEditorReturnHelp")}</Banner> : null}
-    {onSelectedRevision && selected?.selectionId && selected.revisionId ? <Button size="sm" disabled={disabled || !gate.canDispatch({ viewId: view.id, source: "button" })}
+    {onSelectedRevision && selected?.selectionId && selected.revisionId ? <EntryActionButton gate={gate} viewId={view.id} size="sm" disabled={disabled}
       onClick={() => {
         if (!selected.selectionId || !selected.revisionId || !gate.canDispatch({ viewId: view.id, source: "button" })) return;
         const opened = onSelectedRevision({ kind: "selected-revision", basis: { unitId: selected.unitId, locale: selected.locale,
           sourceSnapshotId: selected.sourceSnapshotId, sourceRevisionId: selected.sourceRevisionId,
           selectionId: selected.selectionId, translationRevisionId: selected.revisionId } });
         setRevisionFailureUnit(opened ? null : selected.unitId);
-      }}>{t("entryReviseSaved")}</Button> : null}
+      }}>{t("entryReviseSaved")}</EntryActionButton> : null}
     {revisionFailureUnit && revisionFailureUnit === selected?.unitId ? <Banner tone="warning">{t("entryReviseUnavailable")}</Banner> : null}
     {queueEnd ? <Banner>{t("queueEnd")}</Banner> : null}
     {view.compareSource && current?.rows.length ? comparison.isError ? <Banner tone="error" role="alert" action={<Button disabled={disabled || comparison.isFetching} onClick={() => { void comparison.refetch(); }}>{t("sourceComparisonRetry")}</Button>}>{t("sourceComparisonFailed")}</Banner>
       : comparison.isPending || comparison.isFetching ? <Banner role="status">{t("sourceComparisonLoading")}</Banner>
         : currentComparison?.baseSnapshotId === null ? <Banner role="status">{t("sourceComparisonFirstVersion")}</Banner> : null : null}
-    {!configuredQuery ? <ErrorState title={t("filterMissing")} description={t("chooseFilter")} /> : !availableLocale ? <ErrorState title={t("languageMissing")} description={t("chooseLanguage")} action={key ? <Button onClick={() => onRevealDraft(key)}>{t("draftRecoveryOpen")}</Button> : undefined} /> : failed ? <ErrorState title={t("readFailed")} description={t(stalePage ? "viewChanged" : "readFailedHelp")} action={<div className={styles.actions}><Button onClick={() => { void refresh(); }}>{t("refresh")}</Button>{key ? <Button onClick={() => onRevealDraft(key)}>{t("draftRecoveryOpen")}</Button> : null}</div>} /> : empty ? <EmptyState icon={<Layers />} title={t("noSource")} description={t("noSourceHelp")} action={onImportSource ? <Button disabled={disabled || !gate.canDispatch({ viewId: view.id, source: "button" })} onClick={() => { if (!disabled && gate.canDispatch({ viewId: view.id, source: "button" })) onImportSource(); }}>{t("noSourceImport")}</Button> : undefined} /> : loading || !current ? <LoadingState label={t("loadingEntries")} /> : current.rows.length === 0 ? <EmptyState icon={<Search />} title={t("noMatches")} description={t("noMatchesHelp")} /> : <EntriesTable ref={table} rows={current.rows} firstPosition={view.queueActive ? queue.data?.firstPosition ?? 0 : view.afterOrdinal} total={current.total}
+    {!configuredQuery ? <ErrorState title={t("filterMissing")} description={t("chooseFilter")} /> : !availableLocale ? <ErrorState title={t("languageMissing")} description={t("chooseLanguage")} action={key ? <Button onClick={() => onRevealDraft(key)}>{t("draftRecoveryOpen")}</Button> : undefined} /> : failed ? <ErrorState title={t("readFailed")} description={t(stalePage ? "viewChanged" : "readFailedHelp")} action={<div className={styles.actions}><Button onClick={() => { void refresh(); }}>{t("refresh")}</Button>{key ? <Button onClick={() => onRevealDraft(key)}>{t("draftRecoveryOpen")}</Button> : null}</div>} /> : empty ? <EmptyState icon={<Layers />} title={t("noSource")} description={t("noSourceHelp")} action={onImportSource ? <EntryActionButton gate={gate} viewId={view.id} disabled={disabled} onClick={() => { if (!disabled && gate.canDispatch({ viewId: view.id, source: "button" })) onImportSource(); }}>{t("noSourceImport")}</EntryActionButton> : undefined} /> : loading || !current ? <LoadingState label={t("loadingEntries")} /> : current.rows.length === 0 ? <EmptyState icon={<Search />} title={t("noMatches")} description={t("noMatchesHelp")} /> : <EntriesTable ref={table} rows={current.rows} firstPosition={view.queueActive ? queue.data?.firstPosition ?? 0 : view.afterOrdinal} total={current.total}
       projectId={reads.context.projectId} sourceLocale={project.metadata.sourceLocale} view={view} drafts={drafts} gate={gate} disabled={disabled} dispatch={dispatch} scroll={view.scroll}
       selectedIds={selectionMatches ? selectedIds : []} canSelect={canSelect} onScroll={position => patch({ scroll: position })} onEdit={openEditor}
       sourceComparison={currentComparison} renderCandidate={renderCandidate}

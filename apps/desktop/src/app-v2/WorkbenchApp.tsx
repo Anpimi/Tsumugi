@@ -154,6 +154,52 @@ const noDraftState: TranslationDraftSnapshot = { hydration: "idle", revision: 0,
 const noDraftSubscription = () => () => undefined;
 const getNoCandidateBatchState = () => null;
 
+function DraftRecoveryButton({ drafts, revealDraft }: { drafts: TranslationDrafts | null; revealDraft: (key: DraftKey) => void }) {
+  const { t } = useTranslation(undefined, { keyPrefix: "workbenchV2" });
+  const available = useSyncExternalStore(drafts?.subscribe ?? noDraftSubscription, () => Boolean(drafts?.getSnapshot().summaries.length));
+  return <Button size="sm" disabled={!available} onClick={() => {
+    const first = drafts?.getSnapshot().summaries[0];
+    if (first) revealDraft(first.key);
+  }}>{t("draftRecoveryTitle")}</Button>;
+}
+
+function InteractionBlocked({ gate, children }: { gate: InteractionGate; children: (blocked: boolean) => ReactNode }) {
+  const blocked = useSyncExternalStore(gate.subscribe, () => {
+    const { intentOwner, composingOwners } = gate.getSnapshot();
+    return intentOwner !== null || composingOwners.length > 0;
+  });
+  return children(blocked);
+}
+
+function WorkspaceNativeMenu({ gate, dispatcher, viewId, commandsReady, bindingsRevision, projectReferencesReady, disabled, draftState, editing, recovering, setCommandFailed }: {
+  gate: InteractionGate;
+  dispatcher: ReturnType<typeof createWorkspaceCommandDispatcher>;
+  viewId: string | null;
+  commandsReady: boolean;
+  bindingsRevision: number;
+  projectReferencesReady: boolean;
+  disabled: boolean;
+  draftState: Pick<TranslationDraftSnapshot, "hydration" | "mutationReserved"> & { canConfirm: boolean };
+  editing: boolean | undefined;
+  recovering: boolean;
+  setCommandFailed: Dispatch<SetStateAction<boolean>>;
+}) {
+  const { t, i18n } = useTranslation();
+  const interactionAllowed = useSyncExternalStore(gate.subscribe, () => gate.canDispatch({ viewId, source: "native-menu" }));
+  const nativeMenu = useRef<ReturnType<typeof installWorkspaceMenu> | null>(null);
+  const { hydration, mutationReserved, canConfirm } = draftState;
+  useEffect(() => {
+    if (!isTauri() || !commandsReady) return;
+    const menu = installWorkspaceMenu(key => t(key), id => dispatcher.dispatch(id, { source: "native-menu", viewId }), () => setCommandFailed(true));
+    nativeMenu.current = menu;
+    return () => { nativeMenu.current = null; menu.dispose(); };
+  }, [dispatcher, commandsReady, viewId, i18n.resolvedLanguage, bindingsRevision, setCommandFailed]);
+  useEffect(() => {
+    nativeMenu.current?.update(dispatcher.list({ source: "native-menu" }));
+  }, [dispatcher, commandsReady, viewId, i18n.resolvedLanguage, bindingsRevision, projectReferencesReady, disabled, interactionAllowed, hydration, mutationReserved, editing, recovering, canConfirm]);
+  return null;
+}
+
 function KnowledgeLoadFailure({ canRetry, onFailure, onRetry }: { canRetry: boolean; onFailure: () => void; onRetry: () => void }) {
   const { t } = useTranslation(undefined, { keyPrefix: "knowledge" });
   useLayoutEffect(onFailure, [onFailure]);
@@ -541,7 +587,7 @@ function WorkspaceShell() {
     knowledgeOwner, knowledgeLoadFailed, requestKnowledge, knowledgeReveal, revealKnowledge, knowledgeOpenIntent, setKnowledgeOpenIntent,
     conversations, conversationLoadFailed, retryConversations, conversationReveal, conversationRecovery, conversationProposal, conversationTeamQuestion,
     revealConversation, revealConversationProposal, revealConversationTeamQuestion } = useWorkspaceContext();
-  const { t, i18n } = useTranslation();
+  const { t } = useTranslation();
   const message = useTranslation(undefined, { keyPrefix: "workbenchV2" }).t;
   const state = useStore(store), view = state.activeViewId ? state.views[state.activeViewId] : null;
   const lifecycleState = useProjectLifecycle(lifecycle);
@@ -558,12 +604,11 @@ function WorkspaceShell() {
   useLayoutEffect(() => { if (view?.kind === "runs" && view.runsMode === "strategy") requestStrategy(); }, [view?.kind, view?.runsMode, requestStrategy]);
   useLayoutEffect(() => { if (view?.kind === "runs" || view?.dock === "agent") requestCandidates(); }, [view?.kind, view?.dock, requestCandidates]);
   useLayoutEffect(() => { if (view?.kind === "delivery") requestDelivery(); }, [view?.kind, requestDelivery]);
-  const interaction = useSyncExternalStore(gate.subscribe, gate.getSnapshot, gate.getSnapshot);
   const activeDraftKey = recoveryKey ?? (view?.kind === "entries" && view.editing && view.focus
     ? { projectId: session.project.metadata.projectId, unitId: view.focus, locale: view.locale } : null);
   const selectDraftState = useShallow((snapshot: TranslationDraftSnapshot) => ({
     hydration: snapshot.hydration, retired: snapshot.retired, mutationReserved: snapshot.mutationReserved,
-    firstDraft: snapshot.summaries[0]?.key, pendingCount: snapshot.pendingCount, firstPending: snapshot.firstPending,
+    pendingCount: snapshot.pendingCount, firstPending: snapshot.firstPending,
     canConfirm: activeDraftKey !== null && !!drafts?.canConfirm(activeDraftKey),
     recoverySummaries: recoveryKey ? snapshot.summaries : null,
   }));
@@ -869,16 +914,6 @@ function WorkspaceShell() {
     document.addEventListener("keydown", onKeyDown);
     return () => document.removeEventListener("keydown", onKeyDown);
   }, [dispatcher, currentId, gate, store, runtime]);
-  const nativeMenu = useRef<ReturnType<typeof installWorkspaceMenu> | null>(null);
-  useEffect(() => {
-    if (!isTauri() || !commandsReady) return;
-    const menu = installWorkspaceMenu(key => t(key), id => dispatcher.dispatch(id, { source: "native-menu", viewId: currentId }), () => setCommandFailed(true));
-    nativeMenu.current = menu;
-    return () => { nativeMenu.current = null; menu.dispose(); };
-  }, [dispatcher, commandsReady, currentId, i18n.resolvedLanguage, settings.bindingsRevision]);
-  useEffect(() => {
-    nativeMenu.current?.update(dispatcher.list({ source: "native-menu" }));
-  }, [dispatcher, commandsReady, currentId, i18n.resolvedLanguage, settings.bindingsRevision, disabled, interaction.intentOwner, draftState.hydration, draftState.mutationReserved, view?.editing, recoveryKey !== null, draftState.canConfirm]);
   useEffect(() => () => { paletteRelease.current?.(); drawerRelease.current?.(); }, [gate]);
   const activeLocale = view?.locale ?? session.project.metadata.targetLocales[0] ?? "";
   const importNeedsAttention = !!importOwners && (importOwners.imports.current().busy || importOwners.imports.hasPending()
@@ -1083,8 +1118,8 @@ function WorkspaceShell() {
     dispatch("workspace.decisions");
   }
   function decisionTray() {
-    return <DecisionTray page={decisionFeed.first.data} loading={decisionFeed.firstLoading} error={decisionFeed.first.error}
-      disabled={disabled || !commandsReady || interaction.composingOwners.length > 0 || interaction.intentOwner !== null} onOpen={openDecisionsFromTray}/>;
+    return <InteractionBlocked gate={gate}>{blocked => <DecisionTray page={decisionFeed.first.data} loading={decisionFeed.firstLoading} error={decisionFeed.first.error}
+      disabled={disabled || !commandsReady || blocked} onOpen={openDecisionsFromTray}/>}</InteractionBlocked>;
   }
   function conversationFallback(content: ReactNode) {
     return <div className={styles.agent}><div className={styles.messages}>{projectBrief(true)}{sourceBrief()}{content}</div>{decisionTray()}</div>;
@@ -1522,6 +1557,9 @@ function WorkspaceShell() {
     </TabsRoot>;
   }
   return <div className={styles.frame} data-focus-mode={!importVisible && view?.focusMode || undefined} data-conversation-mode={conversationMode || undefined} onCompositionStartCapture={() => gate.setComposing("workspace", true)} onCompositionEndCapture={() => gate.setComposing("workspace", false)}>
+    <WorkspaceNativeMenu gate={gate} dispatcher={dispatcher} viewId={currentId} commandsReady={commandsReady} bindingsRevision={settings.bindingsRevision}
+      projectReferencesReady={settings.openReferences !== undefined} disabled={disabled} draftState={draftState} editing={view?.editing}
+      recovering={recoveryKey !== null} setCommandFailed={setCommandFailed}/>
     <header className={styles.titlebar} data-tauri-drag-region>
       <span className={styles.wordmark}>紡</span><Menu label={message("projectCommands")} trigger={<Button size="sm"><span className={styles.project}>{session.project.metadata.displayName}</span><ChevronDown /></Button>} items={[
         { id: "create", label: t("startup.manual"), onSelect: () => { if (gate.canDispatch({ viewId: currentId, source: "button" })) requestCreate(); }, disabled: disabled || !commandsReady },
@@ -1530,7 +1568,7 @@ function WorkspaceShell() {
         { id: "source", label: t("sourceMaintenance.title"), onSelect: () => dispatch("source.import-upstream"), disabled: disabled || !commandsReady },
       ]} />
       <span className={styles.breadcrumb}>›</span><Menu label={message("language")} trigger={<Button size="sm" disabled={disabled || view?.kind === "decisions"}>{view?.kind === "decisions" ? message("decisionAllLanguages") : activeLocale}<ChevronDown /></Button>} items={session.project.metadata.targetLocales.map(locale => ({ id: locale, label: locale, onSelect: () => { if (view) void runtime.navigation.update(view.id, { locale }); } }))} />
-      <Button size="sm" disabled={!draftState.firstDraft} onClick={() => { if (draftState.firstDraft) revealDraft(draftState.firstDraft); }}>{message("draftRecoveryTitle")}</Button>
+      <DraftRecoveryButton drafts={drafts} revealDraft={revealDraft}/>
       <Button ref={commandTrigger} className={styles.commandSearch} size="sm" disabled={!commandsReady || disabled} onClick={() => dispatch("workspace.commands")}><Search />{message("commandPlaceholder")}</Button>
       <IconButton label={message("conversationMode")} aria-pressed={conversationMode} disabled={disabled || !commandsReady || !view} onClick={() => dispatch("workspace.conversation-mode")}><Sparkles /></IconButton>
       <IconButton ref={dockTrigger} className={styles.dockToggle} label={message("openAgent")} disabled={disabled || !commandsReady} onClick={() => dispatch("workspace.agent")}><PanelRight /></IconButton>
@@ -1588,15 +1626,15 @@ function WorkspaceShell() {
     </Suspense> : null}
     <div className={styles.body}>
       <nav className={styles.activity} aria-label={message("activity")}>
-        {[{ id: "entries", icon: <Layers /> }, { id: "knowledge", icon: <BookOpen /> }, { id: "runs", icon: <Sparkles /> }, { id: "delivery", icon: <ArrowUp /> }, { id: "decisions", icon: <CircleDot /> }].map(({ id, icon }) => <div key={id} className={styles.activityItem} data-active={view?.kind === id || undefined} aria-busy={id === "knowledge" && knowledgeOpenIntent !== null || undefined}><IconButton ref={id === "decisions" ? decisionTrigger : undefined} label={message(id === "entries" ? "entries" : id === "knowledge" ? "knowledge" : id === "runs" ? "runs" : id === "delivery" ? "delivery" : "decisions")} aria-describedby={id === "decisions" ? decisionBadgeId : undefined}
-          disabled={disabled || !commandsReady || interaction.composingOwners.length > 0 || interaction.intentOwner !== null} onClick={event => {
+        <InteractionBlocked gate={gate}>{blocked => [{ id: "entries", icon: <Layers /> }, { id: "knowledge", icon: <BookOpen /> }, { id: "runs", icon: <Sparkles /> }, { id: "delivery", icon: <ArrowUp /> }, { id: "decisions", icon: <CircleDot /> }].map(({ id, icon }) => <div key={id} className={styles.activityItem} data-active={view?.kind === id || undefined} aria-busy={id === "knowledge" && knowledgeOpenIntent !== null || undefined}><IconButton ref={id === "decisions" ? decisionTrigger : undefined} label={message(id === "entries" ? "entries" : id === "knowledge" ? "knowledge" : id === "runs" ? "runs" : id === "delivery" ? "delivery" : "decisions")} aria-describedby={id === "decisions" ? decisionBadgeId : undefined}
+          disabled={disabled || !commandsReady || blocked} onClick={event => {
           if (id === "runs") { if (event.metaKey || event.ctrlKey) void openRuns(true).catch(() => setCommandFailed(true)); else dispatch("workspace.runs"); return; }
           if (id === "decisions") { if (event.metaKey || event.ctrlKey) void openDecisions(true); else dispatch("workspace.decisions"); return; }
           if (id === "delivery") { if (event.metaKey || event.ctrlKey) void openDelivery(true).catch(() => setCommandFailed(true)); else dispatch("workspace.delivery"); return; }
           if (id === "knowledge") { void openKnowledge(event.metaKey || event.ctrlKey).catch(() => setCommandFailed(true)); return; }
           const existing = store.getState().viewOrder.find(key => store.getState().views[key].kind === "entries");
           if (!(event.metaKey || event.ctrlKey) && existing) void runtime.navigation.activate(existing); else dispatch("workspace.new-view");
-        }}>{icon}</IconButton>{id === "decisions" ? <span id={decisionBadgeId} className={styles.activityCount}><DecisionBadge page={decisionFeed.first.data} loading={decisionFeed.firstLoading} error={decisionFeed.first.error}/></span> : null}</div>)}
+        }}>{icon}</IconButton>{id === "decisions" ? <span id={decisionBadgeId} className={styles.activityCount}><DecisionBadge page={decisionFeed.first.data} loading={decisionFeed.firstLoading} error={decisionFeed.first.error}/></span> : null}</div>)}</InteractionBlocked>
         <div className={styles.activityBottom}><IconButton label={message("extensions")} disabled={disabled || !commandsReady} onClick={() => dispatch("workspace.extensions")}><Command /></IconButton><IconButton label={message("settings")} disabled={disabled || !commandsReady} onClick={() => dispatch("workspace.settings")}><Settings /></IconButton></div>
       </nav>
       <WorkspacePanes view={view} compact={compact} wide={wide} disabled={disabled} dockRef={dock} label={message("agent")}
