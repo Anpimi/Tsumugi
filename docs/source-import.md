@@ -18,6 +18,8 @@ To import a source snapshot, choose **Import an upstream version** in the Projec
 
 ## Reviewing the captured scope
 
+For a first import, use **Next page** and **First page** to review entries throughout the preview. If a page cannot be read, retry it or return to the first page. The entry count and adoption confirmation cover the complete checked source snapshot.
+
 When the source plugin supplies capture details, the preview, upstream comparison and saved source details show counts for each captured file: source records, records with declared fields, declared fields and nonempty fields. These counts cover the complete captured selection, including empty fields, even when the current page or comparison filter shows fewer entries.
 
 Expand **Format and dependencies** to inspect the plugin's literal properties and **View record groups** to inspect its grouped counts. An explicit empty dependency list shows **None**; a plugin that supplies no capture summary shows no summary. Plugin property labels and values remain plain text in the publisher's language. These details describe the plugin's declared projection of captured material, not all resources or translation completion. Viewing them neither runs a plugin nor changes source adoption, translations or sharing permissions. Historical details retain their original saved capture information after reopening.

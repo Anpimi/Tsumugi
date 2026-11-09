@@ -5,7 +5,7 @@ import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { pluginInventoryReadKey, useApplicationQueryClient } from "../../../ApplicationReadProvider";
 import SourcePreparationSheet from "./SourcePreparationSheet";
 import { useSourceDraftSession } from "../../../SourceDraftSession";
-import { sourceCommands } from "../../../sourceCommands";
+import { sourceCommands, type SourceAdoptRequest } from "../../../sourceCommands";
 import { sourceDraftCommands } from "../../../sourceDraftCommands";
 import { sourceDraftValue } from "../../../sourceDraftJournal";
 import { sourceReads } from "../../../sourceQueries";
@@ -15,7 +15,7 @@ import type { CommandError, ProjectView } from "../../../projectCommands";
 import { renderWorkbench, refreshWorkbenchReads } from "../../../testSupport/WorkbenchTestShell";
 import { installSourceDraftFixture } from "../../../testSupport/sourceDraftFixture";
 import { sourceDraftStateFixture } from "../../../testSupport/sourceDraftStateFixture";
-import { sourceAttemptFixture, sourcePageFixture, sourceRowFixture } from "../../../testSupport/sourceFixture";
+import { sourceActionFixture, sourceAttemptFixture, sourcePageFixture, sourceReceiptFixture, sourceRowFixture } from "../../../testSupport/sourceFixture";
 import { pluginSourceInventory, pluginSourcePackage, pluginSourceRequest, pluginSourceView, pluginSourceWorkflow } from "../../../testSupport/pluginSourceFixture";
 import { fixtureIdentity as id } from "../../../testSupport/executionFixture";
 import { InteractionGate } from "../../workspace/interactionGate";
@@ -140,6 +140,76 @@ it.each(["runtime", "package"] as const)("preserves the captured import and requ
   expect(calls("start_plugin_source")).toHaveLength(1);
   expect(calls("start_source_check")).toHaveLength(1);
   expect(calls("adopt_execution")).toHaveLength(0);
+});
+
+it("reviews later pages of a first import and applies the complete checked result", async () => {
+  const nextOrdinal = 37, total = 52, actionId = id(2190);
+  const { attemptId, resultId } = wire.preview;
+  const rows = Array.from({ length: total }, (_, ordinal) => sourceRowFixture({}, {
+    ordinal, key: `source.entry.${ordinal}`, text: `Source text ${ordinal}`, operationOccurrenceId: id(2200 + ordinal),
+  }));
+  const first = sourcePageFixture({ rows: rows.slice(0, nextOrdinal), total, nextOrdinal });
+  const last = { ...first, rows: rows.slice(nextOrdinal), nextOrdinal: null };
+  const otherResult = { ...last, confirmation: { ...last.confirmation, resultDigest: "b".repeat(64) } };
+  let readLaterPage = 0, adoption: SourceAdoptRequest | null = null;
+  vi.mocked(sourceCommands.scope).mockResolvedValue(first.scope);
+  invoke.mockImplementation(async (command, { request }) => {
+    if (command === "read_plugin_inventory") return pluginSourceInventory;
+    if (command === "read_plugin_package") return pluginSourcePackage;
+    if (command === "read_execution_attempt") return sourceAttemptFixture(attemptId, resultId);
+    if (command === "read_source_preview") {
+      if (request.after === 0) return first;
+      if (request.after === nextOrdinal) return ++readLaterPage === 1 ? otherResult : last;
+    }
+    if (command === "create_execution_identity") return actionId;
+    if (command === "prepare_source_adoption") {
+      const original: SourceAdoptRequest = request;
+      adoption = original;
+      return sourceActionFixture(original);
+    }
+    if (command === "adopt_execution" && adoption) return sourceReceiptFixture(adoption);
+    throw new Error(`Unexpected initial source preview command: ${command}`);
+  });
+  installSourceDraftFixture();
+  const inputs = sourceDraftStateFixture();
+  inputs.source.attempt = attemptId;
+  await sourceDraftCommands.write({ sessionToken: project.sessionToken, write: { key: { projectId: project.metadata.projectId },
+    expectedRevision: "0", writerId: id(2191), value: sourceDraftValue(inputs, "2") } });
+  renderWorkbench(<Harness saved={null}/>, project);
+  const user = userEvent.setup(), button = (name: string) => screen.getByRole("button", { name });
+  await user.click(await screen.findByRole("button", { name: i18n.t("sourceMaintenance.preview") }));
+  expect(await screen.findByText("source.entry.0")).toBeVisible();
+  expect(screen.queryByText("source.entry.37")).not.toBeInTheDocument();
+  const confirm = screen.getByRole("checkbox", { name: i18n.t("sourceMaintenance.confirmApply", { count: total }) });
+  const applyName = i18n.t("sourceMaintenance.apply");
+  await user.click(confirm);
+  expect(button(applyName)).toBeEnabled();
+
+  const nextName = i18n.t("sourceMaintenance.nextPage");
+  await user.click(button(nextName));
+  expect(await screen.findByText(i18n.t("sourceMaintenance.previewPageFailed"))).toBeVisible();
+  expect(screen.queryByText("source.entry.37")).not.toBeInTheDocument();
+  expect(button(applyName)).toBeDisabled();
+  expect(adoption).toBeNull();
+  await user.click(button(i18n.t("sourceMaintenance.retryRead")));
+  expect(await screen.findByText("source.entry.37")).toBeVisible();
+  expect(screen.queryByText("source.entry.0")).not.toBeInTheDocument();
+  expect(button(nextName)).toBeDisabled();
+  expect(screen.getByText(i18n.t("sourceMaintenance.initialEntries", { count: total }))).toBeVisible();
+  expect(invoke.mock.calls.filter(([command]) => command === "read_source_preview").map(([, payload]) => payload.request))
+    .toEqual([0, nextOrdinal, nextOrdinal].map(after => ({ ...wire.session, attemptId, resultId, after, limit: 50 })));
+
+  await user.click(button(i18n.t("sourceMaintenance.firstPage")));
+  expect(await screen.findByText("source.entry.0")).toBeVisible();
+  expect(screen.queryByText("source.entry.37")).not.toBeInTheDocument();
+  await user.click(button(nextName));
+  expect(await screen.findByText("source.entry.37")).toBeVisible();
+  expect(screen.getByRole("checkbox", { name: i18n.t("sourceMaintenance.confirmApply", { count: total }) })).toBeChecked();
+  await waitFor(() => expect(button(applyName)).toBeEnabled());
+  await user.click(button(applyName));
+  await waitFor(() => expect(owner.current().receiptRef).toMatchObject({ actionId, attemptId, resultId }));
+  expect(adoption).toEqual({ ...wire.session, actionId, attemptId, resultId, confirmation: first.confirmation });
+  expect(invoke.mock.calls.filter(([command]) => command === "adopt_execution")).toEqual([["adopt_execution", { request: { ...wire.session, actionId } }]]);
 });
 
 async function restoreCorrectionForNavigation() {

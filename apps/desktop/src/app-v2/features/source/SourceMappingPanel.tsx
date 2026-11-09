@@ -23,12 +23,15 @@ export default function SourceMappingPanel({ project, owner, visible, disabled, 
   const reads = useSessionReads(), context = executionContext(project), value = owner.state, basis = value.comparison ?? value.preview;
   const [reading, setReading] = useState(false), [failure, setFailure] = useState<unknown>(null), [changed, setChanged] = useState(false);
   const [details, setDetails] = useState<SourceChangePage["rows"][number] | null>(null), ticket = useRef(0), alive = useRef(true);
+  const previewHeading = useRef<HTMLParagraphElement>(null);
   useEffect(() => { alive.current = true; return () => { alive.current = false; ticket.current++; }; }, []);
   useEffect(() => { ticket.current++; setReading(false); setFailure(null); setDetails(null); }, [project.sessionToken, project.metadata.projectId]);
   const comparisonOptions = sourceReads.comparison(context, value.comparison, value.appliedFilter, value.comparisonAfter);
   const comparison = useSessionQuery({ ...comparisonOptions, enabled: visible && !!value.comparison });
+  const firstPreviewPage = value.previewAfter === 0;
   const previewOptions = sourceReads.preview(context, value.preview, value.previewAfter);
-  const preview = useSessionQuery({ ...previewOptions, enabled: visible && !!value.preview && value.previewAfter > 0 });
+  const preview = useSessionQuery({ ...previewOptions, enabled: visible && !!value.preview && !firstPreviewPage });
+  const previewPage = firstPreviewPage ? value.preview : preview.error ? null : preview.data;
   const page = value.comparison ? comparison.data ?? (value.comparisonAfter === 0 && value.appliedFilter === "" ? value.comparison : null) : null;
   const input = value.historicalSearch;
   const historyOptions = sourceReads.historyContent(context, input?.snapshotId ?? "", input?.query ?? "", input?.after ?? 0);
@@ -38,9 +41,19 @@ export default function SourceMappingPanel({ project, owner, visible, disabled, 
     const query = reads.client.getQueryState(reads.key(key));
     return query?.status === "success" && query.fetchStatus === "idle" && !query.isInvalidated && query.error === null;
   }
-  function proof() { return visible && !disabled && current() && !reads.retired && !reading && !owner.current().stale
-    && owner.current().comparison === value.comparison && owner.current().preview === value.preview
-    && (!value.comparison || fresh(comparisonOptions.key)); }
+  function canReadPage() {
+    const active = owner.current();
+    return visible && !disabled && current() && !reads.retired && !reading && !active.stale
+      && active.comparison === value.comparison && active.preview === value.preview && active.previewAfter === value.previewAfter;
+  }
+  function proof() {
+    return canReadPage() && (value.comparison ? fresh(comparisonOptions.key) : firstPreviewPage || fresh(previewOptions.key));
+  }
+  function openPreviewPage(after: number) {
+    if (!canReadPage() || owner.hasPending()) return;
+    owner.pageIntent(after);
+    previewHeading.current?.focus();
+  }
   async function readProposal() {
     if (!current() || disabled || owner.inFlight() || owner.hasPending() || !owner.current().attempt) return;
     const before = owner.current(), id = ++ticket.current, attemptId = before.attempt!, sequence = before.editSeq;
@@ -78,7 +91,7 @@ export default function SourceMappingPanel({ project, owner, visible, disabled, 
   }
   return <section className={styles.body} aria-label={t("mappingTitle")}>
     <div className={styles.actions}><h2>{t("mappingTitle")}</h2><Button disabled={!current() || disabled || reading || owner.hasPending() || !value.attempt}
-      onClick={() => { void readProposal(); }}>{t(basis ? "refreshComparison" : "preview")}</Button></div>
+      onClick={() => { void readProposal(); }}>{t(value.comparison ? "refreshComparison" : value.preview ? "refreshPreview" : "preview")}</Button></div>
     <p>{t("mappingHelp")}</p>
     {reading ? <LoadingState label={t("readingComparison")}/> : null}
     {failure ? <Banner tone="error">{t("comparisonFailed")}<CommandFailureDetails failure={commandFailure(failure)}/></Banner> : null}
@@ -109,8 +122,21 @@ export default function SourceMappingPanel({ project, owner, visible, disabled, 
       <Field label={t("actor")} required={!!Object.keys(value.lineage).length}><TextInput readOnly={!editAllowed} value={value.actor} onChange={event => owner.edit("actor", event.target.value)}/></Field>
       <Button disabled={!proof() || !auditValid || owner.inFlight() || owner.hasPending()} onClick={() => { void owner.estimate(proof); }}>{t("reviewImpact")}</Button>
       {value.estimate?.map(summary => <p key={summary.locale}>{original("source.impactSummary", { locale: summary.locale, preserved: String(summary.preserved), reassess: String(summary.reassess), unresolved: String(summary.unresolved), total: String(summary.total) })}</p>)}
-    </> : value.preview ? <><p>{t("notApplied")}</p><p>{t("initialEntries", { count: value.preview.total })}</p>
-      {(value.previewAfter === 0 ? value.preview : preview.data)?.rows.map(row => <div key={row.occurrence.operationOccurrenceId}><strong>{row.occurrence.nativeIdentity?.display.value || row.occurrence.key}</strong><p><TokenizedText text={row.occurrence.text}/></p></div>)}</> : null}
+    </> : value.preview ? <><p>{t("notApplied")}</p>
+      <p ref={previewHeading} tabIndex={-1}>{t("initialEntries", { count: value.preview.total })}</p>
+      {(!firstPreviewPage || value.preview.nextOrdinal !== null) ? <div className={styles.actions}>
+        <Button disabled={!canReadPage() || firstPreviewPage || owner.hasPending()} onClick={() => openPreviewPage(0)}>{t("firstPage")}</Button>
+        <Button disabled={!proof() || previewPage?.nextOrdinal == null || owner.hasPending()}
+          onClick={() => { if (previewPage?.nextOrdinal != null && proof()) openPreviewPage(previewPage.nextOrdinal); }}>{t("nextPage")}</Button>
+      </div> : null}
+      {!firstPreviewPage && preview.isFetching ? <LoadingState label={t("readingPreviewPage")}/> : null}
+      {!firstPreviewPage && preview.error ? <Banner role="alert" tone="error" action={<Button disabled={!canReadPage() || preview.isFetching || owner.hasPending()}
+        onClick={() => {
+          if (!canReadPage() || preview.isFetching || owner.hasPending()) return;
+          previewHeading.current?.focus();
+          void preview.refetch();
+        }}>{t("retryRead")}</Button>}>{t("previewPageFailed")}<CommandFailureDetails failure={commandFailure(preview.error)}/></Banner> : null}
+      {previewPage?.rows.map(row => <div key={row.occurrence.operationOccurrenceId}><strong>{row.occurrence.nativeIdentity?.display.value || row.occurrence.key}</strong><p><TokenizedText text={row.occurrence.text}/></p></div>)}</> : null}
     {basis ? <><Field label={t("confirmApply", { count: basis.total })}><input type="checkbox" checked={value.confirmed} disabled={!proof() || !owner.qualified() || !!value.comparison && !value.estimate || owner.hasPending()}
       onChange={event => { if (current()) owner.confirm(event.target.checked); }}/></Field><p>{t("applyHelp")}</p>
       <Button variant="primary" disabled={!proof() || !auditValid || !value.confirmed || owner.inFlight() || owner.hasPending()} onClick={() => { void owner.apply(proof); }}>{t("apply")}</Button></> : null}
