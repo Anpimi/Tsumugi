@@ -50,6 +50,8 @@ pnpm --dir apps/desktop test --maxWorkers=2 \
   src/TranslationImportSession.test.tsx \
   src/SourceDraftSession.test.tsx \
   src/SourceDraftPersistence.test.tsx \
+  src/app-v2/features/source/SourcePreparationSheet.test.tsx \
+  src/app-v2/features/source/SourceCorrectionPanel.test.tsx \
   src/ReviewBatchSession.test.tsx \
   src/ReleaseDraftSession.test.tsx \
   src/app-v2/features/delivery/DeliveryView.test.tsx \
