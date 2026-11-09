@@ -201,6 +201,7 @@ Current workspace version metadata: **`0.2.0-alpha.1`**. Because the published `
 - Publish each local draft write's result together with its saved or failed status.
 - Confirm and next keeps advancing through the fixed queue when an unfocused row leaves the viewport during the save.
 - Keep the native Edit menu in place and suspend workspace commands as a group when they are temporarily unavailable during paste or translation confirmation.
+- Enable the native reference commands when the project reference tools are ready. The native workspace menu also follows input composition and open dialogs.
 - Update the affected buttons and menu during paste without refreshing the entry table for the temporary interaction lock.
 - Avoid flashing a progress banner during quick macOS clipboard reads. Escape cancels a pending paste, and slower reads also show a Cancel button.
 

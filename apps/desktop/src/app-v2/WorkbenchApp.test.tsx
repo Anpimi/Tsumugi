@@ -1,7 +1,7 @@
 import { RECENT_PROJECTS_STORAGE_KEY, readRecentProject } from "../recentProjects";
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { StrictMode, useCallback, useLayoutEffect, type ComponentProps } from "react";
+import { StrictMode, useCallback, useLayoutEffect, useState, type ComponentProps } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { clearMocks, mockIPC } from "@tauri-apps/api/mocks";
 import { i18n } from "../i18n";
@@ -39,6 +39,7 @@ import { projectCommands, type ProjectView } from "../projectCommands";
 import WorkbenchApp from "./WorkbenchApp";
 import { ProjectLifecycle, type ProjectLifecyclePorts } from "./platform/projectLifecycle";
 import type { TranslationImportPanelProps } from "./features/import/TranslationImportPanel";
+import * as applicationSettings from "./features/settings/ApplicationSettings";
 import { Button } from "../design-system/Button";
 import { fixtureIdentity } from "../testSupport/executionFixture";
 import { installResourceDraftPortsFixture } from "../testSupport/resourceDraftFixture";
@@ -544,7 +545,7 @@ function waitForSourceAndKnowledgeJournals() {
   }, { timeout: 5000 });
 }
 
-it("suspends the workspace command group while keeping native Edit installed", async () => {
+it("updates native command readiness and suspends the workspace group without replacing Edit", async () => {
   type NativeItem = { id: string; enabled: boolean };
   const items = new Map<number, NativeItem>();
   const submenus = new Map<number, number[]>();
@@ -559,9 +560,20 @@ it("suspends the workspace command group while keeping native Edit installed", a
   });
   const setEnabled = vi.fn<(kind: string, enabled: boolean, previous: boolean | undefined) => void>();
   const gateIntents = vi.spyOn(InteractionGate.prototype, "acquireIntent");
+  const readSettings = applicationSettings.useApplicationSettings;
+  const showReferences = new Set<(visible: boolean) => void>();
+  const settingsSpy = vi.spyOn(applicationSettings, "useApplicationSettings").mockImplementation(function useDeferredReferenceCommands() {
+    const settings = readSettings(), [visible, setVisible] = useState(false);
+    useLayoutEffect(() => {
+      showReferences.add(setVisible);
+      return () => { showReferences.delete(setVisible); };
+    }, []);
+    return visible ? settings : { ...settings, openReferences: undefined, openMcpQuery: undefined, openMcpShare: undefined };
+  });
   // Hold the independent background read so it cannot commit while measuring the gate update.
   const readDecisions = vi.spyOn(decisionCommands, "page").mockReturnValue(new Promise(() => {}));
   vi.stubGlobal("isTauri", true);
+  vi.stubGlobal("innerWidth", 1440);
   mockIPC((command, args) => {
     const { kind, options, rid, enabled } = args as {
       kind?: string; options?: { enabled?: boolean; items?: (NativeItem | [number, string])[] };
@@ -601,6 +613,7 @@ it("suspends the workspace command group while keeping native Edit installed", a
     await openImportWorkspace();
     expect(await screen.findByText(page.rows[0].content.sourcePreview, {}, { timeout: 5000 })).toBeVisible();
     await waitForSourceAndKnowledgeJournals();
+    await screen.findByRole("button", { name: i18n.t("conversation.chooseThread") }, { timeout: 5000 });
     await waitFor(() => {
       expect(readDecisions).toHaveBeenCalled();
       expect(enabled("workspace.open-project")).toBe(true);
@@ -610,8 +623,24 @@ it("suspends the workspace command group while keeping native Edit installed", a
     expect(entries()).toBeEnabled();
     const gate = gateIntents.mock.contexts.find((_, index) => gateIntents.mock.calls[index][0] === "restore");
     if (!(gate instanceof InteractionGate)) throw new Error("Missing workspace interaction gate");
+    // The lazy conversation panel registers its own command. Let the menu
+    // include it before checking that availability-only changes keep Edit.
+    const setup = { intent: null as ReturnType<InteractionGate["acquireIntent"]> };
+    act(() => { setup.intent = gate.acquireIntent("menu-fixture"); });
+    if (!setup.intent) throw new Error("Workspace interaction gate is still busy");
+    await waitFor(() => expect(enabled("workspace.open-project")).toBe(false));
+    act(setup.intent.release);
+    await waitFor(() => expect(enabled("workspace.open-project")).toBe(true));
+    expect(enabled("conversation.new-thread")).toBeDefined();
     const installed = currentMenu;
     setAppMenu.mockClear();
+    setEnabled.mockClear();
+    const referenceCommands = ["workspace.references", "workspace.mcp-query", "workspace.mcp-share"];
+    for (const command of referenceCommands) expect(enabled(command)).toBe(false);
+    act(() => { showReferences.forEach(show => show(true)); });
+    await waitFor(() => { for (const command of referenceCommands) expect(enabled(command)).toBe(true); });
+    expect(currentMenu).toBe(installed);
+    expect(setAppMenu).not.toHaveBeenCalled();
     setEnabled.mockClear();
     entriesPresentation.mockClear();
     let reservation: ReturnType<InteractionGate["acquireIntent"]> = null;
@@ -632,10 +661,23 @@ it("suspends the workspace command group while keeping native Edit installed", a
     // An owner can finish loading during the reservation. Publish any real
     // per-item changes before restoring the group.
     expect(setEnabled.mock.calls.slice(1, -1).every(([kind, enabled, previous]) => kind === "MenuItem" && enabled !== previous)).toBe(true);
+
+    setEnabled.mockClear();
+    act(() => gate.setComposing("test-editor", true));
+    await waitFor(() => expect(enabled("workspace.open-project")).toBe(false));
+    act(() => gate.setComposing("test-editor", false));
+    await waitFor(() => expect(enabled("workspace.open-project")).toBe(true));
+    let closeDialog!: () => void;
+    act(() => { closeDialog = gate.pushDialog("test-dialog"); });
+    await waitFor(() => expect(enabled("workspace.open-project")).toBe(false));
+    act(closeDialog);
+    await waitFor(() => expect(enabled("workspace.open-project")).toBe(true));
+    expect(setEnabled.mock.calls).toEqual([["Submenu", false, true], ["Submenu", true, false], ["Submenu", false, true], ["Submenu", true, false]]);
+    expect(setAppMenu).not.toHaveBeenCalled();
   } finally {
     cleanup();
     try { await waitFor(() => expect(currentMenu).toBe(hostMenu)); }
-    finally { clearMocks(); vi.unstubAllGlobals(); }
+    finally { settingsSpy.mockRestore(); clearMocks(); vi.unstubAllGlobals(); }
   }
 }, 15000);
 

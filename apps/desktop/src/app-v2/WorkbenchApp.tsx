@@ -171,12 +171,13 @@ function InteractionBlocked({ gate, children }: { gate: InteractionGate; childre
   return children(blocked);
 }
 
-function WorkspaceNativeMenu({ gate, dispatcher, viewId, commandsReady, bindingsRevision, disabled, draftState, editing, recovering, setCommandFailed }: {
+function WorkspaceNativeMenu({ gate, dispatcher, viewId, commandsReady, bindingsRevision, projectReferencesReady, disabled, draftState, editing, recovering, setCommandFailed }: {
   gate: InteractionGate;
   dispatcher: ReturnType<typeof createWorkspaceCommandDispatcher>;
   viewId: string | null;
   commandsReady: boolean;
   bindingsRevision: number;
+  projectReferencesReady: boolean;
   disabled: boolean;
   draftState: Pick<TranslationDraftSnapshot, "hydration" | "mutationReserved"> & { canConfirm: boolean };
   editing: boolean | undefined;
@@ -184,7 +185,7 @@ function WorkspaceNativeMenu({ gate, dispatcher, viewId, commandsReady, bindings
   setCommandFailed: Dispatch<SetStateAction<boolean>>;
 }) {
   const { t, i18n } = useTranslation();
-  const intentOwner = useSyncExternalStore(gate.subscribe, () => gate.getSnapshot().intentOwner);
+  const interactionAllowed = useSyncExternalStore(gate.subscribe, () => gate.canDispatch({ viewId, source: "native-menu" }));
   const nativeMenu = useRef<ReturnType<typeof installWorkspaceMenu> | null>(null);
   const { hydration, mutationReserved, canConfirm } = draftState;
   useEffect(() => {
@@ -195,7 +196,7 @@ function WorkspaceNativeMenu({ gate, dispatcher, viewId, commandsReady, bindings
   }, [dispatcher, commandsReady, viewId, i18n.resolvedLanguage, bindingsRevision, setCommandFailed]);
   useEffect(() => {
     nativeMenu.current?.update(dispatcher.list({ source: "native-menu" }));
-  }, [dispatcher, commandsReady, viewId, i18n.resolvedLanguage, bindingsRevision, disabled, intentOwner, hydration, mutationReserved, editing, recovering, canConfirm]);
+  }, [dispatcher, commandsReady, viewId, i18n.resolvedLanguage, bindingsRevision, projectReferencesReady, disabled, interactionAllowed, hydration, mutationReserved, editing, recovering, canConfirm]);
   return null;
 }
 
@@ -1544,7 +1545,8 @@ function WorkspaceShell() {
   }
   return <div className={styles.frame} data-focus-mode={!importVisible && view?.focusMode || undefined} data-conversation-mode={conversationMode || undefined} onCompositionStartCapture={() => gate.setComposing("workspace", true)} onCompositionEndCapture={() => gate.setComposing("workspace", false)}>
     <WorkspaceNativeMenu gate={gate} dispatcher={dispatcher} viewId={currentId} commandsReady={commandsReady} bindingsRevision={settings.bindingsRevision}
-      disabled={disabled} draftState={draftState} editing={view?.editing} recovering={recoveryKey !== null} setCommandFailed={setCommandFailed}/>
+      projectReferencesReady={settings.openReferences !== undefined} disabled={disabled} draftState={draftState} editing={view?.editing}
+      recovering={recoveryKey !== null} setCommandFailed={setCommandFailed}/>
     <header className={styles.titlebar} data-tauri-drag-region>
       <span className={styles.wordmark}>紡</span><Menu label={message("projectCommands")} trigger={<Button size="sm"><span className={styles.project}>{session.project.metadata.displayName}</span><ChevronDown /></Button>} items={[
         { id: "create", label: t("startup.manual"), onSelect: () => { if (gate.canDispatch({ viewId: currentId, source: "button" })) requestCreate(); }, disabled: disabled || !commandsReady },

@@ -74,9 +74,10 @@ export function installWorkspaceMenu(translate: (key: TranslationKey) => string,
 
   function update(commands: WorkbenchCommandDescription[]) {
     if (disposed) return;
-    desired = commands.flatMap(command => {
-      const id = workspaceCommandIds.find(value => value === command.id);
-      return id ? [{ id, text: translate(command.nameKey), enabled: command.availability.enabled }] : [];
+    const byId = new Map(commands.map(command => [command.id, command]));
+    desired = workspaceCommandIds.flatMap(id => {
+      const command = byId.get(id);
+      return command ? [{ id, text: translate(command.nameKey), enabled: command.availability.enabled }] : [];
     });
     if (scheduled) return;
     scheduled = true;
