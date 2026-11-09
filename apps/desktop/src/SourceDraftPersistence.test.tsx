@@ -255,7 +255,7 @@ it("refreshes a completed correction before explicitly submitting newer input wi
   }
   renderWorkbench(<Correction/>, project); const user = userEvent.setup();
   await waitFor(() => expect(owner.journal.hydration).toBe("ready"));
-  const label = (name: string) => i18n.t(`sourceMaintenance.${name}`);
+  const label = i18n.getFixedT(null, "translation", "sourceMaintenance");
   await user.click(screen.getByRole("button", { name: label("correctionOpen") }));
   await user.selectOptions(screen.getByRole("combobox", { name: label("correctionCandidate") }), basis.candidates[0].old.occurrenceId!);
   await user.selectOptions(screen.getByRole("combobox", { name: label("correctionDecision") }), "reject");
