@@ -14,11 +14,12 @@ import type { EntryDiagnosticFocus } from "../review/navigationTypes";
 import styles from "../../WorkbenchLayout.module.css";
 
 export type EditorCommand = "translation.confirm" | "translation.confirm-next" | "translation.exit-editor";
-export interface SegmentEditorHandle { focus: () => void }
+export interface SegmentEditorHandle { focus: () => void; cancelPendingPaste: () => boolean }
 export interface SegmentEditorProps {
   drafts: TranslationDrafts;
   draftKey: DraftKey;
   viewId: string | null;
+  dialogId?: string;
   gate: InteractionGate;
   disabled: boolean;
   nativeKey?: string;
@@ -63,7 +64,7 @@ function EditorIntentControls({ gate, children }: { gate: InteractionGate; child
 }
 
 /** Views borrow the session's entity draft; mounting an editor never owns its lifetime. */
-export default function SegmentEditor({ drafts, draftKey, viewId, gate, disabled, nativeKey, autoFocus = true, allowAdvance = true,
+export default function SegmentEditor({ drafts, draftKey, viewId, dialogId, gate, disabled, nativeKey, autoFocus = true, allowAdvance = true,
   diagnosticFocus, diagnosticCurrent, onDiagnosticFocus, dispatch, ref }: SegmentEditorProps) {
   const { t } = useTranslation(undefined, { keyPrefix: "workbenchV2" });
   const entry = useSyncExternalStore(drafts.subscribe, () => drafts.getEntry(draftKey));
@@ -110,8 +111,8 @@ export default function SegmentEditor({ drafts, draftKey, viewId, gate, disabled
       clearTimeout(flight?.feedbackTimer);
       flight?.intent.release();
     };
-  }, [drafts, gate, ownerId, viewId, identity]);
-  useImperativeHandle(ref, () => ({ focus: () => field.current?.focus() }), []);
+  }, [drafts, gate, ownerId, viewId, dialogId, identity]);
+  useImperativeHandle(ref, () => ({ focus: () => field.current?.focus(), cancelPendingPaste: () => cancelPaste() }), []);
   useLayoutEffect(() => {
     if (firstLoaded.current.drafts !== drafts) firstLoaded.current = { drafts, keys: new Set() };
     if (!entry || firstLoaded.current.keys.has(identity)) return;
@@ -190,7 +191,9 @@ export default function SegmentEditor({ drafts, draftKey, viewId, gate, disabled
   }
   function cancelPaste(feedback: PasteFeedback = "editorPasteCancelled") {
     const flight = pasteFlight.current;
-    if (flight) finishPaste(flight, feedback);
+    if (!flight) return false;
+    finishPaste(flight, feedback);
+    return true;
   }
   function pasteCurrent(flight: PasteFlight) {
     const current = drafts.getEntry(flight.key), control = flight.field;
@@ -211,7 +214,7 @@ export default function SegmentEditor({ drafts, draftKey, viewId, gate, disabled
       setPasteFeedback("editorPasteUnavailable"); return;
     }
     // This owns navigation only; a formal confirmation may still be awaiting A.
-    const intent = gate.acquireIntent(`${ownerId}-paste`);
+    const intent = gate.acquireIntent(`${ownerId}-paste`, dialogId);
     if (!intent) { setPasteFeedback("editorPasteBusy"); return; }
     const flight: PasteFlight = { field: control, key: { ...draftKey }, value: current.value, currentBasis: current.current.basis,
       text: control.value, start: control.selectionStart, end: control.selectionEnd, direction: control.selectionDirection,
@@ -280,8 +283,8 @@ export default function SegmentEditor({ drafts, draftKey, viewId, gate, disabled
     onKeyDown={event => {
       if (composing.current || event.nativeEvent.isComposing || event.nativeEvent.keyCode === 229) {
         event.stopPropagation();
-      } else if (event.key === "Escape" && pasteFlight.current) {
-        event.preventDefault(); event.stopPropagation(); cancelPaste();
+      } else if (event.key === "Escape" && cancelPaste()) {
+        event.preventDefault(); event.stopPropagation();
       }
     }} /> : null;
 

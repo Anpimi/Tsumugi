@@ -813,7 +813,7 @@ it("uses the folder picker after a rejected native drop invalidates the offered 
   }
 });
 
-it("enables local recovery for the first draft without refreshing the entries presentation", async () => {
+it("opens the first local draft without refreshing entries and supports exact paste in recovery", async () => {
   const { unitId, locale, nativeKey, sourceRevisionId, sourcePreview } = page.rows[0].content;
   const key = { projectId: project.metadata.projectId, unitId, locale };
   const basis: DraftBasis = { sourceRevisionId, selectionId: null, revisionId: null, text: null };
@@ -824,7 +824,7 @@ it("enables local recovery for the first draft without refreshing the entries pr
   } }));
   const write = vi.spyOn(draftCommands, "write").mockImplementation(async ({ write }) => {
     const { editSeq, text } = write.value;
-    head = { key: write.key, revision: "1", writerId: write.writerId, value: { basis, editSeq, text, pending: null } };
+    head = { key: write.key, revision: (BigInt(head.revision) + 1n).toString(), writerId: write.writerId, value: { basis, editSeq, text, pending: null } };
     return structuredClone(head);
   });
   vi.spyOn(decisionCommands, "page").mockRejectedValue(new Error("No decision fixture"));
@@ -848,9 +848,59 @@ it("enables local recovery for the first draft without refreshing the entries pr
   await waitFor(() => expect(write).toHaveBeenCalledWith(expect.objectContaining({ write: expect.objectContaining({
     key, value: expect.objectContaining({ text }),
   }) })));
+  act(() => recovery.focus());
   fireEvent.click(recovery);
   const sheet = await screen.findByRole("dialog", { name: recoveryName });
-  expect(await within(sheet).findByRole("textbox", { name: inputName })).toHaveValue(text);
+  const recovered = await within(sheet).findByRole<HTMLTextAreaElement>("textbox", { name: inputName });
+  expect(recovered).toHaveValue(text);
+
+  const clipboard = Object.getOwnPropertyDescriptor(navigator, "clipboard");
+  const execCommand = Object.getOwnPropertyDescriptor(document, "execCommand");
+  const platform = vi.spyOn(navigator, "platform", "get").mockReturnValue("MacIntel");
+  let finishRead!: (text: string) => void;
+  const readText = vi.fn(() => new Promise<string>(resolve => { finishRead = resolve; }));
+  const insertText = vi.fn((command: string, _showUi: boolean, value: string) => {
+    if (command !== "insertText" || document.activeElement !== recovered) return false;
+    fireEvent.change(recovered, { target: { value } });
+    return true;
+  });
+  Object.defineProperty(navigator, "clipboard", { configurable: true, value: { readText } });
+  Object.defineProperty(document, "execCommand", { configurable: true, value: insertText });
+  try {
+    const replacement = "Recovered e\u0301 👩🏽‍💻 {{name}}\nSecond line";
+    await waitFor(() => expect(recovered).toHaveFocus());
+    recovered.select();
+    expect(fireEvent.paste(recovered, { clipboardData: { getData: () => replacement.normalize("NFC") } })).toBe(false);
+    expect(readText).toHaveBeenCalledTimes(1);
+    await act(async () => { finishRead(replacement); });
+    expect(insertText).toHaveBeenCalledWith("insertText", false, replacement);
+    expect(recovered).toHaveValue(replacement);
+    await waitFor(() => expect(head.value?.text).toBe(replacement));
+
+    recovered.select();
+    fireEvent.paste(recovered, { clipboardData: { getData: () => "Cancelled input" } });
+    expect(readText).toHaveBeenCalledTimes(2);
+    fireEvent.keyDown(recovered, { key: "Escape" });
+    expect(sheet).toBeVisible();
+    expect(recovered).toHaveFocus();
+    expect(within(sheet).getByText(i18n.t("workbenchV2.editorPasteCancelled"))).toBeVisible();
+    await act(async () => { finishRead("Cancelled input"); });
+    expect(insertText).toHaveBeenCalledTimes(1);
+    expect(recovered).toHaveValue(replacement);
+    expect(head.value?.text).toBe(replacement);
+
+    fireEvent.keyDown(recovered, { key: "Escape" });
+    await waitFor(() => {
+      expect(sheet).not.toBeInTheDocument();
+      expect(recovery).toHaveFocus();
+    });
+  } finally {
+    platform.mockRestore();
+    if (clipboard) Object.defineProperty(navigator, "clipboard", clipboard);
+    else Reflect.deleteProperty(navigator, "clipboard");
+    if (execCommand) Object.defineProperty(document, "execCommand", execCommand);
+    else Reflect.deleteProperty(document, "execCommand");
+  }
 }, 15000);
 
 it("creates an empty project without restoring the previous project's focused route or extra view", async () => {

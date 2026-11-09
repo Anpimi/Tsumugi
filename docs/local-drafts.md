@@ -2,6 +2,8 @@
 
 The desktop workspace uses a local journal for unconfirmed translation, conversation, resource and source-maintenance input. Its editor keeps translation input by project, entry, and language, while resource and source-maintenance input are kept by project. The recovery panel lists drafts and requests whose results still need checking. Native macOS checks have covered translation drafts and pending requests across project reopening and a process interruption, and conversation input across project reopening and restarting the app. A restored project's new input remains separate from the original project's draft and pending request. Resource and source-maintenance draft recovery have not yet been verified in a native build.
 
+On macOS, the translation editor in **Local drafts** preserves clipboard text when you paste. If a clipboard read is still pending, press **Escape** to cancel the paste and keep the panel open. Press **Escape** again to close the panel.
+
 ## Back up and restore a project
 
 Open **Project settings → Save project backup** to save the committed project database to a new local file. Finish or check unresolved work before backing up. The backup includes committed content, decisions and saved delivery history. Local drafts, external files, machine credentials, extension approvals and runtime caches stay separate.

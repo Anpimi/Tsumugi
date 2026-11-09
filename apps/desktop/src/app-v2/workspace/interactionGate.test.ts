@@ -54,4 +54,27 @@ describe("workspace input ownership", () => {
     gate.setInputOwner(null, "stale-recovery-editor");
     expect(gate.getSnapshot().inputOwner).toBeNull();
   });
+
+  it("limits a dialog intent to the active dialog and does not revive it after another dialog", () => {
+    const gate = new InteractionGate();
+    const closeRecovery = gate.pushDialog("draft-recovery");
+    expect(gate.acquireIntent("navigate")).toBeNull();
+    expect(gate.acquireIntent("wrong-paste", "another-dialog")).toBeNull();
+    const paste = gate.acquireIntent("recovery-paste", "draft-recovery");
+    expect(paste?.current()).toBe(true);
+    const closeOther = gate.pushDialog("another-dialog");
+    expect(paste?.current()).toBe(false);
+    closeOther();
+    expect(paste?.current()).toBe(false);
+    paste?.release();
+
+    const retry = gate.acquireIntent("recovery-paste", "draft-recovery");
+    expect(retry?.current()).toBe(true);
+    closeRecovery();
+    const closeReplacement = gate.pushDialog("draft-recovery");
+    expect(retry?.current()).toBe(false);
+    retry?.release();
+    closeReplacement();
+    expect(gate.acquireIntent("recovery-paste", "draft-recovery")).toBeNull();
+  });
 });

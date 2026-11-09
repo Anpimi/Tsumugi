@@ -209,6 +209,7 @@ Current workspace version metadata: **`0.2.0-alpha.1`**. Because the published `
 - Typing and saving a local draft updates the editor and its status without refreshing unrelated entry rows when their view stays the same. Changes to other drafts leave the active editor alone. The recovery button updates independently when the first draft becomes available.
 - Keep the active row's unchanged source text out of translation input, paste and draft-write updates.
 - While a paste is waiting for the clipboard, the affected editor actions update independently of the translation field.
+- Paste exact clipboard text into a recovered translation draft on macOS. Escape cancels a pending paste and keeps the recovery panel open.
 - Editing a translation updates its recovery summary without rebuilding the full local draft list.
 - Update translation confirmation activity when a submission changes, removing a scan of loaded drafts from typing and local draft saves.
 - Reuse the pending-request count and recovery target during draft edits.

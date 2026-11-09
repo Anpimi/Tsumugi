@@ -152,6 +152,7 @@ function subscribeWidth(listener: () => void) { window.addEventListener("resize"
 const noDraftState: TranslationDraftSnapshot = { hydration: "idle", revision: 0, failure: null, retired: false,
   mutationReserved: false, summaries: [], pendingCount: 0, firstPending: undefined };
 const noDraftSubscription = () => () => undefined;
+const draftRecoveryDialogId = "draft-recovery";
 const getNoCandidateBatchState = () => null;
 
 function DraftRecoveryButton({ drafts, revealDraft }: { drafts: TranslationDrafts | null; revealDraft: (key: DraftKey) => void }) {
@@ -740,7 +741,7 @@ function WorkspaceShell() {
   function openPalette() { if (paletteRelease.current) return; paletteOrigin.current = document.activeElement; paletteRelease.current = gate.pushDialog("workspace-palette"); setPalette(true); }
   const closeDrawer = useCallback(() => { drawerRelease.current?.(); drawerRelease.current = null; setDrawer(false); }, []);
   useLayoutEffect(() => { if (!narrow && drawer) closeDrawer(); }, [narrow, drawer, closeDrawer]);
-  useLayoutEffect(() => recoveryKey ? gate.pushDialog("draft-recovery") : undefined, [gate, recoveryKey !== null]);
+  useLayoutEffect(() => recoveryKey ? gate.pushDialog(draftRecoveryDialogId) : undefined, [gate, recoveryKey !== null]);
   const showDock = useCallback(() => {
     const active = store.getState().activeViewId, current = active ? store.getState().views[active] : null;
     if (innerWidth <= 1100 && !current?.conversationMode && !drawerRelease.current) { drawerRelease.current = gate.pushDialog("workspace-dock"); setDrawer(true); }
@@ -899,7 +900,7 @@ function WorkspaceShell() {
   } }), [gate, store, registries, registeredCommands, scope, readOnly]);
   const dispatch = (id: WorkspaceCommandId) => dispatcher.dispatch(id, { source: "button", viewId: currentId });
   const dispatchEditor = (id: EditorCommand, source: "button" | "keyboard", inputOwner?: string) => dispatcher.dispatch(id, { source, viewId: currentId, inputOwner });
-  const dispatchRecoveryEditor = (id: EditorCommand, source: "button" | "keyboard", inputOwner?: string) => dispatcher.dispatch(id, { source, viewId: currentId, inputOwner, dialogId: "draft-recovery" });
+  const dispatchRecoveryEditor = (id: EditorCommand, source: "button" | "keyboard", inputOwner?: string) => dispatcher.dispatch(id, { source, viewId: currentId, inputOwner, dialogId: draftRecoveryDialogId });
   useLayoutEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
       if (event.isComposing || event.keyCode === 229) return;
@@ -909,7 +910,7 @@ function WorkspaceShell() {
       }
       const current = gate.getSnapshot();
       const dialog = current.dialogs.at(-1);
-      dispatcher.handleKeyDown(event, currentId, current.inputOwner?.ownerId, dialog === "draft-recovery" || dialog === "workspace-dock" ? dialog : undefined);
+      dispatcher.handleKeyDown(event, currentId, current.inputOwner?.ownerId, dialog === draftRecoveryDialogId || dialog === "workspace-dock" ? dialog : undefined);
     };
     document.addEventListener("keydown", onKeyDown);
     return () => document.removeEventListener("keydown", onKeyDown);
@@ -1719,7 +1720,8 @@ function WorkspaceShell() {
       onEscapeKeyDown={event => {
         const current = gate.getSnapshot();
         if (event.isComposing || event.keyCode === 229 || current.composingOwners.length) { event.preventDefault(); return; }
-        dispatcher.handleKeyDown(event, currentId, current.inputOwner?.ownerId, "draft-recovery");
+        if (recoveryEditor.current?.cancelPendingPaste()) { event.preventDefault(); return; }
+        dispatcher.handleKeyDown(event, currentId, current.inputOwner?.ownerId, draftRecoveryDialogId);
       }}>
       {drafts && recoveryKey ? <>
         {draftState.recoverySummaries?.length ? <div className={styles.actions}>{draftState.recoverySummaries.map(summary => {
@@ -1729,7 +1731,7 @@ function WorkspaceShell() {
             onClick={() => revealDraft(summary.key)}>{entry?.current.kind === "current" ? entry.current.nativeKey : message("draftRecoveryFallback", { locale: summary.key.locale, id: shortId })}</Button>;
         })}</div> : null}
         {recoveryEntry?.current.kind === "current" ? <div className={styles.source}><span className={styles.key}>{recoveryEntry.current.nativeKey}</span><p><TokenizedText text={recoveryEntry.current.sourceText} /></p></div> : null}
-        <div className={styles.target}>{commands ? <Suspense fallback={<LoadingState label={message("editorLoading")} />}><SegmentEditor key={JSON.stringify(recoveryKey)} ref={recoveryEditor} drafts={drafts} draftKey={recoveryKey} viewId={currentId} gate={gate} disabled={readOnly || !!lifecycleState.pending} allowAdvance={false} dispatch={dispatchRecoveryEditor} /></Suspense> : <LoadingState label={message("editorLoading")} />}</div>
+        <div className={styles.target}>{commands ? <Suspense fallback={<LoadingState label={message("editorLoading")} />}><SegmentEditor key={JSON.stringify(recoveryKey)} ref={recoveryEditor} drafts={drafts} draftKey={recoveryKey} viewId={currentId} dialogId={draftRecoveryDialogId} gate={gate} disabled={readOnly || !!lifecycleState.pending} allowAdvance={false} dispatch={dispatchRecoveryEditor} /></Suspense> : <LoadingState label={message("editorLoading")} />}</div>
       </> : <LoadingState label={message("draftIndexLoading")} />}
     </Sheet>
     <CommandPalette open={palette} onOpenChange={open => { if (!open) closePalette(); }} title={message("commands")} placeholder={message("commandPlaceholder")} emptyLabel={message("noCommands")} closeLabel={message("close")} groups={[{ label: message("viewCommands"), commands: dispatcher.list({ source: "palette", dialogId: "workspace-palette" }).flatMap(command => {

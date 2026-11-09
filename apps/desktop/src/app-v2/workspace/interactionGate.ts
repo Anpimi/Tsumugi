@@ -18,6 +18,7 @@ export class InteractionGate {
   private listeners = new Set<() => void>();
   private intent: symbol | null = null;
   private dialogTokens: { id: string; token: symbol }[] = [];
+  private dialogRevision = 0;
   private disposed = false;
   private compositionRevision = 0;
   private snapshot: InteractionSnapshot = { visibleViewId: null, inputOwner: null, composingOwners: [], dialogs: [], intentOwner: null };
@@ -58,8 +59,10 @@ export class InteractionGate {
   pushDialog(id: string): () => void {
     const token = Symbol(id);
     this.dialogTokens.push({ id, token });
+    this.dialogRevision += 1;
     this.update({ dialogs: this.dialogTokens.map(dialog => dialog.id) });
     return () => {
+      if (this.dialogTokens.at(-1)?.token === token) this.dialogRevision += 1;
       this.dialogTokens = this.dialogTokens.filter(dialog => dialog.token !== token);
       this.update({ dialogs: this.dialogTokens.map(dialog => dialog.id) });
     };
@@ -73,15 +76,17 @@ export class InteractionGate {
     return true;
   }
 
-  acquireIntent(ownerId: string): InteractionIntent | null {
-    if (this.disposed || this.intent || this.snapshot.composingOwners.length > 0 || this.snapshot.dialogs.length > 0) return null;
+  acquireIntent(ownerId: string, dialogId?: string): InteractionIntent | null {
+    if (this.disposed || this.intent || this.snapshot.composingOwners.length > 0 || this.dialogTokens.at(-1)?.id !== dialogId) return null;
     const token = Symbol(ownerId);
     const fromView = this.snapshot.visibleViewId;
     const compositionRevision = this.compositionRevision;
+    const dialogRevision = this.dialogRevision;
     this.intent = token;
     this.update({ intentOwner: ownerId });
     return {
-      current: () => !this.disposed && this.intent === token && this.snapshot.visibleViewId === fromView && this.compositionRevision === compositionRevision,
+      current: () => !this.disposed && this.intent === token && this.snapshot.visibleViewId === fromView
+        && this.compositionRevision === compositionRevision && (dialogId === undefined || this.dialogRevision === dialogRevision),
       release: () => {
         if (this.intent !== token) return;
         this.intent = null;
