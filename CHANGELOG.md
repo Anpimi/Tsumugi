@@ -191,7 +191,7 @@ Current workspace version metadata: **`0.2.0-alpha.1`**. Because the published `
 - The untranslated and needs review segment filters reuse current selection membership, and saved legacy QA rows share frozen source-input validation within each read, reducing repeated work while preserving current evidence and fixed scope checks.
 - Segment status filters and pages reuse the source positions already established for the current list, reducing repeated source scans when reviewing large projects.
 - Current review and decision views look up saved QA, approvals, and waivers by the requested entries and their review basis, reducing work as review history grows.
-- Pending candidate, review, and finding lists reuse the source positions of their bounded entry lists, reducing repeated source scans in Items needing a decision.
+- Pending candidates, human review, and review findings share the bounded entry list and source positions for one Items needing a decision read, including across target languages.
 - The Items needing a decision count waits for the first entries view, local draft startup and translation confirmation to settle. Its background reads share one native request at a time, leaving more room for opening and saving.
 - Typing and saving a local draft updates the editor and its status without refreshing unrelated entry rows when their view stays the same. Changes to other drafts leave the active editor alone. The recovery button updates independently when the first draft becomes available.
 - Keep the active row's unchanged source text out of translation input, paste and draft-write updates.

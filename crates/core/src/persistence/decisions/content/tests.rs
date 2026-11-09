@@ -55,7 +55,7 @@ fn semantic_findings(store: &mut ProjectStore, project: ExecutionId, unit: Execu
 
 fn read(store: &ProjectStore, project: ExecutionId, source: DecisionSource) -> SourceProjection {
     let c = store.connection().unwrap();
-    review::read_snapshot(c, |c| super::project(store, &mut review::TargetRead::new(c), project, "zh-CN", source)).unwrap()
+    review::read_snapshot(c, |c| super::project(store, &mut ContentRead::new(c), project, "zh-CN", source)).unwrap()
 }
 
 /// Save an original typed synthetic result through the normal ledger and
@@ -138,6 +138,31 @@ fn human_review_requires_a_selected_translation_and_current_approval_resolves_it
     let changed = read(&store, project, DecisionSource::HumanReview);
     assert_eq!(changed.items[0].decision_id, pending.items[0].decision_id);
     assert_ne!(changed.items[0].basis, pending.items[0].basis);
+}
+
+#[test]
+fn decision_sources_share_one_bounded_entry_scope_across_target_locales() {
+    let (_directory, mut store, project, units) = finding_fixture(3);
+    translate(&mut store, project, units[0], "zh-CN", "Synthetic zh-CN translation");
+    translate(&mut store, project, units[1], "fr-FR", "Synthetic fr-FR translation");
+    let sources = [DecisionSource::TranslationCandidate, DecisionSource::HumanReview, DecisionSource::ReviewFinding];
+    let query = DecisionQuery { locale: None, sources: sources.to_vec() };
+    let (combined, statements) = traced_findings(&store, || store.decision_page(project, &query, None, 50, |_| false).unwrap());
+    assert_eq!(combined.items.len(), 2);
+    assert!(combined.items.iter().any(|item| item.locale.as_deref() == Some("zh-CN")));
+    assert!(combined.items.iter().any(|item| item.locale.as_deref() == Some("fr-FR")));
+    for source in sources {
+        let query = DecisionQuery { locale: None, sources: vec![source] };
+        let single = store.decision_page(project, &query, None, 50, |_| false).unwrap();
+        assert_eq!(combined.items.iter().filter(|item| item.source == source).collect::<Vec<_>>(),
+            single.items.iter().collect::<Vec<_>>());
+        assert_eq!(combined.coverage.iter().filter(|item| item.source == source).collect::<Vec<_>>(),
+            single.coverage.iter().collect::<Vec<_>>());
+    }
+    let membership_reads = statements.iter()
+        .filter(|sql| sql.contains("SELECT o.unit_id,MIN(o.ordinal) FROM source_effective_occurrences"))
+        .count();
+    assert_eq!(membership_reads, 1);
 }
 
 #[test]
@@ -267,6 +292,6 @@ fn review_finding_limit_keeps_unvisited_batch_corruption_outside_the_partial_pag
     let c = store.connection().unwrap();
     assert_eq!(c.execute("UPDATE review_decisions SET basis_json='{}' WHERE project_id=?1 AND unit_id=?2 AND locale='zh-CN'",
         params![project.to_string(), units[0].to_string()]).unwrap(), 1);
-    let failure = review::read_snapshot(c, |c| super::project(&store, &mut review::TargetRead::new(c), project, "zh-CN", DecisionSource::ReviewFinding)).err().unwrap();
+    let failure = review::read_snapshot(c, |c| super::project(&store, &mut ContentRead::new(c), project, "zh-CN", DecisionSource::ReviewFinding)).err().unwrap();
     assert_eq!(failure.code, ErrorCode::CorruptLedger);
 }

@@ -21,6 +21,18 @@ struct UnitScope {
     complete: bool,
 }
 
+pub(super) struct ContentRead<'a> {
+    targets: review::TargetRead<'a>,
+    // Cache a successful lookup, including an empty project, in this read snapshot only.
+    units: Option<Option<UnitScope>>,
+}
+
+impl<'a> ContentRead<'a> {
+    pub(super) fn new(connection: &'a Connection) -> Self {
+        Self { targets: review::TargetRead::new(connection), units: None }
+    }
+}
+
 impl UnitScope {
     fn batches(&self) -> impl Iterator<Item = SourcePositions<'_>> {
         self.members.chunks(100).map(|members| SourcePositions { snapshot_id: self.snapshot_id, members })
@@ -53,6 +65,15 @@ fn units_in(c: &Connection, project: ExecutionId) -> Result<Option<UnitScope>, E
     Ok(Some(UnitScope { snapshot_id: identity(snapshot)?, members, complete }))
 }
 
+fn units_for_read<'a>(cached: &'a mut Option<Option<UnitScope>>, c: &Connection, project: ExecutionId)
+    -> Result<Option<&'a UnitScope>, ExecutionError>
+{
+    if cached.is_none() {
+        *cached = Some(units_in(c, project)?);
+    }
+    Ok(cached.as_ref().and_then(Option::as_ref))
+}
+
 fn selection_action(c: &Connection, project: ExecutionId, target: &ReviewTarget) -> Result<Option<ExecutionId>, ExecutionError> {
     let Some(selection) = target.selection_id else { return Ok(None); };
     let raw: Option<String> = c.query_row(
@@ -65,15 +86,15 @@ fn selection_action(c: &Connection, project: ExecutionId, target: &ReviewTarget)
         .and_then(identity).map(Some)
 }
 
-fn candidates(read: &mut review::TargetRead<'_>, project: ExecutionId, locale: &str) -> Result<SourceProjection, ExecutionError> {
-    let c = read.connection();
-    let Some(scope) = units_in(c, project)? else {
+fn candidates(read: &mut ContentRead<'_>, project: ExecutionId, locale: &str) -> Result<SourceProjection, ExecutionError> {
+    let c = read.targets.connection();
+    let Some(scope) = units_for_read(&mut read.units, c, project)? else {
         return Ok(SourceProjection { items: Vec::new(), complete: true });
     };
     let mut complete = scope.complete;
     let mut items = Vec::new();
     for batch in scope.batches() {
-        let targets = read.targets_at(project, locale, batch)?;
+        let targets = read.targets.targets_at(project, locale, batch)?;
         let (candidates, batch_complete) = translation::pending_candidates_in(
             c, project, locale, &targets, SOURCE_LIMIT - items.len(),
         )?;
@@ -103,14 +124,14 @@ fn candidates(read: &mut review::TargetRead<'_>, project: ExecutionId, locale: &
     Ok(SourceProjection { items, complete })
 }
 
-fn human_review(read: &mut review::TargetRead<'_>, project: ExecutionId, locale: &str) -> Result<SourceProjection, ExecutionError> {
-    let c = read.connection();
-    let Some(scope) = units_in(c, project)? else {
+fn human_review(read: &mut ContentRead<'_>, project: ExecutionId, locale: &str) -> Result<SourceProjection, ExecutionError> {
+    let c = read.targets.connection();
+    let Some(scope) = units_for_read(&mut read.units, c, project)? else {
         return Ok(SourceProjection { items: Vec::new(), complete: true });
     };
     let mut items = Vec::new();
     for batch in scope.batches() {
-        for target in read.targets_at(project, locale, batch)? {
+        for target in read.targets.targets_at(project, locale, batch)? {
             let (Some(selection_id), Some(revision_id)) = (target.selection_id, target.revision_id) else { continue; };
             if target.current_decision.as_ref().is_some_and(|decision| decision.kind == ReviewDecisionKind::Approve) { continue; }
             let source_action_id = match &target.current_decision {
@@ -238,9 +259,9 @@ fn finding_item(project: ExecutionId, unit: ExecutionId, locale: &str, target_ba
     })
 }
 
-fn review_findings(read: &mut review::TargetRead<'_>, project: ExecutionId, locale: &str) -> Result<SourceProjection, ExecutionError> {
-    let c = read.connection();
-    let Some(scope) = units_in(c, project)? else {
+fn review_findings(read: &mut ContentRead<'_>, project: ExecutionId, locale: &str) -> Result<SourceProjection, ExecutionError> {
+    let c = read.targets.connection();
+    let Some(scope) = units_for_read(&mut read.units, c, project)? else {
         return Ok(SourceProjection { items: Vec::new(), complete: true });
     };
     let mut complete = scope.complete;
@@ -250,7 +271,7 @@ fn review_findings(read: &mut review::TargetRead<'_>, project: ExecutionId, loca
         // A failed batch may include corruption beyond the visited prefix.
         // Recheck only actually visited targets so an earlier limit still returns
         // the same partial page, while an encountered invalid target still fails.
-        let targets = read.targets_at(project, locale, batch).ok();
+        let targets = read.targets.targets_at(project, locale, batch).ok();
         let units = batch.units();
         let recorded = review::finding_record_units_in(c, project, locale, &units)?;
         for (index, unit) in units.into_iter().enumerate() {
@@ -310,8 +331,8 @@ fn review_findings(read: &mut review::TargetRead<'_>, project: ExecutionId, loca
 #[cfg(test)]
 mod tests;
 
-pub(super) fn project(store: &ProjectStore, read: &mut review::TargetRead<'_>, project: ExecutionId, locale: &str, source: DecisionSource) -> Result<SourceProjection, ExecutionError> {
-    let c = read.connection();
+pub(super) fn project(store: &ProjectStore, read: &mut ContentRead<'_>, project: ExecutionId, locale: &str, source: DecisionSource) -> Result<SourceProjection, ExecutionError> {
+    let c = read.targets.connection();
     let metadata = super::super::read_metadata_from(c)
         .map_err(|_| failure(ErrorCode::StorageFailed, "decision-content-project"))?;
     if metadata.project_id().to_string() != project.to_string()
