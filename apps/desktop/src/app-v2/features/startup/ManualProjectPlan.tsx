@@ -126,6 +126,7 @@ export default function ManualProjectPlan({ controller, gate, open, onOpenChange
       const selected = ticket ? await startupCommands.droppedDirectory({ dropTicket: ticket }) : await startupCommands.chooseDirectory();
       if (!mounted.current || !openRef.current || flight !== sourceFlight.current || current.current !== frame || composing.current) return;
       if (selected) edit({ sourcePlan: { ...selectedPlan, directory: selected, folderName: selected.folderName, expired: false } });
+      else if (!ticket && before.directory) edit({ sourcePlan: before });
     } catch (cause) {
       if (mounted.current && openRef.current && flight === sourceFlight.current && current.current === frame) setSourceFailure(commandFailure(cause));
     } finally {
