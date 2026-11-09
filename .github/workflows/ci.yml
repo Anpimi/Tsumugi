@@ -75,13 +75,18 @@ jobs:
         run: >-
           pnpm --dir apps/desktop test --maxWorkers=2
           src/app-v2/WorkbenchApp.test.tsx
+          src/app-v2/features/startup/ManualProjectPlan.test.tsx
           src/TranslationDraftSession.test.tsx
           src/app-v2/features/editor/translationDrafts.test.ts
           src/app-v2/features/editor/SegmentEditor.test.tsx
+          src/app-v2/features/entries/EntriesView.test.tsx
           src/TranslationImportSession.test.tsx
           src/SourceDraftSession.test.tsx
+          src/SourceDraftPersistence.test.tsx
           src/ReviewBatchSession.test.tsx
           src/ReleaseDraftSession.test.tsx
+          src/app-v2/features/delivery/DeliveryView.test.tsx
+          src/app-v2/features/delivery/DeliveryOwnerHost.test.tsx
           src/app-v2/features/assistant/ConversationPanel.test.tsx
           src/app-v2/features/assistant/ConversationWorkPlanPanel.test.tsx
           src/ipcContracts.test.ts
