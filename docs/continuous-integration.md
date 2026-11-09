@@ -57,6 +57,8 @@ pnpm --dir apps/desktop test --maxWorkers=2 \
   src/app-v2/features/delivery/DeliveryView.test.tsx \
   src/app-v2/features/delivery/DeliveryOwnerHost.test.tsx \
   src/app-v2/features/assistant/ConversationPanel.test.tsx \
+  src/app-v2/features/assistant/ConversationSend.test.tsx \
+  src/app-v2/features/assistant/ConversationRevisionCandidate.test.tsx \
   src/app-v2/features/assistant/ConversationWorkPlanPanel.test.tsx \
   src/ipcContracts.test.ts
 ```
