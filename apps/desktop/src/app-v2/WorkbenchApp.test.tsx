@@ -813,7 +813,7 @@ it("uses the folder picker after a rejected native drop invalidates the offered 
   }
 });
 
-it("opens the first local draft without refreshing entries and supports exact paste in recovery", async () => {
+it("keeps entries stable when opening the first local draft and pasting in recovery", async () => {
   const { unitId, locale, nativeKey, sourceRevisionId, sourcePreview } = page.rows[0].content;
   const key = { projectId: project.metadata.projectId, unitId, locale };
   const basis: DraftBasis = { sourceRevisionId, selectionId: null, revisionId: null, text: null };
@@ -869,6 +869,9 @@ it("opens the first local draft without refreshing entries and supports exact pa
   try {
     const replacement = "Recovered e\u0301 👩🏽‍💻 {{name}}\nSecond line";
     await waitFor(() => expect(recovered).toHaveFocus());
+    expect(within(sheet).getByRole("button", { name: nativeKey })).toHaveAttribute("aria-current", "true");
+    expect(within(sheet).getByText(sourcePreview)).toBeVisible();
+    entriesPresentation.mockClear();
     recovered.select();
     expect(fireEvent.paste(recovered, { clipboardData: { getData: () => replacement.normalize("NFC") } })).toBe(false);
     expect(readText).toHaveBeenCalledTimes(1);
@@ -876,6 +879,8 @@ it("opens the first local draft without refreshing entries and supports exact pa
     expect(insertText).toHaveBeenCalledWith("insertText", false, replacement);
     expect(recovered).toHaveValue(replacement);
     await waitFor(() => expect(head.value?.text).toBe(replacement));
+    await within(sheet).findByText(i18n.t("workbenchV2.editorPreserved"));
+    expect(entriesPresentation).not.toHaveBeenCalled();
 
     recovered.select();
     fireEvent.paste(recovered, { clipboardData: { getData: () => "Cancelled input" } });
@@ -1473,10 +1478,17 @@ describe("real-port workspace assembly", () => {
 
   it("reveals the original pending draft outside blocked routing and checks it through the current session", async () => {
     const retained: unknown = structuredClone(draftFixture.responses.read);
-    if (!validateResponseRead(retained) || retained.head.value?.pending?.kind !== "save") throw new Error("Invalid shared pending draft fixture");
+    if (!validateResponseRead(retained) || retained.head.value?.pending?.kind !== "save" || retained.current.kind !== "current") throw new Error("Invalid shared pending draft fixture");
     const pending = retained.head.value.pending, restored = { ...project, metadata: { ...project.metadata, projectId: retained.head.key.projectId } };
-    vi.mocked(draftCommands.list).mockResolvedValue(draftFixture.responses.page);
-    vi.spyOn(draftCommands, "read").mockImplementation(async () => structuredClone(retained));
+    const otherKey = { ...retained.head.key, unitId: fixtureIdentity(984) };
+    const other = {
+      head: { ...retained.head, key: otherKey, value: { ...retained.head.value, text: "Another retained draft", pending: null } },
+      current: { ...retained.current, nativeKey: "greeting.farewell", sourceText: "Source for the second draft" },
+    };
+    vi.mocked(draftCommands.list).mockResolvedValue({
+      items: [...draftFixture.responses.page.items, { ...draftFixture.responses.page.items[0], key: otherKey, hasPending: false }], next: null,
+    });
+    vi.spyOn(draftCommands, "read").mockImplementation(async ({ key }) => structuredClone(key.unitId === otherKey.unitId ? other : retained));
     const recover = vi.spyOn(translationCommands, "recoverSave").mockImplementation(async () => {
       const result = { request: structuredClone(pending.request), outcome: { kind: "pending" as const, replay: "explicit-same-request" as const } };
       if (!validateResponseRecoverSave(result)) throw new Error("Invalid shared recovery fixture");
@@ -1504,6 +1516,16 @@ describe("real-port workspace assembly", () => {
     const input = await within(sheet).findByRole("textbox", { name: i18n.t("workbenchV2.editorLabel", { key: "greeting.welcome" }) });
     expect(input).toHaveValue(retained.head.value.text);
     expect(within(sheet).getByText("Welcome 👩🏽‍💻", { exact: false })).toBeVisible();
+
+    const otherChoice = within(sheet).getByRole("button", { name: i18n.t("workbenchV2.draftRecoveryFallback", {
+      locale: otherKey.locale, id: `${otherKey.unitId.slice(0, 8)}…${otherKey.unitId.slice(-6)}`,
+    }) });
+    fireEvent.click(otherChoice);
+    expect(await within(sheet).findByRole("textbox", { name: i18n.t("workbenchV2.editorLabel", { key: other.current.nativeKey }) })).toHaveValue(other.head.value.text);
+    expect(within(sheet).getByRole("button", { name: other.current.nativeKey })).toHaveAttribute("aria-current", "true");
+    expect(within(sheet).getByText(other.current.sourceText)).toBeVisible();
+    fireEvent.click(within(sheet).getByRole("button", { name: retained.current.nativeKey }));
+    expect(await within(sheet).findByRole("textbox", { name: i18n.t("workbenchV2.editorLabel", { key: retained.current.nativeKey }) })).toHaveValue(retained.head.value.text);
     fireEvent.click(within(sheet).getByRole("button", { name: i18n.t("workbenchV2.editorCheckResult") }));
     await waitFor(() => expect(recover).toHaveBeenCalledWith({ ...pending.request, sessionToken: restored.sessionToken }));
     expect(close).not.toHaveBeenCalled();

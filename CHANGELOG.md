@@ -206,7 +206,7 @@ Current workspace version metadata: **`0.2.0-alpha.1`**. Because the published `
 - Current review and decision views look up saved QA, approvals, and waivers by the requested entries and their review basis, reducing work as review history grows.
 - Pending candidates, human review, and review findings share the bounded entry list and source positions for one Items needing a decision read, including across target languages.
 - The Items needing a decision count waits for the first entries view, local draft startup and translation confirmation to settle. Its background reads share one native request at a time, leaving more room for opening and saving.
-- Typing and saving a local draft updates the editor and its status without refreshing unrelated entry rows when their view stays the same. Changes to other drafts leave the active editor alone. The recovery button updates independently when the first draft becomes available.
+- Typing and saving a local draft, including in the recovery panel, updates the editor and its status without refreshing unrelated entry rows when their view stays the same. Changes to other drafts leave the active editor alone. The recovery button updates independently when the first draft becomes available.
 - Keep the active row's unchanged source text out of translation input, paste and draft-write updates.
 - While a paste is waiting for the clipboard, the affected editor actions update independently of the translation field.
 - Paste exact clipboard text into a recovered translation draft on macOS. Escape cancels a pending paste and keeps the recovery panel open.

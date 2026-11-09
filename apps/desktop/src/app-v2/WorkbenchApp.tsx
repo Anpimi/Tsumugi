@@ -39,8 +39,8 @@ import { InteractionGate } from "./workspace/interactionGate";
 import { registerWorkspaceCommands, createWorkspaceCommandDispatcher, workspaceCommandIds, type WorkspaceCommandId } from "./workspace/workspaceCommands";
 import type { WorkbenchCommands } from "../workbenchCommands";
 import type { EntriesHandle } from "./features/entries/EntriesView";
-import type { DraftKey } from "../draftCommands";
-import type { TranslationDrafts, TranslationDraftSnapshot } from "./features/editor/translationDrafts";
+import { sameDraftKey, type DraftKey } from "../draftCommands";
+import type { DraftEntry, TranslationDrafts, TranslationDraftSnapshot } from "./features/editor/translationDrafts";
 import type { EditorCommand, SegmentEditorHandle } from "./features/editor/SegmentEditor";
 import type { LifecycleParticipant } from "./platform/projectLifecycle";
 import type { ImportOwners } from "./features/import/importTypes";
@@ -162,6 +162,33 @@ function DraftRecoveryButton({ drafts, revealDraft }: { drafts: TranslationDraft
     const first = drafts?.getSnapshot().summaries[0];
     if (first) revealDraft(first.key);
   }}>{t("draftRecoveryTitle")}</Button>;
+}
+
+function DraftRecoveryDetails({ drafts, draftKey, revealDraft }: {
+  drafts: TranslationDrafts; draftKey: DraftKey; revealDraft: (key: DraftKey) => void;
+}) {
+  const { t } = useTranslation(undefined, { keyPrefix: "workbenchV2" });
+  const selectChoices = useShallow((summaries: TranslationDraftSnapshot["summaries"]) => {
+    const choices = new Map<DraftKey, string | undefined>();
+    for (const { key } of summaries) {
+      const current = drafts.getEntry(key)?.current;
+      choices.set(key, current?.kind === "current" ? current.nativeKey : undefined);
+    }
+    return choices;
+  });
+  const choices = useSyncExternalStore(drafts.subscribe, () => selectChoices(drafts.getSnapshot().summaries));
+  const selectSource = useShallow((entry: DraftEntry | undefined) => {
+    const current = entry?.current;
+    return current?.kind === "current" ? { name: current.nativeKey, text: current.sourceText } : null;
+  });
+  const source = useSyncExternalStore(drafts.subscribe, () => selectSource(drafts.getEntry(draftKey)));
+  return <>
+    {choices.size ? <div className={styles.actions}>{Array.from(choices, ([key, name]) => (
+      <Button key={JSON.stringify(key)} title={key.unitId} aria-current={sameDraftKey(key, draftKey) ? "true" : undefined}
+        onClick={() => revealDraft(key)}>{name ?? t("draftRecoveryFallback", { locale: key.locale, id: `${key.unitId.slice(0, 8)}…${key.unitId.slice(-6)}` })}</Button>
+    ))}</div> : null}
+    {source ? <div className={styles.source}><span className={styles.key}>{source.name}</span><p><TokenizedText text={source.text} /></p></div> : null}
+  </>;
 }
 
 function InteractionBlocked({ gate, children }: { gate: InteractionGate; children: (blocked: boolean) => ReactNode }) {
@@ -611,7 +638,6 @@ function WorkspaceShell() {
     hydration: snapshot.hydration, retired: snapshot.retired, mutationReserved: snapshot.mutationReserved,
     pendingCount: snapshot.pendingCount, firstPending: snapshot.firstPending,
     canConfirm: activeDraftKey !== null && !!drafts?.canConfirm(activeDraftKey),
-    recoverySummaries: recoveryKey ? snapshot.summaries : null,
   }));
   const draftState = useSyncExternalStore(drafts?.subscribe ?? noDraftSubscription,
     () => selectDraftState(drafts?.getSnapshot() ?? noDraftState));
@@ -656,7 +682,6 @@ function WorkspaceShell() {
   const importVisible = importRecovery || view?.kind === "entries" && view.entryMode === "import";
   const revealedImportFailure = useRef<typeof lifecycleState.failure>(null);
   const revealedReviewFailure = useRef<typeof lifecycleState.failure>(null);
-  const recoveryEntry = recoveryKey ? drafts?.getEntry(recoveryKey) : undefined;
   const firstPendingDraft = draftState.firstPending;
   const disabled = readOnly || lifecycleState.phase !== "idle" || !!lifecycleState.pending;
   const sourcePresentation = useRef<{ viewId: string | null; origin: Element | null } | null>(null);
@@ -1724,13 +1749,7 @@ function WorkspaceShell() {
         dispatcher.handleKeyDown(event, currentId, current.inputOwner?.ownerId, draftRecoveryDialogId);
       }}>
       {drafts && recoveryKey ? <>
-        {draftState.recoverySummaries?.length ? <div className={styles.actions}>{draftState.recoverySummaries.map(summary => {
-          const entry = drafts.getEntry(summary.key);
-          const shortId = `${summary.key.unitId.slice(0, 8)}…${summary.key.unitId.slice(-6)}`;
-          return <Button key={JSON.stringify(summary.key)} title={summary.key.unitId} aria-current={summary.key.unitId === recoveryKey.unitId && summary.key.locale === recoveryKey.locale ? "true" : undefined}
-            onClick={() => revealDraft(summary.key)}>{entry?.current.kind === "current" ? entry.current.nativeKey : message("draftRecoveryFallback", { locale: summary.key.locale, id: shortId })}</Button>;
-        })}</div> : null}
-        {recoveryEntry?.current.kind === "current" ? <div className={styles.source}><span className={styles.key}>{recoveryEntry.current.nativeKey}</span><p><TokenizedText text={recoveryEntry.current.sourceText} /></p></div> : null}
+        <DraftRecoveryDetails drafts={drafts} draftKey={recoveryKey} revealDraft={revealDraft}/>
         <div className={styles.target}>{commands ? <Suspense fallback={<LoadingState label={message("editorLoading")} />}><SegmentEditor key={JSON.stringify(recoveryKey)} ref={recoveryEditor} drafts={drafts} draftKey={recoveryKey} viewId={currentId} dialogId={draftRecoveryDialogId} gate={gate} disabled={readOnly || !!lifecycleState.pending} allowAdvance={false} dispatch={dispatchRecoveryEditor} /></Suspense> : <LoadingState label={message("editorLoading")} />}</div>
       </> : <LoadingState label={message("draftIndexLoading")} />}
     </Sheet>
