@@ -196,8 +196,11 @@ it.each(["en-US", "zh-CN"] as const)("keeps both sides reachable and newer %s in
   expect(reason).toHaveValue("Newer B 👩🏽‍💻\n人工理由"); expect(applied).not.toHaveBeenCalled();
   act(() => patchFrame({ pendingCorrection: null, correctionReceipt: receipt, correctionBasis: null }));
   expect(screen.getByText(language === "en-US"
-    ? "The earlier correction was recorded. Your newer changes are still here and have not been submitted. Read the match again before submitting them."
-    : "此前的更正已记录，较新的修改仍在这里，还没有提交。请重新读取对应后再提交。")).toBeVisible();
+    ? "The earlier correction was recorded. Your newer changes are still here and have not been submitted."
+    : "此前的更正已记录，较新的修改仍在这里，还没有提交。")).toBeVisible();
+  expect(screen.getByText(language === "en-US"
+    ? "Read the match again before submitting them."
+    : "请重新读取对应后再提交。")).toBeVisible();
   expect(reason).toHaveValue("Newer B 👩🏽‍💻\n人工理由");
   expect(screen.getByText(/Earlier saved A/)).toBeVisible();
   for (const node of screen.getAllByText(/Original selected B/)) expect(node).toBeVisible();

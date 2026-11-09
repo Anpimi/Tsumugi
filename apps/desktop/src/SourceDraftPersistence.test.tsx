@@ -31,7 +31,7 @@ const key = { projectId: project.metadata.projectId }, preview = sourcePageFixtu
 let owner: ReturnType<typeof useSourceDraftSession>;
 type SourceLabel = "actor" | "recoveryTitle" | "recoveryCheck" | "recoveryPreparation"
   | "correctionOpen" | "correctionCandidate" | "correctionDecision" | "correctionReason" | "correctionConfirm"
-  | "correctionApply" | "correctionRefresh" | "correctionDiscardConfirm";
+  | "correctionApply" | "correctionRefresh" | "correctionDiscardConfirm" | "correctionNewerEdits";
 const t = (key: SourceLabel) => i18n.t(`sourceMaintenance.${key}`);
 function Probe() {
   const value = useSourceDraftSession(); useLayoutEffect(() => { owner = value; });
@@ -276,13 +276,18 @@ it("refreshes a completed correction before explicitly submitting newer input wi
   await act(async () => { reply.resolve(recorded); });
   await waitFor(() => expect(owner.current().pendingCorrection).toBeNull());
   expect(confirmation).toBeDisabled(); expect(reason).toHaveValue("Explicit continuation B 👩🏽‍💻");
+  const refreshNotice = /Read the match again before submitting them/;
+  expect(screen.getByText(refreshNotice)).toBeVisible();
   read.mockResolvedValueOnce(basis).mockResolvedValueOnce(fresh);
   await user.click(screen.getByRole("button", { name: t("correctionRefresh") }));
   await waitFor(() => expect(owner.current().correctionLoading).toBe(false));
   expect(confirmation).toBeDisabled(); expect(correct).toHaveBeenCalledOnce();
+  expect(screen.getByText(refreshNotice)).toBeVisible();
   await user.click(screen.getByRole("button", { name: t("correctionRefresh") }));
   await waitFor(() => expect(confirmation).toBeEnabled());
   expect(read).toHaveBeenCalledTimes(3); expect(reason).toHaveValue("Explicit continuation B 👩🏽‍💻");
+  expect(screen.queryByText(refreshNotice)).not.toBeInTheDocument();
+  expect(screen.getByText(t("correctionNewerEdits"))).toBeVisible();
   expect(screen.getByRole("button", { name: t("correctionApply") })).toBeDisabled();
   await user.click(confirmation); await user.click(screen.getByRole("button", { name: t("correctionApply") }));
   await waitFor(() => expect(correct).toHaveBeenCalledTimes(2));
