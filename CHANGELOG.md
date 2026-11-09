@@ -182,6 +182,8 @@ Current workspace version metadata: **`0.2.0-alpha.1`**. Because the published `
 
 ### Fixed
 
+- Open the project's current saved source from the upstream import sheet after restoring a backup or opening the project without a local import receipt.
+
 - Delivery shows when the selected build was saved and offers a direct switch to a newer saved build. Existing export preparation stays with its original build until you clear it or finish the export.
 
 - Canceling the replacement source-folder picker during new-project setup keeps the previous folder and its completed file check.
