@@ -182,6 +182,8 @@ Current workspace version metadata: **`0.2.0-alpha.1`**. Because the published `
 
 ### Fixed
 
+- Canceling the replacement source-folder picker during new-project setup keeps the previous folder and its completed file check.
+
 - Source import offers the folder picker again after rejecting a drop of multiple items. The selected importer and runtime are retained. New-project setup shows the rejection in the project form and lets an open folder picker finish. Consecutive drops update the form in the order the host processes them. A valid folder drop into an open project can use the last available slot in the host queue.
 
 - Adopting and editing a candidate returns keyboard focus to the translation editor when the entry is already open for editing.

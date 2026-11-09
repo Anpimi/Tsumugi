@@ -187,6 +187,48 @@ it("rejects a preflight from a different runtime and keeps the source plan for r
   expect(screen.getByRole("textbox", { name: t("parent") })).toHaveValue("/synthetic/projects"); expect(ports.create).not.toHaveBeenCalled(); controller.dispose();
 });
 
+it("keeps the checked source directory when its replacement picker is cancelled", async () => {
+  nativeSourceReads();
+  const { controller, ports, onCreated } = fixture(), user = await fill();
+  await checkedSource(user);
+  const cancelled = deferred<null>();
+  vi.spyOn(startupCommands, "chooseDirectory").mockReturnValueOnce(cancelled.promise);
+  const create = screen.getByRole("button", { name: t("create") });
+  await user.click(screen.getByRole("button", { name: t("chooseSourceFolder") }));
+  expect(create).toBeDisabled();
+  await act(async () => cancelled.resolve(null));
+  expect(screen.getByText(t("sourceReady"))).toBeVisible();
+  expect(screen.queryByText(t("sourceSelectionExpired"))).not.toBeInTheDocument();
+  expect(create).toBeEnabled();
+  await user.click(create);
+  await waitFor(() => expect(onCreated).toHaveBeenCalledExactlyOnceWith({
+    selectionId: directory.selectionId, source: pluginSourceRequest,
+    projectId: project.metadata.projectId, sessionToken: project.sessionToken,
+  }));
+  expect(ports.create).toHaveBeenCalledOnce();
+  expect(invoke.mock.calls.filter(([command]) => command === "read_startup_source_preflight")).toHaveLength(1);
+  controller.dispose();
+});
+
+it("does not restore the old source when a native drop supersedes a picker that returns cancellation", async () => {
+  nativeSourceReads();
+  const { controller, setDrop } = fixture(), user = await fill();
+  await checkedSource(user);
+  const cancelled = deferred<null>();
+  const newer = { selectionId: "00000000-0000-4000-8000-000000002223", folderName: "New folder B" };
+  vi.spyOn(startupCommands, "chooseDirectory").mockReturnValueOnce(cancelled.promise);
+  const acceptDrop = vi.spyOn(startupCommands, "droppedDirectory").mockResolvedValueOnce(newer);
+  await user.click(screen.getByRole("button", { name: t("chooseSourceFolder") }));
+  act(() => setDrop({ dropTicket: "00000000-0000-4000-8000-000000002222", folderName: newer.folderName }));
+  await act(async () => cancelled.resolve(null));
+  await waitFor(() => expect(screen.getByRole("button", { name: t("checkSource") })).toBeEnabled());
+  expect(acceptDrop).toHaveBeenCalledOnce();
+  expect(screen.getByText(i18n.t("startup.sourceFolder", { folder: newer.folderName }))).toBeVisible();
+  expect(screen.queryByText(t("sourceReady"))).not.toBeInTheDocument();
+  expect(screen.getByRole("button", { name: t("create") })).toBeDisabled();
+  controller.dispose();
+});
+
 it("uses an opaque native drop ticket and removes an older preflight even when the new drop fails", async () => {
   nativeSourceReads(); const { controller, setDrop, onDropHandled } = fixture(), user = await fill(); await checkedSource(user);
   onDropHandled.mockClear();
