@@ -1720,7 +1720,9 @@ describe("entry knowledge workflow assembly", () => {
   }, 15000);
 });
 
-it("opens application settings and external query commands through the real workspace while retaining project language and query input", async () => {
+it("opens application settings and external query commands through the real workspace while retaining project language and query input", async ({ onTestFinished }) => {
+  vi.stubGlobal("innerWidth", 900);
+  onTestFinished(() => { vi.unstubAllGlobals(); });
   document.documentElement.lang = "zh-CN";
   controller = new ProjectLifecycle({ open: vi.fn().mockResolvedValue(project) });
   render(<WorkbenchApp controller={controller} native/>);
@@ -1744,6 +1746,19 @@ it("opens application settings and external query commands through the real work
   await screen.findByRole("textbox", { name: i18n.t("toolQuery.text", { position: "1" }) });
   fireEvent.click(screen.getByRole("button", { name: i18n.t("mcpWorkbench.close") }));
   await waitFor(() => expect(dockTrigger).toHaveFocus());
+
+  vi.stubGlobal("innerWidth", 1440);
+  fireEvent(window, new Event("resize"));
+  const inlineEntry = await screen.findByRole("button", { name: i18n.t("toolQuery.title") });
+  await userEvent.setup().click(inlineEntry);
+  const inlineQuery = await screen.findByRole("textbox", { name: i18n.t("toolQuery.text", { position: "1" }) });
+  vi.stubGlobal("innerWidth", 900);
+  fireEvent(window, new Event("resize"));
+  expect(inlineEntry.closest("[hidden]")).not.toBeNull();
+  inlineQuery.focus();
+  fireEvent.keyDown(inlineQuery, { key: "Escape" });
+  await waitFor(() => expect(screen.getByRole("main")).toHaveFocus());
+
   await userEvent.setup().click(screen.getByRole("button", { name: i18n.t("workbenchV2.commandPlaceholder") }));
   const reference = await screen.findByRole("option", { name: i18n.t("toolQuery.title") });
   await waitFor(() => expect(reference).not.toHaveAttribute("aria-disabled", "true")); fireEvent.click(reference);

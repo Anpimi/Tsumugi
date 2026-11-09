@@ -182,6 +182,8 @@ Current workspace version metadata: **`0.2.0-alpha.1`**. Because the published `
 
 ### Fixed
 
+- Closing Reference queries returns keyboard focus to the workspace when resizing hides the original entry point.
+
 - Open the project's current saved source from the upstream import sheet after restoring a backup or opening the project without a local import receipt.
 - After rereading a source match, the correction panel stops asking you to reread it and keeps your newer edits visible for confirmation.
 

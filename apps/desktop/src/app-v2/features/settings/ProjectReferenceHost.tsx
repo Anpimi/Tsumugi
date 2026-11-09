@@ -102,8 +102,13 @@ function ProjectMcpSurface({ project, lifecycle, gate, drafts, knowledgeOwner, o
   function close() {
     if (gate.getSnapshot().composingOwners.length || gate.getSnapshot().dialogs.length) return;
     setOpen(false); gate.releaseOwner(inputId);
-    const target = returnFocus.current?.isConnected ? returnFocus.current : returnFallback.current; returnFocus.current = null; returnFallback.current = null;
-    if (target?.isConnected && !target.matches(":disabled") && !target.closest("[hidden]")) target.focus();
+    const targets = [returnFocus.current, returnFallback.current];
+    returnFocus.current = null; returnFallback.current = null;
+    for (const target of targets) {
+      if (!target?.isConnected || target.matches(":disabled") || target.closest("[hidden], [inert]")) continue;
+      target.focus();
+      if (document.activeElement === target) break;
+    }
   }
 
   const scopeOptions = sourceReads.scope(context), scopeRead = useSessionQuery({ ...scopeOptions, enabled: open && !reads.retired });

@@ -910,7 +910,7 @@ function WorkspaceShell() {
       openProjectMetadata: revealProjectMetadata,
     openRuns: () => actions.current.openRuns(),
       openDecisions: () => openDecisions(), openDelivery: () => actions.current.openDelivery(), openSettings: () => settings.open("general", paletteHandoff.current ?? undefined), openExtensions: () => settings.openExtensions(paletteHandoff.current ?? undefined),
-      openReferences: settings.openReferences ? () => settings.openReferences?.(paletteHandoff.current ?? undefined) : undefined,
+      openReferences: settings.openReferences ? () => settings.openReferences?.(paletteHandoff.current ?? undefined, main.current ?? undefined) : undefined,
       openMcpQuery: settings.openMcpQuery ? () => settings.openMcpQuery?.(paletteHandoff.current ?? undefined) : undefined,
       openMcpShare: settings.openMcpShare ? () => settings.openMcpShare?.(paletteHandoff.current ?? undefined) : undefined,
       openImport: () => actions.current.openImport(), canOpenImport: () => actions.current.canOpenImport(),
