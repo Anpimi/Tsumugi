@@ -13,6 +13,7 @@ import { sourceDraftStateFixture } from "../testSupport/sourceDraftStateFixture"
 import { pluginCommands } from "../pluginCommands";
 import { pluginSourceInventory, pluginSourcePackage, pluginSourceRequest, pluginSourceWorkflow } from "../testSupport/pluginSourceFixture";
 import { startupCommands } from "../startupCommands";
+import type { KnowledgeOwner } from "./features/knowledge/knowledgeTypes";
 import type { SourceOwner } from "./features/source/sourceTypes";
 import { segmentCommands, type SegmentPage } from "../segmentCommands";
 import { decisionCommands } from "../decisionCommands";
@@ -47,7 +48,8 @@ import { InteractionGate } from "./workspace/interactionGate";
 
 vi.mock("./platform/useProjectLifecycle", async original => ({ ...await original<object>(), useNativeProjectClose: () => ({ state: "ready" }) }));
 vi.mock("@tauri-apps/api/path", () => ({ sep: () => "/", join: async (...parts: string[]) => parts.join("/") }));
-const ownerLoad = vi.hoisted(() => ({ execution: null as Promise<void> | null, knowledge: null as Promise<void> | null, source: null as Promise<void> | null, sourceValue: null as SourceOwner | null, deliveryFail: false }));
+const ownerLoad = vi.hoisted(() => ({ execution: null as Promise<void> | null, knowledge: null as Promise<void> | null, source: null as Promise<void> | null,
+  knowledgeValue: null as KnowledgeOwner | null, sourceValue: null as SourceOwner | null, deliveryFail: false }));
 const entriesPresentation = vi.hoisted(() => vi.fn());
 vi.mock("./features/entries/EntriesView", async original => {
   const module = await original<typeof import("./features/entries/EntriesView")>(), Actual = module.default;
@@ -73,8 +75,9 @@ vi.mock("./features/execution/ExecutionOwnerHost", async original => {
 vi.mock("./features/knowledge/KnowledgeOwnerHost", async original => {
   const module = await original<typeof import("./features/knowledge/KnowledgeOwnerHost")>(), Actual = module.default;
   return { ...module, default: (props: ComponentProps<typeof Actual>) => {
+    const publish = useCallback((owner: KnowledgeOwner | null) => { ownerLoad.knowledgeValue = owner; props.onOwner(owner); }, [props.onOwner]);
     if (ownerLoad.knowledge) throw ownerLoad.knowledge;
-    return <Actual {...props}/>;
+    return <Actual {...props} onOwner={publish}/>;
   } };
 });
 vi.mock("./features/source/SourceOwnerHost", async original => {
@@ -124,7 +127,7 @@ const page: SegmentPage = {
 let controller: ProjectLifecycle;
 beforeEach(async () => {
   ownerLoad.execution = null; ownerLoad.knowledge = null; ownerLoad.source = null;
-  ownerLoad.sourceValue = null;
+  ownerLoad.knowledgeValue = null; ownerLoad.sourceValue = null;
   ownerLoad.deliveryFail = false;
   installResourceDraftPortsFixture();
   installSourceDraftPortsFixture();
@@ -534,6 +537,13 @@ async function openImportWorkspace(opened: ProjectView = project, ports: Partial
   return { close, register, button };
 }
 
+function waitForSourceAndKnowledgeJournals() {
+  return waitFor(() => {
+    expect(ownerLoad.sourceValue?.journal.hydration).toBe("ready");
+    expect(ownerLoad.knowledgeValue?.journal.hydration).toBe("ready");
+  }, { timeout: 5000 });
+}
+
 it("suspends the workspace command group while keeping native Edit installed", async () => {
   type NativeItem = { id: string; enabled: boolean };
   const items = new Map<number, NativeItem>();
@@ -549,7 +559,8 @@ it("suspends the workspace command group while keeping native Edit installed", a
   });
   const setEnabled = vi.fn<(kind: string, enabled: boolean, previous: boolean | undefined) => void>();
   const gateIntents = vi.spyOn(InteractionGate.prototype, "acquireIntent");
-  vi.spyOn(decisionCommands, "page").mockRejectedValue(new Error("No decision fixture"));
+  // Hold the independent background read so it cannot commit while measuring the gate update.
+  const readDecisions = vi.spyOn(decisionCommands, "page").mockReturnValue(new Promise(() => {}));
   vi.stubGlobal("isTauri", true);
   mockIPC((command, args) => {
     const { kind, options, rid, enabled } = args as {
@@ -589,8 +600,12 @@ it("suspends the workspace command group while keeping native Edit installed", a
   try {
     await openImportWorkspace();
     expect(await screen.findByText(page.rows[0].content.sourcePreview, {}, { timeout: 5000 })).toBeVisible();
-    await screen.findByLabelText(i18n.t("workbenchV2.decisionsBadgeError"), {}, { timeout: 5000 });
-    await waitFor(() => expect(enabled("workspace.open-project")).toBe(true));
+    await waitForSourceAndKnowledgeJournals();
+    await waitFor(() => {
+      expect(readDecisions).toHaveBeenCalled();
+      expect(enabled("workspace.open-project")).toBe(true);
+      expect(enabled("workspace.references")).toBe(true);
+    }, { timeout: 5000 });
     const activity = within(screen.getByRole("navigation", { name: i18n.t("workbenchV2.activity") }));
     const entries = () => activity.getByRole("button", { name: i18n.t("workbenchV2.entries") });
     expect(entries()).toBeEnabled();
