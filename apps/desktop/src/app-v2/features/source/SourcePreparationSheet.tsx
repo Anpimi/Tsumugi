@@ -11,7 +11,7 @@ import { matchingPluginEnvironments, pluginEnvironmentVersion } from "../../../p
 import { useSessionQuery, useSessionReads } from "../../../SessionReadProvider";
 import { executionCommands, executionContext } from "../../../executionCommands";
 import { sourceReads } from "../../../sourceQueries";
-import { sameSourceEnvironment } from "../../../sourceCommands";
+import { sameSourceEnvironment, type ContentScope } from "../../../sourceCommands";
 import { readCompleteAttempt } from "../../../executionRead";
 import type { ProjectView } from "../../../projectCommands";
 import type { InteractionGate } from "../../workspace/interactionGate";
@@ -37,6 +37,7 @@ export default function SourcePreparationSheet({ project, owner, open, disabled,
   const { t } = useTranslation(undefined, { keyPrefix: "sourceMaintenance" }), { t: old } = useTranslation();
   const reads = useSessionReads(), pluginFacts = usePluginFacts(), context = executionContext(project), dialogId = useId(), inputId = useId();
   const [inventoryRevision, setInventoryRevision] = useState(0), [targetBlocked, setTargetBlocked] = useState(false);
+  const [viewedSnapshotId, setViewedSnapshotId] = useState<string | null>(null);
   const [correctionLocation, setCorrectionLocation] = useState<{ snapshotId: string; ordinal: number } | null>(null);
   const [discardFrame, setDiscardFrame] = useState<SourceDraftValue | null>(null), [discarding, setDiscarding] = useState(false), discardDialogId = useId();
   useLayoutEffect(() => discardFrame ? gate.pushDialog(discardDialogId) : undefined, [discardFrame, gate, discardDialogId]);
@@ -47,7 +48,7 @@ export default function SourcePreparationSheet({ project, owner, open, disabled,
   const state = owner.state, inventoryOptions = sourceReads.inventory(inventoryRevision);
   const externalTarget = jsonIdentity(target), dropTicket = drop?.dropTicket;
   const ordinaryPresentation = savedSnapshotId === null && target === null && !dropTicket;
-  useLayoutEffect(() => { setCorrectionLocation(null); }, [open, savedSnapshotId, externalTarget, dropTicket]);
+  useLayoutEffect(() => { setCorrectionLocation(null); setViewedSnapshotId(null); }, [open, savedSnapshotId, externalTarget, dropTicket]);
   const correctionSnapshot = state.correctionDraft?.snapshotId, correctionOrdinal = state.correctionDraft?.ordinal;
   const correctionPending = state.pendingCorrection !== null;
   useLayoutEffect(() => {
@@ -60,9 +61,12 @@ export default function SourcePreparationSheet({ project, owner, open, disabled,
   const draftReady = owner.journal.hydration === "ready";
   const correctionTarget = correctionLocation ?? (ordinaryPresentation && state.pendingCorrection && state.correctionDraft
     ? { snapshotId: state.correctionDraft.snapshotId, ordinal: state.correctionDraft.ordinal } : null);
-  const historyOnly = correctionTarget !== null || savedSnapshotId !== null || target?.kind === "resolve-source-mapping";
-  const savedSnapshot = correctionTarget?.snapshotId ?? savedSnapshotId ?? (target?.kind === "resolve-source-mapping" ? target.snapshotId
+  const historyOnly = correctionTarget !== null || savedSnapshotId !== null || viewedSnapshotId !== null || target?.kind === "resolve-source-mapping";
+  const savedSnapshot = correctionTarget?.snapshotId ?? savedSnapshotId ?? viewedSnapshotId ?? (target?.kind === "resolve-source-mapping" ? target.snapshotId
     : !state.attempt ? state.correctionDraft?.snapshotId ?? state.receiptRef?.snapshotId : null);
+  const browseCurrent = ordinaryPresentation && !historyOnly;
+  const scopeOptions = sourceReads.scope(context);
+  const scope = useSessionQuery({ ...scopeOptions, enabled: open && browseCurrent });
   const inventory = useSessionQuery({ ...inventoryOptions, enabled: open && draftReady && !historyOnly });
   const sourceOptions = sourceReads.integration(context, state.source);
   const source = useSessionQuery({ ...sourceOptions, enabled: open && draftReady && !historyOnly && !!state.source });
@@ -89,6 +93,17 @@ export default function SourcePreparationSheet({ project, owner, open, disabled,
   const readOnly = disabled || owner.journal.hydration !== "ready" || owner.journal.retired;
   const configurationLocked = readOnly || owner.inFlight() || owner.hasPending() || !!state.attempt || !!Object.keys(state.lineage).length || state.actor !== "";
   function fresh(key: readonly unknown[]) { const value = reads.client.getQueryState(reads.key(key)); return value?.status === "success" && value.fetchStatus === "idle" && !value.isInvalidated && value.error === null; }
+  function toggleSavedSource() {
+    if (!current()) return;
+    if (viewedSnapshotId) {
+      if (owner.current().pendingCorrection) return;
+      setCorrectionLocation(null);
+      setViewedSnapshotId(null);
+    } else if (browseCurrent && fresh(scopeOptions.key)) {
+      const snapshotId = reads.client.getQueryData<ContentScope>(reads.key(scopeOptions.key))?.currentSnapshot;
+      if (snapshotId) setViewedSnapshotId(snapshotId);
+    }
+  }
   const environment = state.source && source.data && !source.error && sameSourceEnvironment(source.data, state.source) ? source.data : null;
   const appRevision = pluginFacts.state?.data?.settingsRevision;
   const inventoryRevisionBehind = (latest: string | undefined, local: string | undefined) => latest !== undefined && local !== undefined && BigInt(latest) > BigInt(local);
@@ -146,6 +161,11 @@ export default function SourcePreparationSheet({ project, owner, open, disabled,
       onBlurCapture={event => { if (!(event.relatedTarget instanceof Node) || !event.currentTarget.contains(event.relatedTarget)) gate.releaseOwner(inputId); }}
       onCompositionStart={() => gate.setComposing(inputId, true)} onCompositionEnd={() => gate.setComposing(inputId, false)}>
       <SourceDraftRecovery owner={owner} disabled={disabled} onRevealCorrection={(snapshotId, ordinal) => setCorrectionLocation({ snapshotId, ordinal })}/>
+      {viewedSnapshotId || browseCurrent && scope.data?.currentSnapshot ? <Button size="sm"
+        disabled={!current() || (viewedSnapshotId ? !!state.pendingCorrection : !fresh(scopeOptions.key))}
+        onClick={toggleSavedSource}>{t(viewedSnapshotId ? "backToSourceImport" : "viewCurrentSaved")}</Button> : null}
+      {browseCurrent && scope.error ? <Banner tone="warning" action={<Button size="sm" disabled={!current() || scope.isFetching}
+        onClick={() => { if (current()) void scope.refetch(); }}>{t("retryRead")}</Button>}>{t("historyFailed")}</Banner> : null}
       {!historyOnly ? <>
       <p role="status">{t(phase)}</p>
       <TaskCancellationFeedback origin="source" taskId={detail.data?.taskId} disabled={disabled} visible={open}/>

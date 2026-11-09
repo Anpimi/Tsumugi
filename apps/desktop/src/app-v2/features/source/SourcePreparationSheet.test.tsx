@@ -236,6 +236,36 @@ it.each(["en-US", "zh-CN"] as const)("keeps the selected importer unavailable un
   expect(invoke.mock.calls.some(([command]) => ["select_plugin_source", "preflight_plugin_source", "start_plugin_source"].includes(command))).toBe(false);
 });
 
+it("opens the adopted source and its correction from an ordinary sheet without a local adoption receipt", async () => {
+  const basis = sourceCorrectionBasisFixture(project.metadata.projectId), binding = basis.bindings[0];
+  const currentRow = sourceRowFixture({ occurrenceId: binding.occurrenceId, unitId: binding.unitId, sourceRevisionId: binding.sourceRevisionId },
+    { ordinal: basis.ordinal, key: "restored.adopted.entry", text: "Saved source" });
+  const page = sourcePageFixture({ snapshotId: basis.snapshotId, scope: basis.scope, rows: [currentRow], total: 1, nextOrdinal: null });
+  vi.mocked(sourceCommands.scope).mockResolvedValue(basis.scope);
+  vi.mocked(sourceCommands.historyContent).mockResolvedValue(page);
+  vi.spyOn(sourceCommands, "content").mockResolvedValue(page);
+  const correction = vi.spyOn(sourceCommands, "correctionBasis").mockResolvedValue(basis);
+  vi.mocked(translationCommands.history).mockResolvedValue({ unitId: currentRow.unitId!, locale: "zh-CN", current: null,
+    currentText: null, total: "0", rows: [], nextOrdinal: null });
+  invoke.mockImplementation(async command => {
+    if (command === "read_plugin_inventory") return { ...pluginSourceInventory, packages: [], runtimes: [] };
+    throw new Error(`Unexpected native command: ${command}`);
+  });
+  renderWorkbench(<Harness saved={null}/>, project); const user = userEvent.setup();
+  await waitFor(() => expect(owner.journal.hydration).toBe("ready"));
+  expect(owner.current().receiptRef).toBeNull();
+  const entry = await screen.findByRole("button", { name: "View current saved source" });
+  expect(sourceCommands.historyContent).not.toHaveBeenCalled();
+  await user.click(entry);
+  const saved = screen.getByRole("dialog", { name: i18n.t("sourceMaintenance.savedSource") });
+  await user.click(await within(saved).findByRole("button", { name: "restored.adopted.entry" }));
+  await user.click(await within(saved).findByRole("button", { name: i18n.t("sourceMaintenance.correctionOpen") }));
+  await waitFor(() => expect(correction).toHaveBeenCalledExactlyOnceWith({ ...wire.session, snapshotId: basis.snapshotId, ordinal: basis.ordinal }));
+  await user.click(within(saved).getByRole("button", { name: "Back to source import" }));
+  expect(screen.getByRole("dialog", { name: i18n.t("sourceMaintenance.title") })).toBeVisible();
+  expect(owner.current().correctionDraft).toMatchObject({ snapshotId: basis.snapshotId, ordinal: basis.ordinal });
+});
+
 it("returns to ordinary source preparation after closing a restored correction presentation", async () => {
   const restored = await restoreCorrectionForNavigation(), view = renderWorkbench(<Harness saved={null}/>, project);
   const recovery = await screen.findByRole("region", { name: i18n.t("sourceMaintenance.recoveryTitle") });
