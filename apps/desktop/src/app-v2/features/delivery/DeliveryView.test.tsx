@@ -15,6 +15,7 @@ import { InteractionGate } from "../../workspace/interactionGate";
 import { i18n } from "../../../i18n";
 import type { DecisionItem, DecisionPage } from "../../../decisionCommands";
 import type { deliveryWorkbenchEn } from "../../../i18n/deliveryWorkbench";
+import { useSessionReads } from "../../../SessionReadProvider";
 
 const invoke = vi.hoisted(() => vi.fn());
 vi.mock("@tauri-apps/api/core", () => ({ invoke }));
@@ -27,7 +28,10 @@ let registry: ReturnType<typeof useWorkbenchCommands>;
 let gate: InteractionGate, owner: ReturnType<typeof useReleaseDraftSession>, stored: ExportRecord | null, serial: number;
 let releases: typeof wire.responses.releases;
 let installed: boolean, loseExport: boolean, readAttempts: number, prepared: PluginBuildPrepareRequest | null;
+let reads: ReturnType<typeof useSessionReads>;
+let readSourceScope: () => Promise<{ currentSnapshot: string; revision: string }>;
 function Harness({ visible = true, target = null, inbox, onOpenDecision }: { visible?: boolean; target?: DeliveryViewProps["target"]; project?: ProjectView; inbox?: DeliveryViewProps["inbox"]; onOpenDecision?: DeliveryViewProps["onOpenDecision"] }) {
+  reads = useSessionReads();
   owner = useReleaseDraftSession();
   const tasks = useExecutionTaskSession(), commands = useWorkbenchCommands();
   registry = commands;
@@ -62,6 +66,7 @@ async function prepareExport(user: ReturnType<typeof userEvent.setup>) {
 beforeEach(async () => {
   await i18n.changeLanguage("en-US"); gate = new InteractionGate(); gate.setVisibleOwner("delivery-view");
   releases = [release]; stored = null; serial = 720; installed = false; loseExport = false; readAttempts = 0; prepared = null;
+  readSourceScope = async () => ({ currentSnapshot: id(707), revision: "1" });
   invoke.mockReset().mockImplementation(async (command: string, args: { request: Record<string, unknown> }) => {
     const request = args?.request;
     if (command === "list_releases") return releases;
@@ -83,7 +88,7 @@ beforeEach(async () => {
       return stored;
     }
     if (command === "read_delivery_record") return { ...wire.responses.delivery, actionId: request.actionId, deliveryId: request.deliveryId, releaseId: request.releaseId };
-    if (command === "read_content_scope") return { currentSnapshot: id(707), revision: "1" };
+    if (command === "read_content_scope") return readSourceScope();
     if (command === "read_review_eligibility") return { basis: "basis", sourceSnapshotId: id(707), epoch: id(1), sequence: "1", ready: true, policyVersion: "balanced-1", locales: (request.locales as string[]).map(locale => ({ locale, ready: true, blockers: [], exceptions: [], checkedUnits: 2, selectedUnits: 2, blockingUnits: 0, blockerCount: 0, exceptionCount: 0 })) };
     if (command === "prepare_plugin_build") { prepared = request as unknown as PluginBuildPrepareRequest; return { ...pluginBuildWorkflow.review, attemptId: prepared.attemptId, choices: prepared.choices, build: pluginBuildView, eligibilityBasis: prepared.expectedEligibilityBasis, sourceSnapshotId: id(707) }; }
     throw new Error(command);
@@ -157,6 +162,63 @@ it("preserves an unsubmitted export preview when a newer saved build appears", a
   await user.click(useNewer);
   expect(owner.current().chosen?.releaseId).toBe(newerRelease.releaseId);
   expect(invoke.mock.calls.some(([command]) => command === "export_release")).toBe(false);
+});
+
+it("warns when the selected build uses an earlier source and exports the fixed build only on request", async () => {
+  readSourceScope = async () => ({ currentSnapshot: release.sourceSnapshotId, revision: "1" });
+  const { user } = await chooseSaved();
+  await prepareExport(user);
+  const before = owner.current();
+  readSourceScope = async () => ({ currentSnapshot: newerRelease.sourceSnapshotId, revision: "2" });
+  await act(async () => { await reads.client.invalidateQueries({ queryKey: reads.key(["workbench-source-scope"]), exact: true }); });
+  expect(await screen.findByText("This build uses a different version of the source. Export uses the files saved with this build.")).toBeVisible();
+  expect(owner.current()).toBe(before);
+  expect(screen.queryByRole("button", { name: "Use newer build for export" })).not.toBeInTheDocument();
+  expect(invoke.mock.calls.filter(([command]) => command === "export_release")).toHaveLength(0);
+
+  await user.click(screen.getByRole("checkbox", { name: w("overwrite") }));
+  await user.click(mainAction());
+  await screen.findByText(w("exported"));
+  expect(invoke.mock.calls.filter(([command]) => command === "export_release").map(([, args]) => args.request.releaseId))
+    .toEqual([release.releaseId]);
+
+  releases = [newerRelease, release];
+  await user.click(screen.getByRole("button", { name: w("refreshHistory") }));
+  await user.click(await screen.findByRole("button", { name: "Use newer build for export" }));
+  expect(await screen.findByText("This build uses the current saved source.")).toBeVisible();
+  expect(owner.current().chosen?.releaseId).toBe(newerRelease.releaseId);
+});
+
+it("shows an unknown source version after a failed refresh and can retry without changing the selected build", async () => {
+  readSourceScope = async () => ({ currentSnapshot: release.sourceSnapshotId, revision: "1" });
+  const { user } = await chooseSaved();
+  expect(await screen.findByText("This build uses the current saved source.")).toBeVisible();
+  let rejectRead!: (reason: Error) => void;
+  readSourceScope = () => new Promise((_, reject) => { rejectRead = reject; });
+  act(() => { void reads.client.invalidateQueries({ queryKey: reads.key(["workbench-source-scope"]), exact: true }); });
+  expect(await screen.findByText("Checking the current saved source…")).toBeVisible();
+  expect(screen.queryByText("This build uses the current saved source.")).not.toBeInTheDocument();
+  await act(async () => { rejectRead(new Error("Source read failed")); });
+  expect(await screen.findByText("Could not confirm which source version is current.")).toBeVisible();
+  readSourceScope = async () => ({ currentSnapshot: release.sourceSnapshotId, revision: "1" });
+  await user.click(screen.getByRole("button", { name: "Retry source check" }));
+  const current = await screen.findByText("This build uses the current saved source.");
+  expect(current.closest('[role="status"]')).toHaveFocus();
+  expect(owner.current().chosen?.releaseId).toBe(release.releaseId);
+  expect(invoke.mock.calls.filter(([command]) => command === "export_release")).toHaveLength(0);
+});
+
+it("stops showing the source check when the project session has ended", async () => {
+  readSourceScope = async () => ({ currentSnapshot: release.sourceSnapshotId, revision: "1" });
+  const { view } = await chooseSaved();
+  const sourceStatus = await screen.findByText(w("exportSourceCurrent"));
+
+  act(() => reads.retire());
+  view.rerender(<Harness project={project}/>);
+
+  expect(sourceStatus).not.toBeInTheDocument();
+  expect(screen.queryByText(w("exportSourceChecking"))).not.toBeInTheDocument();
+  expect(owner.current().chosen?.releaseId).toBe(release.releaseId);
 });
 
 it("clears only an unsubmitted export setup while keeping the saved release and newer build input", async () => {

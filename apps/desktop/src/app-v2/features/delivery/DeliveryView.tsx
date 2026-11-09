@@ -12,6 +12,7 @@ import { ExecutionTaskHandleProvider, type useExecutionTaskSession } from "../..
 import { executionContext } from "../../../executionCommands";
 import { releaseCommands, type DeliveryView as DeliveryRecord, type ReleaseView } from "../../../releaseCommands";
 import { useSessionQuery, useSessionReads } from "../../../SessionReadProvider";
+import { sourceCommands } from "../../../sourceCommands";
 import type { DecisionItem, DecisionPage } from "../../../decisionCommands";
 import type { ProjectView } from "../../../projectCommands";
 import { WorkbenchCommandsProvider, type WorkbenchCommands } from "../../../workbenchCommands";
@@ -50,6 +51,7 @@ export function DeliveryView(props: DeliveryViewProps) {
   const [expanded, setExpanded] = useState<Step[]>(() => owner.checkReview && !owner.checkAttempt || owner.workflow?.review?.phase === "prepared" && !owner.workflow.start && !owner.workflow.stop ? ["verification"] : owner.prepared && !owner.attempt ? ["build"] : []), [settingsOpen, setSettingsOpen] = useState(false);
   const selectedTarget = useRef<string | null>(null), mounted = useRef(false);
   const exportStep = useRef<HTMLButtonElement>(null);
+  const exportSourceNotice = useRef<HTMLDivElement>(null);
   const decisionFlight = useRef(0), currentView = useRef({ visible, sessionToken: project.sessionToken, viewId });
   currentView.current = { visible, sessionToken: project.sessionToken, viewId };
   const [decisionChanged, setDecisionChanged] = useState(false);
@@ -64,6 +66,13 @@ export function DeliveryView(props: DeliveryViewProps) {
   const delivery = useDeliveryCommands({ project, owner, commands, gate, viewId, visible, disabled, onOpenEntry });
   const { releasesRead, deliveriesRead, commandScope } = delivery;
   const { chosen, selection, preview, overwrite, result, pending, busy } = owner;
+  const showExportSource = visible && !!chosen && !reads.retired;
+  const savedSource = useSessionQuery({ key: ["workbench-source-scope"], scopes: ["source"], enabled: showExportSource,
+    read: () => sourceCommands.scope(reads.context) });
+  const currentSnapshot = savedSource.isSuccess && !savedSource.isStale ? savedSource.data.currentSnapshot : null;
+  const exportSourceStatus = savedSource.isPending || savedSource.isFetching ? "exportSourceChecking"
+    : !currentSnapshot ? "exportSourceUnknown"
+    : chosen?.sourceSnapshotId === currentSnapshot ? "exportSourceCurrent" : "exportSourceDifferent";
   const releases = releasesRead.data ?? [], deliveries = deliveriesRead.data ?? [];
   const latestSaved = releasesRead.isSuccess ? releases[0] : undefined;
   const newerSaved = latestSaved && chosen && Date.parse(latestSaved.createdAt) > Date.parse(chosen.createdAt) ? latestSaved : null;
@@ -233,6 +242,15 @@ export function DeliveryView(props: DeliveryViewProps) {
       {deliveryFailure ? <Banner tone={pendingExport ? "warning" : "error"} role="alert"><p>{global("release.error", { reason: global(deliveryReason) })}</p><CommandFailureDetails failure={deliveryFailure}/></Banner> : null}
       {historyFailure ? <Banner tone="warning" role="alert"><p>{t("historyFailed")}</p><CommandFailureDetails failure={commandFailure(historyFailure)}/><Button variant="secondary" disabled={!canInteract()} onClick={() => { if (canInteract()) { void releasesRead.refetch(); if (chosen) void deliveriesRead.refetch(); } }}>{t("retryOwner")}</Button></Banner> : null}
       {parts.feedback}{parts.recovery}
+      {showExportSource ? <Banner ref={exportSourceNotice} tabIndex={-1} role="status"
+        tone={exportSourceStatus === "exportSourceDifferent" || exportSourceStatus === "exportSourceUnknown" ? "warning" : "info"}
+        action={exportSourceStatus === "exportSourceUnknown" ? <Button variant="secondary" disabled={!canInteract()} onClick={() => {
+          if (!canInteract()) return;
+          exportSourceNotice.current?.focus();
+          void savedSource.refetch();
+        }}>{t("retryExportSource")}</Button> : undefined}>
+        {t(exportSourceStatus)}
+      </Banner> : null}
       {newerSaved ? <Banner role="status" action={
         <Button variant="secondary" disabled={!delivery.recordAvailability(delivery.recordPayload(newerSaved)).enabled}
           onClick={() => { if (chooseForExport(newerSaved)) exportStep.current?.focus(); }}>{t("useNewerBuild")}</Button>
