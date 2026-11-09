@@ -85,7 +85,7 @@ export default function SourceCorrectionPanel({ project, owner, snapshotId, row,
   const candidates = Array.from(new Map((comparison?.candidates ?? []).flatMap(evidence => evidence.old.occurrenceId ? [[evidence.old.occurrenceId, evidence.old] as const] : [])).values());
   const availableCandidate = candidates.some(candidate => candidate.occurrenceId === draft?.oldOccurrenceId);
   const recorded = receipt?.request;
-  const needsRefresh = !!basis && !!receipt && basis.mappingRevision === receipt.request.basis.mappingRevision;
+  const needsRefresh = !basis || stale || (recorded !== undefined && basis.mappingRevision === recorded.basis.mappingRevision);
   const newer = !!recorded && sameTarget && !!draft && (draft.oldOccurrenceId !== recorded.oldOccurrenceId || draft.decision !== recorded.decision
     || draft.actor !== recorded.actor || draft.reason !== recorded.reason);
   // A rematch must not hide work on the entry that was current before it.
@@ -134,7 +134,11 @@ export default function SourceCorrectionPanel({ project, owner, snapshotId, row,
         {owner.canRetryCorrection() ? <p>{t("correctionRetryHelp")}</p> : null}
         <p>{t("correctionCancelHelp")}</p>
       </Banner> : null}
-      {receipt ? <Banner tone="success" role="status"><p>{t(newer ? "correctionNewerEdits" : "correctionRecorded")}</p><SubmittedCorrection request={receipt.request}/></Banner> : null}
+      {receipt ? <Banner tone="success" role="status">
+        <p>{t(newer ? "correctionNewerEdits" : "correctionRecorded")}</p>
+        {newer && needsRefresh && !pending && !state.correctionLoading ? <p>{t("correctionRefreshNewerEdits")}</p> : null}
+        <SubmittedCorrection request={receipt.request}/>
+      </Banner> : null}
       {sameTarget && draft ? <>
         <Button disabled={actionBlocked || busy || pending || discarding || state.correctionLoading} onClick={() => { if (!current()) return; setReview(null); void owner.refreshCorrection(); }}>{t("correctionRefresh")}</Button>
         {comparison ? <>
@@ -170,8 +174,8 @@ export default function SourceCorrectionPanel({ project, owner, snapshotId, row,
             }) : <p>{t("correctionNoWork")}</p>}
           </section>
           <ul><li>{t("correctionEffectFiles")}</li><li>{t("correctionEffectWork")}</li><li>{t("correctionEffectSelection")}</li></ul>
-          <Field label={t("correctionConfirm")}><input type="checkbox" checked={reviewed} disabled={actionBlocked || pending || busy || discarding || !basis || stale || needsRefresh} onChange={event => { if (!readOnly && current()) setReview(event.target.checked ? { basis, draft } : null); }}/></Field>
-          <Button variant="primary" pending={busy && pending} disabled={actionBlocked || busy || discarding || owner.hasPending() || pending || owner.journal.busy || !!owner.journal.failure || !!owner.journal.conflict || state.correctionLoading || stale || !basis || !availableCandidate
+          <Field label={t("correctionConfirm")}><input type="checkbox" checked={reviewed} disabled={actionBlocked || pending || busy || discarding || needsRefresh} onChange={event => { if (!readOnly && current()) setReview(event.target.checked ? { basis, draft } : null); }}/></Field>
+          <Button variant="primary" pending={busy && pending} disabled={actionBlocked || busy || discarding || owner.hasPending() || pending || owner.journal.busy || !!owner.journal.failure || !!owner.journal.conflict || state.correctionLoading || !availableCandidate
             || needsRefresh || !!actorError || !!reasonError || !draft.actor.trim() || !draft.reason.trim() || !reviewed} onClick={() => { if (current()) { setReview(null); setDiscardFrame(null); void owner.applyCorrection(); } }}>{t("correctionApply")}</Button>
         </> : !state.correctionLoading && !state.correctionFailure ? <p>{t("correctionEmpty")}</p> : null}
         {!pending ? discardFrame ? <section className={styles.body} aria-label={t("correctionDiscardTitle")}>

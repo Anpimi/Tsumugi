@@ -274,13 +274,18 @@ it("refreshes a completed correction before explicitly submitting newer input wi
   await act(async () => { reply.resolve(recorded); });
   await waitFor(() => expect(owner.current().pendingCorrection).toBeNull());
   expect(confirmation).toBeDisabled(); expect(reason).toHaveValue("Explicit continuation B 👩🏽‍💻");
+  const refreshNotice = /Read the match again before submitting them/;
+  expect(screen.getByText(refreshNotice)).toBeVisible();
   read.mockResolvedValueOnce(basis).mockResolvedValueOnce(fresh);
   await user.click(screen.getByRole("button", { name: label("correctionRefresh") }));
   await waitFor(() => expect(owner.current().correctionLoading).toBe(false));
   expect(confirmation).toBeDisabled(); expect(correct).toHaveBeenCalledOnce();
+  expect(screen.getByText(refreshNotice)).toBeVisible();
   await user.click(screen.getByRole("button", { name: label("correctionRefresh") }));
   await waitFor(() => expect(confirmation).toBeEnabled());
   expect(read).toHaveBeenCalledTimes(3); expect(reason).toHaveValue("Explicit continuation B 👩🏽‍💻");
+  expect(screen.queryByText(refreshNotice)).not.toBeInTheDocument();
+  expect(screen.getByText(label("correctionNewerEdits"))).toBeVisible();
   expect(screen.getByRole("button", { name: label("correctionApply") })).toBeDisabled();
   await user.click(confirmation); await user.click(screen.getByRole("button", { name: label("correctionApply") }));
   await waitFor(() => expect(correct).toHaveBeenCalledTimes(2));
