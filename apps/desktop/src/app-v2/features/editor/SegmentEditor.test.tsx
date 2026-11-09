@@ -7,6 +7,7 @@ import type { workbenchEn } from "../../../i18n/workbench";
 import fixture from "../../../../test/fixtures/translation-commands.json";
 import type { DraftBasis, DraftHead, DraftKey, DraftReadView, DraftValue } from "../../../draftCommands";
 import type { TranslationSaveReceipt, TranslationSaveRequest } from "../../../translationCommands";
+import * as fieldControls from "../../../design-system/Field";
 import { InteractionGate } from "../../workspace/interactionGate";
 import { TranslationDrafts, type TranslationDraftPorts } from "./translationDrafts";
 import type { EntryDiagnosticFocus } from "../review/navigationTypes";
@@ -425,6 +426,37 @@ it("pastes the original decomposed Mac text and line endings through native inse
   expect(editor.field).toHaveValue(`Left ${raw.replace(/\r\n/g, "\n")} right`);
   expect(editor.drafts.getEntry(key)?.value?.text).toBe(`Left ${raw.replace(/\r\n/g, "\n")} right`);
   expect(editor.gate.getSnapshot().intentOwner).toBeNull();
+});
+
+it("updates paste-gated actions without rendering the unchanged textarea", async () => {
+  const renderField = vi.spyOn(fieldControls, "TextArea");
+  try {
+    const editor = await pasteEditor();
+    await act(async () => {});
+    fireEvent.click(screen.getByRole("button", { name: w("editorRestore") }));
+    expect(screen.getByRole("button", { name: w("editorRestoreNow") })).toBeEnabled();
+    const confirm = screen.getByRole("button", { name: w("editorConfirm") });
+    expect(confirm).toBeEnabled();
+    expect(renderField).toHaveBeenCalled();
+    renderField.mockClear();
+
+    fireEvent.paste(editor.field, { clipboardData: { getData: () => "" } });
+    expect(confirm).toBeDisabled();
+    expect(screen.queryByRole("button", { name: w("editorRestoreNow") })).not.toBeInTheDocument();
+    expect(renderField).not.toHaveBeenCalled();
+
+    await act(async () => { editor.clipboard.resolve(""); await editor.clipboard.promise; });
+    expect(confirm).toBeEnabled();
+    expect(screen.getByRole("button", { name: w("editorRestoreNow") })).toBeEnabled();
+    expect(renderField).not.toHaveBeenCalled();
+    expect(editor.field).toHaveValue("Left replace right");
+    expect(editor.field).toHaveFocus();
+    expect(editor.field.selectionStart).toBe(5);
+    expect(editor.field.selectionEnd).toBe(12);
+    expect(editor.insertText).not.toHaveBeenCalled();
+  } finally {
+    renderField.mockRestore();
+  }
 });
 
 it("allows a local paste of B while formal confirmation of A owns the mutation reservation", async () => {
