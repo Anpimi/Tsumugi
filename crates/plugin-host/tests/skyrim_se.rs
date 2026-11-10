@@ -6,7 +6,9 @@ use std::{path::PathBuf, sync::Arc};
 use tsumugi_core::{
     PluginBuildLocaleChoice, ProjectMetadata, ProjectStore, ReleaseAdoptionHandler,
     ReleaseBuildEnvironment, ReviewDecisionKind, ReviewWrite, SaveTranslationRevision,
-    content::{SourceAdoptionHandler, SourceBundle, SourceReviewBinding, SourceSettings},
+    content::{
+        ContentPage, SourceAdoptionHandler, SourceBundle, SourceReviewBinding, SourceSettings,
+    },
     execution::*,
 };
 use tsumugi_plugin_host::{core::RunnerProxy, *};
@@ -571,6 +573,7 @@ struct AdoptedSource {
     grants: Vec<ExecutionId>,
     extracted: FixedResult,
     check_input_bytes: usize,
+    preview_total: u32,
     preview_summary: sdk::SourceCaptureSummary,
 }
 fn adopt_source(
@@ -592,14 +595,27 @@ fn adopt_source(
             .validation,
         ValidationState::Pending
     );
-    let preview = store
-        .source_preview(
-            input.envelope().attempt_id,
-            extracted.envelope().result_id,
-            0,
-            100,
-        )
-        .unwrap();
+    let read_preview = |store: &ProjectStore, after| {
+        store
+            .source_preview(
+                input.envelope().attempt_id,
+                extracted.envelope().result_id,
+                after,
+                50,
+            )
+            .unwrap()
+    };
+    let prepare = |store: &mut ProjectStore, preview: &ContentPage| {
+        store
+            .prepare_adoption(
+                input.envelope().attempt_id,
+                input.envelope().units[0].unit_id,
+                vec![extracted.envelope().result_id],
+                json!(preview.confirmation),
+            )
+            .unwrap()
+    };
+    let mut preview = read_preview(store, 0);
     let preview_summary = preview
         .capture_summary
         .clone()
@@ -619,14 +635,7 @@ fn adopt_source(
         assert!(preview_summary.materials.iter().all(|material| bundle.files.iter()
             .any(|file| file.artifact_id.to_string() == material.source.artifact_id)));
     }
-    let action = store
-        .prepare_adoption(
-            input.envelope().attempt_id,
-            input.envelope().units[0].unit_id,
-            vec![extracted.envelope().result_id],
-            json!(preview.confirmation),
-        )
-        .unwrap();
+    let action = prepare(store, &preview);
     assert!(
         store
             .adopt_execution(&action, &SourceAdoptionHandler)
@@ -643,6 +652,41 @@ fn adopt_source(
     store
         .commit_source_validation(capture.prepare(checked).unwrap())
         .unwrap();
+    let mut after = 0;
+    let mut pages = 0;
+    loop {
+        pages += 1;
+        let end = after + preview.rows.len() as u32;
+        assert!(preview.snapshot_id.is_none());
+        assert!(preview
+            .rows
+            .iter()
+            .map(|row| row.occurrence.ordinal)
+            .eq(after..end));
+        let Some(next) = preview.next_ordinal else {
+            assert_eq!(end, preview.total);
+            break;
+        };
+        assert!(next > after);
+        assert_eq!(next, end);
+        let next_page = read_preview(store, next);
+        assert_eq!(next_page.attempt_id, preview.attempt_id);
+        assert_eq!(next_page.result_id, preview.result_id);
+        assert_eq!(next_page.total, preview.total);
+        assert_eq!(next_page.confirmation, preview.confirmation);
+        assert_eq!(next_page.coverage, preview.coverage);
+        preview = next_page;
+        after = next;
+    }
+    println!(
+        "Source preview covered {} rows in {pages} page(s)",
+        preview.total
+    );
+    let action = if pages == 1 {
+        action
+    } else {
+        prepare(store, &preview)
+    };
     store
         .adopt_execution(&action, &SourceAdoptionHandler)
         .unwrap();
@@ -652,6 +696,7 @@ fn adopt_source(
         grants,
         extracted,
         check_input_bytes,
+        preview_total: preview.total,
         preview_summary,
     }
 }
@@ -1022,6 +1067,7 @@ fn skyrim_normal_core_adopts_maximum_escaped_capture_and_reopens_every_field() {
         mut grants,
         extracted,
         check_input_bytes,
+        preview_total,
         preview_summary,
     } = adopt_source(&mut store, &mut runtime, &input);
     eprintln!("capacity Core adoption returned in {:?}", started.elapsed());
@@ -1034,6 +1080,7 @@ fn skyrim_normal_core_adopts_maximum_escaped_capture_and_reopens_every_field() {
     };
     let expected = sdk::parse_content_exchange(output.utf8.as_bytes()).unwrap();
     assert_eq!(expected.units.len(), 476);
+    assert_eq!(preview_total, 476);
     let summary = capture_summary(&expected);
     assert_eq!(preview_summary, summary);
     assert_eq!(
