@@ -56,7 +56,7 @@ pub use ledger::{
 #[cfg(any(test, feature = "execution-test-host", feature = "legacy-desktop-domain"))]
 pub use release::{BuildLocaleChoice, LocaleBuildStartReceipt};
 pub use release::{
-    DeliveryFile, DeliveryFileState, DeliveryState, DeliveryView, PluginBuildLocaleChoice,
+    DeliveryFile, DeliveryFileState, DeliveryState, DeliveryView, ExportAdmission, PluginBuildLocaleChoice,
     ReleaseAdoptionHandler, ReleaseBuildEnvironment, ReleaseException, ReleaseExceptionKind,
     ReleasePlan, ReleaseView, ReleasedArtifact, SavedArtifactCheckProof, SavedBuildArtifact,
     SavedBuildLocale, SavedBuildResult, SavedPluginBuildView,

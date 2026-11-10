@@ -11,7 +11,7 @@ use tauri_plugin_dialog::DialogExt;
 use tsumugi_core::BuildLocaleChoice;
 use tsumugi_core::content::artifact_digest;
 use tsumugi_core::{DecisionDeliveryActivity, DecisionDeliveryJobKind, DeliveryFile, DeliveryFileState,
-    DeliveryState, DeliveryView, ReleaseView};
+    DeliveryState, DeliveryView, ExportAdmission, ReleaseView};
 
 pub(in crate::commands) mod plugin;
 
@@ -940,6 +940,29 @@ impl ExportCapture {
     }
 }
 
+fn replay_export(
+    existing: DeliveryView,
+    request: &ExportRequest,
+    directory: &str,
+) -> Result<DeliveryView, CommandError> {
+    if existing.release_id != request.release_id
+        || existing.directory != directory
+        || existing.overwrite_conflicts != request.overwrite_conflicts
+    {
+        return Err(CommandError::simple(
+            CommandErrorCode::DependencyConflict,
+            CommandStage::ExecutionAdopt,
+        ));
+    }
+    if existing.state == DeliveryState::Pending {
+        return Err(CommandError::simple(
+            CommandErrorCode::OutcomeUnknown,
+            CommandStage::ExecutionAdopt,
+        ));
+    }
+    Ok(existing)
+}
+
 #[tauri::command]
 pub async fn export_release(
     state: State<'_, AppState>,
@@ -965,22 +988,7 @@ pub async fn export_release(
                 .delivery_by_action(initial.action_id)
                 .map_err(map_adopt)?
             {
-                if existing.release_id != initial.release_id
-                    || existing.directory != directory
-                    || existing.overwrite_conflicts != initial.overwrite_conflicts
-                {
-                    return Err(CommandError::simple(
-                        CommandErrorCode::DependencyConflict,
-                        CommandStage::ExecutionAdopt,
-                    ));
-                }
-                if existing.state == DeliveryState::Pending {
-                    return Err(CommandError::simple(
-                        CommandErrorCode::OutcomeUnknown,
-                        CommandStage::ExecutionAdopt,
-                    ));
-                }
-                return Ok(Err(existing));
+                return replay_export(existing, &initial, &directory).map(Err);
             }
             if host.release.delivery.is_some() || host.release.picker.is_some() {
                 return Err(CommandError::simple(
@@ -1015,33 +1023,22 @@ pub async fn export_release(
                     CommandStage::ExecutionAdopt,
                 ));
             }
-            let (release, bytes) = store
-                .release_with_artifacts(initial.release_id)
-                .map_err(map_adopt)?;
-            if release.artifacts.len() != preview.files.len()
-                || release
-                    .artifacts
-                    .iter()
-                    .zip(&preview.files)
-                    .any(|(artifact, file)| {
-                        artifact.locale != file.locale
-                            || artifact.file_name != file.file_name
-                            || artifact.sha256 != file.expected_sha256
-                    })
-            {
-                return Err(CommandError::simple(
-                    CommandErrorCode::DependencyConflict,
-                    CommandStage::ExecutionAdopt,
-                ));
-            }
-            store
-                .begin_delivery(
+            let expected = unobserved_files(&preview.files, DeliveryFileState::Pending);
+            let admission = store
+                .begin_delivery_for_export(
                     initial.action_id,
                     initial.release_id,
                     &directory,
                     initial.overwrite_conflicts,
+                    &expected,
                 )
                 .map_err(map_adopt)?;
+            let (release, bytes) = match admission {
+                ExportAdmission::Started { release, bytes } => (release, bytes),
+                ExportAdmission::Existing(existing) => {
+                    return replay_export(existing, &initial, &directory).map(Err);
+                }
+            };
             let (job, cancel) = begin_delivery_job(host, DecisionDeliveryJobKind::Export,
                 initial.release_id, Some(initial.action_id))?;
             host.release.preview = None;

@@ -1,6 +1,6 @@
 //! Real SQLite adoption and delivery records; process outcomes are synthetic.
 use super::*;
-use crate::{DeliveryFileState, DeliveryState, ReleaseAdoptionHandler};
+use crate::{DeliveryFile, DeliveryFileState, DeliveryState, ExportAdmission, ReleaseAdoptionHandler};
 
 fn prove(
     store: &mut ProjectStore,
@@ -253,10 +253,40 @@ fn all_artifacts_survive_frozen_edits_delivery_outcomes_and_current_format_move(
 
     // These calls record observed outcomes. They perform no target-directory IO.
     let delivery_action = ExecutionId::new();
-    let pending = store
-        .begin_delivery(delivery_action, release, "isolated-destination", false)
-        .unwrap();
-    assert_eq!(pending.files.len(), 6);
+    let mut expected: Vec<_> = view.artifacts.iter().map(|artifact| DeliveryFile {
+        locale: artifact.locale.clone(),
+        file_name: artifact.file_name.clone(),
+        expected_sha256: artifact.sha256.clone(),
+        actual_sha256: None,
+        state: DeliveryFileState::Pending,
+    }).collect();
+    let correct_digest = std::mem::replace(&mut expected[0].expected_sha256, "0".repeat(64));
+    let error = store.begin_delivery_for_export(delivery_action, release, "isolated-destination", false, &expected)
+        .err().expect("a stale preview must be rejected");
+    assert_eq!(error.code, ErrorCode::DependencyConflict);
+    assert!(store.delivery_by_action(delivery_action).unwrap().is_none());
+    expected[0].expected_sha256 = correct_digest;
+
+    use rusqlite::trace::{TraceEvent, TraceEventCodes};
+    thread_local! { static RELEASE_READS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) }; }
+    store.connection().unwrap().trace_v2(TraceEventCodes::SQLITE_TRACE_STMT, Some(|event| {
+        if let TraceEvent::Stmt(_, sql) = event
+            && sql.starts_with("SELECT action_id,project_id,attempt_id,manifest,manifest_digest,created_at")
+        {
+            RELEASE_READS.with(|count| count.set(count.get() + 1));
+        }
+    }));
+    let admission = store.begin_delivery_for_export(delivery_action, release, "isolated-destination", false, &expected).unwrap();
+    let replay = store.begin_delivery_for_export(delivery_action, release, "isolated-destination", false, &expected).unwrap();
+    store.connection().unwrap().trace_v2(TraceEventCodes::empty(), None);
+    assert_eq!(RELEASE_READS.with(|count| count.replace(0)), 1);
+    let ExportAdmission::Started { release: captured, bytes } = admission else { panic!("new action must carry bytes"); };
+    assert_eq!(captured, view);
+    assert!(bytes.iter().eq(saved.iter().map(|(_, bytes)| bytes)));
+    let pending = store.delivery_by_action(delivery_action).unwrap().unwrap();
+    assert_eq!(pending.files, expected);
+    let ExportAdmission::Existing(existing) = replay else { panic!("replay must carry only the receipt"); };
+    assert_eq!(existing, pending);
     assert_eq!(
         store
             .begin_delivery(delivery_action, release, "isolated-destination", false)

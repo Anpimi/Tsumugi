@@ -279,6 +279,11 @@ pub struct DeliveryView {
     pub created_at: String,
 }
 
+pub enum ExportAdmission {
+    Existing(DeliveryView),
+    Started { release: ReleaseView, bytes: Vec<Vec<u8>> },
+}
+
 /// Immutable acknowledgement of the accepted original build request.
 #[cfg_attr(feature = "wire-schema", derive(schemars::JsonSchema))]
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
@@ -322,60 +327,92 @@ impl ProjectStore {
         directory: &str,
         overwrite_conflicts: bool,
     ) -> Result<DeliveryView, ExecutionError> {
-        if let Some(existing) = self.delivery_by_action(action_id)? {
-            if existing.release_id != release_id
-                || existing.directory != directory
-                || existing.overwrite_conflicts != overwrite_conflicts
-            {
-                return Err(failure(ErrorCode::DependencyConflict, "delivery-action"));
-            }
-            return Ok(existing);
-        }
-        if directory.is_empty() || directory.len() > 4096 {
-            return Err(failure(ErrorCode::InvalidInput, "delivery-directory"));
-        }
-        let release = self.release_view(release_id)?;
-        let files: Vec<_> = release
-            .artifacts
-            .into_iter()
-            .map(|artifact| DeliveryFile {
-                locale: artifact.locale,
-                file_name: artifact.file_name,
-                expected_sha256: artifact.sha256,
-                actual_sha256: None,
-                state: DeliveryFileState::Pending,
-            })
-            .collect();
-        let delivery_id = ExecutionId::new();
-        let encoded = serde_json::to_string(&files)
-            .map_err(|_| failure(ErrorCode::StorageFailed, "delivery-encode"))?;
+        self.register_delivery(action_id, release_id, directory, overwrite_conflicts, None)
+            .map(|(receipt, _)| receipt)
+    }
+
+    /// Verify the preview and record the pending delivery in one write snapshot.
+    /// Only a newly registered action carries bytes that the caller may export.
+    pub fn begin_delivery_for_export(
+        &mut self,
+        action_id: ExecutionId,
+        release_id: ExecutionId,
+        directory: &str,
+        overwrite_conflicts: bool,
+        expected_files: &[DeliveryFile],
+    ) -> Result<ExportAdmission, ExecutionError> {
+        let (receipt, record) = self.register_delivery(
+            action_id, release_id, directory, overwrite_conflicts, Some(expected_files),
+        )?;
+        Ok(match record {
+            Some(record) => ExportAdmission::Started {
+                release: record.view,
+                bytes: record.artifacts.into_iter().map(|artifact| artifact.bytes).collect(),
+            },
+            None => ExportAdmission::Existing(receipt),
+        })
+    }
+
+    fn register_delivery(
+        &mut self,
+        action_id: ExecutionId,
+        release_id: ExecutionId,
+        directory: &str,
+        overwrite_conflicts: bool,
+        expected_files: Option<&[DeliveryFile]>,
+    ) -> Result<(DeliveryView, Option<record::Record>), ExecutionError> {
         let changes = self.changes.clone();
         let unknown = self.execution_unknown.clone();
         let tx = self.connection_mut().map_err(|_| failure(ErrorCode::StorageFailed, "delivery-write"))?
             .transaction_with_behavior(TransactionBehavior::Immediate).map_err(sql)?;
         let observer = changes.observe(&tx, super::ChangeScope::Release);
         if let Some(existing) = delivery::by_action_in(&tx, action_id)? {
-            return if existing.release_id == release_id && existing.directory == directory
-                && existing.overwrite_conflicts == overwrite_conflicts {
-                Ok(existing)
-            } else { Err(failure(ErrorCode::DependencyConflict, "delivery-action")) };
+            if existing.release_id != release_id
+                || existing.directory != directory
+                || existing.overwrite_conflicts != overwrite_conflicts
+            {
+                return Err(failure(ErrorCode::DependencyConflict, "delivery-action"));
+            }
+            return Ok((existing, None));
+        }
+        if directory.is_empty() || directory.len() > 4096 {
+            return Err(failure(ErrorCode::InvalidInput, "delivery-directory"));
+        }
+        let record = record::load(&tx, release_id, None)?;
+        let files: Vec<_> = record.view
+            .artifacts
+            .iter()
+            .map(|artifact| DeliveryFile {
+                locale: artifact.locale.clone(),
+                file_name: artifact.file_name.clone(),
+                expected_sha256: artifact.sha256.clone(),
+                actual_sha256: None,
+                state: DeliveryFileState::Pending,
+            })
+            .collect();
+        if expected_files.is_some_and(|expected| expected != files.as_slice()) {
+            return Err(failure(ErrorCode::DependencyConflict, "delivery-preview"));
         }
         let unresolved = tx.prepare("SELECT 1 FROM release_deliveries WHERE release_id=?1 AND directory=?2
             AND state IN ('pending','unknown') LIMIT 1").map_err(sql)?
             .exists(params![release_id.to_string(), directory]).map_err(sql)?;
         if unresolved { return Err(failure(ErrorCode::OutcomeUnknown, "delivery-unresolved")); }
+        let delivery_id = ExecutionId::new();
+        let encoded = serde_json::to_string(&files)
+            .map_err(|_| failure(ErrorCode::StorageFailed, "delivery-encode"))?;
         tx.execute(
                 "INSERT INTO release_deliveries
                  (delivery_id,action_id,release_id,directory,overwrite_conflicts,state,expected_json)
                  VALUES (?1,?2,?3,?4,?5,'pending',?6)",
                 params![delivery_id.to_string(),action_id.to_string(),release_id.to_string(),directory,overwrite_conflicts,encoded],
             ).map_err(sql)?;
+        let receipt = delivery::by_action_in(&tx, action_id)?
+            .ok_or_else(|| failure(ErrorCode::StorageFailed, "delivery-write"))?;
         observer.commit(tx).map_err(|_| {
             unknown.store(true, std::sync::atomic::Ordering::Release);
             failure(ErrorCode::OutcomeUnknown, "delivery-begin-commit")
         })?;
-        self.delivery_by_action(action_id)?
-            .ok_or_else(|| failure(ErrorCode::StorageFailed, "delivery-write"))
+        Ok((receipt, Some(record)))
     }
 
     pub fn delivery_by_action(

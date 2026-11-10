@@ -87,7 +87,7 @@ pub use persistence::{
     TmxLicenseStatus, TmxLossEntry, TmxLossKind, TmxLossSample, TmxProvenance, TmxRowReason,
     TmxRowStatus, preview_tbx_exchange, preview_tmx_exchange,
 };
-pub use persistence::{PluginBuildLocaleChoice, ReleaseBuildEnvironment, ReleasePlan};
+pub use persistence::{ExportAdmission, PluginBuildLocaleChoice, ReleaseBuildEnvironment, ReleasePlan};
 pub use persistence::{
     SavedArtifactCheckProof, SavedBuildArtifact, SavedBuildLocale, SavedBuildResult,
     SavedPluginBuildView, SelectedSourceContext, SelectedSourceFact, SourceContextAdjacency,
