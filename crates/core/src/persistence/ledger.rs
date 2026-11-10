@@ -88,7 +88,7 @@ thread_local! { static TEST_SCHEMA: std::cell::Cell<bool> = const { std::cell::C
 pub(super) fn validate(connection: &Connection) -> Result<(), ExecutionError> {
     validate_schema(
         connection,
-        |connection, input| {
+        |connection, input, _| {
             validate_attempt_input(
                 connection,
                 input,
@@ -145,16 +145,15 @@ pub(super) fn validate_for_open<'a>(
     let mut links = BTreeMap::new();
     validate_schema(
         connection,
-        |connection, input| {
-            let mut results = OpenResultReader::new(connection, input);
+        |connection, input, results| {
             validate_attempt_input(
                 connection,
                 input,
                 |result| results.load(result),
                 |result| require_open_valid_plugin_link(connection, result.envelope().result_id),
             )?;
-            super::plugin_execution::validate_associated_input(connection, input, &mut results)?;
-            validate_review(connection, input, &mut results)
+            super::plugin_execution::validate_associated_input(connection, input, results)?;
+            validate_review(connection, input, results)
         },
         |result, link, valid| {
             links.insert(result, (link, valid));
@@ -215,7 +214,11 @@ fn validate_attempt_input(
 
 fn validate_schema(
     connection: &Connection,
-    mut validate_input: impl FnMut(&Connection, &FixedInput) -> Result<(), ExecutionError>,
+    mut validate_input: impl FnMut(
+        &Connection,
+        &FixedInput,
+        &mut OpenResultReader<'_>,
+    ) -> Result<(), ExecutionError>,
     mut checked_link: impl FnMut(ExecutionId, CheckedPluginLink, bool),
 ) -> Result<(), ExecutionError> {
     #[cfg(feature = "execution-test-host")]
@@ -263,6 +266,28 @@ fn validate_schema(
     input_storage::validate_chunks(connection)?;
     let project = super::read_metadata_from(connection)
         .map_err(|_| error(ErrorCode::CorruptLedger, "project"))?;
+    // Index only link identities. The producer scan can then use its exact
+    // input and bounded result reader for every link, including historical or
+    // negative links that the current execution items do not point to.
+    let mut links_by_attempt = BTreeMap::<ExecutionId, Vec<(ExecutionId, bool)>>::new();
+    {
+        let mut links = connection
+            .prepare(
+                "SELECT r.attempt_id,l.producer_result_id,l.valid FROM plugin_validation_links l
+                 LEFT JOIN execution_results r ON r.result_id=l.producer_result_id",
+            )
+            .map_err(sql_error)?;
+        let rows = links
+            .query_map([], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)))
+            .map_err(sql_error)?;
+        for row in rows {
+            let (attempt, result, valid) = row.map_err(sql_error)?;
+            links_by_attempt
+                .entry(parse_id(attempt)?)
+                .or_default()
+                .push((parse_id(result)?, valid));
+        }
+    }
     let mut statement = connection
         .prepare("SELECT attempt_id FROM execution_attempts ORDER BY sequence")
         .map_err(sql_error)?;
@@ -282,29 +307,18 @@ fn validate_schema(
         if input.envelope().project_id.to_string() != project.project_id().to_string() {
             return Err(error(ErrorCode::CorruptLedger, "project"));
         }
-        validate_input(connection, &input)?;
+        let mut results = OpenResultReader::new(connection, &input);
+        validate_input(connection, &input, &mut results)?;
+        for (result_id, valid) in links_by_attempt.remove(&id).into_iter().flatten() {
+            let result = results.load(result_id)?;
+            let link = validate_plugin_link(connection, &input, &result, valid)?;
+            checked_link(result.envelope().result_id, link, valid);
+        }
+    }
+    if !links_by_attempt.is_empty() {
+        return Err(error(ErrorCode::CorruptLedger, "semantic-validation-link"));
     }
     super::mcp::validate_action_links(connection)?;
-    let mut links = connection
-        .prepare("SELECT producer_result_id,valid FROM plugin_validation_links")
-        .map_err(sql_error)?;
-    let rows = links
-        .query_map([], |r| Ok((r.get::<_, String>(0)?, r.get::<_, bool>(1)?)))
-        .map_err(sql_error)?;
-    for row in rows {
-        let (result_id, valid) = row.map_err(sql_error)?;
-        let attempt: String = connection
-            .query_row(
-                "SELECT attempt_id FROM execution_results WHERE result_id=?1",
-                [&result_id],
-                |r| r.get(0),
-            )
-            .map_err(sql_error)?;
-        let input = load_input(connection, parse_id(attempt)?)?;
-        let result = load_result(connection, &input, parse_id(result_id)?)?;
-        let link = validate_plugin_link(connection, &input, &result, valid)?;
-        checked_link(result.envelope().result_id, link, valid);
-    }
     let mut actions = connection
         .prepare("SELECT action_id,attempt_id,unit_id,request,digest FROM execution_actions")
         .map_err(sql_error)?;
@@ -1223,8 +1237,8 @@ fn read_attempt_with_results(
     })
 }
 
-// The open scan verifies every link in the same snapshot after reading the
-// attempts. A result already marked valid still requires its positive link.
+// The open scan verifies every link in the same snapshot as the attempts.
+// A result already marked valid still requires its positive link.
 fn require_open_valid_plugin_link(
     connection: &Connection,
     result: ExecutionId,
