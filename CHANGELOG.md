@@ -159,7 +159,7 @@ Current workspace version metadata: **`0.2.0-alpha.1`**. Because the published `
 
 ### Changed
 
-- Preparing artifact checks, saving plugin releases, and reading their evidence reuse validated build and source data within each operation. Saved releases still verify the exact original source, artifacts, and independent check.
+- Preparing artifact checks, saving plugin releases, and reading their evidence reuse validated build and source data within each operation. Export reads all saved files together and checks them against the preview. Saved releases still verify the exact original source, artifacts, and independent check.
 
 - Experimental SDK `0.1.0-alpha.7` adds a bounded, read-only capture summary with per-material counts, groups, format properties and source references. The summary describes only the declared captured projection and cannot enter source-revision semantics or authorize execution.
 - Experimental SDK `0.1.0-alpha.6` avoids decoding the complete binary material again for each field, native label and context reference during one validation. Every range, material digest and subsequent validation still uses the exact captured bytes; capacity and process deadlines are unchanged.

@@ -753,6 +753,21 @@ impl ProjectStore {
     }
 
     pub fn release_view(&self, release_id: ExecutionId) -> Result<ReleaseView, ExecutionError> {
+        Ok(self.read_release_record(release_id)?.view)
+    }
+
+    /// Read the verified release and its exact artifact bytes in one snapshot.
+    /// The byte vectors follow the order of the artifacts in the view.
+    pub fn release_with_artifacts(
+        &self,
+        release_id: ExecutionId,
+    ) -> Result<(ReleaseView, Vec<Vec<u8>>), ExecutionError> {
+        let record = self.read_release_record(release_id)?;
+        let bytes = record.artifacts.into_iter().map(|artifact| artifact.bytes).collect();
+        Ok((record.view, bytes))
+    }
+
+    fn read_release_record(&self, release_id: ExecutionId) -> Result<record::Record, ExecutionError> {
         let snapshot = self
             .connection()
             .map_err(|_| failure(ErrorCode::StorageFailed, "release-read"))?
@@ -760,7 +775,7 @@ impl ProjectStore {
             .map_err(sql)?;
         let record = record::load(&snapshot, release_id)?;
         snapshot.commit().map_err(sql)?;
-        Ok(record.view)
+        Ok(record)
     }
 
     /// Select a locale only when it has exactly one artifact. Callers exporting
@@ -788,12 +803,7 @@ impl ProjectStore {
         locale: &str,
         logical_path: Option<&str>,
     ) -> Result<(ReleasedArtifact, Vec<u8>), ExecutionError> {
-        let snapshot = self
-            .connection()
-            .map_err(|_| failure(ErrorCode::StorageFailed, "release-read"))?
-            .unchecked_transaction()
-            .map_err(sql)?;
-        let record = record::load(&snapshot, release_id)?;
+        let record = self.read_release_record(release_id)?;
         let mut artifacts = record.artifacts.into_iter().filter(|a| {
             a.summary.locale == locale && logical_path.is_none_or(|p| a.summary.file_name == p)
                 && (logical_path.is_some() || !record.report_paths.contains(&a.summary.file_name))
@@ -807,7 +817,6 @@ impl ProjectStore {
                 "release-artifact-ambiguous",
             ));
         }
-        snapshot.commit().map_err(sql)?;
         Ok((artifact.summary, artifact.bytes))
     }
 }

@@ -1015,23 +1015,25 @@ pub async fn export_release(
                     CommandStage::ExecutionAdopt,
                 ));
             }
-            let release = store.release_view(initial.release_id).map_err(map_adopt)?;
-            let bytes = preview
-                .files
-                .iter()
-                .map(|file| {
-                    let (artifact, bytes) = store
-                        .release_artifact_by_path(initial.release_id, &file.locale, &file.file_name)
-                        .map_err(map_adopt)?;
-                    if artifact.sha256 != file.expected_sha256 {
-                        return Err(CommandError::simple(
-                            CommandErrorCode::DependencyConflict,
-                            CommandStage::ExecutionAdopt,
-                        ));
-                    }
-                    Ok(bytes)
-                })
-                .collect::<Result<Vec<_>, CommandError>>()?;
+            let (release, bytes) = store
+                .release_with_artifacts(initial.release_id)
+                .map_err(map_adopt)?;
+            if release.artifacts.len() != preview.files.len()
+                || release
+                    .artifacts
+                    .iter()
+                    .zip(&preview.files)
+                    .any(|(artifact, file)| {
+                        artifact.locale != file.locale
+                            || artifact.file_name != file.file_name
+                            || artifact.sha256 != file.expected_sha256
+                    })
+            {
+                return Err(CommandError::simple(
+                    CommandErrorCode::DependencyConflict,
+                    CommandStage::ExecutionAdopt,
+                ));
+            }
             store
                 .begin_delivery(
                     initial.action_id,

@@ -67,18 +67,26 @@ pub(super) struct Record {
     pub report_paths: BTreeSet<String>,
 }
 
+struct PreparedRecord {
+    manifest: ReleaseManifest,
+    summary: ManifestSummary,
+    artifacts: Vec<Artifact>,
+    referenced_plan: Option<ReleasePlan>,
+}
+
 fn prepare_data(
     input: &FixedInput,
     action: &AdoptionAction,
     results: &[FixedResult],
     version: u32,
-) -> Result<(ReleaseManifest, ManifestSummary, Vec<Artifact>), ExecutionError> {
+) -> Result<PreparedRecord, ExecutionError> {
     if ![1, 2, 3].contains(&version) || version >= 2 && input.envelope().plugin.is_none() {
         return Err(failure(ErrorCode::CorruptLedger, "release-manifest-version"));
     }
     action.validate(input, results)?;
     let mut seen = BTreeSet::new();
     let mut artifacts = Vec::new();
+    let mut referenced_plan = None;
     let (plan, summary) = if input.envelope().plugin.is_some() {
         let plan = ReleasePlan::from_input(input)?;
         let summary = plan.release_summary();
@@ -146,7 +154,12 @@ fn prepare_data(
         if seen.len() != plan.choices().len() {
             return Err(failure(ErrorCode::ResultMismatch, "release-coverage"));
         }
-        let frozen = if version >= 2 { FrozenPlan::PluginInput } else { FrozenPlan::Plugin(plan) };
+        let frozen = if version >= 2 {
+            referenced_plan = Some(plan);
+            FrozenPlan::PluginInput
+        } else {
+            FrozenPlan::Plugin(plan)
+        };
         (frozen, summary)
     } else {
         #[cfg(any(
@@ -169,8 +182,8 @@ fn prepare_data(
     artifacts.sort_by(|a, b| {
         (&a.summary.locale, &a.summary.file_name).cmp(&(&b.summary.locale, &b.summary.file_name))
     });
-    Ok((
-        ReleaseManifest {
+    Ok(PreparedRecord {
+        manifest: ReleaseManifest {
             version,
             input_digest: input.digest().into(),
             result_ids: action.result_ids.clone(),
@@ -178,7 +191,8 @@ fn prepare_data(
         },
         summary,
         artifacts,
-    ))
+        referenced_plan,
+    })
 }
 
 pub(super) fn prepare(
@@ -187,7 +201,8 @@ pub(super) fn prepare(
     results: &[FixedResult],
 ) -> Result<PreparedMutation, ExecutionError> {
     let version = if input.envelope().plugin.is_some() { 3 } else { 1 };
-    let (manifest, summary, artifacts) = prepare_data(input, action, results, version)?;
+    let PreparedRecord { manifest, summary, artifacts, .. } =
+        prepare_data(input, action, results, version)?;
     let manifest_bytes = codec::encode(&manifest, MAX_INPUT_BYTES)?;
     let digest = codec::digest(&manifest_bytes);
     let action = action.clone();
@@ -281,15 +296,23 @@ pub(super) fn load(
         .iter()
         .map(|id| super::super::ledger::load_result(connection, &input, *id))
         .collect::<Result<Vec<_>, _>>()?;
-    let (expected_manifest, summary, expected_artifacts) = prepare_data(&input, &action, &results, manifest.version)?;
+    let PreparedRecord {
+        manifest: expected_manifest,
+        summary,
+        artifacts: expected_artifacts,
+        referenced_plan,
+    } = prepare_data(&input, &action, &results, manifest.version)?;
     if manifest != expected_manifest || bytes != codec::encode(&expected_manifest, MAX_INPUT_BYTES)?
     {
         return Err(failure(ErrorCode::CorruptLedger, "release-fixed-input"));
     }
     if input.envelope().plugin.is_some() {
-        match &manifest.plan {
+        match &expected_manifest.plan {
             FrozenPlan::Plugin(plan) => plan.validate_source_reference(connection)?,
-            FrozenPlan::PluginInput => ReleasePlan::from_input(&input)?.validate_source_reference(connection)?,
+            FrozenPlan::PluginInput => referenced_plan
+                .as_ref()
+                .ok_or_else(|| failure(ErrorCode::CorruptLedger, "release-plugin-plan"))?
+                .validate_source_reference(connection)?,
             #[cfg(any(
                 test,
                 feature = "execution-test-host",
