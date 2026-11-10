@@ -948,7 +948,7 @@ fn load_result_with_verified(
     Ok(result_value)
 }
 
-/// Hold at most one artifact checker pair until its own attempt is scanned.
+/// Hold at most one source or artifact checker pair until its attempt is scanned.
 /// The slot belongs to the open transaction and never carries execution authority.
 #[derive(Default)]
 struct OpenCheckerFrames(Option<ResultValidationCapture>);
@@ -961,10 +961,8 @@ impl OpenCheckerFrames {
         None
     }
 
-    fn remember(&mut self, prepared: &PreparedArtifactValidation) {
+    fn remember(&mut self, input: &FixedInput, result: &FixedResult) {
         const MAX_FRAME_BYTES: usize = 16 * 1024 * 1024;
-        let input = &prepared.capture.check_input;
-        let result = &prepared.check_result;
         if input.envelope().attempt_id == result.envelope().attempt_id
             && input.bytes().len() + result.bytes().len() <= MAX_FRAME_BYTES
         {
@@ -1591,6 +1589,9 @@ fn validate_plugin_link_with_open_evidence(
     let input = original.as_ref();
     if input.envelope().operation == crate::content::OPERATION {
         let proof = validate_source_link(connection, input, result, expected_valid)?;
+        if let Some(open) = open {
+            open.checker.remember(&proof.capture.check_input, &proof.check_result);
+        }
         return Ok(CheckedPluginLink::Source {
             checker_attempt: proof.check_result.envelope().attempt_id,
             checker_result: proof.check_result.envelope().result_id,
@@ -1639,7 +1640,7 @@ fn validate_plugin_link_with_open_evidence(
         *slot = Some(OpenBuildArtifact { result: result.clone(), output });
     }
     if let Some(open) = open {
-        open.checker.remember(&prepared);
+        open.checker.remember(&prepared.capture.check_input, &prepared.check_result);
     }
     Ok(CheckedPluginLink::Artifact {
         build_attempt: input.envelope().attempt_id,

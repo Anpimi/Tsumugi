@@ -4,6 +4,8 @@
 
 By default, the crate is data-only: it validates manifests and payloads and computes digests, while package installation, process management, and runtime authorization belong to the Host and application layers. Building this crate requires Rust 1.98 or newer.
 
+The optional `aws-lc-digest` feature uses AWS-LC for artifact and invocation payload SHA-256 digests. Core enables it in builds that already link AWS-LC. Standalone builds use the portable backend by default, and both backends produce the same digests and wire values.
+
 ## Contract Documentation
 
 Protocol versions (`1` for manifests, exchange envelopes, and runtime environments; `3` for the local process transport) are versioned independently of the crate's SemVer (`0.1.0-alpha.8`).

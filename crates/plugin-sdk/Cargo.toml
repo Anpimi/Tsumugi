@@ -10,12 +10,14 @@ description = "Experimental data contracts and conformance harness for Tsumugi p
 [features]
 schema = ["dep:schemars"]
 native-worker = []
+aws-lc-digest = ["dep:aws-lc-rs"]
 
 [[example]]
 name = "native-worker"
 required-features = ["native-worker"]
 
 [dependencies]
+aws-lc-rs = { version = "=1.18.1", default-features = false, features = ["aws-lc-sys"], optional = true }
 base64 = "=0.22.1"
 schemars = { version = "=1.2.2", optional = true }
 semver = "=1.0.28"

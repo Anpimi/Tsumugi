@@ -403,3 +403,28 @@ fn reopening_keeps_plugin_mapping_identity_and_proof_without_reconstructing_live
     assert_eq!(pending(&reopened, project, 100), (expected, true));
     assert_eq!(reopened.connection().unwrap().total_changes(), writes);
 }
+
+#[test]
+fn reusing_source_checker_frames_still_requires_the_original_attempt_receipt() {
+    let fixture = plugin_fixture();
+    let attempt = fixture.check_input.envelope().attempt_id;
+    let path = fixture.store.directory().to_path_buf();
+    fixture.store.close().unwrap();
+
+    let reopened = ProjectStore::open(&path).unwrap();
+    let changed = reopened
+        .connection()
+        .unwrap()
+        .execute(
+            "UPDATE execution_items SET validation='valid', adoption='committed' WHERE attempt_id=?1",
+            [attempt.to_string()],
+        )
+        .unwrap();
+    assert_eq!(changed, 1);
+    reopened.close().unwrap();
+
+    assert_eq!(
+        ProjectStore::open(path).unwrap_err().code(),
+        crate::PersistenceErrorCode::CorruptProject
+    );
+}

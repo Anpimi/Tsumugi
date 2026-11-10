@@ -5151,6 +5151,7 @@ dependencies = [
 name = "tsumugi-plugin-sdk"
 version = "0.1.0-alpha.8"
 dependencies = [
+ "aws-lc-rs",
  "base64 0.22.1",
  "schemars 1.2.2",
  "semver",

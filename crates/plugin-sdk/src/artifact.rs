@@ -4,7 +4,7 @@ use std::borrow::Cow;
 
 use base64::{Engine, engine::general_purpose::STANDARD};
 use serde::{Deserialize, Serialize};
-use sha2::{Digest, Sha256};
+use sha2::Sha256;
 
 use crate::{ContractError, ContractErrorCode, MAX_EXCHANGE_BYTES, TextEncoding, TextRange};
 
@@ -249,7 +249,21 @@ impl CapturedArtifact {
 }
 
 pub fn artifact_bytes_digest(bytes: &[u8]) -> String {
-    format!("{:x}", Sha256::digest(bytes))
+    #[cfg(feature = "aws-lc-digest")]
+    let digest = {
+        use aws_lc_rs::digest::{SHA256, digest};
+
+        let mut output = sha2::digest::Output::<Sha256>::default();
+        output.copy_from_slice(digest(&SHA256, bytes).as_ref());
+        output
+    };
+    #[cfg(not(feature = "aws-lc-digest"))]
+    let digest = {
+        use sha2::Digest;
+
+        Sha256::digest(bytes)
+    };
+    format!("{digest:x}")
 }
 
 /// Source coordinates are separate from ranges in decoded unit/target text.
