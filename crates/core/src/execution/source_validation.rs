@@ -71,7 +71,19 @@ impl SourceValidationPublicationCapture {
     }
 }
 impl SourceValidationCapture {
-    pub(crate) fn capture(source: ResultValidationCapture) -> Result<Self, ExecutionError> {
+    pub(crate) fn capture(
+        source: ResultValidationCapture,
+        attempt: Option<ExecutionId>,
+    ) -> Result<Self, ExecutionError> {
+        let (mut envelope, projected, checks) = Self::reconstruct(&source)?;
+        envelope.attempt_id = attempt.unwrap_or(envelope.attempt_id);
+        let check_input = FixedInput::capture(envelope)?;
+        Ok(Self { source, check_input, projected, checks })
+    }
+
+    fn reconstruct(
+        source: &ResultValidationCapture,
+    ) -> Result<(InputEnvelope, Arc<crate::content::SourceOutput>, sdk::FixedCheckSet), ExecutionError> {
         let projected = Arc::new(crate::content::validate_output(
             &source.input,
             &source.result,
@@ -156,19 +168,10 @@ impl SourceValidationCapture {
             .timeout_ms
             .min(binding.capability.declaration.limits.timeout_ms);
         envelope.plugin = Some(binding);
-        let check_input = FixedInput::capture(envelope)?;
-        Ok(Self {
-            source,
-            check_input,
-            projected,
-            checks,
-        })
+        Ok((envelope, projected, checks))
     }
     pub fn check_input(&self) -> &FixedInput {
         &self.check_input
-    }
-    pub(super) fn set_check_input(&mut self, input: FixedInput) {
-        self.check_input = input;
     }
     /// Reconstruct required policy from original fixed source evidence. Saved
     /// checker identities may differ; its entire remaining input must match.
@@ -176,10 +179,9 @@ impl SourceValidationCapture {
         source: ResultValidationCapture,
         check_input: FixedInput,
     ) -> Result<Self, ExecutionError> {
-        let mut capture = Self::capture(source)?;
-        validation::restore_check_input(&capture.check_input, &check_input)?;
-        capture.check_input = check_input;
-        Ok(capture)
+        let (envelope, projected, checks) = Self::reconstruct(&source)?;
+        validation::restore_reconstructed_check_input(envelope, &check_input)?;
+        Ok(Self { source, check_input, projected, checks })
     }
 
     /// A completed result can be invalid: coverage and blocking findings are

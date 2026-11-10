@@ -133,6 +133,7 @@ fn restoring_a_check_requires_canonical_bytes_after_rebinding_identities() {
     let actual = capture("Original");
     assert_ne!(expected.digest(), actual.digest());
     validation::restore_check_input(&expected, &actual).unwrap();
+    validation::restore_reconstructed_check_input(expected.envelope().clone(), &actual).unwrap();
 
     let changed = capture("Substituted");
     assert_eq!(validation::restore_check_input(&expected, &changed).unwrap_err().code, ErrorCode::ResultMismatch);
@@ -142,6 +143,9 @@ fn restoring_a_check_requires_canonical_bytes_after_rebinding_identities() {
     let reencoded = FixedInput::restore(&raw, &codec::digest(&raw)).unwrap();
     assert_eq!(reencoded.envelope(), actual.envelope());
     assert_eq!(validation::restore_check_input(&expected, &reencoded).unwrap_err().code, ErrorCode::ResultMismatch);
+    let error = validation::restore_reconstructed_check_input(expected.envelope().clone(), &reencoded)
+        .unwrap_err();
+    assert_eq!(error.code, ErrorCode::ResultMismatch);
 }
 
 fn result(input: &FixedInput, item: ExecutionId, token: ExecutionId) -> ResultEnvelope {

@@ -607,13 +607,16 @@ impl FixedInput {
                 .min(MAX_FIXED_INPUT_BYTES)
         })
     }
-    pub fn capture(mut envelope: InputEnvelope) -> Result<Self, ExecutionError> {
+    fn validate_capture(envelope: &mut InputEnvelope) -> Result<(), ExecutionError> {
         codec::validate_depth(&envelope.settings, 1)?;
         for item in &envelope.items {
             codec::validate_depth(&item.payload, 3)?;
         }
         envelope.normalize();
-        envelope.validate()?;
+        envelope.validate()
+    }
+    pub fn capture(mut envelope: InputEnvelope) -> Result<Self, ExecutionError> {
+        Self::validate_capture(&mut envelope)?;
         let bytes = codec::encode(&envelope, Self::byte_limit(&envelope))?;
         Self::restore(&bytes, &codec::digest(&bytes))
     }

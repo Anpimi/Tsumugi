@@ -159,7 +159,7 @@ Current workspace version metadata: **`0.2.0-alpha.1`**. Because the published `
 
 ### Changed
 
-- Preparing artifact checks, saving plugin releases, and reading their evidence reuse validated build and source data within each operation. Reading saved releases avoids decoding reconstructed checker inputs a second time. Export verifies the saved files against the preview and registers the pending delivery in one transaction. Saved releases still verify the exact original source, artifacts, and independent check.
+- Saving and reading plugin releases reuse validated build and source data within each operation. Preparing source and artifact checks captures each new checker input once. Reopening projects and reading saved releases verify the original checker input against its reconstructed bytes without decoding a temporary copy. Export verifies the saved files against the preview and registers the pending delivery in one transaction. Saved releases still verify the exact original source, artifacts, and independent check.
 - Opening projects with plugin history reuses independently checked proof identities within the database snapshot. Historical publications and saved releases still verify their original evidence.
 
 - Experimental SDK `0.1.0-alpha.7` adds a bounded, read-only capture summary with per-material counts, groups, format properties and source references. The summary describes only the declared captured projection and cannot enter source-revision semantics or authorize execution.

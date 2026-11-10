@@ -702,10 +702,10 @@ fn generic_validator_and_corrupt_artifact_data_cannot_bypass_required_proof() {
     envelope.output = Some(serde_json::to_value(artifacts).unwrap());
     let forged = FixedResult::capture(envelope, &input, result.envelope().dispatch_token).unwrap();
     assert!(
-        ArtifactValidationCapture::capture(ResultValidationCapture {
-            input: input.clone(),
-            result: forged
-        })
+        ArtifactValidationCapture::capture(
+            ResultValidationCapture { input: input.clone(), result: forged },
+            None,
+        )
         .is_err()
     );
 }

@@ -56,7 +56,19 @@ impl PreparedArtifactValidation {
     }
 }
 impl ArtifactValidationCapture {
-    pub(crate) fn capture(build: ResultValidationCapture) -> Result<Self, ExecutionError> {
+    pub(crate) fn capture(
+        build: ResultValidationCapture,
+        attempt: Option<ExecutionId>,
+    ) -> Result<Self, ExecutionError> {
+        let (mut envelope, checks) = Self::reconstruct(&build)?;
+        envelope.attempt_id = attempt.unwrap_or(envelope.attempt_id);
+        let check_input = FixedInput::capture(envelope)?;
+        Ok(Self { build, check_input, checks })
+    }
+
+    fn reconstruct(
+        build: &ResultValidationCapture,
+    ) -> Result<(InputEnvelope, sdk::FixedCheckSet), ExecutionError> {
         let plan = ReleasePlan::from_input(&build.input)?;
         let result = &build.result;
         FixedResult::restore(
@@ -152,27 +164,18 @@ impl ArtifactValidationCapture {
             .timeout_ms
             .min(selected.capability.declaration.limits.timeout_ms);
         envelope.plugin = Some(selected);
-        let check_input = FixedInput::capture(envelope)?;
-        Ok(Self {
-            build,
-            check_input,
-            checks,
-        })
+        Ok((envelope, checks))
     }
     pub fn check_input(&self) -> &FixedInput {
         &self.check_input
-    }
-    pub(super) fn set_check_input(&mut self, input: FixedInput) {
-        self.check_input = input;
     }
     pub(crate) fn restore(
         build: ResultValidationCapture,
         check_input: FixedInput,
     ) -> Result<Self, ExecutionError> {
-        let mut capture = Self::capture(build)?;
-        validation::restore_check_input(&capture.check_input, &check_input)?;
-        capture.check_input = check_input;
-        Ok(capture)
+        let (envelope, checks) = Self::reconstruct(&build)?;
+        validation::restore_reconstructed_check_input(envelope, &check_input)?;
+        Ok(Self { build, check_input, checks })
     }
     /// Coverage can be complete and still have blocking findings. The ledger
     /// records valid/invalid against these exact producer and checker results.

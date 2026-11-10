@@ -3748,7 +3748,7 @@ impl ProjectStore {
         attempt: ExecutionId,
         result: ExecutionId,
     ) -> Result<SourceValidationCapture, ExecutionError> {
-        SourceValidationCapture::capture(self.capture_result_validation(attempt, result)?)
+        SourceValidationCapture::capture(self.capture_result_validation(attempt, result)?, None)
     }
     pub fn commit_source_validation(
         &mut self,
@@ -3780,7 +3780,7 @@ impl ProjectStore {
         attempt: ExecutionId,
         result: ExecutionId,
     ) -> Result<ArtifactValidationCapture, ExecutionError> {
-        ArtifactValidationCapture::capture(self.capture_result_validation(attempt, result)?)
+        ArtifactValidationCapture::capture(self.capture_result_validation(attempt, result)?, None)
     }
     pub fn capture_translation_validation(
         &self,

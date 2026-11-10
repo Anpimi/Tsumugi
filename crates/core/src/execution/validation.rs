@@ -18,6 +18,18 @@ pub(crate) fn restore_check_input(
     expected: &FixedInput,
     actual: &FixedInput,
 ) -> Result<(), ExecutionError> {
+    compare_check_input(expected.envelope().clone(), actual)
+}
+
+pub(super) fn restore_reconstructed_check_input(
+    mut expected: InputEnvelope,
+    actual: &FixedInput,
+) -> Result<(), ExecutionError> {
+    FixedInput::validate_capture(&mut expected)?;
+    compare_check_input(expected, actual)
+}
+
+fn compare_check_input(mut rebuilt: InputEnvelope, actual: &FixedInput) -> Result<(), ExecutionError> {
     let captured = actual.envelope();
     if captured.items.len() != 1 || captured.units.len() != 1 {
         return Err(ExecutionError::new(
@@ -25,7 +37,6 @@ pub(crate) fn restore_check_input(
             "semantic-check-input",
         ));
     }
-    let mut rebuilt = expected.envelope().clone();
     rebuilt.task_id = captured.task_id;
     rebuilt.attempt_id = captured.attempt_id;
     rebuilt.items[0].item_id = captured.items[0].item_id;
@@ -159,11 +170,7 @@ impl ResultValidationCapture {
         self,
         attempt: ExecutionId,
     ) -> Result<ArtifactValidationCapture, ExecutionError> {
-        let mut capture = ArtifactValidationCapture::capture(self)?;
-        let mut envelope = capture.check_input().envelope().clone();
-        envelope.attempt_id = attempt;
-        capture.set_check_input(FixedInput::capture(envelope)?);
-        Ok(capture)
+        ArtifactValidationCapture::capture(self, Some(attempt))
     }
     /// Build the mandatory source checker input from store-owned evidence on a
     /// computation worker, without retaining a project connection or write.
@@ -171,11 +178,7 @@ impl ResultValidationCapture {
         self,
         attempt: ExecutionId,
     ) -> Result<SourceValidationCapture, ExecutionError> {
-        let mut capture = SourceValidationCapture::capture(self)?;
-        let mut envelope = capture.check_input().envelope().clone();
-        envelope.attempt_id = attempt;
-        capture.set_check_input(FixedInput::capture(envelope)?);
-        Ok(capture)
+        SourceValidationCapture::capture(self, Some(attempt))
     }
 
     pub fn input(&self) -> &FixedInput {
