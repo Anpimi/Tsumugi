@@ -190,12 +190,7 @@ impl SourceValidationCapture {
         self,
         check_result: FixedResult,
     ) -> Result<PreparedSourceValidation, ExecutionError> {
-        FixedResult::restore(
-            check_result.bytes(),
-            check_result.digest(),
-            &self.check_input,
-            check_result.envelope().dispatch_token,
-        )?;
+        check_result.validate_for_input(&self.check_input)?;
         let valid = self.validate_check_result(&check_result).is_ok();
         let proof = validation::ValidationProof {
             input_digest: self.source.input.digest().into(),

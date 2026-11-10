@@ -316,12 +316,7 @@ impl TranslationValidationCapture {
         self,
         check_result: FixedResult,
     ) -> Result<PreparedTranslationValidation, ExecutionError> {
-        FixedResult::restore(
-            check_result.bytes(),
-            check_result.digest(),
-            &self.check_input,
-            check_result.envelope().dispatch_token,
-        )?;
+        check_result.validate_for_input(&self.check_input)?;
         let valid = validation::validate_required_check_result(&self.checks, &check_result).is_ok();
         let proof = validation::ValidationProof {
             input_digest: self.producer.input.digest().into(),

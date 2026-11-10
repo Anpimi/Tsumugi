@@ -71,12 +71,7 @@ impl ArtifactValidationCapture {
     ) -> Result<(InputEnvelope, sdk::FixedCheckSet), ExecutionError> {
         let plan = ReleasePlan::from_input(&build.input)?;
         let result = &build.result;
-        FixedResult::restore(
-            result.bytes(),
-            result.digest(),
-            &build.input,
-            result.envelope().dispatch_token,
-        )?;
+        result.validate_for_input(&build.input)?;
         let output = plan.parse_artifact_set(result)?;
         let item = build.input.item(result.envelope().item_id)?;
         let locale = item.scope.locale.as_deref().ok_or_else(invalid)?;
@@ -183,12 +178,7 @@ impl ArtifactValidationCapture {
         self,
         check_result: FixedResult,
     ) -> Result<PreparedArtifactValidation, ExecutionError> {
-        FixedResult::restore(
-            check_result.bytes(),
-            check_result.digest(),
-            &self.check_input,
-            check_result.envelope().dispatch_token,
-        )?;
+        check_result.validate_for_input(&self.check_input)?;
         let proof = validation::ValidationProof {
             input_digest: self.build.input.digest().into(),
             result_digest: self.build.result.digest().into(),

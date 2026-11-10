@@ -1043,6 +1043,7 @@ pub struct FixedResult {
     envelope: Arc<ResultEnvelope>,
     bytes: Arc<[u8]>,
     digest: String,
+    validated_input_digest: Arc<str>,
     pub(crate) semantic_validation: Option<validation::ValidationProof>,
 }
 impl FixedResult {
@@ -1059,13 +1060,23 @@ impl FixedResult {
         input: &FixedInput,
         token: ExecutionId,
     ) -> Result<Self, ExecutionError> {
+        Self::receive_frame(bytes, input, token, None)
+    }
+
+    fn receive_frame(
+        bytes: &[u8],
+        input: &FixedInput,
+        token: ExecutionId,
+        verified_digest: Option<String>,
+    ) -> Result<Self, ExecutionError> {
         let envelope: ResultEnvelope =
             codec::decode(bytes, input.envelope().limits.max_result_bytes as usize)?;
         envelope.validate(input, token)?;
         Ok(Self {
             envelope: Arc::new(envelope),
             bytes: Arc::from(bytes),
-            digest: codec::digest(bytes),
+            digest: verified_digest.unwrap_or_else(|| codec::digest(bytes)),
+            validated_input_digest: Arc::from(input.digest()),
             semantic_validation: None,
         })
     }
@@ -1078,13 +1089,23 @@ impl FixedResult {
         if bytes.len() > input.envelope().limits.max_result_bytes as usize {
             return Err(ExecutionError::new(ErrorCode::LimitExceeded, "result"));
         }
-        if codec::digest(bytes) != expected_digest {
+        let digest = codec::digest(bytes);
+        if digest != expected_digest {
             return Err(ExecutionError::new(
                 ErrorCode::OutputInvalid,
                 "result-digest",
             ));
         }
-        Self::receive(bytes, input, token)
+        Self::receive_frame(bytes, input, token, Some(digest))
+    }
+
+    /// Recheck an immutable frame with its original dispatch token. Database
+    /// association and authorization remain the caller's concern.
+    fn validate_for_input(&self, input: &FixedInput) -> Result<(), ExecutionError> {
+        if self.validated_input_digest.as_ref() == input.digest() {
+            return Ok(());
+        }
+        Self::restore(self.bytes(), self.digest(), input, self.envelope.dispatch_token).map(drop)
     }
     pub fn envelope(&self) -> &ResultEnvelope {
         &self.envelope

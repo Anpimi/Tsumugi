@@ -166,6 +166,42 @@ fn result(input: &FixedInput, item: ExecutionId, token: ExecutionId) -> ResultEn
 }
 
 #[test]
+fn verified_results_recheck_different_inputs_and_keep_raw_frame_checks() {
+    let original = input();
+    let token = ExecutionId::new();
+    let envelope = result(&original, original.envelope().items[0].item_id, token);
+    let received = FixedResult::capture(envelope, &original, token).unwrap();
+    let restored = FixedResult::restore(received.bytes(), received.digest(), &original, token)
+        .unwrap();
+    assert_eq!(restored.bytes(), received.bytes());
+    assert_eq!(restored.digest(), received.digest());
+    restored.validate_for_input(&original).unwrap();
+
+    let mut changed = original.envelope().clone();
+    changed.settings = json!({ "display": "changed" });
+    let compatible = FixedInput::capture(changed.clone()).unwrap();
+    assert_ne!(compatible.digest(), original.digest());
+    restored.validate_for_input(&compatible).unwrap();
+
+    changed.capability_version = "2".into();
+    let mismatched = FixedInput::capture(changed).unwrap();
+    assert_eq!(restored.validate_for_input(&mismatched).unwrap_err().code, ErrorCode::ResultMismatch);
+
+    let mut smaller = original.envelope().clone();
+    smaller.limits.max_result_bytes = restored.bytes().len() as u32 - 1;
+    let smaller = FixedInput::capture(smaller).unwrap();
+    assert_eq!(restored.validate_for_input(&smaller).unwrap_err().code, ErrorCode::LimitExceeded);
+
+    let wrong_token = ExecutionId::new();
+    let error = FixedResult::restore(restored.bytes(), restored.digest(), &original, wrong_token)
+        .unwrap_err();
+    assert_eq!(error.code, ErrorCode::ResultMismatch);
+    let error = FixedResult::restore(restored.bytes(), &"0".repeat(64), &original, token)
+        .unwrap_err();
+    assert_eq!(error.stage, "result-digest");
+}
+
+#[test]
 fn frozen_inputs_retain_bytes_and_retry_only_creates_a_new_attempt() {
     let fixed = input();
     let before = fixed.bytes().to_vec();
