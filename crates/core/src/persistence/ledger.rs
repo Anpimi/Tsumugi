@@ -217,7 +217,7 @@ fn validate_attempt_input(
 
 fn validate_schema(
     connection: &Connection,
-    reuse_attempt_digests: bool,
+    opening: bool,
     mut validate_input: impl FnMut(
         &Connection,
         &FixedInput,
@@ -292,6 +292,7 @@ fn validate_schema(
                 .push((parse_id(result)?, valid));
         }
     }
+    let mut checker = opening.then(OpenCheckerFrames::default);
     let mut statement = connection
         .prepare("SELECT attempt_id FROM execution_attempts ORDER BY sequence")
         .map_err(sql_error)?;
@@ -300,7 +301,14 @@ fn validate_schema(
         .map_err(sql_error)?;
     for id in ids {
         let id = parse_id(id.map_err(sql_error)?)?;
-        let input = load_input(connection, id)?;
+        let (input, verified) = match checker.as_mut().and_then(|slot| slot.take_for(id)) {
+            Some(ResultValidationCapture { input, result }) => {
+                check_stored_input(connection, &input)?;
+                super::resources::verify_input_fact_decisions(connection, &input)?;
+                (input, Some(result))
+            }
+            None => (load_input(connection, id)?, None),
+        };
         if (61..=75).contains(&version)
             && (input.bytes().len() > MAX_INPUT_BYTES
                 || input.envelope().limits.max_result_bytes as usize > MAX_RESULT_BYTES
@@ -312,8 +320,11 @@ fn validate_schema(
             return Err(error(ErrorCode::CorruptLedger, "project"));
         }
         let mut results = OpenResultReader::new(connection, &input);
+        results.verified = verified;
+        results.checker = checker.as_mut();
         validate_input(connection, &input, &mut results, links_by_attempt.remove(&id).unwrap_or_default())?;
     }
+    drop(checker);
     if !links_by_attempt.is_empty() {
         return Err(error(ErrorCode::CorruptLedger, "semantic-validation-link"));
     }
@@ -339,7 +350,7 @@ fn validate_schema(
         let action: AdoptionAction = codec::decode(&bytes, MAX_INPUT_BYTES)?;
         // Opening has verified every attempt in this same transaction.
         // Reconciliation still restores the input under its ordinary read path.
-        let request_digest = if reuse_attempt_digests {
+        let request_digest = if opening {
             let input_digest = input_digest
                 .ok_or_else(|| error(ErrorCode::CorruptLedger, "action-input"))?;
             action.request_digest_for_input(&input_digest)?
@@ -937,6 +948,31 @@ fn load_result_with_verified(
     Ok(result_value)
 }
 
+/// Hold at most one artifact checker pair until its own attempt is scanned.
+/// The slot belongs to the open transaction and never carries execution authority.
+#[derive(Default)]
+struct OpenCheckerFrames(Option<ResultValidationCapture>);
+
+impl OpenCheckerFrames {
+    fn take_for(&mut self, attempt: ExecutionId) -> Option<ResultValidationCapture> {
+        if self.0.as_ref().is_some_and(|capture| capture.input.envelope().attempt_id == attempt) {
+            return self.0.take();
+        }
+        None
+    }
+
+    fn remember(&mut self, prepared: &PreparedArtifactValidation) {
+        const MAX_FRAME_BYTES: usize = 16 * 1024 * 1024;
+        let input = &prepared.capture.check_input;
+        let result = &prepared.check_result;
+        if input.envelope().attempt_id == result.envelope().attempt_id
+            && input.bytes().len() + result.bytes().len() <= MAX_FRAME_BYTES
+        {
+            self.0 = Some(ResultValidationCapture { input: input.clone(), result: result.clone() });
+        }
+    }
+}
+
 /// One strictly received result for the exact input in the current open snapshot.
 /// A different result replaces the slot; the entire slot dies with this attempt.
 /// Mutable rows and original grants are checked on every load, including hits.
@@ -944,6 +980,7 @@ pub(super) struct OpenResultReader<'a> {
     connection: &'a Connection,
     input: &'a FixedInput,
     verified: Option<FixedResult>,
+    checker: Option<&'a mut OpenCheckerFrames>,
 }
 
 impl<'a> OpenResultReader<'a> {
@@ -952,6 +989,7 @@ impl<'a> OpenResultReader<'a> {
             connection,
             input,
             verified: None,
+            checker: None,
         }
     }
 
@@ -966,7 +1004,13 @@ impl<'a> OpenResultReader<'a> {
     ) -> Result<(), ExecutionError> {
         for (id, valid) in links {
             let result = self.load(id)?;
-            let link = validate_plugin_link(self.connection, self.input, &result, valid)?;
+            let link = validate_plugin_link_with_checker(
+                self.connection,
+                self.input,
+                &result,
+                valid,
+                self.checker.as_deref_mut(),
+            )?;
             checked(id, link, valid);
         }
         Ok(())
@@ -1498,6 +1542,16 @@ pub(super) fn validate_plugin_link(
     result: &FixedResult,
     expected_valid: bool,
 ) -> Result<CheckedPluginLink, ExecutionError> {
+    validate_plugin_link_with_checker(connection, input, result, expected_valid, None)
+}
+
+fn validate_plugin_link_with_checker(
+    connection: &Connection,
+    input: &FixedInput,
+    result: &FixedResult,
+    expected_valid: bool,
+    checker: Option<&mut OpenCheckerFrames>,
+) -> Result<CheckedPluginLink, ExecutionError> {
     let original = result_input(connection, input, result.envelope().result_id)?;
     let input = original.as_ref();
     if input.envelope().operation == crate::content::OPERATION {
@@ -1530,6 +1584,9 @@ pub(super) fn validate_plugin_link(
     .prepare(check_result)?;
     if saved_valid != expected_valid || prepared.proof.valid != saved_valid {
         return Err(error(ErrorCode::CorruptLedger, "semantic-validation-proof"));
+    }
+    if let Some(checker) = checker {
+        checker.remember(&prepared);
     }
     Ok(CheckedPluginLink::Artifact {
         build_attempt: input.envelope().attempt_id,

@@ -939,7 +939,7 @@ fn each_locale_needs_its_own_artifact_proof_and_reopening_does_not_restore_autho
 
 #[test]
 fn saved_checker_input_substitution_and_missing_proof_are_rejected_on_reopen() {
-    for tamper_input in [false, true] {
+    for damage in 0..3 {
         let (_directory, mut store, generation, input) = fixture_build(&["zh-CN"]);
         let item = input.envelope().items[0].item_id;
         let result = builder_result(&mut store, &input, item);
@@ -948,18 +948,15 @@ fn saved_checker_input_substitution_and_missing_proof_are_rejected_on_reopen() {
             .unwrap();
         let checked = passing_results(&capture);
         let (checked, _) = checker_result(&mut store, generation, &capture, checked);
+        let checker_input = capture.check_input().clone();
         store
             .commit_artifact_validation(capture.prepare(checked).unwrap())
             .unwrap();
         let path = store.directory().to_owned();
-        if tamper_input {
-            let capture = store
-                .capture_artifact_validation(
-                    input.envelope().attempt_id,
-                    result.envelope().result_id,
-                )
-                .unwrap();
-            let mut envelope = capture.check_input().envelope().clone();
+        store.close().unwrap();
+        let store = ProjectStore::open(&path).unwrap();
+        if damage == 0 {
+            let mut envelope = checker_input.envelope().clone();
             envelope.settings["buildResultDigest"] = serde_json::Value::String("d".repeat(64));
             let different = FixedInput::capture(envelope).unwrap();
             assert!(
@@ -980,7 +977,7 @@ fn saved_checker_input_substitution_and_missing_proof_are_rejected_on_reopen() {
                 })
                 .unwrap();
             store.connection().unwrap().execute("UPDATE plugin_validation_links SET checker_result_id=?2 WHERE producer_result_id=?1", params![result.envelope().result_id.to_string(), source_result]).unwrap();
-        } else {
+        } else if damage == 1 {
             store
                 .connection()
                 .unwrap()
@@ -989,6 +986,11 @@ fn saved_checker_input_substitution_and_missing_proof_are_rejected_on_reopen() {
                     [result.envelope().result_id.to_string()],
                 )
                 .unwrap();
+        } else {
+            store.connection().unwrap().execute(
+                "UPDATE plugin_execution_grants SET input_digest=?2 WHERE attempt_id=?1",
+                params![checker_input.envelope().attempt_id.to_string(), "0".repeat(64)],
+            ).unwrap();
         }
         assert!(
             store
