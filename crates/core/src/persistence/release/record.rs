@@ -1,7 +1,7 @@
 //! Saved releases bind exact frozen inputs, original results and adoption
 //! receipts. Reading historical plugin output needs no live process or grant.
 use super::*;
-use crate::persistence::ledger::{CheckedPluginLink, OpenPluginProofs};
+use crate::persistence::ledger::{CheckedPluginLink, OpenPluginProofs, OpenResultReader};
 #[cfg(any(
     test,
     feature = "execution-test-host",
@@ -240,10 +240,15 @@ pub(super) fn prepare(
     }))
 }
 
+pub(super) struct OpenRecordFrames<'scan, 'input, 'snapshot> {
+    pub(super) results: &'scan mut OpenResultReader<'input>,
+    pub(super) proofs: &'scan OpenPluginProofs<'snapshot>,
+}
+
 pub(super) fn load(
     connection: &Connection,
     release_id: ExecutionId,
-    open_proofs: Option<&OpenPluginProofs<'_>>,
+    mut open: Option<OpenRecordFrames<'_, '_, '_>>,
 ) -> Result<Record, ExecutionError> {
     let (action_id, project_id, attempt_id, bytes, digest, created): (
         String,
@@ -275,7 +280,13 @@ pub(super) fn load(
     let manifest: ReleaseManifest = codec::decode(&bytes, MAX_INPUT_BYTES)?;
     let attempt = parse_id(attempt_id)?;
     let action_id = parse_id(action_id)?;
-    let input = super::super::ledger::load_input(connection, attempt)?;
+    let input = match &open {
+        Some(frames) if frames.results.input().envelope().attempt_id == attempt => {
+            std::borrow::Cow::Borrowed(frames.results.input())
+        }
+        Some(_) => return Err(failure(ErrorCode::CorruptLedger, "release-attempt")),
+        None => std::borrow::Cow::Owned(super::super::ledger::load_input(connection, attempt)?),
+    };
     let (action_bytes, action_digest): (Vec<u8>, String) = connection
         .query_row(
             "SELECT request,digest FROM execution_actions WHERE action_id=?1",
@@ -296,7 +307,10 @@ pub(super) fn load(
     let results = action
         .result_ids
         .iter()
-        .map(|id| super::super::ledger::load_result(connection, &input, *id))
+        .map(|id| match &mut open {
+            Some(frames) => frames.results.load(*id),
+            None => super::super::ledger::load_result(connection, &input, *id),
+        })
         .collect::<Result<Vec<_>, _>>()?;
     let PreparedRecord {
         manifest: expected_manifest,
@@ -329,9 +343,9 @@ pub(super) fn load(
             let link = CheckedPluginLink::Artifact {
                 build_attempt: envelope.attempt_id,
             };
-            if !open_proofs
-                .is_some_and(|proofs| proofs.matches(connection, envelope.result_id, link, true))
-            {
+            if !open.as_ref().is_some_and(|frames| {
+                frames.proofs.matches(connection, envelope.result_id, link, true)
+            }) {
                 super::super::ledger::validate_plugin_link(connection, &input, result, true)?;
             }
         }

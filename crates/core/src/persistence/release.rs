@@ -1,6 +1,7 @@
 //! Fixed build inputs, verified locale artifacts and immutable local releases.
 
 use super::ProjectStore;
+use super::ledger::{OpenPluginProofs, OpenResultReader};
 #[cfg(any(test, feature = "execution-test-host", feature = "legacy-desktop-domain"))]
 use crate::content::{
     BUILDER_VERSION, BuildEntry, BuildLocale, BuildManifest, BuildOutput, VALIDATOR_VERSION,
@@ -15,7 +16,7 @@ use crate::{
 };
 use rusqlite::{Connection, TransactionBehavior, params};
 use serde::{Deserialize, Serialize};
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 
 mod plan;
 mod record;
@@ -126,10 +127,7 @@ pub(super) fn initialize(connection: &Connection) -> rusqlite::Result<()> {
     }
     Ok(())
 }
-pub(super) fn validate(
-    connection: &Connection,
-    open_proofs: Option<&super::ledger::OpenPluginProofs<'_>>,
-) -> rusqlite::Result<()> {
+fn validate_schema(connection: &Connection) -> rusqlite::Result<()> {
     for (name, expected) in TABLES {
         let actual: String = connection.query_row(
             "SELECT sql FROM sqlite_master WHERE type='table' AND name=?1",
@@ -140,6 +138,11 @@ pub(super) fn validate(
             return Err(rusqlite::Error::InvalidQuery);
         }
     }
+    Ok(())
+}
+
+pub(super) fn validate(connection: &Connection) -> rusqlite::Result<()> {
+    validate_schema(connection)?;
     if connection.prepare("PRAGMA foreign_key_check")?.exists([])? {
         return Err(rusqlite::Error::InvalidQuery);
     }
@@ -149,10 +152,55 @@ pub(super) fn validate(
         .collect::<Result<Vec<_>, _>>()?;
     for id in ids {
         let id = parse_id(id).map_err(|_| rusqlite::Error::InvalidQuery)?;
-        record::load(connection, id, open_proofs).map_err(|_| rusqlite::Error::InvalidQuery)?;
+        record::load(connection, id, None).map_err(|_| rusqlite::Error::InvalidQuery)?;
     }
     delivery::validate(connection).map_err(|_| rusqlite::Error::InvalidQuery)?;
     Ok(())
+}
+
+/// Only release identities survive between attempts. Full frames are borrowed
+/// from the ledger owner while it is verifying their original attempt.
+pub(super) struct OpenReleaseValidation {
+    pending: BTreeMap<ExecutionId, Vec<ExecutionId>>,
+}
+
+pub(super) fn prepare_open(connection: &Connection) -> Result<OpenReleaseValidation, ExecutionError> {
+    // The ledger checks all foreign keys in this same open snapshot.
+    validate_schema(connection).map_err(sql)?;
+    let mut records = connection
+        .prepare("SELECT attempt_id,release_id FROM release_records")
+        .map_err(sql)?;
+    let rows = records
+        .query_map([], |row| Ok((row.get(0)?, row.get(1)?)))
+        .map_err(sql)?;
+    let mut pending: BTreeMap<ExecutionId, Vec<ExecutionId>> = BTreeMap::new();
+    for row in rows {
+        let (attempt, release) = row.map_err(sql)?;
+        pending.entry(parse_id(attempt)?).or_default().push(parse_id(release)?);
+    }
+    Ok(OpenReleaseValidation { pending })
+}
+
+impl OpenReleaseValidation {
+    pub(super) fn validate_attempt(
+        &mut self,
+        connection: &Connection,
+        results: &mut OpenResultReader<'_>,
+        proofs: &OpenPluginProofs<'_>,
+    ) -> Result<(), ExecutionError> {
+        let attempt = results.input().envelope().attempt_id;
+        for id in self.pending.remove(&attempt).into_iter().flatten() {
+            record::load(connection, id, Some(record::OpenRecordFrames { results, proofs }))?;
+        }
+        Ok(())
+    }
+
+    pub(super) fn finish(self, connection: &Connection) -> Result<(), ExecutionError> {
+        if !self.pending.is_empty() {
+            return Err(failure(ErrorCode::CorruptLedger, "release-attempt"));
+        }
+        delivery::validate(connection)
+    }
 }
 
 fn failure(code: ErrorCode, stage: &str) -> ExecutionError {

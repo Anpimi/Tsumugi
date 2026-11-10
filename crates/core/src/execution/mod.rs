@@ -1206,11 +1206,17 @@ impl AdoptionAction {
         self.request_digest(input)
     }
     pub(crate) fn request_digest(&self, input: &FixedInput) -> Result<String, ExecutionError> {
+        self.request_digest_for_input(input.digest())
+    }
+    pub(crate) fn request_digest_for_input(
+        &self,
+        input_digest: &str,
+    ) -> Result<String, ExecutionError> {
         codec::validate_depth(&self.parameters, 1)?;
         let mut action = self.clone();
         action.result_ids.sort();
         // The exact frozen input binds scopes, dependencies, settings and versions.
-        let bytes = codec::encode(&(action, input.digest()), MAX_INPUT_BYTES)?;
+        let bytes = codec::encode(&(action, input_digest), MAX_INPUT_BYTES)?;
         Ok(codec::digest(&bytes))
     }
 }

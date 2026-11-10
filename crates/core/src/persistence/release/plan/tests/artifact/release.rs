@@ -548,7 +548,7 @@ fn saved_proof_with_superseded_builder_or_checker_refuses_new_release() {
 
 #[test]
 fn release_reads_and_reopen_refuse_rehashed_substitution_or_missing_links_without_writes() {
-    for damage in 0..12 {
+    for damage in 0..13 {
         let (_directory, mut store, generation, input) = fixture_build(&["zh-CN"]);
         let result = builder_result(&mut store, &input, input.envelope().items[0].item_id);
         prove(&mut store, generation, &input, &result);
@@ -623,6 +623,16 @@ fn release_reads_and_reopen_refuse_rehashed_substitution_or_missing_links_withou
             }
             10 => rehash_source_evidence(&store, &input, false),
             11 => rehash_source_evidence(&store, &input, true),
+            12 => {
+                connection.execute(
+                    "UPDATE release_records SET attempt_id=(
+                        SELECT r.attempt_id FROM plugin_validation_links l
+                        JOIN execution_results r ON r.result_id=l.checker_result_id
+                        WHERE l.producer_result_id=?2
+                    ) WHERE release_id=?1",
+                    rusqlite::params![id, result.envelope().result_id.to_string()],
+                ).unwrap();
+            }
             _ => unreachable!(),
         }
         let bytes = std::fs::read(path.join("project.sqlite3")).unwrap();

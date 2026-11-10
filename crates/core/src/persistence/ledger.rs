@@ -88,15 +88,16 @@ thread_local! { static TEST_SCHEMA: std::cell::Cell<bool> = const { std::cell::C
 pub(super) fn validate(connection: &Connection) -> Result<(), ExecutionError> {
     validate_schema(
         connection,
-        |connection, input, _| {
+        false,
+        |connection, input, results, links| {
             validate_attempt_input(
                 connection,
                 input,
                 |result| load_result(connection, input, result),
                 |result| validate_plugin_link(connection, input, result, true).map(|_| ()),
-            )
+            )?;
+            results.validate_links(links, |_, _, _| {})
         },
-        |_, _, _| {},
     )
 }
 
@@ -133,19 +134,21 @@ impl OpenPluginProofs<'_> {
 
 pub(super) fn validate_for_open<'a>(
     connection: &'a Connection,
-    mut validate_review: impl FnMut(
+    mut validate_associations: impl FnMut(
         &Connection,
         &FixedInput,
         &mut OpenResultReader<'_>,
+        &OpenPluginProofs<'_>,
     ) -> Result<(), ExecutionError>,
 ) -> Result<OpenPluginProofs<'a>, ExecutionError> {
     if connection.is_autocommit() {
         return Err(error(ErrorCode::StorageFailed, "open-proof-snapshot"));
     }
-    let mut links = BTreeMap::new();
+    let mut proofs = OpenPluginProofs { connection, links: BTreeMap::new() };
     validate_schema(
         connection,
-        |connection, input, results| {
+        true,
+        |connection, input, results, links| {
             validate_attempt_input(
                 connection,
                 input,
@@ -153,13 +156,13 @@ pub(super) fn validate_for_open<'a>(
                 |result| require_open_valid_plugin_link(connection, result.envelope().result_id),
             )?;
             super::plugin_execution::validate_associated_input(connection, input, results)?;
-            validate_review(connection, input, results)
-        },
-        |result, link, valid| {
-            links.insert(result, (link, valid));
+            results.validate_links(links, |result, link, valid| {
+                proofs.links.insert(result, (link, valid));
+            })?;
+            validate_associations(connection, input, results, &proofs)
         },
     )?;
-    Ok(OpenPluginProofs { connection, links })
+    Ok(proofs)
 }
 
 fn is_conversation_planning(input: &FixedInput) -> bool {
@@ -214,12 +217,13 @@ fn validate_attempt_input(
 
 fn validate_schema(
     connection: &Connection,
+    reuse_attempt_digests: bool,
     mut validate_input: impl FnMut(
         &Connection,
         &FixedInput,
         &mut OpenResultReader<'_>,
+        Vec<(ExecutionId, bool)>,
     ) -> Result<(), ExecutionError>,
-    mut checked_link: impl FnMut(ExecutionId, CheckedPluginLink, bool),
 ) -> Result<(), ExecutionError> {
     #[cfg(feature = "execution-test-host")]
     if let Some(sql) = connection
@@ -308,19 +312,15 @@ fn validate_schema(
             return Err(error(ErrorCode::CorruptLedger, "project"));
         }
         let mut results = OpenResultReader::new(connection, &input);
-        validate_input(connection, &input, &mut results)?;
-        for (result_id, valid) in links_by_attempt.remove(&id).into_iter().flatten() {
-            let result = results.load(result_id)?;
-            let link = validate_plugin_link(connection, &input, &result, valid)?;
-            checked_link(result.envelope().result_id, link, valid);
-        }
+        validate_input(connection, &input, &mut results, links_by_attempt.remove(&id).unwrap_or_default())?;
     }
     if !links_by_attempt.is_empty() {
         return Err(error(ErrorCode::CorruptLedger, "semantic-validation-link"));
     }
     super::mcp::validate_action_links(connection)?;
     let mut actions = connection
-        .prepare("SELECT action_id,attempt_id,unit_id,request,digest FROM execution_actions")
+        .prepare("SELECT e.action_id,e.attempt_id,e.unit_id,e.request,e.digest,a.digest
+                  FROM execution_actions e LEFT JOIN execution_attempts a ON a.attempt_id=e.attempt_id")
         .map_err(sql_error)?;
     let rows = actions
         .query_map([], |r| {
@@ -330,17 +330,27 @@ fn validate_schema(
                 r.get::<_, String>(2)?,
                 r.get::<_, Vec<u8>>(3)?,
                 r.get::<_, String>(4)?,
+                r.get::<_, Option<String>>(5)?,
             ))
         })
         .map_err(sql_error)?;
     for row in rows {
-        let (id, attempt, unit, bytes, digest) = row.map_err(sql_error)?;
+        let (id, attempt, unit, bytes, digest, input_digest) = row.map_err(sql_error)?;
         let action: AdoptionAction = codec::decode(&bytes, MAX_INPUT_BYTES)?;
-        let input = load_input_cached(connection, parse_id(attempt.clone())?)?;
+        // Opening has verified every attempt in this same transaction.
+        // Reconciliation still restores the input under its ordinary read path.
+        let request_digest = if reuse_attempt_digests {
+            let input_digest = input_digest
+                .ok_or_else(|| error(ErrorCode::CorruptLedger, "action-input"))?;
+            action.request_digest_for_input(&input_digest)?
+        } else {
+            let input = load_input_cached(connection, parse_id(attempt.clone())?)?;
+            action.request_digest(&input)?
+        };
         if action.action_id.to_string() != id
             || action.attempt_id.to_string() != attempt
             || action.unit_id.to_string() != unit
-            || action.request_digest(&input)? != digest
+            || request_digest != digest
         {
             return Err(error(ErrorCode::CorruptLedger, "action"));
         }
@@ -943,6 +953,23 @@ impl<'a> OpenResultReader<'a> {
             input,
             verified: None,
         }
+    }
+
+    pub(super) fn input(&self) -> &'a FixedInput {
+        self.input
+    }
+
+    fn validate_links(
+        &mut self,
+        links: Vec<(ExecutionId, bool)>,
+        mut checked: impl FnMut(ExecutionId, CheckedPluginLink, bool),
+    ) -> Result<(), ExecutionError> {
+        for (id, valid) in links {
+            let result = self.load(id)?;
+            let link = validate_plugin_link(self.connection, self.input, &result, valid)?;
+            checked(id, link, valid);
+        }
+        Ok(())
     }
 
     pub(super) fn load(&mut self, result: ExecutionId) -> Result<FixedResult, ExecutionError> {
@@ -2421,7 +2448,7 @@ impl ProjectStore {
         super::content::validate(connection, None)?;
         super::translation::validate(connection)
             .map_err(|_| error(ErrorCode::CorruptLedger, "translation"))?;
-        super::release::validate(connection, None)
+        super::release::validate(connection)
             .map_err(|_| error(ErrorCode::CorruptLedger, "release"))?;
         super::application::validate(connection)?;
         self.execution_unknown
