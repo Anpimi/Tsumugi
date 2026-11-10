@@ -33,10 +33,10 @@ function useReadVisibility(reads: SessionReads, queryKey: QueryKey, enabled: boo
     }
   }, [reads, enabled, identity]);
 }
-export function useSessionQuery<T>({ key, scopes, enabled, read, refetchOnMount, structuralSharing }: { key: QueryKey; scopes: ChangeScope[]; enabled: boolean; read: () => Promise<T>; refetchOnMount?: UseQueryOptions<T>["refetchOnMount"]; structuralSharing?: boolean }) {
+export function useSessionQuery<T>({ key, scopes, enabled, read, refetchOnMount, structuralSharing, refreshOnFocus }: { key: QueryKey; scopes: ChangeScope[]; enabled: boolean; read: () => Promise<T>; refetchOnMount?: UseQueryOptions<T>["refetchOnMount"]; structuralSharing?: boolean; refreshOnFocus?: boolean }) {
   const reads = useSessionReads();
   const queryKey = reads.key(key);
-  const query = useQuery({ queryKey, enabled, meta: { scopes }, ...(refetchOnMount === undefined ? {} : { refetchOnMount }), ...(structuralSharing === undefined ? {} : { structuralSharing }), queryFn: async ({ signal }) => {
+  const query = useQuery({ queryKey, enabled, meta: { scopes, refreshOnFocus }, ...(refetchOnMount === undefined ? {} : { refetchOnMount }), ...(structuralSharing === undefined ? {} : { structuralSharing }), queryFn: async ({ signal }) => {
     const result = await read();
     if (signal.aborted) throw new Error("Read cancelled");
     return result;

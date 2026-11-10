@@ -14,6 +14,7 @@ export interface ReadTransport {
   listen: (receive: (payload: unknown) => void) => Promise<ReadUnlisten>;
   snapshot: (request: SessionRequest & { afterSequence: string }) => Promise<unknown>;
 }
+type SyncMode = boolean | "focus";
 const transport: ReadTransport = {
   listen: receive => listen<unknown>("project-changed", event => receive(event.payload)),
   snapshot: request => invoke<unknown>("read_project_changes", { request }),
@@ -58,7 +59,7 @@ export class SessionReads {
   private verified = "0";
   private verifiedProgress = "0";
   private syncFlight: Promise<void> | null = null;
-  private syncAgain = false;
+  private syncAgain: SyncMode = false;
   private timer: ReturnType<typeof setTimeout> | undefined;
   private coalesce: ReturnType<typeof setTimeout> | undefined;
   private unlisten: ReadUnlisten | undefined;
@@ -175,7 +176,7 @@ export class SessionReads {
       await this.synchronize();
       if (this.running && this.life === life) this.timer = setTimeout(() => void beat(), 1500);
     };
-    const focus = () => { void this.synchronize(true); };
+    const focus = () => { void this.synchronize("focus"); };
     window.addEventListener("focus", focus);
     const stop = () => {
       if (this.life !== life) return;
@@ -197,14 +198,14 @@ export class SessionReads {
     if (current()) { connect(); void beat(); }
   }
 
-  invalidate(affected: readonly ChangeScope[], semanticChange = true) {
+  invalidate(affected: readonly ChangeScope[], semanticChange = true, origin?: "focus") {
     if (this.closed) return;
     if (semanticChange) this.notifyChanges(affected);
-    // An unchanged focus check refreshes current reads, but a file selection
-    // remains explicit. Real changes still invalidate both kinds of Query.
-    const queries = this.client.getQueryCache().findAll({ predicate: query =>
-      depends(query, affected) && (semanticChange || query.meta?.refresh !== "explicit"),
-    });
+    const queries = this.client.getQueryCache().findAll({ predicate: query => {
+      const explicit = query.meta?.refresh === "explicit";
+      return (depends(query, affected) && (semanticChange || !explicit))
+        || (origin === "focus" && !explicit && query.meta?.refreshOnFocus !== false);
+    } });
     for (const query of queries) {
       if (query.state.fetchStatus === "fetching") this.pending.add(query.queryHash);
       query.invalidate();
@@ -254,9 +255,13 @@ export class SessionReads {
     if (this.epoch && this.epoch !== value) this.retiredEpochs.add(this.epoch);
     this.epoch = value;
   }
-  synchronize(force = false): Promise<void> {
+  synchronize(mode: SyncMode = false): Promise<void> {
     if (!this.running) return Promise.resolve();
-    if (this.syncFlight) { this.syncAgain ||= force; return this.syncFlight; }
+    if (this.syncFlight) {
+      // Manual refresh and reconciliation take precedence over passive focus.
+      if (mode === true || !this.syncAgain) this.syncAgain = mode;
+      return this.syncFlight;
+    }
     const life = this.life;
     const after = this.verified;
     const reconciliation = this.reconciliation;
@@ -275,12 +280,14 @@ export class SessionReads {
         this.sequence = this.verified = next.sequence; this.progress = this.verifiedProgress = next.progressSequence;
         const oldRuntime = this.client.getQueryData<RuntimeStatus>(this.key(["runtime"]));
         this.client.setQueryData(this.key(["runtime"]), next.runtime);
-        // A routine focus/registration check refreshes Query but must not revoke
-        // an unchanged, explicitly consented AI preparation.
-        if (force || reset || this.failed) this.invalidate(["project"], reset || changed);
+        const executionChanged = progressed || JSON.stringify(oldRuntime) !== JSON.stringify(next.runtime);
+        // A passive focus refresh still reconciles durable versions and live jobs.
+        // History reads can skip the extra refresh when their evidence is unchanged.
+        if (mode === true || reset || this.failed || (mode === "focus" && changed)) this.invalidate(["project"], reset || changed);
+        else if (mode === "focus") this.invalidate(executionChanged ? ["execution"] : [], executionChanged, "focus");
         else {
           if (changed) this.invalidate(next.scopes);
-          if (progressed || JSON.stringify(oldRuntime) !== JSON.stringify(next.runtime)) this.invalidate(["execution"]);
+          if (executionChanged) this.invalidate(["execution"]);
         }
         // Retry failed active reads only at the shared heartbeat, without replaying mutations.
         void this.client.refetchQueries({ predicate: query => query.isActive() && query.state.status === "error" }, { cancelRefetch: false });
@@ -288,7 +295,11 @@ export class SessionReads {
       } catch { if (this.running && this.life === life) this.report(true); }
     })().finally(() => {
       this.syncFlight = null;
-      if (this.running && this.syncAgain) { this.syncAgain = false; void this.synchronize(true); }
+      if (this.running && this.syncAgain) {
+        const next = this.syncAgain;
+        this.syncAgain = false;
+        void this.synchronize(next);
+      }
     });
     return this.syncFlight;
   }

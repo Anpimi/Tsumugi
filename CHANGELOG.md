@@ -191,6 +191,7 @@ Current workspace version metadata: **`0.2.0-alpha.1`**. Because the published `
 - After rereading a source match, the correction panel stops asking you to reread it and keeps your newer edits visible for confirmation.
 
 - Delivery shows when the selected build was saved and whether it uses the project's current saved source. If a newer build is available, you can switch to it explicitly. Existing export preparation stays with its original build until you clear it or finish the export.
+- Switching back to the window when the project is unchanged no longer rereads delivery history. The decision inbox also reuses its existing result when execution status is unchanged.
 
 - Canceling the replacement source-folder picker during new-project setup keeps the previous folder and its completed file check.
 

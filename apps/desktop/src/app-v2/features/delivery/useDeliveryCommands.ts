@@ -18,9 +18,9 @@ export function useDeliveryCommands({ project, owner, commands: registry, gate: 
   currentView.current = { visible, disabled, projectId: session.projectId, sessionToken: session.sessionToken };
   useLayoutEffect(() => { mounted.current = true; return () => { mounted.current = false; }; }, []);
   const { chosen, selection, preview } = owner;
-  const releasesRead = useSessionQuery({ key: ["release-list"], scopes: ["release", "execution"], enabled: visible,
+  const releasesRead = useSessionQuery({ key: ["release-list"], scopes: ["release"], refreshOnFocus: false, enabled: visible,
     read: () => releaseCommands.releases(session) });
-  const deliveriesRead = useSessionQuery({ key: ["release-deliveries", chosen?.releaseId], scopes: ["release"], enabled: visible && !!chosen,
+  const deliveriesRead = useSessionQuery({ key: ["release-deliveries", chosen?.releaseId], scopes: ["release"], refreshOnFocus: false, enabled: visible && !!chosen,
     read: async () => {
       if (!chosen) throw new Error("No saved build selected");
       const rows = await releaseCommands.deliveries({ ...session, releaseId: chosen.releaseId });

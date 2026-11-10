@@ -25,15 +25,36 @@ function setup(wireOverride?: Partial<ReadTransport>) {
   const stop = reads.start(); stops.push(stop);
   return { reads, wire, stop, unlisten, set: (value: ProjectChanges) => { next = value; }, emit: (value: unknown) => receive(value) };
 }
-function observe<T>(reads: SessionReads, key: string, scope: ChangeScope, read: () => Promise<T>, enabled = true) {
-  const observer = new QueryObserver(reads.client, { queryKey: reads.key([key]), meta: { scopes: [scope] }, queryFn: read, enabled });
+function observe<T>(reads: SessionReads, key: string, scope: ChangeScope, read: () => Promise<T>, enabled = true, refreshOnFocus = true) {
+  const observer = new QueryObserver(reads.client, { queryKey: reads.key([key]), meta: { scopes: [scope], refreshOnFocus }, queryFn: read, enabled });
   const stop = observer.subscribe(() => {}); stops.push(stop);
   return observer;
 }
+it("skips unchanged focus reads for versioned history while preserving recovery and explicit refresh", async () => {
+  const fixture = setup(); await settle();
+  const history = vi.fn().mockResolvedValue("initial release");
+  const current = vi.fn().mockResolvedValue("current resources");
+  const observer = observe(fixture.reads, "release-history", "release", history, true, false);
+  observe(fixture.reads, "resources", "resources", current); await settle();
+
+  window.dispatchEvent(new Event("focus")); await settle();
+  expect(history).toHaveBeenCalledOnce();
+  expect(current).toHaveBeenCalledTimes(2);
+
+  history.mockResolvedValue("saved while unfocused");
+  fixture.set({ ...snapshot("1"), scopes: ["release"] });
+  window.dispatchEvent(new Event("focus")); await settle();
+  expect(observer.getCurrentResult().data).toBe("saved while unfocused");
+  expect(history).toHaveBeenCalledTimes(2);
+
+  await fixture.reads.synchronize(true); await settle();
+  expect(history).toHaveBeenCalledTimes(3);
+});
+
 it("refreshes delivery readers when a native job ends even while other work and durable versions are unchanged", async () => {
   const fixture = setup(); await settle();
   const read = vi.fn().mockResolvedValue("pending outcomes");
-  observe(fixture.reads, "decisions", "execution", read); await settle();
+  observe(fixture.reads, "decisions", "execution", read, true, false); await settle();
   const live = snapshot(); live.runtime.active = true;
   live.runtime.deliveryActivity = { jobId: "00000000-0000-4000-8000-000000000001", kind: "export",
     releaseId: "00000000-0000-4000-8000-000000000002", actionId: "00000000-0000-4000-8000-000000000003" };
@@ -41,7 +62,7 @@ it("refreshes delivery readers when a native job ends even while other work and 
   expect(fixture.reads.client.getQueryData(fixture.reads.key(["runtime"]))).toMatchObject({ deliveryActivity: live.runtime.deliveryActivity });
   const before = read.mock.calls.length;
   const finished = snapshot(); finished.runtime.active = true;
-  fixture.set(finished); await fixture.reads.synchronize(); await settle();
+  fixture.set(finished); window.dispatchEvent(new Event("focus")); await settle();
   expect(read).toHaveBeenCalledTimes(before + 1);
   expect(fixture.reads.client.getQueryData(fixture.reads.key(["runtime"]))).not.toHaveProperty("deliveryActivity");
 });

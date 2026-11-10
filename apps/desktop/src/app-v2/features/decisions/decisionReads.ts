@@ -60,7 +60,7 @@ export function decisionReadOptions(reads: SessionReads, query: DecisionPageRequ
         dispatched.delete(reads);
       }
     },
-    meta: { scopes: ["project", "source", "translation", "resources", "review", "release", "execution"] },
+    meta: { scopes: ["project", "source", "translation", "resources", "review", "release", "execution"], refreshOnFocus: false },
     networkMode: "always" as const, retry: false as const, staleTime: Infinity, gcTime: 60_000,
     refetchOnWindowFocus: false, refetchOnReconnect: false, refetchOnMount: true,
   };
