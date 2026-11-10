@@ -165,8 +165,7 @@ pub struct ReviewScopeCapture {
 }
 
 fn view_version(targets: &[ReviewTarget]) -> Result<String, ExecutionError> {
-    use sha2::Digest;
-    let mut hash = sha2::Sha256::new();
+    let mut hash = aws_lc_rs::digest::Context::new(&aws_lc_rs::digest::SHA256);
     for target in targets {
         let unit_digest = digest(&(
             target.unit_id,
@@ -191,7 +190,7 @@ fn view_version(targets: &[ReviewTarget]) -> Result<String, ExecutionError> {
         // Fixed-width digests avoid building a multi-megabyte encoded scope.
         hash.update(unit_digest.as_bytes());
     }
-    Ok(format!("{:x}", hash.finalize()))
+    Ok(crate::execution::codec::digest_hex(hash.finish()))
 }
 
 impl ProjectStore {

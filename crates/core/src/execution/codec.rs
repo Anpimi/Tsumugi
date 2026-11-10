@@ -1,11 +1,11 @@
 use std::{collections::BTreeSet, fmt, io::Write};
 
+use aws_lc_rs::digest::{Digest, SHA256, digest as compute_digest};
 use serde::{
     Serialize,
     de::{DeserializeSeed, MapAccess, SeqAccess, Visitor},
 };
 use serde_json::Value;
-use sha2::{Digest, Sha256};
 
 use super::{ErrorCode, ExecutionError, MAX_DEPTH};
 
@@ -13,7 +13,18 @@ mod depth;
 pub(crate) use depth::validate_serialized_depth;
 
 pub(crate) fn digest(bytes: &[u8]) -> String {
-    format!("{:x}", Sha256::digest(bytes))
+    digest_hex(compute_digest(&SHA256, bytes))
+}
+
+pub(crate) fn digest_hex(digest: Digest) -> String {
+    const HEX: &[u8; 16] = b"0123456789abcdef";
+    let bytes = digest.as_ref();
+    let mut encoded = String::with_capacity(bytes.len() * 2);
+    for &byte in bytes {
+        encoded.push(char::from(HEX[usize::from(byte >> 4)]));
+        encoded.push(char::from(HEX[usize::from(byte & 0xf)]));
+    }
+    encoded
 }
 
 /// Limit serialization as it happens, before allocating an unbounded buffer.

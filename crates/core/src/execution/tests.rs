@@ -49,6 +49,11 @@ fn sha256_matches_independent_byte_oracles_at_padding_chunk_and_input_boundaries
     ] {
         let bytes: Vec<u8> = (0..length).map(|index| (index * 17 + 31) as u8).collect();
         assert_eq!(codec::digest(&bytes), expected, "input bytes: {length}");
+        let mut stream = aws_lc_rs::digest::Context::new(&aws_lc_rs::digest::SHA256);
+        for part in bytes.chunks(4093) {
+            stream.update(part);
+        }
+        assert_eq!(codec::digest_hex(stream.finish()), expected, "streamed bytes: {length}");
     }
 }
 
