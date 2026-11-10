@@ -1,6 +1,6 @@
 use super::{
     ProjectStore,
-    ledger::{load_input, load_qualified_source, load_result, read_receipt, sql_error},
+    ledger::{load_input, load_input_cached, load_qualified_source, load_result, read_receipt, sql_error},
 };
 use crate::{
     content::*,
@@ -1178,48 +1178,63 @@ impl ProjectStore {
         let connection = self
             .connection()
             .map_err(|_| failure(ErrorCode::StorageFailed, "source-read"))?;
-        let input = self.execution_input(attempt)?;
-        let result = self.execution_result(attempt, result)?;
-        let validation: String = connection
-            .query_row(
-                "SELECT validation FROM execution_items WHERE attempt_id=?1 AND item_id=?2",
-                params![attempt.to_string(), result.envelope().item_id.to_string()],
-                |row| row.get(0),
-            )
-            .map_err(sql_error)?;
-        if validation == "invalid" {
-            return Err(invalid("source-invalid"));
-        }
-        let output = validate_output(&input, &result)?;
-        let bundle = SourceBundle::from_input(&input)?;
-        if read_bundle(connection, bundle.set_id)? != bundle.source_input() {
-            return Err(corrupt());
-        }
-        let rows = output
-            .occurrences
-            .iter()
-            .cloned()
-            .map(|occurrence| ContentRow {
-                occurrence_id: None,
-                unit_id: None,
-                source_revision_id: None,
-                occurrence,
-            })
-            .collect();
-        page(
-            None,
-            &input,
-            &result,
-            output,
-            scope(connection)?,
-            rows,
-            scope(connection)?
-                .current_snapshot
+        super::review::read_snapshot(connection, |connection| {
+            let qualified: bool = connection
+                .query_row(
+                    "SELECT EXISTS(SELECT 1 FROM execution_items i
+                     JOIN execution_results r ON r.attempt_id=i.attempt_id AND r.item_id=i.item_id
+                         AND r.result_id=i.current_result_id
+                     WHERE i.attempt_id=?1 AND r.result_id=?2 AND i.validation='valid')",
+                    params![attempt.to_string(), result.to_string()],
+                    |row| row.get(0),
+                )
+                .map_err(sql_error)?;
+            // Pending or historical results still use the structural preview.
+            let (input, result, projected) = if qualified {
+                let (input, result, output) = load_qualified_source(connection, attempt, result)?;
+                (input, result, Some(output))
+            } else {
+                let input = load_input_cached(connection, attempt)?;
+                let result = load_result(connection, &input, result)?;
+                (input, result, None)
+            };
+            let validation: String = connection
+                .query_row(
+                    "SELECT validation FROM execution_items WHERE attempt_id=?1 AND item_id=?2",
+                    params![attempt.to_string(), result.envelope().item_id.to_string()],
+                    |row| row.get(0),
+                )
+                .map_err(sql_error)?;
+            if validation == "invalid" {
+                return Err(invalid("source-invalid"));
+            }
+            let output = match projected {
+                Some(output) => output,
+                None => validate_output(&input, &result)?,
+            };
+            let bundle = SourceBundle::from_input(&input)?;
+            if read_bundle(connection, bundle.set_id)? != bundle.source_input() {
+                return Err(corrupt());
+            }
+            let rows = output
+                .occurrences
+                .iter()
+                .cloned()
+                .map(|occurrence| ContentRow {
+                    occurrence_id: None,
+                    unit_id: None,
+                    source_revision_id: None,
+                    occurrence,
+                })
+                .collect();
+            let scope = scope(connection)?;
+            let mapping_revision = scope.current_snapshot
                 .map(|snapshot| lineage_corrections::mapping_revision(connection, snapshot))
-                .transpose()?,
-            after,
-            limit,
-        )
+                .transpose()?;
+            page(
+                None, &input, &result, output, scope, rows, mapping_revision, after, limit,
+            )
+        })
     }
     pub fn source_content(
         &self,

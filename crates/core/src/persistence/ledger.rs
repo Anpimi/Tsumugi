@@ -1255,6 +1255,12 @@ fn source_validation_cache() -> &'static std::sync::Mutex<Option<PreparedSourceV
     CACHE.get_or_init(|| Mutex::new(None))
 }
 
+pub(super) fn remember_source_validation(prepared: PreparedSourceValidation) {
+    *source_validation_cache()
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner) = Some(prepared);
+}
+
 /// Reuse the existing single-proof qualification, never a claim that stored
 /// frames or their provenance are immutable. Snapshot mappings remain the
 /// caller's responsibility and are not part of this memo.
@@ -1359,9 +1365,7 @@ pub(super) fn validate_source_link(
     if saved_valid != expected_valid || prepared.proof.valid != saved_valid {
         return Err(error(ErrorCode::CorruptLedger, "semantic-validation-proof"));
     }
-    *cache
-        .lock()
-        .unwrap_or_else(std::sync::PoisonError::into_inner) = Some(prepared.clone());
+    remember_source_validation(prepared.clone());
     Ok(prepared)
 }
 
@@ -3674,11 +3678,15 @@ impl ProjectStore {
             return Ok(());
         }
         self.commit_semantic_validation(
-            prepared.capture.source,
-            prepared.capture.check_input,
-            prepared.check_result,
-            prepared.proof,
-        )
+            prepared.capture.source.clone(),
+            prepared.capture.check_input.clone(),
+            prepared.check_result.clone(),
+            prepared.proof.clone(),
+        )?;
+        if prepared.proof.valid {
+            remember_source_validation(prepared);
+        }
+        Ok(())
     }
     pub fn capture_artifact_validation(
         &self,

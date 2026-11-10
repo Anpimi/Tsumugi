@@ -3086,18 +3086,29 @@ fn adopted_plugin_source_requires_its_saved_semantic_proof_for_reads_and_reopeni
     // Synthetic external damage satisfies the individual CHECK/FK constraints,
     // but must not downgrade the mandatory proof of an adopted source snapshot.
     let connection = rusqlite::Connection::open(path.join("project.sqlite3")).unwrap();
-    connection
-        .execute(
-            "UPDATE execution_items SET validation='pending' WHERE attempt_id=?1",
-            [input.envelope().attempt_id.to_string()],
+    let read_preview = || {
+        store.source_preview(
+            input.envelope().attempt_id,
+            result.envelope().result_id,
+            0,
+            50,
         )
-        .unwrap();
+    };
+    let checked_preview = read_preview().unwrap();
     connection
         .execute(
             "DELETE FROM plugin_validation_links WHERE producer_result_id=?1",
             [result.envelope().result_id.to_string()],
         )
         .unwrap();
+    assert_eq!(read_preview().unwrap_err().code, ErrorCode::CorruptLedger);
+    connection
+        .execute(
+            "UPDATE execution_items SET validation='pending' WHERE attempt_id=?1",
+            [input.envelope().attempt_id.to_string()],
+        )
+        .unwrap();
+    assert_eq!(read_preview().unwrap(), checked_preview);
     drop(connection);
     let bytes = std::fs::read(path.join("project.sqlite3")).unwrap();
     assert!(store.source_content(snapshot, 0, 50).is_err());

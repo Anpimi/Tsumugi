@@ -139,7 +139,11 @@ impl ProjectStore {
         } else {
             Self::publish_semantic_frames_in(&tx, &producer_input, &producer_result, &check_input, &check_result, &validation.proof)?;
         }
-        super::super::ledger::commit(tx)
+        super::super::ledger::commit(tx)?;
+        if head.is_none() && validation.proof.valid {
+            super::super::ledger::remember_source_validation(prepared.validation);
+        }
+        Ok(())
     }
 }
 
