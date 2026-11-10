@@ -10,7 +10,7 @@ use std::{
     time::Instant,
 };
 use tsumugi_core::{
-    ProjectStore, ReviewDecisionKind, ReviewWrite, SaveTranslationRevision,
+    Eligibility, ProjectStore, ReviewDecisionKind, ReviewWrite, SaveTranslationRevision,
     execution::{Cancellation, ErrorCode, ExecutionId},
 };
 
@@ -875,9 +875,16 @@ fn actual_qa_is_locale_scoped_and_keeps_original_history_after_edit_and_reopen()
     drop(runtime);
     store.close().unwrap();
     let store = ProjectStore::open(&directory.path().join("project")).unwrap();
+    let reopened = store.review_eligibility(project, &locales).unwrap();
+    assert_ne!(reopened.epoch, changed.epoch);
+    assert_eq!(reopened.sequence.get(), 0);
     assert_eq!(
-        store.review_eligibility(project, &locales).unwrap(),
-        changed
+        reopened,
+        Eligibility {
+            epoch: reopened.epoch.clone(),
+            sequence: reopened.sequence,
+            ..changed
+        }
     );
     for run in original {
         let target = store

@@ -11,8 +11,8 @@ use std::{
     time::{Duration, Instant},
 };
 use tsumugi_core::{
-    ProjectStore, ReviewFindingDisposition, ReviewFindingWrite, ReviewRepairStatus, SaveContext,
-    SaveTranslationRevision,
+    Eligibility, ProjectStore, ReviewFindingDisposition, ReviewFindingWrite, ReviewRepairStatus,
+    SaveContext, SaveTranslationRevision,
     ai::{AiConfig, provider::ProviderService, semantic_review::*},
     execution::*,
 };
@@ -399,9 +399,14 @@ fn partial_provider_results_share_one_budget_and_record_only_explicit_successes(
         store.review_target(p, a, "zh-CN").unwrap().current_check,
         Some(qa.clone())
     );
+    let current = store.review_eligibility(p, &["zh-CN".into()]).unwrap();
+    assert!(current.sequence > eligibility.sequence);
     assert_eq!(
-        store.review_eligibility(p, &["zh-CN".into()]).unwrap(),
-        eligibility
+        current,
+        Eligibility {
+            sequence: current.sequence,
+            ..eligibility
+        }
     );
     assert_eq!(
         store.review_history(p, a, "zh-CN", 0, 10).unwrap().checks,

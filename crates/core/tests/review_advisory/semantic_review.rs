@@ -1,6 +1,6 @@
 use super::*;
 use tsumugi_core::{
-    ReviewFindingDisposition, ReviewFindingWrite,
+    Eligibility, ReviewFindingDisposition, ReviewFindingWrite,
     ai::{AiConfig, semantic_review::*},
 };
 
@@ -188,9 +188,14 @@ fn semantic_and_plugin_findings_keep_independent_current_runs_dispositions_and_q
         store.review_target(p, unit, "zh-CN").unwrap().current_check,
         Some(qa.clone())
     );
+    let current = store.review_eligibility(p, &["zh-CN".into()]).unwrap();
+    assert!(current.sequence > qualification.sequence);
     assert_eq!(
-        store.review_eligibility(p, &["zh-CN".into()]).unwrap(),
-        qualification
+        current,
+        Eligibility {
+            sequence: current.sequence,
+            ..qualification
+        }
     );
     assert!(qa.evidence.as_ref().unwrap().required_checks.requirements.iter().all(|r|!matches!(&r.key.implementation,sdk::CheckImplementation::Core {validator} if validator.id=="tsumugi.ai-semantic-review")));
     let prepared = prepare(&store, unit, ExecutionId::new(), &[selected]);
