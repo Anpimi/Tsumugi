@@ -134,7 +134,7 @@ jobs:
       - name: Check SDK contracts
         run: cargo test -p tsumugi-plugin-sdk --tests --features schema --locked
       - name: Check Core behavior
-        run: cargo test -p tsumugi-core --lib --locked -- --test-threads=2
+        run: cargo test -p tsumugi-core --lib --test capture_storage_compatibility --locked -- --test-threads=2
       - name: Check Host and real process channels
         run: cargo test -p tsumugi-plugin-host --features conformance-worker --lib --test process --locked -- --test-threads=2
       - name: Check generated SDK bindings
