@@ -6,13 +6,12 @@ use crate::{
         ResultEnvelope, ResultSender, Runner,
     },
     persistence::{
-        DATABASE_FILENAME, SCHEMA_VERSION,
-        application::tests::{consent, fixture},
+        DATABASE_FILENAME,
+        application::tests::fixture,
     },
 };
 use std::{
     collections::BTreeMap,
-    process::Command,
     sync::{Arc, Barrier, atomic::Ordering},
     time::Duration,
 };
@@ -578,124 +577,4 @@ fn proposal_concurrent_revision_cas_commits_one_successor() {
             .len(),
         2
     );
-}
-
-#[test]
-fn proposal_migration_child() {
-    let Ok(path) = std::env::var("TSUMUGI_PROPOSAL_MIGRATION_PROJECT") else {
-        return;
-    };
-    ProjectStore::open(path).unwrap();
-    panic!("migration did not reach its crash hook");
-}
-
-#[test]
-fn proposal_migration_preserves_supported_history_across_abort_boundaries() {
-    for version in [61, 62] {
-        for point in [
-            "conversation-before-ddl",
-            "conversation-after-ddl",
-            "conversation-before-commit",
-            "conversation-after-commit",
-        ] {
-            let (temp, mut store, units) = fixture();
-            let mut options = PlanOptions::default();
-            options.team_discussions = Some(TeamDiscussionPolicy::CurrentPlanV1 {});
-            let plan = store
-                .prepare_work_plan(
-                    Some(crate::persistence::application::tests::config()),
-                    "zh-CN",
-                    &units,
-                    options,
-                )
-                .unwrap();
-            let mut authorization = consent(&plan);
-            authorization.effects = plan.authorization_effects().unwrap();
-            let receipt = store.authorize_work_plan(&plan, &authorization).unwrap();
-            store
-                .enqueue_execution(&FixedInput::capture(receipt.input.clone().unwrap()).unwrap())
-                .unwrap();
-            let scope = store.work_plan_agent_scope(receipt.lease).unwrap();
-            let basis = &plan.selection_basis[0];
-            let discussion = store
-                .publish_human_team_discussion(
-                    &scope,
-                    "local-user",
-                    &PublishTeamDiscussion {
-                        post_id: ExecutionId::new(),
-                        target: TeamDiscussionTarget {
-                            unit_id: basis.unit_id,
-                            locale: plan.locale.clone(),
-                            source_snapshot_id: basis.source_snapshot_id,
-                            source_revision_id: basis.source_revision_id,
-                        },
-                        kind: TeamDiscussionKind::Note,
-                        body: "Retained original discussion 👩🏽‍💻".into(),
-                        references: vec![],
-                        reply_to: None,
-                        supersedes: None,
-                        question: None,
-                    },
-                )
-                .unwrap();
-            let thread = if version == 62 {
-                Some(completed(&mut store, &units[..1], model(units[0]), true))
-            } else {
-                None
-            };
-            let before = rows(store.connection().unwrap(), version);
-            let path = store.directory().to_path_buf();
-            store.close().unwrap();
-            let c = Connection::open(path.join(DATABASE_FILENAME)).unwrap();
-            c.execute_batch("DROP TABLE application_conversation_planning_attempts; DROP TABLE application_conversation_work_plans; DROP TABLE application_conversation_proposals")
-                .unwrap();
-            if version == 61 {
-                c.execute_batch("DROP TABLE application_conversation_actions; DROP TABLE application_conversation_messages; DROP TABLE application_conversations;").unwrap();
-            }
-            crate::persistence::prepare_legacy_fixture_schema(&c, version).unwrap();
-            c.pragma_update(None, "user_version", version).unwrap();
-            drop(c);
-            let marker = temp.path().join("migration-marker");
-            let output=Command::new(std::env::current_exe().unwrap()).args(["--exact","persistence::application::conversations::proposals::tests::proposal_migration_child","--nocapture"])
-            .env("TSUMUGI_PROPOSAL_MIGRATION_PROJECT",&path).env("TSUMUGI_MIGRATION_CRASH",point).env("TSUMUGI_MIGRATION_HOOK",&marker).output().unwrap();
-            assert!(!output.status.success());
-            assert_eq!(std::fs::read_to_string(marker).unwrap(), point);
-            let c = Connection::open(path.join(DATABASE_FILENAME)).unwrap();
-            let found: i64 = c
-                .pragma_query_value(None, "user_version", |r| r.get(0))
-                .unwrap();
-            assert_eq!(
-                found,
-                if point == "conversation-after-commit" {
-                    SCHEMA_VERSION
-                } else {
-                    version
-                }
-            );
-            assert_eq!(rows(&c, version), before);
-            drop(c);
-            let reopened = ProjectStore::open(path).unwrap();
-            assert_eq!(rows(reopened.connection().unwrap(), version), before);
-            assert_eq!(reopened.work_plan(plan.plan_id).unwrap(), plan);
-            assert_eq!(
-                reopened.work_plan_receipt(authorization.action_id).unwrap(),
-                Some(receipt)
-            );
-            assert_eq!(
-                reopened
-                    .read_team_history_post(
-                        plan.project_id,
-                        plan.plan_id,
-                        discussion.publication.post_id
-                    )
-                    .unwrap(),
-                discussion
-            );
-            if let Some(thread) = thread {
-                reopened
-                    .read_project_conversation(thread.project_id, thread.conversation_id)
-                    .unwrap();
-            }
-        }
-    }
 }

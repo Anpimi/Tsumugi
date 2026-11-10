@@ -1803,7 +1803,7 @@ export default function WorkbenchApp({ controller: suppliedController, native = 
   const [createPanel, setCreatePanel] = useState(false);
   const [restorePanel, setRestorePanel] = useState(false), [restoreName, setRestoreName] = useState("");
   const [restoredSession, setRestoredSession] = useState<string | null>(null);
-  const [restoreFailure, setRestoreFailure] = useState<"restoreFailed" | "restoreUnknown" | null>(null);
+  const [restoreFailure, setRestoreFailure] = useState<"restoreFailed" | "restoreUnknown" | "projectFormatUnsupported" | null>(null);
   const [recent, setRecent] = useState<RecentProject[]>(readRecentProjects), [pickerFailed, setPickerFailed] = useState(false);
   const [closeActionFailed, setCloseActionFailed] = useState(false);
   const busy = state.phase !== "idle", blocked = busy || !!state.pending || !!state.retainedSession || !!state.cleanup;
@@ -1866,7 +1866,12 @@ export default function WorkbenchApp({ controller: suppliedController, native = 
       setRestoreName("");
     } else if (result.failure) {
       const failure = commandFailure(result.failure.cause);
-      setRestoreFailure(result.failure.code === "unknown-lifecycle" || failureReason(failure) === "restored-project-open-failed" ? "restoreUnknown" : "restoreFailed");
+      const reason = failureReason(failure);
+      if (result.failure.code === "unknown-lifecycle" || reason === "restored-project-open-failed") {
+        setRestoreFailure("restoreUnknown");
+      } else {
+        setRestoreFailure(reason === "unsupported-schema" ? "projectFormatUnsupported" : "restoreFailed");
+      }
     }
   }
   async function chooseFolder() {
@@ -1890,8 +1895,8 @@ export default function WorkbenchApp({ controller: suppliedController, native = 
     <div className={styles.actions}><Button disabled={!native || blocked} onClick={() => void chooseFolder()}>{t("chooseFolder")}</Button><Button variant="primary" type="submit" pending={busy} disabled={!native || blocked || !locator.trim()}>{t("openProject")}</Button></div>
   </form>;
   const error = state.failure;
-  const upgradeSnapshotFailed = failureReason(commandFailure(error?.cause)) === "upgrade-snapshot-failed";
-  const errorText = upgradeSnapshotFailed ? startup("upgradeSnapshotFailed") : error?.code === "unknown-lifecycle" || error?.code === "recovery-unavailable" ? t("unknown") : error?.code === "leave-blocked" ? t("leaveBlocked") : error?.code === "leave-changed" ? t("leaveChanged")
+  const formatUnsupported = failureReason(commandFailure(error?.cause)) === "unsupported-schema";
+  const errorText = formatUnsupported ? startup("projectFormatUnsupported") : error?.code === "unknown-lifecycle" || error?.code === "recovery-unavailable" ? t("unknown") : error?.code === "leave-blocked" ? t("leaveBlocked") : error?.code === "leave-changed" ? t("leaveChanged")
     : error?.code === "application-stopping" || error?.code === "application-unknown" || error?.code === "runtime-pending" ? t("cleanupPending") : error?.code === "read-failed" ? t("readFailed") : error?.code === "destroy-failed" ? t("windowCloseFailed") : t("actionFailed");
   return <ApplicationReadProvider><ApplicationSettingsProvider lifecycle={controller} gate={gate} native={native}>
     <div className={appStyles.app}>

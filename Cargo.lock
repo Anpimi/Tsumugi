@@ -5074,7 +5074,7 @@ checksum = "e421abadd41a4225275504ea4d6566923418b7f05506fbc9c0fe86ba7396114b"
 
 [[package]]
 name = "tsumugi-core"
-version = "0.2.0-alpha.1"
+version = "0.3.0-alpha.1"
 dependencies = [
  "aws-lc-rs",
  "httpdate",
@@ -5095,7 +5095,7 @@ dependencies = [
 
 [[package]]
 name = "tsumugi-desktop"
-version = "0.2.0-alpha.1"
+version = "0.3.0-alpha.1"
 dependencies = [
  "aws-lc-rs",
  "bytes",
@@ -5127,7 +5127,7 @@ dependencies = [
 
 [[package]]
 name = "tsumugi-plugin-host"
-version = "0.2.0-alpha.1"
+version = "0.3.0-alpha.1"
 dependencies = [
  "aws-lc-rs",
  "futures-util",

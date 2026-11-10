@@ -63,23 +63,3 @@ fn cancelling_a_nonmonotonic_stale_request_fences_late_apply_and_preserves_b_wor
     assert_eq!(reopened.source_lineage_correction_request_observation(&request).unwrap(),SourceLineageCorrectionObservation::ConfirmedNotApplied);
     assert_eq!(reopened.correct_source_lineage(&request).unwrap_err().code,ErrorCode::Cancelled);
 }
-
-#[test]
-fn schema69_correction_migration_is_atomic_and_keeps_original_adoption_frames() {
-    let (directory,store,_,_)=fixture();
-    let path=directory.path().join("project");drop(store);
-    let mut c=Connection::open(path.join(crate::persistence::DATABASE_FILENAME)).unwrap();
-    crate::persistence::prepare_legacy_fixture_schema(&c, 69).unwrap();
-    c.pragma_update(None,"user_version",69).unwrap();
-    let before:Vec<(String,Vec<u8>,String)>=c.prepare("SELECT action_id,request,digest FROM execution_actions ORDER BY rowid").unwrap()
-        .query_map([],|r|Ok((r.get(0)?,r.get(1)?,r.get(2)?))).unwrap().collect::<Result<_,_>>().unwrap();
-    {let tx=c.transaction().unwrap();initialize(&tx).unwrap();tx.pragma_update(None,"user_version",70).unwrap();}
-    let exists:bool=c.query_row("SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE name='source_lineage_corrections')",[],|r|r.get(0)).unwrap();
-    assert!(!exists);assert_eq!(c.pragma_query_value(None,"user_version",|r|r.get::<_,i64>(0)).unwrap(),69);
-    drop(c);
-    let reopened=ProjectStore::open(&path).unwrap();
-    let after:Vec<(String,Vec<u8>,String)>=reopened.connection().unwrap().prepare("SELECT action_id,request,digest FROM execution_actions ORDER BY rowid").unwrap()
-        .query_map([],|r|Ok((r.get(0)?,r.get(1)?,r.get(2)?))).unwrap().collect::<Result<_,_>>().unwrap();
-    assert_eq!(before,after);
-    assert_eq!(reopened.connection().unwrap().pragma_query_value(None,"user_version",|r|r.get::<_,i64>(0)).unwrap(),crate::persistence::SCHEMA_VERSION);
-}

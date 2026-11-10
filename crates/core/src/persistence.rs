@@ -20,7 +20,6 @@ pub(crate) use application::team::{
     validate_team_provider_view_in, validate_team_provider_view_history_in,
 };
 pub(crate) use application::maintenance::CapturedMaintenanceAssessment;
-mod capture_capacity;
 mod changes;
 #[cfg(test)]
 mod current_tests;
@@ -163,26 +162,6 @@ pub(crate) fn remove_unsupported_fixture_domain(
     Ok(())
 }
 
-/// Restore only structures introduced after the requested supported fixture.
-/// Conversation tables are retained or removed by each fixture's own scenario.
-#[cfg(test)]
-pub(crate) fn prepare_legacy_fixture_schema(c: &Connection, version: i64) -> rusqlite::Result<()> {
-    assert!((61..=75).contains(&version));
-    assert!(c.is_autocommit());
-    capture_capacity::make_legacy_schema(c)?;
-    if version < 70 {
-        content::lineage_corrections::make_legacy_schema(c)?; }
-    if version < 66 {
-        resources::make_legacy_context_schema(c)?;
-    } else if version < 68 {
-        translation::make_legacy_memory_schema(c)?;
-    } else if version < 69 {
-        c.execute_batch("DROP TABLE source_validation_history")?;
-    }
-    if version < 72 { c.execute_batch("ALTER TABLE resource_decisions DROP COLUMN edited_target")?; }
-    if version < 73 { resources::make_legacy_capture_schema(c) } else { Ok(()) }
-}
-
 /// Compare every original legacy column and row identity across migration.
 /// Added tables and nullable columns are outside the older storage format.
 #[cfg(test)]
@@ -306,7 +285,6 @@ pub enum PersistenceStage {
     Reconcile,
     Close,
     Ownership,
-    UpgradeSnapshot,
 }
 
 /// A bounded failure that can be surfaced without exposing SQLite or OS text.
@@ -549,7 +527,7 @@ impl ProjectStore {
         let mut connection =
             Connection::open_with_flags(&database_path, OpenFlags::SQLITE_OPEN_READ_WRITE)
                 .map_err(|error| map_sqlite(error, PersistenceStage::Open))?;
-        validate_existing_connection(&mut connection, &directory)?;
+        validate_existing_database(&mut connection)?;
 
         Ok(Self {
             mcp_query_liveness: std::sync::Arc::new(std::sync::atomic::AtomicBool::new(true)),
@@ -1006,47 +984,42 @@ fn configure_new_connection(connection: &Connection) -> Result<(), PersistenceEr
     Ok(())
 }
 
-fn validate_existing_connection(
-    connection: &mut Connection,
-    directory: &Path,
+fn require_current_schema(
+    connection: &Connection,
+    stage: PersistenceStage,
 ) -> Result<(), PersistenceError> {
-    validate_existing_database(connection, &directory.join(DATABASE_FILENAME), directory)
+    let application_id: i64 = connection
+        .pragma_query_value(None, "application_id", |row| row.get(0))
+        .map_err(|error| map_sqlite(error, stage))?;
+    if application_id != APPLICATION_ID {
+        return Err(PersistenceError::CorruptProject { stage });
+    }
+    let found_version: i64 = connection
+        .pragma_query_value(None, "user_version", |row| row.get(0))
+        .map_err(|error| map_sqlite(error, stage))?;
+    if found_version != SCHEMA_VERSION {
+        return Err(PersistenceError::UnsupportedSchema { found_version, stage });
+    }
+    Ok(())
 }
 
-// Restoration validates an unpublished database copy. The migration owner
-// reads that exact copy while retaining its original-schema snapshot beside
-// the eventual project, using the same checks and transaction as normal open.
-fn validate_existing_database(
-    connection: &mut Connection,
-    database_path: &Path,
-    directory: &Path,
-) -> Result<(), PersistenceError> {
+fn validate_existing_database(connection: &mut Connection) -> Result<(), PersistenceError> {
     connection
         .pragma_update(None, "foreign_keys", true)
         .map_err(|error| map_sqlite(error, PersistenceStage::Open))?;
     connection
         .busy_timeout(BUSY_TIMEOUT)
         .map_err(|error| map_sqlite(error, PersistenceStage::Open))?;
-    let application_id: i64 = connection
-        .query_row("PRAGMA application_id", [], |row| row.get(0))
-        .map_err(|error| map_sqlite(error, PersistenceStage::Open))?;
-    if application_id != APPLICATION_ID {
-        return Err(PersistenceError::CorruptProject {
-            stage: PersistenceStage::Open,
-        });
-    }
-    let user_version: i64 = connection
-        .query_row("PRAGMA user_version", [], |row| row.get(0))
-        .map_err(|error| map_sqlite(error, PersistenceStage::Open))?;
-    if ![61, 62, 63, 64, 65, 66, 67, 68, 69, 70, 71, 72, 73, 74, 75, SCHEMA_VERSION].contains(&user_version) {
-        return Err(PersistenceError::UnsupportedSchema {
-            found_version: user_version,
-            stage: PersistenceStage::Open,
-        });
-    }
     ledger::register_input_reader(connection)
         .map_err(|error| map_sqlite(error, PersistenceStage::Open))?;
-    let journal_mode: String = connection
+    // Every open-time association check must see the same database snapshot.
+    // A deferred transaction keeps validation read-only while excluding
+    // changes between the ledger scan, grant scan, and final metadata read.
+    let snapshot = connection
+        .transaction_with_behavior(rusqlite::TransactionBehavior::Deferred)
+        .map_err(|error| map_sqlite(error, PersistenceStage::Open))?;
+    require_current_schema(&snapshot, PersistenceStage::Open)?;
+    let journal_mode: String = snapshot
         .query_row("PRAGMA journal_mode", [], |row| row.get(0))
         .map_err(|error| map_sqlite(error, PersistenceStage::Open))?;
     if !journal_mode.eq_ignore_ascii_case("delete") {
@@ -1054,7 +1027,7 @@ fn validate_existing_database(
             stage: PersistenceStage::Open,
         });
     }
-    let synchronous: i64 = connection
+    let synchronous: i64 = snapshot
         .query_row("PRAGMA synchronous", [], |row| row.get(0))
         .map_err(|error| map_sqlite(error, PersistenceStage::Open))?;
     if synchronous != 2 {
@@ -1062,101 +1035,6 @@ fn validate_existing_database(
             stage: PersistenceStage::Open,
         });
     }
-    if user_version < SCHEMA_VERSION {
-        // Validate the complete supported schema and storage pragmas before
-        // replacing any tables.
-        // SQLite's rollback journal makes both schema and version one durable
-        // unit; a crash leaves the original supported schema or complete 76.
-        let transaction = connection
-            .transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)
-            .map_err(|error| map_sqlite(error, PersistenceStage::Open))?;
-        if user_version < 70 {
-            content::lineage_corrections::legacy_read_views(&transaction)
-                .map_err(|error| map_sqlite(error, PersistenceStage::Open))?;
-        }
-        validate_schema_shape_version(&transaction, user_version)?;
-        let _ = read_metadata_from(&transaction)?;
-        // The immediate transaction excludes other SQLite writers while this
-        // separate read-only connection captures the pre-migration database.
-        // A SQLite backup cannot use a source holding a write transaction.
-        let source = Connection::open_with_flags(
-            database_path,
-            OpenFlags::SQLITE_OPEN_READ_ONLY,
-        )
-        .map_err(|error| map_sqlite(error, PersistenceStage::UpgradeSnapshot))?;
-        project_backup::write_schema_snapshot(&source, directory, user_version)?;
-        drop(source);
-        #[cfg(test)]
-        migration_crash_hook("conversation-before-ddl");
-        if user_version == 61 {
-            application::conversations::initialize_messages(&transaction)
-                .map_err(|error| map_sqlite(error, PersistenceStage::Open))?;
-        }
-        if user_version < 63 {
-            application::conversations::proposals::initialize_revisions(&transaction)
-                .map_err(|error| map_sqlite(error, PersistenceStage::Open))?;
-        }
-        if user_version < 64 {
-            application::conversations::proposals::work_plans::initialize(&transaction)
-                .map_err(|error| map_sqlite(error, PersistenceStage::Open))?;
-        }
-        if user_version < 65 {
-            application::conversations::planning::history::initialize(&transaction)
-                .map_err(|error| map_sqlite(error, PersistenceStage::Open))?;
-            application::conversations::planning::history::backfill(&transaction)
-                .map_err(|_| PersistenceError::CorruptProject { stage: PersistenceStage::Open })?;
-        }
-        if user_version < 66 {
-            resources::migrate_context_resources(&transaction)
-                .map_err(|error| map_sqlite(error, PersistenceStage::Open))?;
-        }
-        if user_version < 68 {
-            translation::migrate_memory(&transaction)
-                .map_err(|error| map_sqlite(error, PersistenceStage::Open))?;
-        }
-        if user_version < 69 {
-            content::validation_history::migrate(&transaction)
-                .map_err(|_| PersistenceError::CorruptProject { stage: PersistenceStage::Open })?;
-        }
-        if user_version < 70 {
-            content::lineage_corrections::remove_legacy_read_views(&transaction)
-                .map_err(|error| map_sqlite(error, PersistenceStage::Open))?;
-            content::lineage_corrections::initialize(&transaction)
-                .map_err(|error| map_sqlite(error, PersistenceStage::Open))?;
-        }
-        if user_version < 72 {
-            resources::migrate_edited_decisions(&transaction)
-                .map_err(|error| map_sqlite(error, PersistenceStage::Open))?;
-        }
-        if user_version < 73 {
-            resources::migrate_conversation_captures(&transaction)
-                .map_err(|error| map_sqlite(error, PersistenceStage::Open))?;
-        }
-        // Schema 75 admits typed binary captures and artifact results in the
-        // existing BLOB/JSON stores. Historical bytes and bindings are not
-        // rewritten; the version gate excludes older text-only clients.
-        if user_version < 76 {
-            capture_capacity::migrate(&transaction)
-                .map_err(|error| map_sqlite(error, PersistenceStage::Open))?;
-        }
-        #[cfg(test)]
-        migration_crash_hook("conversation-after-ddl");
-        transaction.pragma_update(None, "user_version", SCHEMA_VERSION)
-            .map_err(|error| map_sqlite(error, PersistenceStage::Open))?;
-        validate_schema_shape(&transaction)?;
-        #[cfg(test)]
-        migration_crash_hook("conversation-before-commit");
-        transaction.commit().map_err(|error| map_sqlite(error, PersistenceStage::Open))?;
-        #[cfg(test)]
-        migration_crash_hook("conversation-after-commit");
-        return Ok(());
-    }
-    // Every open-time association check must see the same database snapshot.
-    // A deferred transaction keeps validation read-only while excluding
-    // changes between the ledger scan, grant scan, and final metadata read.
-    let snapshot = connection
-        .transaction_with_behavior(rusqlite::TransactionBehavior::Deferred)
-        .map_err(|error| map_sqlite(error, PersistenceStage::Open))?;
     validate_schema_shape(&snapshot)?;
     let _ = read_metadata_from(&snapshot)?;
     snapshot
@@ -1166,9 +1044,6 @@ fn validate_existing_database(
 
 
 fn validate_schema_shape(connection: &Connection) -> Result<(), PersistenceError> {
-    validate_schema_shape_version(connection, SCHEMA_VERSION)
-}
-fn validate_schema_shape_version(connection: &Connection, version: i64) -> Result<(), PersistenceError> {
     let table_names: Vec<String> = connection
         .prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%' ORDER BY name")
         .map_err(|error| map_sqlite(error, PersistenceStage::Open))?
@@ -1182,31 +1057,9 @@ fn validate_schema_shape_version(connection: &Connection, version: i64) -> Resul
     expected_tables.extend(review::table_names());
     expected_tables.extend(release::table_names());
     expected_tables.extend(content::maintenance_table_names());
-    if version < 69 {
-        expected_tables.retain(|name| name != content::validation_history::TABLE);
-    }
-    if version < 70 {
-        expected_tables.retain(|name| !content::lineage_corrections::TABLES.iter().any(|(added,_)| name==added));
-    }
     expected_tables.extend(arena::table_names());
     expected_tables.extend(ledger::provider::table_names());
     expected_tables.extend(application::table_names());
-    if version == 61 {
-        let added: std::collections::BTreeSet<_> = application::conversations::table_names().collect();
-        expected_tables.retain(|name| !added.contains(name));
-    }
-    if version == 62 {
-        let added: std::collections::BTreeSet<_> = application::conversations::proposals::table_names().collect();
-        expected_tables.retain(|name| !added.contains(name));
-    }
-    if version == 63 {
-        let added: std::collections::BTreeSet<_> = application::conversations::proposals::work_plans::table_names().collect();
-        expected_tables.retain(|name| !added.contains(name));
-    }
-    if version < 65 {
-        let added: std::collections::BTreeSet<_> = application::conversations::planning::history::table_names().collect();
-        expected_tables.retain(|name| !added.contains(name));
-    }
     expected_tables.extend(
         plugin_execution::TABLES
             .iter()
@@ -1258,7 +1111,7 @@ fn validate_schema_shape_version(connection: &Connection, version: i64) -> Resul
     let mut planning_attempts = 0;
     let open_proofs = ledger::validate_for_open(connection, |connection, input, results, proofs| {
         review_open.validate_input(connection, input, results)?;
-        if version >= 65 && application::conversations::planning::history::validate_input(connection, input)? {
+        if application::conversations::planning::history::validate_input(connection, input)? {
             planning_attempts += 1;
         }
         application_open.validate_input(input)?;
@@ -1267,10 +1120,8 @@ fn validate_schema_shape_version(connection: &Connection, version: i64) -> Resul
     .map_err(|_| PersistenceError::CorruptProject {
         stage: PersistenceStage::Open,
     })?;
-    if version >= 65 {
-        application::conversations::planning::history::validate(connection, planning_attempts)
-            .map_err(|_| PersistenceError::CorruptProject { stage: PersistenceStage::Open })?;
-    }
+    application::conversations::planning::history::validate(connection, planning_attempts)
+        .map_err(|_| PersistenceError::CorruptProject { stage: PersistenceStage::Open })?;
     review_open
         .finish()
         .map_err(|_| PersistenceError::CorruptProject {
@@ -1282,7 +1133,7 @@ fn validate_schema_shape_version(connection: &Connection, version: i64) -> Resul
     translation::validate(connection).map_err(|_| PersistenceError::CorruptProject {
         stage: PersistenceStage::Open,
     })?;
-    resources::validate_version(connection, version).map_err(|_| PersistenceError::CorruptProject {
+    resources::validate(connection).map_err(|_| PersistenceError::CorruptProject {
         stage: PersistenceStage::Open,
     })?;
     release_open.finish(connection).map_err(|_| PersistenceError::CorruptProject {
@@ -1294,7 +1145,7 @@ fn validate_schema_shape_version(connection: &Connection, version: i64) -> Resul
     plugin_execution::validate(connection).map_err(|_| PersistenceError::CorruptProject {
         stage: PersistenceStage::Open,
     })?;
-    application::validate_after_open_version(connection, application_open, version).map_err(|_| {
+    application::validate_after_open(connection, application_open).map_err(|_| {
         PersistenceError::CorruptProject {
             stage: PersistenceStage::Open,
         }
@@ -1565,41 +1416,9 @@ mod tests {
         store.close().unwrap();
     }
 
-    #[cfg(unix)]
-    #[test]
-    fn project_upgrade_stops_when_snapshot_cannot_be_written() {
-        use std::os::unix::fs::PermissionsExt;
-
-        let temp = tempfile::tempdir().unwrap();
-        let path = temp.path().join("project");
-        ProjectStore::create(&path, metadata()).unwrap().close().unwrap();
-        let database = path.join(DATABASE_FILENAME);
-        let legacy = Connection::open(&database).unwrap();
-        capture_capacity::make_legacy_schema(&legacy).unwrap();
-        legacy.pragma_update(None, "user_version", 73).unwrap();
-        let before = read_metadata_from(&legacy).unwrap();
-        drop(legacy);
-
-        let permissions = fs::metadata(&path).unwrap().permissions();
-        fs::set_permissions(&path, fs::Permissions::from_mode(0o500)).unwrap();
-        let refused = ProjectStore::open(&path);
-        fs::set_permissions(&path, permissions).unwrap();
-        let error = refused.unwrap_err();
-        assert_eq!(error.code(), PersistenceErrorCode::PermissionDenied);
-        assert_eq!(error.stage(), PersistenceStage::UpgradeSnapshot);
-
-        let legacy = Connection::open_with_flags(&database, OpenFlags::SQLITE_OPEN_READ_ONLY).unwrap();
-        assert_eq!(legacy.pragma_query_value(None, "user_version", |row| row.get::<_, i64>(0)).unwrap(), 73);
-        assert_eq!(read_metadata_from(&legacy).unwrap(), before);
-        assert_eq!(fs::read_dir(&path).unwrap().count(), 2);
-        drop(legacy);
-        let reopened = ProjectStore::open(&path).unwrap();
-        assert_eq!(reopened.metadata().unwrap(), before);
-    }
-
     #[test]
     fn open_refuses_unsupported_schema_without_repair() {
-        for version in (0..61).chain([SCHEMA_VERSION + 1, 99]) {
+        for version in [0, 60, 61, SCHEMA_VERSION - 1, SCHEMA_VERSION + 1, 99] {
             let parent = temporary_directory("schema");
             let project_path = parent.path().join("project");
             let store = ProjectStore::create(&project_path, metadata()).unwrap();

@@ -353,7 +353,7 @@ fn current_unsupported_profile_is_distinct_and_never_converted() {
     let mut c = Connection::open(path.join(DATABASE_FILENAME)).unwrap();
     c.pragma_update(None, "synchronous", "NORMAL").unwrap();
     assert_eq!(
-        validate_existing_connection(&mut c, &path)
+        validate_existing_database(&mut c)
             .unwrap_err()
             .code(),
         PersistenceErrorCode::UnsupportedStorage
@@ -366,7 +366,7 @@ fn current_unsupported_profile_is_distinct_and_never_converted() {
     c.pragma_update(None, "synchronous", "FULL").unwrap();
     c.pragma_update(None, "journal_mode", "WAL").unwrap();
     assert_eq!(
-        validate_existing_connection(&mut c, &path)
+        validate_existing_database(&mut c)
             .unwrap_err()
             .code(),
         PersistenceErrorCode::UnsupportedStorage
@@ -395,7 +395,7 @@ fn current_unsupported_profile_is_distinct_and_never_converted() {
 
 #[test]
 fn current_layout_reopens_and_every_unsupported_snapshot_preserves_bytes() {
-    for version in (0..61).chain([SCHEMA_VERSION + 1]) {
+    for version in (0..SCHEMA_VERSION).chain([SCHEMA_VERSION + 1]) {
         let temp = tempfile::tempdir().unwrap();
         let path = temp.path().join("project");
         let store = ProjectStore::create(

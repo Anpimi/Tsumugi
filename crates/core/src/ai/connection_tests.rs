@@ -2,16 +2,13 @@ use super::*;
 use crate::model_connections::{ModelConnectionChange, ModelConnectionEdit, ModelConnectionStore};
 
 #[test]
-fn schema_73_upgrade_preserves_original_fixed_connection_inputs() {
+fn reopen_preserves_original_fixed_connection_inputs() {
     let (temp, mut project, rows) = source_project();
     let cfg = config("http://127.0.0.1:9/v1/chat/completions".into());
     let input = project.preview_ai(cfg, "zh-CN", &[rows[0].unit_id.unwrap()]).unwrap()
         .fixed_input(project.metadata().unwrap().project_id()).unwrap();
     project.enqueue_execution(&input).unwrap(); drop(project);
     let path = temp.path().join("project");
-    let db = rusqlite::Connection::open(path.join("project.sqlite3")).unwrap();
-    crate::persistence::prepare_legacy_fixture_schema(&db, 73).unwrap();
-    db.pragma_update(None, "user_version", 73).unwrap(); drop(db);
     let reopened = ProjectStore::open(&path).unwrap();
     assert_eq!(reopened.execution_input(input.envelope().attempt_id).unwrap().bytes(), input.bytes());
     assert_eq!(rusqlite::Connection::open(path.join("project.sqlite3")).unwrap()

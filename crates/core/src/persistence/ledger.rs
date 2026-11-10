@@ -239,11 +239,7 @@ fn validate_schema(
             return Err(error(ErrorCode::CorruptLedger, "fixture-schema"));
         }
     }
-    let version: i64 = connection
-        .pragma_query_value(None, "user_version", |r| r.get(0))
-        .map_err(sql_error)?;
     for (name, expected) in TABLES {
-        let expected = super::capture_capacity::schema_sql(name, expected, version);
         let actual: String = connection
             .query_row(
                 "SELECT sql FROM sqlite_master WHERE type='table' AND name=?1",
@@ -251,7 +247,7 @@ fn validate_schema(
                 |r| r.get(0),
             )
             .map_err(sql_error)?;
-        if actual != expected {
+        if actual != *expected {
             return Err(error(ErrorCode::CorruptLedger, "schema"));
         }
     }
@@ -309,13 +305,6 @@ fn validate_schema(
             }
             None => (load_input(connection, id)?, None),
         };
-        if (61..=75).contains(&version)
-            && (input.bytes().len() > MAX_INPUT_BYTES
-                || input.envelope().limits.max_result_bytes as usize > MAX_RESULT_BYTES
-                || input.envelope().limits.max_attempt_result_bytes as usize > MAX_ATTEMPT_RESULT_BYTES)
-        {
-            return Err(error(ErrorCode::CorruptLedger, "legacy-input-limits"));
-        }
         if input.envelope().project_id.to_string() != project.project_id().to_string() {
             return Err(error(ErrorCode::CorruptLedger, "project"));
         }

@@ -73,23 +73,6 @@ pub(in crate::persistence) fn initialize(c: &Connection) -> rusqlite::Result<()>
     Ok(())
 }
 
-#[cfg(test)]
-pub(in crate::persistence) fn make_legacy_schema(c:&Connection)->rusqlite::Result<()> {
-    for (name,_) in VIEWS {c.execute_batch(&format!("DROP VIEW {name}"))?;}
-    c.execute_batch("DROP TABLE source_lineage_correction_bindings; DROP TABLE source_lineage_corrections; DROP TABLE source_snapshot_mapping_bases; DROP TABLE source_lineage_correction_closures;")
-}
-
-// Old supported schemas are fully validated before the atomic migration. These
-// transaction-local aliases expose exactly their original, uncorrected facts.
-pub(in crate::persistence) fn legacy_read_views(c: &Connection) -> rusqlite::Result<()> {
-    c.execute_batch("CREATE TEMP VIEW source_effective_occurrences AS SELECT rowid AS rowid,* FROM main.source_occurrences;
-        CREATE TEMP VIEW source_binding_history AS SELECT rowid AS rowid,*,0 AS mapping_revision FROM main.source_occurrences;
-        CREATE TEMP VIEW source_effective_lineage AS SELECT * FROM main.source_lineage;")
-}
-pub(in crate::persistence) fn remove_legacy_read_views(c: &Connection) -> rusqlite::Result<()> {
-    c.execute_batch("DROP VIEW temp.source_effective_occurrences; DROP VIEW temp.source_binding_history; DROP VIEW temp.source_effective_lineage;")
-}
-
 pub(in crate::persistence) fn mapping_revision(c: &Connection, snapshot: ExecutionId) -> Result<Revision, ExecutionError> {
     let exists:bool=c.query_row("SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE name='source_lineage_corrections')",[],|r|r.get(0)).map_err(sql_error)?;
     if !exists {return Revision::new(0);}

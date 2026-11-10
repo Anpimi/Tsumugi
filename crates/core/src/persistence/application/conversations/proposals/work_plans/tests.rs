@@ -3,12 +3,11 @@ use super::*;
 use crate::{
     application::*,
     persistence::{
-        DATABASE_FILENAME, SCHEMA_VERSION,
+        DATABASE_FILENAME,
         application::tests::{config, consent, fixture},
     },
 };
 use std::{
-    process::Command,
     sync::{Arc, Barrier, atomic::Ordering},
     time::Duration,
 };
@@ -569,127 +568,4 @@ fn concurrent_same_confirmation_creates_one_original_plan_and_association() {
         ),
         1
     );
-}
-
-fn snapshot(c: &Connection, version: i64) -> BTreeMap<String, Vec<Vec<rusqlite::types::Value>>> {
-    crate::persistence::legacy_fixture_rows(c, version)
-}
-
-#[test]
-fn work_plan_migration_child() {
-    let Ok(path) = std::env::var("TSUMUGI_PROPOSAL_PLAN_MIGRATION_PROJECT") else {
-        return;
-    };
-    ProjectStore::open(path).unwrap();
-    panic!("migration did not reach its crash hook");
-}
-#[test]
-fn supported_migrations_preserve_plans_discussions_proposals_and_receipts_at_abort_boundaries() {
-    for version in [61, 62, 63] {
-        for point in [
-            "conversation-before-ddl",
-            "conversation-after-ddl",
-            "conversation-before-commit",
-            "conversation-after-commit",
-        ] {
-            let (temp, mut store, units) = fixture();
-            let mut options = PlanOptions::default();
-            options.team_discussions = Some(TeamDiscussionPolicy::CurrentPlanV1 {});
-            let plan = store
-                .prepare_work_plan(Some(config()), "zh-CN", &units, options)
-                .unwrap();
-            let mut allow = consent(&plan);
-            allow.effects = plan.authorization_effects().unwrap();
-            let grant = store.authorize_work_plan(&plan, &allow).unwrap();
-            store
-                .enqueue_execution(&FixedInput::capture(grant.input.clone().unwrap()).unwrap())
-                .unwrap();
-            let scope = store.work_plan_agent_scope(grant.lease).unwrap();
-            let basis = &plan.selection_basis[0];
-            let discussion = store
-                .publish_human_team_discussion(
-                    &scope,
-                    "local-user",
-                    &PublishTeamDiscussion {
-                        post_id: ExecutionId::new(),
-                        target: TeamDiscussionTarget {
-                            unit_id: basis.unit_id,
-                            locale: plan.locale.clone(),
-                            source_snapshot_id: basis.source_snapshot_id,
-                            source_revision_id: basis.source_revision_id,
-                        },
-                        kind: TeamDiscussionKind::Note,
-                        body: "Original discussion survives the additive bridge".into(),
-                        references: vec![],
-                        reply_to: None,
-                        supersedes: None,
-                        question: None,
-                    },
-                )
-                .unwrap();
-            let original = if version >= 62 {
-                Some(completed(&mut store, &units[..1], model(units[0]), true))
-            } else {
-                None
-            };
-            if version == 63 {
-                let original = original.as_ref().unwrap();
-                let first = store.capture_conversation_proposal(original).unwrap();
-                store
-                    .revise_conversation_proposal(&revise(original, first.revision_id, units[0]))
-                    .unwrap();
-            }
-            let before = snapshot(store.connection().unwrap(), version);
-            let path = store.directory().to_path_buf();
-            store.close().unwrap();
-            let c = Connection::open(path.join(DATABASE_FILENAME)).unwrap();
-            c.execute_batch("DROP TABLE application_conversation_planning_attempts; DROP TABLE application_conversation_work_plans")
-                .unwrap();
-            if version < 63 {
-                c.execute_batch("DROP TABLE application_conversation_proposals")
-                    .unwrap();
-            }
-            if version == 61 {
-                c.execute_batch("DROP TABLE application_conversation_actions; DROP TABLE application_conversation_messages; DROP TABLE application_conversations;").unwrap();
-            }
-            crate::persistence::prepare_legacy_fixture_schema(&c, version).unwrap();
-            c.pragma_update(None, "user_version", version).unwrap();
-            drop(c);
-            let marker = temp.path().join("migration-marker");
-            let child=Command::new(std::env::current_exe().unwrap()).args(["--exact","persistence::application::conversations::proposals::work_plans::tests::work_plan_migration_child","--nocapture"]).env("TSUMUGI_PROPOSAL_PLAN_MIGRATION_PROJECT",&path).env("TSUMUGI_MIGRATION_CRASH",point).env("TSUMUGI_MIGRATION_HOOK",&marker).output().unwrap();
-            assert!(!child.status.success());
-            assert_eq!(std::fs::read_to_string(marker).unwrap(), point);
-            let c = Connection::open(path.join(DATABASE_FILENAME)).unwrap();
-            let found: i64 = c
-                .pragma_query_value(None, "user_version", |row| row.get(0))
-                .unwrap();
-            assert_eq!(
-                found,
-                if point == "conversation-after-commit" {
-                    SCHEMA_VERSION
-                } else {
-                    version
-                }
-            );
-            assert_eq!(snapshot(&c, version), before);
-            drop(c);
-            let reopened = ProjectStore::open(path).unwrap();
-            assert_eq!(snapshot(reopened.connection().unwrap(), version), before);
-            assert_eq!(reopened.work_plan(plan.plan_id).unwrap(), plan);
-            assert_eq!(
-                reopened.work_plan_receipt(allow.action_id).unwrap(),
-                Some(grant)
-            );
-            assert_eq!(
-                reopened
-                    .read_team_history_post(
-                        plan.project_id,
-                        plan.plan_id,
-                        discussion.publication.post_id
-                    )
-                    .unwrap(),
-                discussion
-            );
-        }
-    }
 }

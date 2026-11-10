@@ -20,8 +20,8 @@ impl ProjectStore {
             .map_err(|error| map_sqlite(error, stage))?;
         require_idle(&snapshot, stage)?;
         let parent = parent_directory(destination);
-        let temporary = capture(&snapshot, parent, SCHEMA_VERSION, stage)?;
-        validate_current_snapshot(&temporary, parent, stage)?;
+        let temporary = capture(&snapshot, parent, stage)?;
+        validate_current_snapshot(&temporary, stage)?;
         snapshot
             .commit()
             .map_err(|error| map_sqlite(error, stage))?;
@@ -29,25 +29,19 @@ impl ProjectStore {
         sync_directory(parent, stage)
     }
 
-    /// Restore a supported backup into a new directory, upgrading only its
-    /// unpublished copy. The project lock is published after normal validation.
+    /// Restore a current-format backup into a new directory. Publish the
+    /// project lock only after validating the unpublished copy.
     pub fn restore_backup(backup: &Path, destination: &Path) -> Result<(), PersistenceError> {
         let stage = PersistenceStage::Create;
         let source = Connection::open_with_flags(backup, OpenFlags::SQLITE_OPEN_READ_ONLY)
             .map_err(|error| map_sqlite(error, stage))?;
-        let source_version = source
-            .pragma_query_value(None, "user_version", |row| row.get::<_, i64>(0))
-            .map_err(|error| map_sqlite(error, stage))?;
+        let snapshot = source.unchecked_transaction().map_err(|error| map_sqlite(error, stage))?;
+        require_current_schema(&snapshot, stage)?;
         fs::create_dir(destination).map_err(map_create_io)?;
         let result = (|| {
-            let database = capture(&source, destination, source_version, stage)?;
-            {
-                let mut validation =
-                    Connection::open_with_flags(database.path(), OpenFlags::SQLITE_OPEN_READ_WRITE)
-                        .map_err(|error| map_sqlite(error, stage))?;
-                validate_existing_database(&mut validation, database.path(), destination)?;
-                require_idle(&validation, stage)?;
-            }
+            let database = capture(&snapshot, destination, stage)?;
+            snapshot.commit().map_err(|error| map_sqlite(error, stage))?;
+            validate_current_snapshot(&database, stage)?;
             let mut lock = tempfile::NamedTempFile::new_in(destination)
                 .map_err(|error| map_io(error, stage))?;
             write!(lock, "{RESTORED_PREFIX}{}", ExecutionId::new())
@@ -91,15 +85,12 @@ pub(super) fn read_restored_instance(
 
 fn validate_current_snapshot(
     database: &tempfile::NamedTempFile,
-    directory: &Path,
     stage: PersistenceStage,
 ) -> Result<(), PersistenceError> {
-    // capture has already required the current schema, so this is only the
-    // normal read-only validation branch and cannot run a migration.
     let mut validation =
         Connection::open_with_flags(database.path(), OpenFlags::SQLITE_OPEN_READ_ONLY)
             .map_err(|error| map_sqlite(error, stage))?;
-    validate_existing_database(&mut validation, database.path(), directory)?;
+    validate_existing_database(&mut validation)?;
     require_idle(&validation, stage)
 }
 
@@ -132,25 +123,9 @@ fn parent_directory(path: &Path) -> &Path {
         .unwrap_or_else(|| Path::new("."))
 }
 
-pub(super) fn write_schema_snapshot(
-    connection: &Connection,
-    directory: &Path,
-    version: i64,
-) -> Result<(), PersistenceError> {
-    let stage = PersistenceStage::UpgradeSnapshot;
-    let temporary = capture(connection, directory, version, stage)?;
-    let path = directory.join(format!(
-        "{DATABASE_FILENAME}.pre-v{version}-{}.backup",
-        uuid::Uuid::new_v4()
-    ));
-    publish(temporary, &path, stage)?;
-    sync_directory(directory, stage)
-}
-
 fn capture(
     connection: &Connection,
     directory: &Path,
-    version: i64,
     stage: PersistenceStage,
 ) -> Result<tempfile::NamedTempFile, PersistenceError> {
     let temporary = tempfile::Builder::new()
@@ -162,21 +137,7 @@ fn capture(
         .map_err(|error| map_sqlite(error, stage))?;
     let backup = Connection::open_with_flags(temporary.path(), OpenFlags::SQLITE_OPEN_READ_ONLY)
         .map_err(|error| map_sqlite(error, stage))?;
-    let application_id: i64 = backup
-        .pragma_query_value(None, "application_id", |row| row.get(0))
-        .map_err(|error| map_sqlite(error, stage))?;
-    if application_id != APPLICATION_ID {
-        return Err(PersistenceError::CorruptProject { stage });
-    }
-    let found_version: i64 = backup
-        .pragma_query_value(None, "user_version", |row| row.get(0))
-        .map_err(|error| map_sqlite(error, stage))?;
-    if found_version != version {
-        return Err(PersistenceError::UnsupportedSchema {
-            found_version,
-            stage,
-        });
-    }
+    require_current_schema(&backup, stage)?;
     let check: String = backup
         .query_row("PRAGMA quick_check", [], |row| row.get(0))
         .map_err(|error| map_sqlite(error, stage))?;

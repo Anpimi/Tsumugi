@@ -191,10 +191,10 @@ Source and translation capture ranges use half-open UTF-8 byte offsets in the ra
 
 ### Storage, Diagnostics, and Test Host
 
-- **Database compatibility**: The [versioning policy](docs/versioning.md#core-storage-and-desktop-domain-transition) owns the current schema, supported upgrade range and unsupported-project recovery instructions. Keep unsupported older directories intact; opening them does not reset their contents.
+- **Database compatibility**: The [versioning policy](docs/versioning.md#core-storage-and-desktop-domain-transition) owns the current schema and recovery instructions for unsupported projects. Keep unsupported older directories intact; opening them does not reset their contents.
 - **Diagnostics and recovery**: Command failures preserve structured evidence. When a save conflicts with newer state, expandable diagnostics show both the submitted and current values alongside recovery steps without automatically re-running writes. Boundary log reference IDs record only operation labels and error categories, omitting project paths and request payloads.
 - **Execution test host**: Developers can test task lifecycle, cancellation, and recovery flows without configuring an external AI provider by using the isolated [Execution Test Host](docs/execution-test-host.md).
 
 ## Version and Status
 
-Workspace metadata remains **`0.2.0-alpha.1`**; the published snapshot of that version is frozen. Current source changes accumulate under **Unreleased** and are not part of that download. See the [Changelog](CHANGELOG.md) and [Versioning Policy](docs/versioning.md) for release history and compatibility rules.
+The workspace targets **`0.3.0-alpha.1`**. Changes under **Unreleased** are separate from the frozen `0.2.0-alpha.1` download. See the [Changelog](CHANGELOG.md) and [Versioning Policy](docs/versioning.md) for release history and compatibility rules.

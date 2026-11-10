@@ -384,7 +384,7 @@ const TABLES: &[(&str, &str)] = &[
             text TEXT NOT NULL CHECK(length(CAST(text AS BLOB)) <= 16384),
             source_snapshot_id TEXT NOT NULL REFERENCES source_snapshots(snapshot_id),
             source_revision_id TEXT NOT NULL,
-            origin_kind TEXT NOT NULL CHECK(origin_kind IN ('import','manual')),
+            origin_kind TEXT NOT NULL CHECK(origin_kind IN ('import','manual','ai')),
             action_id TEXT NOT NULL UNIQUE,
             request_digest TEXT NOT NULL CHECK(length(request_digest)=64),
             attempt_id TEXT REFERENCES execution_attempts(attempt_id),
@@ -394,12 +394,12 @@ const TABLES: &[(&str, &str)] = &[
             logical_path TEXT,
             declared_locale TEXT,
             native_key TEXT,
-            file_digest TEXT,
+            file_digest TEXT, reuse_origin_json TEXT,
             UNIQUE(unit_id,locale,ordinal),
             UNIQUE(unit_id,locale,revision_id),
             FOREIGN KEY(unit_id,source_revision_id) REFERENCES source_revisions(unit_id,revision_id),
             CHECK((origin_kind='manual' AND attempt_id IS NULL AND result_id IS NULL AND item_id IS NULL AND artifact_id IS NULL AND logical_path IS NULL AND declared_locale IS NULL AND native_key IS NULL AND file_digest IS NULL)
-               OR (origin_kind='import' AND attempt_id IS NOT NULL AND result_id IS NOT NULL AND item_id IS NOT NULL AND artifact_id IS NOT NULL AND logical_path IS NOT NULL AND declared_locale IS NOT NULL AND native_key IS NOT NULL AND file_digest IS NOT NULL)))",
+               OR (origin_kind='import' AND attempt_id IS NOT NULL AND result_id IS NOT NULL AND item_id IS NOT NULL AND artifact_id IS NOT NULL AND logical_path IS NOT NULL AND declared_locale IS NOT NULL AND native_key IS NOT NULL AND file_digest IS NOT NULL) OR (origin_kind='ai' AND attempt_id IS NOT NULL AND result_id IS NOT NULL AND item_id IS NOT NULL AND artifact_id IS NULL AND logical_path IS NULL AND declared_locale IS NULL AND native_key IS NULL AND file_digest IS NULL)))",
     ),
     (
         "translation_selections",
@@ -418,46 +418,13 @@ const TABLES: &[(&str, &str)] = &[
     ),
 ];
 
-fn current_sql(name: &str, sql: &str) -> String {
-    if name != "translation_revisions" {
-        return sql.to_owned();
-    }
-    sql.replace("IN ('import','manual')", "IN ('import','manual','ai')")
-       .replace("file_digest IS NOT NULL)))", "file_digest IS NOT NULL) OR (origin_kind='ai' AND attempt_id IS NOT NULL AND result_id IS NOT NULL AND item_id IS NOT NULL AND artifact_id IS NULL AND logical_path IS NULL AND declared_locale IS NULL AND native_key IS NULL AND file_digest IS NULL)))")
-}
-
-fn version_sql(name: &str, sql: &str, version: i64) -> String {
-    let value = current_sql(name, sql);
-    if name == "translation_revisions" && version >= 68 {
-        // Match SQLite ADD COLUMN's insertion after the last column and before
-        // the existing table constraints, without rebuilding any original rows.
-        return value.replace("file_digest TEXT,", "file_digest TEXT, reuse_origin_json TEXT,");
-    }
-    value
-}
-
-pub(super) fn migrate_memory(c: &Connection) -> rusqlite::Result<()> {
-    c.execute_batch("ALTER TABLE translation_revisions ADD COLUMN reuse_origin_json TEXT")
-}
-
-#[cfg(test)]
-pub(in crate::persistence) fn make_legacy_memory_schema(c: &Connection) -> rusqlite::Result<()> {
-    c.execute_batch("DROP TABLE IF EXISTS source_validation_history")?;
-    let present: bool = c.query_row("SELECT EXISTS(SELECT 1 FROM pragma_table_info('translation_revisions')
-        WHERE name='reuse_origin_json')", [], |r| r.get(0))?;
-    if present {
-        c.execute_batch("ALTER TABLE translation_revisions DROP COLUMN reuse_origin_json")?;
-    }
-    Ok(())
-}
-
 pub(super) fn table_names() -> impl Iterator<Item = String> {
     TABLES.iter().map(|(name, _)| (*name).to_owned())
 }
 
 pub(super) fn initialize(connection: &Connection) -> rusqlite::Result<()> {
-    for (name, sql) in TABLES {
-        connection.execute_batch(&version_sql(name, sql, super::SCHEMA_VERSION))?;
+    for (_, sql) in TABLES {
+        connection.execute_batch(sql)?;
     }
     candidates::initialize(connection)
 }
@@ -660,19 +627,13 @@ fn record_plugin_input(connection: &Connection, input: &FixedInput) -> Result<()
 }
 
 pub(super) fn validate(connection: &Connection) -> rusqlite::Result<()> {
-    let version: i64 = connection.query_row("PRAGMA user_version", [], |r| r.get(0))?;
     for (name, expected) in TABLES {
         let actual: String = connection.query_row(
             "SELECT sql FROM sqlite_master WHERE type='table' AND name=?1",
             [name],
             |row| row.get(0),
         )?;
-        let expected = if version >= 10 {
-            version_sql(name, expected, version)
-        } else {
-            (*expected).to_owned()
-        };
-        if actual != expected {
+        if actual != *expected {
             return Err(rusqlite::Error::InvalidQuery);
         }
     }
@@ -812,10 +773,7 @@ pub(super) fn validate(connection: &Connection) -> rusqlite::Result<()> {
         previous_events.insert(key, (sequence, id));
     }
     candidates::validate(connection).map_err(|_| rusqlite::Error::InvalidQuery)?;
-    if version >= 68 {
-        memory::validate_storage(connection).map_err(|_| rusqlite::Error::InvalidQuery)?;
-    }
-    Ok(())
+    memory::validate_storage(connection).map_err(|_| rusqlite::Error::InvalidQuery)
 }
 
 fn error(code: ErrorCode, stage: &str) -> ExecutionError {

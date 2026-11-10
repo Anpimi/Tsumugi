@@ -259,9 +259,6 @@ fn record(c: &Connection, request: &Action, receipt: &Receipt) -> Result<(), Exe
     Ok(())
 }
 pub(in crate::persistence) fn validate(c: &Connection) -> Result<(), ExecutionError> {
-    validate_version(c, crate::persistence::SCHEMA_VERSION)
-}
-pub(in crate::persistence) fn validate_version(c: &Connection, version: i64) -> Result<(), ExecutionError> {
     let project = ExecutionId::parse(
         &read_metadata_from(c)
             .map_err(|_| corrupt())?
@@ -292,16 +289,16 @@ pub(in crate::persistence) fn validate_version(c: &Connection, version: i64) -> 
                 }
             }
             Action::CaptureProposal { request } => {
-                if version < 63 || !revisions.insert(request.revision_id) { return Err(corrupt()); }
+                if !revisions.insert(request.revision_id) { return Err(corrupt()); }
             }
             Action::ReviseProposal { request } => {
-                if version < 63 || !revisions.insert(request.revision_id) { return Err(corrupt()); }
+                if !revisions.insert(request.revision_id) { return Err(corrupt()); }
             }
             Action::AuthorizeProposalWorkPlan { action_id, .. } => {
-                if version < 64 || !links.insert(action_id) { return Err(corrupt()); }
+                if !links.insert(action_id) { return Err(corrupt()); }
             }
             Action::DecideKnowledgeProposal{request} => {
-                if version<67||!knowledge.insert((request.proposal.revision_id,request.entry_index)){return Err(corrupt());}
+                if !knowledge.insert((request.proposal.revision_id,request.entry_index)){return Err(corrupt());}
             }
         }
     }
@@ -333,9 +330,8 @@ pub(in crate::persistence) fn validate_version(c: &Connection, version: i64) -> 
             return Err(corrupt());
         }
     }
-    if version >= 63 { self::proposals::validate(c, &revisions)?; }
-    if version >= 64 { self::proposals::work_plans::validate(c, &links)?; }
-    Ok(())
+    proposals::validate(c, &revisions)?;
+    proposals::work_plans::validate(c, &links)
 }
 fn page_limit(limit: u32) -> Result<(), ExecutionError> {
     if limit == 0 || limit > MAX_CONVERSATION_PAGE {

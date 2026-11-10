@@ -93,30 +93,6 @@ pub(in crate::persistence) fn record_in(
     Ok(())
 }
 
-/// An older schema can prove only the currently published link. Generated but
-/// unlinked results and previously overwritten links are never invented here.
-pub(in crate::persistence) fn migrate(c: &Connection) -> Result<(), ExecutionError> {
-    initialize(c).map_err(sql_error)?;
-    let mut statement = c.prepare(
-        "SELECT l.producer_result_id,l.checker_result_id,r.attempt_id,l.valid
-         FROM plugin_validation_links l
-         JOIN execution_results producer ON producer.result_id=l.producer_result_id
-         JOIN execution_attempts a ON a.attempt_id=producer.attempt_id
-         JOIN execution_tasks t ON t.task_id=a.task_id
-         JOIN execution_results r ON r.result_id=l.checker_result_id
-         WHERE t.operation=?1",
-    ).map_err(sql_error)?;
-    let rows = statement.query_map([OPERATION], |r| {
-        Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?, r.get::<_, String>(2)?, r.get::<_, bool>(3)?))
-    }).map_err(sql_error)?.collect::<Result<Vec<_>, _>>().map_err(sql_error)?;
-    for (producer, checker, attempt, valid) in rows {
-        let (producer, checker, attempt) = (id(producer)?, id(checker)?, id(attempt)?);
-        checked_record(c, attempt, checker, producer, valid)?;
-        record_in(c, producer, attempt, checker, valid)?;
-    }
-    Ok(())
-}
-
 pub(in crate::persistence) fn validate(
     c: &Connection,
     open_proofs: Option<&OpenPluginProofs<'_>>,

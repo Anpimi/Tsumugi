@@ -754,46 +754,6 @@ pub(super) fn initialize(connection: &Connection) -> rusqlite::Result<()> {
     Ok(())
 }
 
-pub(super) fn migrate_edited_decisions(connection: &Connection) -> rusqlite::Result<()> {
-    connection.execute_batch("ALTER TABLE resource_decisions ADD COLUMN edited_target TEXT")
-}
-
-pub(super) fn migrate_conversation_captures(c: &Connection) -> rusqlite::Result<()> {
-    c.execute_batch("PRAGMA defer_foreign_keys=ON")?;
-    let ddl = TABLES.iter().find(|(name, _)| *name == "resource_captures").unwrap().1;
-    c.execute_batch(&ddl.replacen("CREATE TABLE resource_captures (", "CREATE TABLE resource_captures_v73 (", 1))?;
-    // Capture and change identities are historical references. Keep rowid gaps,
-    // original bytes, action digests and every existing foreign-key target.
-    c.execute_batch("INSERT INTO resource_captures_v73(rowid,capture_id,project_id,capture_kind,correction_key,resource_id,resource_revision,source_locale,target_locale,license,digest,bytes,action_id,request_digest)
-        SELECT rowid,capture_id,project_id,capture_kind,correction_key,resource_id,resource_revision,source_locale,target_locale,license,digest,bytes,action_id,request_digest FROM resource_captures;
-        DROP TABLE resource_captures;
-        ALTER TABLE resource_captures_v73 RENAME TO resource_captures;")?;
-    if c.prepare("PRAGMA foreign_key_check")?.exists([])? { return Err(rusqlite::Error::InvalidQuery); }
-    c.execute_batch("PRAGMA defer_foreign_keys=OFF")?;
-    Ok(())
-}
-
-/// Reconstruct the original capture constraint in an owned, closed fixture.
-#[cfg(test)]
-pub(in crate::persistence) fn make_legacy_capture_schema(c: &Connection) -> rusqlite::Result<()> {
-    assert!(c.is_autocommit());
-    let foreign_keys: bool = c.pragma_query_value(None, "foreign_keys", |r| r.get(0))?;
-    c.pragma_update(None, "foreign_keys", false)?;
-    let ddl = TABLES.iter().find(|(name, _)| *name == "resource_captures").unwrap().1
-        .replace(",'conversation'", "").replace("capture_kind IN ('mcp')", "capture_kind='mcp'")
-        .replacen("CREATE TABLE resource_captures (", "CREATE TABLE resource_captures_legacy (", 1);
-    let result = (|| {
-        c.execute_batch("BEGIN IMMEDIATE")?;
-        c.execute_batch(&ddl)?;
-        c.execute_batch("INSERT INTO resource_captures_legacy(rowid,capture_id,project_id,capture_kind,correction_key,resource_id,resource_revision,source_locale,target_locale,license,digest,bytes,action_id,request_digest)
-            SELECT rowid,capture_id,project_id,capture_kind,correction_key,resource_id,resource_revision,source_locale,target_locale,license,digest,bytes,action_id,request_digest FROM resource_captures;
-            DROP TABLE resource_captures; ALTER TABLE resource_captures_legacy RENAME TO resource_captures; COMMIT;")
-    })();
-    if result.is_err() && !c.is_autocommit() { c.execute_batch("ROLLBACK")?; }
-    c.pragma_update(None, "foreign_keys", foreign_keys)?;
-    result
-}
-
 fn validate_edited_decision(request: &ResourceDecision) -> Result<(), ExecutionError> {
     if let Some(target) = &request.edited_target {
         if !matches!(request.decision, ResourceDecisionKind::Adopt | ResourceDecisionKind::Override) {
@@ -807,69 +767,7 @@ fn validate_edited_decision(request: &ResourceDecision) -> Result<(), ExecutionE
     Ok(())
 }
 
-pub(super) fn migrate_context_resources(connection: &Connection) -> rusqlite::Result<()> {
-    // Defer existing self/current references only while atomically replacing the
-    // original tables. The final foreign_key_check runs before commit.
-    connection.execute_batch("PRAGMA defer_foreign_keys=ON")?;
-    for name in ["context_revisions", "context_current", "resource_changes"] {
-        let ddl = TABLES.iter().find(|(table, _)| *table == name).unwrap().1;
-        connection.execute_batch(&ddl.replacen(
-            &format!("CREATE TABLE {name} ("), &format!("CREATE TABLE {name}_v66 ("), 1,
-        ))?;
-        let columns = match name {
-            "context_revisions" => "revision_id,project_id,unit_id,locale,text,reason,previous_revision_id,action_id,request_digest",
-            "context_current" => "unit_id,locale,revision_id",
-            _ => "change_id,project_id,kind,locale,scope_unit_id,old_scope_unit_id,source_phrase,old_source_phrase,old_revision_id,new_revision_id,action_id",
-        };
-        // Baselines refer to resource_changes.rowid. Preserve all rowids, not
-        // merely the change IDs, including gaps left in supported projects.
-        connection.execute_batch(&format!(
-            "INSERT INTO {name}_v66(rowid,{columns}) SELECT rowid,{columns} FROM {name};"
-        ))?;
-    }
-    connection.execute_batch("DROP TABLE context_current; DROP TABLE context_revisions; DROP TABLE resource_changes;
-        ALTER TABLE context_revisions_v66 RENAME TO context_revisions;
-        ALTER TABLE context_current_v66 RENAME TO context_current;
-        ALTER TABLE resource_changes_v66 RENAME TO resource_changes;")?;
-    if connection.prepare("PRAGMA foreign_key_check")?.exists([])? {
-        return Err(rusqlite::Error::InvalidQuery);
-    }
-    // Replacement tables now satisfy every original reference. Clear only the
-    // deferred DROP bookkeeping after checking the complete resulting graph.
-    connection.execute_batch("PRAGMA defer_foreign_keys=OFF")?;
-    Ok(())
-}
-
-/// Reconstruct the actual pre-66 table shapes in an owned, closed test project.
-/// Changing user_version alone would not exercise a supported migration input.
-#[cfg(test)]
-pub(in crate::persistence) fn make_legacy_context_schema(c:&Connection)->rusqlite::Result<()> {
-    assert!(c.is_autocommit());
-    super::translation::make_legacy_memory_schema(c)?;
-    let foreign_keys:bool=c.pragma_query_value(None,"foreign_keys",|r|r.get(0))?;
-    c.pragma_update(None,"foreign_keys",false)?;
-    let result=c.execute_batch("BEGIN IMMEDIATE;
-        CREATE TABLE context_revisions_legacy(revision_id TEXT PRIMARY KEY NOT NULL,project_id TEXT NOT NULL,unit_id TEXT NOT NULL REFERENCES source_units(unit_id),locale TEXT NOT NULL,text TEXT NOT NULL CHECK(length(CAST(text AS BLOB))<=16384),reason TEXT NOT NULL,previous_revision_id TEXT REFERENCES context_revisions(revision_id),action_id TEXT NOT NULL UNIQUE,request_digest TEXT NOT NULL CHECK(length(request_digest)=64));
-        INSERT INTO context_revisions_legacy(rowid,revision_id,project_id,unit_id,locale,text,reason,previous_revision_id,action_id,request_digest) SELECT rowid,revision_id,project_id,unit_id,locale,text,reason,previous_revision_id,action_id,request_digest FROM context_revisions;
-        CREATE TABLE context_current_legacy(unit_id TEXT NOT NULL REFERENCES source_units(unit_id),locale TEXT NOT NULL,revision_id TEXT NOT NULL REFERENCES context_revisions(revision_id),PRIMARY KEY(unit_id,locale));
-        INSERT INTO context_current_legacy(rowid,unit_id,locale,revision_id) SELECT rowid,unit_id,locale,revision_id FROM context_current;
-        CREATE TABLE resource_changes_legacy(change_id TEXT PRIMARY KEY NOT NULL,project_id TEXT NOT NULL,kind TEXT NOT NULL CHECK(kind IN ('term','context','context-fact')),locale TEXT NOT NULL,scope_unit_id TEXT REFERENCES source_units(unit_id),old_scope_unit_id TEXT REFERENCES source_units(unit_id),source_phrase TEXT,old_source_phrase TEXT,old_revision_id TEXT,new_revision_id TEXT NOT NULL,action_id TEXT NOT NULL UNIQUE);
-        INSERT INTO resource_changes_legacy(rowid,change_id,project_id,kind,locale,scope_unit_id,old_scope_unit_id,source_phrase,old_source_phrase,old_revision_id,new_revision_id,action_id) SELECT rowid,change_id,project_id,kind,locale,scope_unit_id,old_scope_unit_id,source_phrase,old_source_phrase,old_revision_id,new_revision_id,action_id FROM resource_changes;
-        DROP TABLE context_current;DROP TABLE context_revisions;DROP TABLE resource_changes;
-        ALTER TABLE context_revisions_legacy RENAME TO context_revisions;
-        ALTER TABLE context_current_legacy RENAME TO context_current;
-        ALTER TABLE resource_changes_legacy RENAME TO resource_changes;
-        COMMIT;");
-    if result.is_err()&&!c.is_autocommit(){c.execute_batch("ROLLBACK")?;}
-    c.pragma_update(None,"foreign_keys",foreign_keys)?;
-    result
-}
-
 pub(super) fn validate(connection: &Connection) -> rusqlite::Result<()> {
-    validate_version(connection, super::SCHEMA_VERSION)
-}
-
-pub(super) fn validate_version(connection: &Connection, version: i64) -> rusqlite::Result<()> {
     context_facts::validate(connection)?;
     strategy::validate(connection)?;
     for (name, _) in TABLES {
@@ -947,10 +845,7 @@ pub(super) fn validate_version(connection: &Connection, version: i64) -> rusqlit
     correction::validate(connection).map_err(|_| rusqlite::Error::InvalidQuery)?;
     mcp::validate_captures(connection).map_err(|_| rusqlite::Error::InvalidQuery)?;
     conversation::validate(connection).map_err(|_| rusqlite::Error::InvalidQuery)?;
-    if version >= 66 {
-        context_resources::validate(connection).map_err(|_| rusqlite::Error::InvalidQuery)?;
-    }
-    Ok(())
+    context_resources::validate(connection).map_err(|_| rusqlite::Error::InvalidQuery)
 }
 
 fn validate_file_decision(c: &Connection, receipt: &ResourceDecisionResult, file: &GlossaryFile) -> Result<(), ExecutionError> {

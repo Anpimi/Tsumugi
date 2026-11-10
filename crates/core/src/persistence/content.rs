@@ -196,19 +196,8 @@ pub(super) fn read_bundle(
     connection: &Connection,
     set: ExecutionId,
 ) -> Result<tsumugi_plugin_sdk::SourceExtractionInput, ExecutionError> {
-    read_bundle_limited(
-        connection,
-        set,
-        MAX_CAPTURED_SOURCE_INPUT_BYTES,
-        tsumugi_plugin_sdk::MAX_EXCHANGE_BYTES,
-    )
-}
-fn read_bundle_limited(
-    connection: &Connection,
-    set: ExecutionId,
-    input_limit: usize,
-    file_limit: usize,
-) -> Result<tsumugi_plugin_sdk::SourceExtractionInput, ExecutionError> {
+    let input_limit = MAX_CAPTURED_SOURCE_INPUT_BYTES;
+    let file_limit = tsumugi_plugin_sdk::MAX_EXCHANGE_BYTES;
     let (project,payload,digest):(String,Vec<u8>,String)=connection.query_row(
         "SELECT project_id,CASE WHEN length(payload)<=?2 THEN payload END,digest FROM source_sets WHERE set_id=?1",
         params![set.to_string(),input_limit as i64],|r|Ok((r.get(0)?,r.get(1)?,r.get(2)?))).map_err(sql_error)?;
@@ -318,15 +307,8 @@ fn validate_in(
     open_proofs: Option<&super::ledger::OpenPluginProofs<'_>>,
 ) -> Result<(), ExecutionError> {
     maintenance_hook::validate(connection)?;
-    let version: i64 = connection
-        .pragma_query_value(None, "user_version", |r| r.get(0))
-        .map_err(sql_error)?;
-    if version >= 69 {
-        validation_history::validate(connection, open_proofs)?;
-    }
-    if version >= 70 {
-        lineage_corrections::validate(connection)?;
-    }
+    validation_history::validate(connection, open_proofs)?;
+    lineage_corrections::validate(connection)?;
     for (name, sql) in TABLES {
         let actual: String = connection
             .query_row(
@@ -335,18 +317,10 @@ fn validate_in(
                 |r| r.get(0),
             )
             .map_err(sql_error)?;
-        if actual != super::capture_capacity::schema_sql(name, sql, version) {
+        if actual != *sql {
             return Err(corrupt());
         }
     }
-    let (input_limit, file_limit) = if version < 76 {
-        (1024 * 1024, 1024 * 1024)
-    } else {
-        (
-            MAX_CAPTURED_SOURCE_INPUT_BYTES,
-            tsumugi_plugin_sdk::MAX_EXCHANGE_BYTES,
-        )
-    };
     let mut referenced_sets = std::collections::BTreeSet::new();
     let mut attempts=connection.prepare("SELECT attempt_id FROM execution_attempts a JOIN execution_tasks t ON t.task_id=a.task_id WHERE t.operation=?1").map_err(sql_error)?;
     for attempt in attempts
@@ -355,9 +329,7 @@ fn validate_in(
     {
         let input = load_input(connection, id(attempt.map_err(sql_error)?)?)?;
         let bundle = SourceBundle::from_input(&input)?;
-        if bundle.source_input()
-            != read_bundle_limited(connection, bundle.set_id, input_limit, file_limit)?
-        {
+        if bundle.source_input() != read_bundle(connection, bundle.set_id)? {
             return Err(corrupt());
         }
         referenced_sets.insert(bundle.set_id);

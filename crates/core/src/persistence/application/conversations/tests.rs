@@ -1,8 +1,7 @@
 use super::*;
-use crate::{ProjectMetadata, application::*, execution::FixedInput};
+use crate::{ProjectMetadata, application::*};
 use std::{
     collections::BTreeMap,
-    process::Command,
     sync::{Arc, Barrier, atomic::Ordering},
     time::Duration,
 };
@@ -36,10 +35,6 @@ fn append(r: &CreateProjectConversation, text: &str) -> AppendProjectConversatio
         body: text.into(),
     }
 }
-fn version(c: &Connection) -> i64 {
-    c.pragma_query_value(None, "user_version", |r| r.get(0))
-        .unwrap()
-}
 fn legacy_rows(c: &Connection) -> BTreeMap<String, Vec<Vec<rusqlite::types::Value>>> {
     let names=c.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%' AND name NOT LIKE 'application_conversation%' ORDER BY name").unwrap()
         .query_map([],|r|r.get::<_,String>(0)).unwrap().collect::<Result<Vec<_>,_>>().unwrap();
@@ -63,23 +58,6 @@ fn legacy_rows(c: &Connection) -> BTreeMap<String, Vec<Vec<rusqlite::types::Valu
         })
         .collect()
 }
-fn make_legacy(path: &std::path::Path) {
-    let c = Connection::open(path.join(super::super::super::DATABASE_FILENAME)).unwrap();
-    for name in [
-        "application_conversation_planning_attempts",
-        "application_conversation_work_plans",
-        "application_conversation_proposals",
-        "application_conversation_actions",
-        "application_conversation_messages",
-        "application_conversations",
-    ] {
-        c.execute_batch(&format!("DROP TABLE {name}")).unwrap();
-    }
-    // Reconstruct all supported old structures through their existing owner.
-    crate::persistence::prepare_legacy_fixture_schema(&c, 61).unwrap();
-    c.pragma_update(None, "user_version", 61).unwrap();
-}
-
 #[test]
 fn original_actions_are_durable_exact_and_independent_of_work_plans() {
     let (_temp, store, create) = fixture();
@@ -468,148 +446,4 @@ fn corrupt_original_action_never_clears_unknown_or_returns_an_absent_result() {
         ErrorCode::CorruptLedger
     );
     assert!(store.is_reconciling());
-}
-
-#[test]
-fn conversation_migration_child() {
-    let Ok(path) = std::env::var("TSUMUGI_CONVERSATION_MIGRATION_PROJECT") else {
-        return;
-    };
-    let _ = ProjectStore::open(path).unwrap();
-    panic!("migration did not reach its crash hook");
-}
-
-#[test]
-fn migration_interruptions_preserve_all_original_plan_team_and_receipt_rows() {
-    use crate::persistence::application::tests::{config, consent, fixture as work_fixture};
-    for point in [
-        "conversation-before-ddl",
-        "conversation-after-ddl",
-        "conversation-before-commit",
-        "conversation-after-commit",
-    ] {
-        let (temp, mut store, units) = work_fixture();
-        let mut options = PlanOptions::default();
-        options.team_discussions = Some(TeamDiscussionPolicy::CurrentPlanV1 {});
-        let plan = store
-            .prepare_work_plan(Some(config()), "zh-CN", &units, options)
-            .unwrap();
-        let mut permission = consent(&plan);
-        permission.effects = plan.authorization_effects().unwrap();
-        let grant = store.authorize_work_plan(&plan, &permission).unwrap();
-        store
-            .enqueue_execution(&FixedInput::capture(grant.input.clone().unwrap()).unwrap())
-            .unwrap();
-        let scope = store.work_plan_agent_scope(grant.lease).unwrap();
-        let basis = &plan.selection_basis[0];
-        let post = PublishTeamDiscussion {
-            post_id: ExecutionId::new(),
-            target: TeamDiscussionTarget {
-                unit_id: basis.unit_id,
-                locale: plan.locale.clone(),
-                source_snapshot_id: basis.source_snapshot_id,
-                source_revision_id: basis.source_revision_id,
-            },
-            kind: TeamDiscussionKind::Note,
-            body: "Original retained team discussion 👩🏽‍💻".into(),
-            references: vec![],
-            reply_to: None,
-            supersedes: None,
-            question: None,
-        };
-        let saved = store
-            .publish_human_team_discussion(&scope, "local-user", &post)
-            .unwrap();
-        let before = crate::persistence::legacy_fixture_rows(store.connection().unwrap(), 61);
-        let path = store.directory().to_path_buf();
-        store.close().unwrap();
-        make_legacy(&path);
-        let raw = Connection::open(path.join(super::super::super::DATABASE_FILENAME)).unwrap();
-        let before_legacy = crate::persistence::legacy_fixture_rows(&raw, 61);
-        assert_eq!(version(&raw), 61);
-        drop(raw);
-        let marker = temp.path().join("migration-hook");
-        let output = Command::new(std::env::current_exe().unwrap())
-            .args([
-                "--exact",
-                "persistence::application::conversations::tests::conversation_migration_child",
-                "--nocapture",
-            ])
-            .env("TSUMUGI_CONVERSATION_MIGRATION_PROJECT", &path)
-            .env("TSUMUGI_MIGRATION_CRASH", point)
-            .env("TSUMUGI_MIGRATION_HOOK", &marker)
-            .output()
-            .unwrap();
-        assert!(
-            !output.status.success(),
-            "crash child unexpectedly succeeded"
-        );
-        assert_eq!(
-            std::fs::read_to_string(&marker).unwrap_or_else(|error| panic!(
-                "migration child did not reach {point}: {error}; stdout: {}; stderr: {}",
-                String::from_utf8_lossy(&output.stdout), String::from_utf8_lossy(&output.stderr))),
-            point,
-            "the actual migration hook must run"
-        );
-        let backups: Vec<_> = std::fs::read_dir(&path).unwrap()
-            .map(|entry| entry.unwrap().path())
-            .filter(|path| path.extension().is_some_and(|extension| extension == "backup"))
-            .collect();
-        assert_eq!(backups.len(), 1);
-        let backup = Connection::open_with_flags(&backups[0], rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY).unwrap();
-        assert_eq!(version(&backup), 61);
-        assert_eq!(crate::persistence::legacy_fixture_rows(&backup, 61), before_legacy);
-        drop(backup);
-        let raw = Connection::open(path.join(super::super::super::DATABASE_FILENAME)).unwrap();
-        assert_eq!(
-            version(&raw),
-            if point == "conversation-after-commit" {
-                crate::persistence::SCHEMA_VERSION
-            } else {
-                61
-            }
-        );
-        assert_eq!(crate::persistence::legacy_fixture_rows(&raw, 61), if point == "conversation-after-commit" { before.clone() } else { before_legacy });
-        drop(raw);
-        let reopened = ProjectStore::open(&path).unwrap();
-        assert_eq!(version(reopened.connection().unwrap()), crate::persistence::SCHEMA_VERSION);
-        assert_eq!(crate::persistence::legacy_fixture_rows(reopened.connection().unwrap(), 61), before);
-        assert_eq!(reopened.work_plan(plan.plan_id).unwrap(), plan);
-        assert_eq!(
-            reopened
-                .work_plan_receipt(permission.action_id)
-                .unwrap()
-                .unwrap(),
-            grant
-        );
-        assert_eq!(
-            reopened
-                .read_team_history_post(plan.project_id, plan.plan_id, saved.publication.post_id)
-                .unwrap(),
-            saved
-        );
-    }
-}
-
-#[test]
-fn invalid_legacy_shape_is_rejected_before_additive_migration_writes() {
-    let (_temp, store, _) = fixture();
-    let path = store.directory().to_path_buf();
-    store.close().unwrap();
-    make_legacy(&path);
-    let raw = Connection::open(path.join(super::super::super::DATABASE_FILENAME)).unwrap();
-    raw.execute_batch("CREATE TABLE unexpected_state(value TEXT)")
-        .unwrap();
-    drop(raw);
-    assert!(ProjectStore::open(&path).is_err());
-    let raw = Connection::open(path.join(super::super::super::DATABASE_FILENAME)).unwrap();
-    assert_eq!(version(&raw), 61);
-    let count: i64 = raw
-        .query_row(
-            "SELECT COUNT(*) FROM sqlite_master WHERE name LIKE 'application_conversation%'",
-            [],
-            |r| r.get(0),
-        )
-        .unwrap();
-    assert_eq!(count, 0);
 }

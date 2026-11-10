@@ -185,10 +185,10 @@ pnpm --dir apps/desktop check:contracts
 
 ### 存储格式、诊断与测试宿主
 
-- **数据库兼容**：[版本管理策略](docs/versioning.md#core-storage-and-desktop-domain-transition)统一记录当前 schema、支持的升级范围及不支持项目的恢复方式。不支持的旧目录请原样保留，打开不会重置其中内容。
+- **数据库兼容**：[版本管理策略](docs/versioning.md#core-storage-and-desktop-domain-transition)统一记录当前 schema 及不支持项目的恢复方式。不支持的旧目录请原样保留，打开不会重置其中内容。
 - **结构化诊断与恢复**：命令失败时会保留原始结构化证据。若保存时底层基准已发生变化，可展开诊断面板对照提交值与当前值，并按提示执行下一步读取或决策，系统不会自动重放写入。命令边界日志通过诊断编号关联，仅记录操作标签与错误分类，不包含请求正文或本地工程路径。
 - **执行测试宿主**：开发调试时可使用隔离的[执行测试宿主](docs/execution-test-host.md)，在不接入外部翻译模型的情况下验证任务进度、取消与恢复流程。
 
 ## 版本与状态
 
-工作区版本元数据仍为 **`0.2.0-alpha.1`**，该版本已经发布的快照保持冻结；当前源码改动记在 **Unreleased**，不属于该下载快照。最近变更、兼容性边界与版本管理规则详见[更新日志](CHANGELOG.zh-CN.md)与[版本管理策略](docs/versioning.md)。
+工作区当前目标为 **`0.3.0-alpha.1`**。**Unreleased** 中的改动与已冻结的 `0.2.0-alpha.1` 下载分开。最近变更、兼容性边界与版本管理规则详见[更新日志](CHANGELOG.zh-CN.md)与[版本管理策略](docs/versioning.md)。

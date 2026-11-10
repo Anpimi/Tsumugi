@@ -1,7 +1,6 @@
 use super::*;
 use crate::application::*;
 use crate::persistence::application::conversations::proposals::tests::completed_profile;
-use crate::persistence::{DATABASE_FILENAME, SCHEMA_VERSION};
 use std::collections::BTreeMap;
 
 fn fixture() -> (tempfile::TempDir, ProjectStore, Vec<ExecutionId>) {
@@ -611,11 +610,6 @@ fn term_revision_preserves_original_entries_and_only_resolves_summary_and_questi
     );
 }
 
-fn legacy_72(c: &Connection) {
-    crate::persistence::prepare_legacy_fixture_schema(c, 72).unwrap();
-    c.pragma_update(None, "user_version", 72).unwrap();
-}
-
 fn rows(c: &Connection) -> BTreeMap<String, Vec<Vec<rusqlite::types::Value>>> {
     let tables = c.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%' ORDER BY name").unwrap()
         .query_map([], |r| r.get::<_,String>(0)).unwrap().collect::<Result<Vec<_>,_>>().unwrap();
@@ -638,108 +632,4 @@ fn rows(c: &Connection) -> BTreeMap<String, Vec<Vec<rusqlite::types::Value>>> {
             (name, values)
         })
         .collect()
-}
-fn conversation_capture_ddl(c: &Connection) -> bool {
-    c.query_row("SELECT instr(sql, '''conversation''')>0 FROM sqlite_master WHERE type='table' AND name='resource_captures'", [], |r|r.get(0)).unwrap()
-}
-#[test]
-fn term_capture_migration_child() {
-    let Ok(path) = std::env::var("TSUMUGI_TERM_CAPTURE_MIGRATION_PROJECT") else {
-        return;
-    };
-    let _ = ProjectStore::open(path).unwrap();
-    panic!("migration did not reach its crash hook");
-}
-#[test]
-fn schema_72_capture_upgrade_preserves_rowids_foreign_keys_edited_receipts_and_atomicity() {
-    for point in [
-        "conversation-before-ddl",
-        "conversation-after-ddl",
-        "conversation-before-commit",
-        "conversation-after-commit",
-    ] {
-        let (temp, mut store, project) = super::super::tests::fixture_project();
-        let capture = store
-            .capture_glossary(
-                project,
-                ExecutionId::new(),
-                include_bytes!("../../../../tests/fixtures/resource-updates/g1.json"),
-            )
-            .unwrap();
-        let request = ResourceDecision {
-            project_id: project,
-            action_id: ExecutionId::new(),
-            capture_id: capture.capture_id,
-            entry_id: "barrel".into(),
-            expected_revision_id: None,
-            decision: ResourceDecisionKind::Adopt,
-            edited_target: Some("Original edited receipt".into()),
-        };
-        let receipt = store.decide_glossary_entry(&request).unwrap();
-        let path = store.directory().to_path_buf();
-        store.close().unwrap();
-        let raw = Connection::open(path.join(DATABASE_FILENAME)).unwrap();
-        raw.execute_batch(
-            "UPDATE resource_captures SET rowid=41; UPDATE resource_changes SET rowid=71",
-        )
-        .unwrap();
-        legacy_72(&raw);
-        let before = rows(&raw);
-        assert!(!conversation_capture_ddl(&raw));
-        drop(raw);
-        let marker = temp.path().join("term-capture-migration-hook");
-        let output = std::process::Command::new(std::env::current_exe().unwrap())
-            .args([
-                "--exact",
-                "persistence::resources::conversation::tests::term_capture_migration_child",
-                "--nocapture",
-            ])
-            .env("TSUMUGI_TERM_CAPTURE_MIGRATION_PROJECT", &path)
-            .env("TSUMUGI_MIGRATION_CRASH", point)
-            .env("TSUMUGI_MIGRATION_HOOK", &marker)
-            .output()
-            .unwrap();
-        assert!(!output.status.success());
-        assert_eq!(
-            std::fs::read_to_string(&marker).unwrap_or_else(|error| panic!(
-                "missing {point}: {error}; {}",
-                String::from_utf8_lossy(&output.stderr)
-            )),
-            point
-        );
-        let raw = Connection::open(path.join(DATABASE_FILENAME)).unwrap();
-        let committed = point == "conversation-after-commit";
-        assert_eq!(
-            raw.pragma_query_value(None, "user_version", |r| r.get::<_, i64>(0))
-                .unwrap(),
-            if committed { SCHEMA_VERSION } else { 72 }
-        );
-        assert_eq!(conversation_capture_ddl(&raw), committed);
-        assert_eq!(rows(&raw), before);
-        assert!(
-            !raw.prepare("PRAGMA foreign_key_check")
-                .unwrap()
-                .exists([])
-                .unwrap()
-        );
-        drop(raw);
-        let store = ProjectStore::open(path).unwrap();
-        assert_eq!(
-            store
-                .connection()
-                .unwrap()
-                .pragma_query_value(None, "user_version", |r| r.get::<_, i64>(0))
-                .unwrap(),
-            SCHEMA_VERSION
-        );
-        assert_eq!(rows(store.connection().unwrap()), before);
-        assert_eq!(
-            store
-                .resource_decision_request_observation(&request)
-                .unwrap()
-                .unwrap()
-                .receipt,
-            receipt
-        );
-    }
 }

@@ -44,22 +44,6 @@ pub(in crate::persistence) fn record_input(
     Ok(())
 }
 
-/// Migration only: stream every original frame through the existing reader.
-/// Results and proposal capture are deliberately irrelevant to discovery.
-pub(in crate::persistence) fn backfill(c: &Connection) -> Result<(), ExecutionError> {
-    let mut q = c
-        .prepare("SELECT attempt_id FROM execution_attempts ORDER BY sequence")
-        .map_err(sql)?;
-    let ids = q
-        .query_map([], |row| row.get::<_, String>(0))
-        .map_err(sql)?;
-    for id in ids {
-        let id = ExecutionId::parse(&id.map_err(sql)?).map_err(|_| corrupt())?;
-        record_input(c, &ledger::load_input(c, id)?)?;
-    }
-    Ok(())
-}
-
 /// Join the existing complete open-time ledger pass, so missing, forged or
 /// reparented locators cannot make an incomplete history look authoritative.
 pub(in crate::persistence) fn validate_input(

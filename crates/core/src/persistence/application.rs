@@ -46,18 +46,12 @@ pub(super) fn validate(c: &rusqlite::Connection) -> Result<(), ExecutionError> {
     team::validate(c)?;
     coordination::validate(c)
 }
-#[cfg(test)]
 pub(super) fn validate_after_open(
     c: &rusqlite::Connection, inputs: OpenControlValidation<'_>,
 ) -> Result<(), ExecutionError> {
-    validate_after_open_version(c, inputs, super::SCHEMA_VERSION)
-}
-pub(super) fn validate_after_open_version(
-    c: &rusqlite::Connection, inputs: OpenControlValidation<'_>, version: i64,
-) -> Result<(), ExecutionError> {
-    if version >= 62 { self::conversations::validate_version(c, version)?; }
+    conversations::validate(c)?;
     control::validate_after_open(c, inputs)?;
-    team::validate_version(c, version)?;
+    team::validate(c)?;
     coordination::validate(c)
 }
 pub use selection::{

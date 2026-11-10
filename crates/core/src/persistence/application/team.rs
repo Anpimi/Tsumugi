@@ -1535,11 +1535,6 @@ pub(super) fn validate(c: &Connection) -> Result<(), ExecutionError> {
     Ok(())
 }
 
-pub(super) fn validate_version(c: &Connection, version: i64) -> Result<(), ExecutionError> {
-    if version < 71 { super::team_questions::validate_legacy(c)?; }
-    validate(c)
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;

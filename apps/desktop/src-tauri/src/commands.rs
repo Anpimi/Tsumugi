@@ -1387,9 +1387,8 @@ fn map_metadata_error(error: MetadataError, stage: CommandStage) -> CommandError
 }
 
 fn map_persistence_error(error: PersistenceError, fallback: CommandStage) -> CommandError {
-    let snapshot_failed = error.stage() == PersistenceStage::UpgradeSnapshot;
     let stage = command_stage(error.stage(), fallback);
-    let mut mapped = match error {
+    match error {
         PersistenceError::InvalidInput { error, .. } => map_metadata_error(error, stage),
         PersistenceError::DestinationConflict { .. } => {
             CommandError::simple(CommandErrorCode::DestinationConflict, stage)
@@ -1424,22 +1423,14 @@ fn map_persistence_error(error: PersistenceError, fallback: CommandStage) -> Com
         PersistenceError::StorageFailed { .. } => {
             CommandError::simple(CommandErrorCode::StorageFailed, stage)
         }
-        // An uncertain snapshot publication still precedes all migration writes.
-        PersistenceError::OutcomeUnknown { .. } if snapshot_failed => {
-            CommandError::simple(CommandErrorCode::StorageFailed, stage)
-        }
         PersistenceError::OutcomeUnknown { .. } => CommandError::unknown(stage),
-    };
-    if snapshot_failed {
-        mapped.reason = Some("upgrade-snapshot-failed".into());
     }
-    mapped
 }
 
 fn command_stage(persistence: PersistenceStage, fallback: CommandStage) -> CommandStage {
     match persistence {
         PersistenceStage::Create => CommandStage::Create,
-        PersistenceStage::Open | PersistenceStage::Ownership | PersistenceStage::UpgradeSnapshot => fallback,
+        PersistenceStage::Open | PersistenceStage::Ownership => fallback,
         PersistenceStage::Read | PersistenceStage::Reconcile => CommandStage::Read,
         PersistenceStage::Write | PersistenceStage::Commit => fallback,
         PersistenceStage::Close => CommandStage::Close,
@@ -2008,15 +1999,23 @@ mod tests {
     }
 
     #[test]
-    fn upgrade_snapshot_failure_is_a_rejected_open_even_if_the_snapshot_write_was_uncertain() {
-        let mapped = map_persistence_error(
-            PersistenceError::OutcomeUnknown { stage: PersistenceStage::UpgradeSnapshot },
-            CommandStage::Open,
-        );
-        assert_eq!(mapped.code, CommandErrorCode::StorageFailed);
-        assert_eq!(mapped.stage, CommandStage::Open);
-        assert_eq!(mapped.reason.as_deref(), Some("upgrade-snapshot-failed"));
-        assert!(!mapped.recovery_required);
+    fn unsupported_project_schema_rejects_open_and_restore() {
+        for (persistence, command) in [
+            (PersistenceStage::Open, CommandStage::Open),
+            (PersistenceStage::Create, CommandStage::Create),
+        ] {
+            let mapped = map_persistence_error(
+                PersistenceError::UnsupportedSchema {
+                    found_version: 74,
+                    stage: persistence,
+                },
+                command,
+            );
+            assert_eq!(mapped.code, CommandErrorCode::UnsupportedSchema);
+            assert_eq!(mapped.stage, command);
+            assert_eq!(mapped.outcome, CommandOutcome::Rejected);
+            assert!(!mapped.recovery_required);
+        }
     }
 
     #[test]

@@ -10,7 +10,7 @@ Open **Project settings → Save project backup** to save the committed project 
 
 With no project open, choose **Restore a backup**. Enter a new folder name, choose the backup and then its destination parent. The restored project opens separately. Use Extensions or Model connections to set up any missing dependencies. To check an earlier export, select its saved release and original folder in Delivery, then choose **Check folder**. **New file** means the file is missing there. Files that match or differ are marked separately. If the restore result is uncertain, use **Open a project** to check the destination folder before restoring again.
 
-Backups from [supported earlier project schemas](versioning.md#core-storage-and-desktop-domain-transition) use the normal project upgrade checks on an unpublished copy. The original backup stays unchanged. Before upgrading, Tsumugi saves an original-schema snapshot beside the restored project; if that snapshot cannot be saved, restoration stops. Unsupported or damaged backups are refused. The project becomes available only after validation finishes and its project lock is published.
+Restoration requires a backup in the [current project format](versioning.md#core-storage-and-desktop-domain-transition). Older backups are refused before creating the destination folder. Tsumugi keeps the original backup and verifies the unpublished copy before making the restored project available. Keep older backups intact and import the original source files into a new project.
 
 ## Rescue local draft text
 

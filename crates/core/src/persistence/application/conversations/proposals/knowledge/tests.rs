@@ -493,7 +493,7 @@ fn questions_need_a_real_revision_and_stale_source_only_blocks_adoption() {
 }
 
 #[test]
-fn schema_66_upgrade_keeps_the_exact_old_profile_and_original_proposal_bytes() {
+fn reopen_keeps_exact_profile_and_original_proposal_bytes() {
     let (_temp, mut store, units) = fixture();
     let request = super::super::tests::completed(
         &mut store,
@@ -506,10 +506,6 @@ fn schema_66_upgrade_keeps_the_exact_old_profile_and_original_proposal_bytes() {
     let bytes = input.bytes().to_vec();
     let path = store.directory().to_path_buf();
     drop(store);
-    let c = Connection::open(path.join(crate::persistence::DATABASE_FILENAME)).unwrap();
-    crate::persistence::prepare_legacy_fixture_schema(&c, 66).unwrap();
-    c.pragma_update(None, "user_version", 66).unwrap();
-    drop(c);
     let reopened = ProjectStore::open(path).unwrap();
     assert_eq!(
         reopened

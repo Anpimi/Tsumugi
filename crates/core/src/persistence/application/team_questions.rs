@@ -227,22 +227,3 @@ impl ProjectStore {
         })
     }
 }
-
-/// Older schemas cannot carry new question consent or typed post/author fields.
-pub(super) fn validate_legacy(c: &Connection) -> Result<(), ExecutionError> {
-    let mut plans = c.prepare("SELECT plan FROM application_plans").map_err(sql)?;
-    for bytes in plans.query_map([], |row| row.get::<_, Vec<u8>>(0)).map_err(sql)? {
-        let value: serde_json::Value = codec::decode(&bytes.map_err(sql)?, 1024 * 1024)?;
-        if value.get("options").and_then(|value| value.get("teamQuestions")).is_some() { return Err(corrupt()); }
-    }
-    let mut posts = c.prepare("SELECT record FROM application_team_posts").map_err(sql)?;
-    for bytes in posts.query_map([], |row| row.get::<_, Vec<u8>>(0)).map_err(sql)? {
-        let value: serde_json::Value = codec::decode(&bytes.map_err(sql)?, 32768)?;
-        if value.get("author").and_then(|value| value.get("kind")).and_then(|value| value.as_str()) == Some("local-human")
-            || value.get("publication").is_some_and(|publication| publication.get("question").is_some()
-                || publication.get("kind").and_then(|value| value.as_str()) == Some("human-question")) {
-            return Err(corrupt());
-        }
-    }
-    Ok(())
-}
