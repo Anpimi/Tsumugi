@@ -163,14 +163,14 @@ fn project_seek_crosses_releases_and_locale_filters_keep_the_complete_original_l
 }
 
 #[test]
-fn delivery_writes_invalidate_the_original_release_scope_and_reads_do_not_settle_unknown() {
+fn delivery_writes_invalidate_only_receipts_and_reads_do_not_settle_unknown() {
     let (_directory, mut store, project, release) = fixture();
     let empty = page(&store, project, None, &[]);
     let before = store.changes_since(Revision::new(0).unwrap()).sequence;
     let delivery = pending(&mut store, release, "clock");
     let changed = store.changes_since(before);
     assert!(changed.sequence > before);
-    assert_eq!(changed.scopes, vec![crate::ChangeScope::Release]);
+    assert_eq!(changed.scopes, vec![crate::ChangeScope::Delivery]);
     let original = page(&store, project, None, &[]);
     assert_ne!(original.basis, empty.basis);
     let before = changed.sequence;
@@ -181,7 +181,7 @@ fn delivery_writes_invalidate_the_original_release_scope_and_reads_do_not_settle
     let unknown = store.finish_delivery(delivery.action_id, files).unwrap();
     let finished = store.changes_since(before);
     assert!(finished.sequence > before);
-    assert_eq!(finished.scopes, vec![crate::ChangeScope::Release]);
+    assert_eq!(finished.scopes, vec![crate::ChangeScope::Delivery]);
     let uncertain = page(&store, project, None, &[]);
     assert_ne!(uncertain.basis, original.basis);
     let writes = store.connection().unwrap().total_changes();
@@ -193,7 +193,7 @@ fn delivery_writes_invalidate_the_original_release_scope_and_reads_do_not_settle
     store.reconcile_delivery(delivery.action_id, files).unwrap();
     let settled = store.changes_since(finished.sequence);
     assert!(settled.sequence > finished.sequence);
-    assert_eq!(settled.scopes, vec![crate::ChangeScope::Release]);
+    assert_eq!(settled.scopes, vec![crate::ChangeScope::Delivery]);
     let resolved = page(&store, project, None, &[]);
     assert!(resolved.items.is_empty());
     assert_ne!(resolved.basis, uncertain.basis);

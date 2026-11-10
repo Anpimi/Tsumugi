@@ -18,6 +18,7 @@ pub enum ChangeScope {
     Review,
     Arena,
     Release,
+    Delivery,
     Execution,
 }
 

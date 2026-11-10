@@ -702,7 +702,7 @@ function useReleaseOwner(project: ProjectView) {
           const resolved = await lookupDelivery(latest);
           if (!resolved && uncertain && live() && flight.current === ticket) throw writeFailure;
         }
-      } finally { if (live() && flight.current === ticket) reads.invalidate(["release"], false); }
+      } finally { if (live() && flight.current === ticket) reads.invalidate(["delivery"], false); }
     });
   }
   async function checkExport() {
@@ -711,7 +711,7 @@ function useReleaseOwner(project: ProjectView) {
     await run(async () => {
       const ticket = flight.current;
       await lookupDelivery(pending);
-      if (live() && flight.current === ticket) reads.invalidate(["release"], false);
+      if (live() && flight.current === ticket) reads.invalidate(["delivery"], false);
     }, true);
   }
   async function reconcile(delivery: DeliveryView) {
@@ -747,7 +747,7 @@ function useReleaseOwner(project: ProjectView) {
           const resolved = await lookupDelivery(latest);
           if (!resolved && uncertain && live() && flight.current === ticket) throw writeFailure;
         }
-      } finally { if (live() && flight.current === ticket) reads.invalidate(["release"], false); }
+      } finally { if (live() && flight.current === ticket) reads.invalidate(["delivery"], false); }
     }, true);
   }
   function reset() {

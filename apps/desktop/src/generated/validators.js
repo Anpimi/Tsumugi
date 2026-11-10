@@ -670,7 +670,7 @@ const schema105 = {"$id":"urn:tsumugi:ipc:responses:changes","$ref":"urn:tsumugi
 const schema49 = {"properties":{"epoch":{"$ref":"#/definitions/ExecutionId"},"progressSequence":{"$ref":"#/definitions/Revision"},"projectId":{"$ref":"#/definitions/ExecutionId"},"runtime":{"$ref":"#/definitions/RuntimeStatus"},"scopes":{"items":{"$ref":"#/definitions/ChangeScope"},"type":"array"},"sequence":{"$ref":"#/definitions/Revision"},"sessionToken":{"type":"string"}},"required":["projectId","sessionToken","epoch","sequence","progressSequence","scopes","runtime"],"type":"object"};
 const schema50 = {"pattern":"^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$","type":"string"};
 const schema51 = {"pattern":"^(0|[1-9][0-9]{0,17}|[1-8][0-9]{18}|9[0-1][0-9]{17}|92[0-1][0-9]{16}|922[0-2][0-9]{15}|9223[0-2][0-9]{14}|92233[0-6][0-9]{13}|922337[0-1][0-9]{12}|92233720[0-2][0-9]{10}|922337203[0-5][0-9]{9}|9223372036[0-7][0-9]{8}|92233720368[0-4][0-9]{7}|922337203685[0-3][0-9]{6}|9223372036854[0-6][0-9]{5}|92233720368547[0-6][0-9]{4}|922337203685477[0-4][0-9]{3}|9223372036854775[0-7][0-9]{2}|922337203685477580[0-6][0-9]{0}|9223372036854775807)$","type":"string"};
-const schema88 = {"enum":["project","source","translation","resources","review","arena","release","execution"],"type":"string"};
+const schema88 = {"enum":["project","source","translation","resources","review","arena","release","delivery","execution"],"type":"string"};
 const pattern2 = new RegExp("^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$", "u");
 const schema53 = {"additionalProperties":false,"properties":{"active":{"type":"boolean"},"deliveryActivity":{"anyOf":[{"$ref":"#/definitions/DecisionDeliveryActivity"},{"type":"null"}],"description":"Present only while the original native delivery job is owned. The shared\nruntime snapshot can invalidate readers even if outcome persistence fails."},"error":{"anyOf":[{"$ref":"#/definitions/CommandError"},{"type":"null"}]},"queryCount":{"format":"uint32","maximum":4294967295,"minimum":0,"type":"integer"},"quiescing":{"type":"boolean"}},"required":["active","quiescing","queryCount","error"],"type":"object"};
 const schema54 = {"additionalProperties":false,"description":"The original Host job owns native IO. This observation does not recreate\nits directory selection or permit access to the destination.","properties":{"actionId":{"anyOf":[{"$ref":"#/definitions/ExecutionId"},{"type":"null"}]},"jobId":{"$ref":"#/definitions/ExecutionId"},"kind":{"$ref":"#/definitions/DecisionDeliveryJobKind"},"releaseId":{"$ref":"#/definitions/ExecutionId"}},"required":["jobId","kind","releaseId","actionId"],"type":"object"};
@@ -4157,7 +4157,7 @@ if(typeof data5 !== "string"){
 validate48.errors = [{instancePath:instancePath+"/scopes/" + i0,schemaPath:"#/definitions/ChangeScope/type",keyword:"type",params:{type: "string"},message:"must be string"}];
 return false;
 }
-if(!((((((((data5 === "project") || (data5 === "source")) || (data5 === "translation")) || (data5 === "resources")) || (data5 === "review")) || (data5 === "arena")) || (data5 === "release")) || (data5 === "execution"))){
+if(!(((((((((data5 === "project") || (data5 === "source")) || (data5 === "translation")) || (data5 === "resources")) || (data5 === "review")) || (data5 === "arena")) || (data5 === "release")) || (data5 === "delivery")) || (data5 === "execution"))){
 validate48.errors = [{instancePath:instancePath+"/scopes/" + i0,schemaPath:"#/definitions/ChangeScope/enum",keyword:"enum",params:{allowedValues: schema88.enum},message:"must be equal to one of the allowed values"}];
 return false;
 }
@@ -5026,7 +5026,7 @@ if(typeof data5 !== "string"){
 validate60.errors = [{instancePath:instancePath+"/scopes/" + i0,schemaPath:"#/definitions/ChangeScope/type",keyword:"type",params:{type: "string"},message:"must be string"}];
 return false;
 }
-if(!((((((((data5 === "project") || (data5 === "source")) || (data5 === "translation")) || (data5 === "resources")) || (data5 === "review")) || (data5 === "arena")) || (data5 === "release")) || (data5 === "execution"))){
+if(!(((((((((data5 === "project") || (data5 === "source")) || (data5 === "translation")) || (data5 === "resources")) || (data5 === "review")) || (data5 === "arena")) || (data5 === "release")) || (data5 === "delivery")) || (data5 === "execution"))){
 validate60.errors = [{instancePath:instancePath+"/scopes/" + i0,schemaPath:"#/definitions/ChangeScope/enum",keyword:"enum",params:{allowedValues: schema88.enum},message:"must be equal to one of the allowed values"}];
 return false;
 }

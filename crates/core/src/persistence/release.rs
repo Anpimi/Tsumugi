@@ -365,7 +365,7 @@ impl ProjectStore {
         let unknown = self.execution_unknown.clone();
         let tx = self.connection_mut().map_err(|_| failure(ErrorCode::StorageFailed, "delivery-write"))?
             .transaction_with_behavior(TransactionBehavior::Immediate).map_err(sql)?;
-        let observer = changes.observe(&tx, super::ChangeScope::Release);
+        let observer = changes.observe(&tx, super::ChangeScope::Delivery);
         if let Some(existing) = delivery::by_action_in(&tx, action_id)? {
             if existing.release_id != release_id
                 || existing.directory != directory
@@ -475,7 +475,7 @@ impl ProjectStore {
         let unknown = self.execution_unknown.clone();
         let tx = self.connection_mut().map_err(|_| failure(ErrorCode::StorageFailed, "delivery-write"))?
             .transaction_with_behavior(TransactionBehavior::Immediate).map_err(sql)?;
-        let observer = changes.observe(&tx, super::ChangeScope::Release);
+        let observer = changes.observe(&tx, super::ChangeScope::Delivery);
         if delivery::by_action_in(&tx, action_id)?.as_ref() != Some(&current) {
             return Err(failure(ErrorCode::DependencyConflict, "delivery-finish-race"));
         }
@@ -558,7 +558,7 @@ impl ProjectStore {
         let unknown = self.execution_unknown.clone();
         let tx = self.connection_mut().map_err(|_| failure(ErrorCode::StorageFailed, "delivery-write"))?
             .transaction_with_behavior(TransactionBehavior::Immediate).map_err(sql)?;
-        let observer = changes.observe(&tx, super::ChangeScope::Release);
+        let observer = changes.observe(&tx, super::ChangeScope::Delivery);
         if delivery::by_action_in(&tx, action_id)?.as_ref() != Some(&current) {
             return Err(failure(ErrorCode::DependencyConflict, "delivery-reconcile-race"));
         }

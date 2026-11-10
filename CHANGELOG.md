@@ -159,7 +159,7 @@ Current workspace version metadata: **`0.2.0-alpha.1`**. Because the published `
 
 ### Changed
 
-- Preparing artifact checks, saving plugin releases, and reading their evidence reuse validated build and source data within each operation. Export verifies the saved files against the preview and registers the pending delivery in one transaction. Saved releases still verify the exact original source, artifacts, and independent check.
+- Preparing artifact checks, saving plugin releases, and reading their evidence reuse validated build and source data within each operation. Reading saved releases avoids decoding reconstructed checker inputs a second time. Export verifies the saved files against the preview and registers the pending delivery in one transaction. Saved releases still verify the exact original source, artifacts, and independent check.
 - Opening projects with plugin history reuses independently checked proof identities within the database snapshot. Historical publications and saved releases still verify their original evidence.
 
 - Experimental SDK `0.1.0-alpha.7` adds a bounded, read-only capture summary with per-material counts, groups, format properties and source references. The summary describes only the declared captured projection and cannot enter source-revision semantics or authorize execution.
@@ -192,6 +192,7 @@ Current workspace version metadata: **`0.2.0-alpha.1`**. Because the published `
 
 - Delivery shows when the selected build was saved and whether it uses the project's current saved source. If a newer build is available, you can switch to it explicitly. Existing export preparation stays with its original build until you clear it or finish the export.
 - Switching back to the window when the project is unchanged no longer rereads delivery history. The decision inbox also reuses its existing result when execution status is unchanged.
+- Recording or checking an export updates its delivery history without rereading the saved build list.
 
 - Canceling the replacement source-folder picker during new-project setup keeps the previous folder and its completed file check.
 

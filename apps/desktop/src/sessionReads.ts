@@ -281,13 +281,11 @@ export class SessionReads {
         const oldRuntime = this.client.getQueryData<RuntimeStatus>(this.key(["runtime"]));
         this.client.setQueryData(this.key(["runtime"]), next.runtime);
         const executionChanged = progressed || JSON.stringify(oldRuntime) !== JSON.stringify(next.runtime);
-        // A passive focus refresh still reconciles durable versions and live jobs.
-        // History reads can skip the extra refresh when their evidence is unchanged.
-        if (mode === true || reset || this.failed || (mode === "focus" && changed)) this.invalidate(["project"], reset || changed);
-        else if (mode === "focus") this.invalidate(executionChanged ? ["execution"] : [], executionChanged, "focus");
+        if (mode === true || reset || this.failed) this.invalidate(["project"], reset || changed);
         else {
-          if (changed) this.invalidate(next.scopes);
-          if (executionChanged) this.invalidate(["execution"]);
+          const scopes = changed ? [...next.scopes] : [];
+          if (executionChanged) scopes.push("execution");
+          if (scopes.length || mode === "focus") this.invalidate(scopes, scopes.length > 0, mode === "focus" ? mode : undefined);
         }
         // Retry failed active reads only at the shared heartbeat, without replaying mutations.
         void this.client.refetchQueries({ predicate: query => query.isActive() && query.state.status === "error" }, { cancelRefetch: false });

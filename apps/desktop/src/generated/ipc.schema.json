@@ -295,6 +295,7 @@
           "review",
           "arena",
           "release",
+          "delivery",
           "execution"
         ],
         "type": "string"

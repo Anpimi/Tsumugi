@@ -109,9 +109,13 @@ it.each([
   await prepareExport(user);
   expect(mainAction()).toBeDisabled();
   expect(invoke.mock.calls.some(([command]) => command === "export_release")).toBe(false);
+  const savedBuildReads = invoke.mock.calls.filter(([command]) => command === "list_releases").length;
+  const receiptReads = invoke.mock.calls.filter(([command]) => command === "list_deliveries").length;
   await user.click(screen.getByRole("checkbox", { name: w("overwrite") }));
   await user.click(mainAction());
   await screen.findByText(w("exported"));
+  await waitFor(() => expect(invoke.mock.calls.filter(([command]) => command === "list_deliveries").length).toBeGreaterThan(receiptReads));
+  expect(invoke.mock.calls.filter(([command]) => command === "list_releases")).toHaveLength(savedBuildReads);
   const call = invoke.mock.calls.find(([command]) => command === "export_release");
   expect(call?.[1].request).toEqual({ ...wire.requests.export, projectId: project.metadata.projectId, sessionToken: project.sessionToken, actionId: id(720) });
   expect(invoke.mock.calls.filter(([command]) => command === "export_release")).toHaveLength(1);

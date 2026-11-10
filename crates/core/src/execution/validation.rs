@@ -31,7 +31,11 @@ pub(crate) fn restore_check_input(
     rebuilt.items[0].item_id = captured.items[0].item_id;
     rebuilt.units[0].unit_id = captured.units[0].unit_id;
     rebuilt.units[0].item_ids = vec![captured.items[0].item_id];
-    if FixedInput::capture(rebuilt)?.digest() != actual.digest() {
+    // Both inputs were already validated. Exact canonical bytes also check
+    // the rebound identities without decoding and validating another frame.
+    rebuilt.normalize();
+    let canonical = codec::encode(&rebuilt, FixedInput::byte_limit(&rebuilt))?;
+    if canonical.as_slice() != actual.bytes() {
         return Err(ExecutionError::new(
             ErrorCode::ResultMismatch,
             "semantic-check-input",

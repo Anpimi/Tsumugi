@@ -10,7 +10,7 @@
     "epoch": "9d6f18a6-3ae0-4591-a6d1-7b2c47676a38",
     "sequence": "9007199254740993",
     "progressSequence": "9223372036854775807",
-    "scopes": ["translation", "review"],
+    "scopes": ["translation", "review", "delivery"],
     "runtime": { "active": false, "quiescing": false, "queryCount": 0, "error": null }
   },
   "notification": {
@@ -20,6 +20,6 @@
     "kind": "change",
     "afterSequence": "9007199254740992",
     "sequence": "9007199254740993",
-    "scopes": ["translation", "review"]
+    "scopes": ["translation", "review", "delivery"]
   }
 }

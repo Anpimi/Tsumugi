@@ -233,7 +233,7 @@ function DetailsRead({ item, disabled, current, onBack, onOpenEntry, onNavigate 
   useLayoutEffect(() => { mounted.current = true; return () => { mounted.current = false; pageFocus.current?.dispose(); }; }, []);
   const present = () => mounted.current && !reads.retired && !live.current.disabled && live.current.current();
   const key = decisionTargetKey(item, sourceAfter);
-  const query = useSessionQuery({ key, scopes: ["project", "source", "translation", "resources", "review", "execution", "release"],
+  const query = useSessionQuery({ key, scopes: ["project", "source", "translation", "resources", "review", "execution", "release", "delivery"],
     enabled: !disabled && !reads.retired && current(), structuralSharing: false,
     read: () => readDecisionTarget(reads.context, item, present, undefined, sourceAfter) });
   const view = query.error ? null : query.data ?? null;

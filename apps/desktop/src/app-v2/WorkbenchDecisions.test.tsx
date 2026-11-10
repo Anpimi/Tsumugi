@@ -173,7 +173,7 @@ it("shares current counts across the activity badge, fixed tray and list, then r
   await waitFor(() => expect(reads.client.isFetching({ queryKey: reads.key(["workbench-decisions"]) })).toBe(0));
   const before = vi.mocked(decisionCommands.page).mock.calls.length;
   knownCount = 3; basis = "f".repeat(64);
-  act(() => { reads.invalidate(["release"]); });
+  act(() => { reads.invalidate(["delivery"]); });
   await waitFor(() => expect(within(list).getByText(w("decisionsAtLeastCount", { count: 3 }))).toBeVisible());
   expect(activity().getByLabelText(w("decisionsBadgePartial", { count: 3 }))).toHaveTextContent("3+");
   expect(dock().getByRole("button", { name: w("decisionsTrayPartial", { count: 3 }) })).toBeEnabled();

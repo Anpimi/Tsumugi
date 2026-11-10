@@ -51,6 +51,29 @@ it("skips unchanged focus reads for versioned history while preserving recovery 
   expect(history).toHaveBeenCalledTimes(3);
 });
 
+it("refreshes receipts without rereading saved releases on a delivery hint or focus reconciliation", async () => {
+  const fixture = setup(); await settle();
+  const releases = vi.fn().mockResolvedValue("saved release");
+  const receipts = vi.fn().mockResolvedValue("no receipts");
+  observe(fixture.reads, "release-list", "release", releases, true, false);
+  const observer = observe(fixture.reads, "release-deliveries", "delivery", receipts, true, false);
+  await settle();
+
+  receipts.mockResolvedValue("pending receipt");
+  fixture.set({ ...snapshot("1"), scopes: ["delivery"] });
+  fixture.emit({ ...context, epoch, kind: "change", afterSequence: "0", sequence: "1", scopes: ["delivery"] });
+  await vi.advanceTimersByTimeAsync(50); await settle();
+  expect(observer.getCurrentResult().data).toBe("pending receipt");
+  expect(releases).toHaveBeenCalledOnce();
+
+  receipts.mockResolvedValue("completed receipt");
+  fixture.set({ ...snapshot("2"), scopes: ["delivery"] });
+  window.dispatchEvent(new Event("focus")); await settle();
+  expect(observer.getCurrentResult().data).toBe("completed receipt");
+  expect(receipts).toHaveBeenCalledTimes(3);
+  expect(releases).toHaveBeenCalledOnce();
+});
+
 it("refreshes delivery readers when a native job ends even while other work and durable versions are unchanged", async () => {
   const fixture = setup(); await settle();
   const read = vi.fn().mockResolvedValue("pending outcomes");

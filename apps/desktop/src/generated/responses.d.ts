@@ -115,7 +115,7 @@ export type CommandStage =
   | "execution-adopt"
   | "execution-quiesce";
 export type ChangeScope =
-  "project" | "source" | "translation" | "resources" | "review" | "arena" | "release" | "execution";
+  "project" | "source" | "translation" | "resources" | "review" | "arena" | "release" | "delivery" | "execution";
 export type MetadataChangeOutcome = "changed" | "unchanged";
 export type NotificationKind = "change" | "progress" | "resync";
 export type ReconciliationState = "settled" | "committed" | "previous";

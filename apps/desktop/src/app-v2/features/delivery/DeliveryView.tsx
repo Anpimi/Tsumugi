@@ -76,7 +76,7 @@ export function DeliveryView(props: DeliveryViewProps) {
   const releases = releasesRead.data ?? [], deliveries = deliveriesRead.data ?? [];
   const latestSaved = releasesRead.isSuccess ? releases[0] : undefined;
   const newerSaved = latestSaved && chosen && Date.parse(latestSaved.createdAt) > Date.parse(chosen.createdAt) ? latestSaved : null;
-  const targetRead = useSessionQuery({ key: ["delivery-navigation-record", target], scopes: ["release"], enabled: visible && !!target,
+  const targetRead = useSessionQuery({ key: ["delivery-navigation-record", target], scopes: ["delivery"], refreshOnFocus: false, enabled: visible && !!target,
     read: async () => {
       if (!target) throw new Error("No delivery navigation target");
       const record = await releaseCommands.deliveryRecord({ ...context, ...target });
