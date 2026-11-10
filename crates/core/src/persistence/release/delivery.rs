@@ -110,7 +110,7 @@ pub(in crate::persistence) fn project_observations_in(
     for (delivery, action, release) in references {
         let delivery = parse_id(delivery)?;
         let release = parse_id(release)?;
-        if verified.insert(release) { record::load(c, release)?; }
+        if verified.insert(release) { record::load(c, release, None)?; }
         let value = by_action_in(c, parse_id(action)?)?
             .filter(|value| value.delivery_id == delivery && value.release_id == release)
             .ok_or_else(|| failure(ErrorCode::CorruptLedger, "delivery-identity"))?;

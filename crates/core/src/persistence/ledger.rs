@@ -2,6 +2,7 @@ use super::ProjectStore;
 use crate::execution::{codec, *};
 use rusqlite::{Connection, OptionalExtension, TransactionBehavior, params};
 use serde::{Deserialize, Serialize};
+use std::collections::BTreeMap;
 mod activity;
 mod input_storage;
 pub use activity::{TaskActivity, TaskActivityPhase, TaskActivityRow};
@@ -85,27 +86,81 @@ pub(super) fn table_names(_connection: &Connection) -> Vec<String> {
 thread_local! { static TEST_SCHEMA: std::cell::Cell<bool> = const { std::cell::Cell::new(false) }; }
 
 pub(super) fn validate(connection: &Connection) -> Result<(), ExecutionError> {
-    validate_schema(connection, |connection, input| {
-        validate_attempt_input(connection, input, |result| {
-            load_result(connection, input, result)
-        })
-    })
+    validate_schema(
+        connection,
+        |connection, input| {
+            validate_attempt_input(
+                connection,
+                input,
+                |result| load_result(connection, input, result),
+                |result| validate_plugin_link(connection, input, result, true).map(|_| ()),
+            )
+        },
+        |_, _, _| {},
+    )
 }
 
-pub(super) fn validate_for_open(
-    connection: &Connection,
+#[derive(PartialEq, Eq)]
+pub(super) enum CheckedPluginLink {
+    Source {
+        checker_attempt: ExecutionId,
+        checker_result: ExecutionId,
+    },
+    Artifact { build_attempt: ExecutionId },
+    Translation,
+}
+
+/// Proof identities already validated in the current SQLite open transaction.
+/// This holds no frames or runtime authority.
+pub(super) struct OpenPluginProofs<'a> {
+    connection: &'a Connection,
+    links: BTreeMap<ExecutionId, (CheckedPluginLink, bool)>,
+}
+
+impl OpenPluginProofs<'_> {
+    pub(super) fn matches(
+        &self,
+        connection: &Connection,
+        producer_result: ExecutionId,
+        link: CheckedPluginLink,
+        valid: bool,
+    ) -> bool {
+        std::ptr::eq(self.connection, connection)
+            && !connection.is_autocommit()
+            && self.links.get(&producer_result) == Some(&(link, valid))
+    }
+}
+
+pub(super) fn validate_for_open<'a>(
+    connection: &'a Connection,
     mut validate_review: impl FnMut(
         &Connection,
         &FixedInput,
         &mut OpenResultReader<'_>,
     ) -> Result<(), ExecutionError>,
-) -> Result<(), ExecutionError> {
-    validate_schema(connection, |connection, input| {
-        let mut results = OpenResultReader::new(connection, input);
-        validate_attempt_input(connection, input, |result| results.load(result))?;
-        super::plugin_execution::validate_associated_input(connection, input, &mut results)?;
-        validate_review(connection, input, &mut results)
-    })
+) -> Result<OpenPluginProofs<'a>, ExecutionError> {
+    if connection.is_autocommit() {
+        return Err(error(ErrorCode::StorageFailed, "open-proof-snapshot"));
+    }
+    let mut links = BTreeMap::new();
+    validate_schema(
+        connection,
+        |connection, input| {
+            let mut results = OpenResultReader::new(connection, input);
+            validate_attempt_input(
+                connection,
+                input,
+                |result| results.load(result),
+                |result| require_open_valid_plugin_link(connection, result.envelope().result_id),
+            )?;
+            super::plugin_execution::validate_associated_input(connection, input, &mut results)?;
+            validate_review(connection, input, &mut results)
+        },
+        |result, link, valid| {
+            links.insert(result, (link, valid));
+        },
+    )?;
+    Ok(OpenPluginProofs { connection, links })
 }
 
 fn is_conversation_planning(input: &FixedInput) -> bool {
@@ -144,8 +199,9 @@ fn validate_attempt_input(
     connection: &Connection,
     input: &FixedInput,
     load_result: impl FnMut(ExecutionId) -> Result<FixedResult, ExecutionError>,
+    validate_link: impl FnMut(&FixedResult) -> Result<(), ExecutionError>,
 ) -> Result<(), ExecutionError> {
-    let _ = read_attempt_with_results(connection, input, false, load_result)?;
+    let _ = read_attempt_with_results(connection, input, false, load_result, validate_link)?;
     if is_conversation_planning(input) {
         crate::ai::conversation_planning::settings(input)?;
     }
@@ -160,6 +216,7 @@ fn validate_attempt_input(
 fn validate_schema(
     connection: &Connection,
     mut validate_input: impl FnMut(&Connection, &FixedInput) -> Result<(), ExecutionError>,
+    mut checked_link: impl FnMut(ExecutionId, CheckedPluginLink, bool),
 ) -> Result<(), ExecutionError> {
     #[cfg(feature = "execution-test-host")]
     if let Some(sql) = connection
@@ -245,7 +302,8 @@ fn validate_schema(
             .map_err(sql_error)?;
         let input = load_input(connection, parse_id(attempt)?)?;
         let result = load_result(connection, &input, parse_id(result_id)?)?;
-        validate_plugin_link(connection, &input, &result, valid)?;
+        let link = validate_plugin_link(connection, &input, &result, valid)?;
+        checked_link(result.envelope().result_id, link, valid);
     }
     let mut actions = connection
         .prepare("SELECT action_id,attempt_id,unit_id,request,digest FROM execution_actions")
@@ -1029,9 +1087,13 @@ fn read_attempt_in(
     input: &FixedInput,
     active: bool,
 ) -> Result<AttemptView, ExecutionError> {
-    read_attempt_with_results(connection, input, active, |result| {
-        load_result(connection, input, result)
-    })
+    read_attempt_with_results(
+        connection,
+        input,
+        active,
+        |result| load_result(connection, input, result),
+        |result| validate_plugin_link(connection, input, result, true).map(|_| ()),
+    )
 }
 
 fn read_attempt_with_results(
@@ -1039,6 +1101,7 @@ fn read_attempt_with_results(
     input: &FixedInput,
     active: bool,
     mut load_result: impl FnMut(ExecutionId) -> Result<FixedResult, ExecutionError>,
+    mut validate_link: impl FnMut(&FixedResult) -> Result<(), ExecutionError>,
 ) -> Result<AttemptView, ExecutionError> {
     let attempt = input.envelope().attempt_id;
     check_translation_projection(connection, input, None)?;
@@ -1110,7 +1173,7 @@ fn read_attempt_with_results(
                             == retry_safe =>
                 {
                     if validation == ValidationState::Valid && requires_semantic_check(input) {
-                        validate_plugin_link(connection, input, &output, true)?;
+                        validate_link(&output)?;
                     }
                     if validation == ValidationState::Valid
                         && input.envelope().operation == crate::ai::conversation_planning::OPERATION {
@@ -1158,6 +1221,25 @@ fn read_attempt_with_results(
         items,
         progress,
     })
+}
+
+// The open scan verifies every link in the same snapshot after reading the
+// attempts. A result already marked valid still requires its positive link.
+fn require_open_valid_plugin_link(
+    connection: &Connection,
+    result: ExecutionId,
+) -> Result<(), ExecutionError> {
+    let valid: bool = connection
+        .query_row(
+            "SELECT valid FROM plugin_validation_links WHERE producer_result_id=?1",
+            [result.to_string()],
+            |row| row.get(0),
+        )
+        .map_err(|_| error(ErrorCode::CorruptLedger, "semantic-validation-link"))?;
+    if !valid {
+        return Err(error(ErrorCode::CorruptLedger, "semantic-validation-proof"));
+    }
+    Ok(())
 }
 
 fn load_check_link(
@@ -1374,16 +1456,19 @@ pub(super) fn validate_plugin_link(
     input: &FixedInput,
     result: &FixedResult,
     expected_valid: bool,
-) -> Result<(), ExecutionError> {
+) -> Result<CheckedPluginLink, ExecutionError> {
     let original = result_input(connection, input, result.envelope().result_id)?;
     let input = original.as_ref();
     if input.envelope().operation == crate::content::OPERATION {
-        validate_source_link(connection, input, result, expected_valid)?;
-        return Ok(());
+        let proof = validate_source_link(connection, input, result, expected_valid)?;
+        return Ok(CheckedPluginLink::Source {
+            checker_attempt: proof.check_result.envelope().attempt_id,
+            checker_result: proof.check_result.envelope().result_id,
+        });
     }
     if input.envelope().operation == crate::content::TRANSLATION_EXTRACTION_OPERATION {
         validate_translation_link(connection, input, result, expected_valid)?;
-        return Ok(());
+        return Ok(CheckedPluginLink::Translation);
     }
     if input.envelope().plugin.is_none()
         || input.envelope().operation != crate::content::BUILD_OPERATION
@@ -1405,7 +1490,9 @@ pub(super) fn validate_plugin_link(
     if saved_valid != expected_valid || prepared.proof.valid != saved_valid {
         return Err(error(ErrorCode::CorruptLedger, "semantic-validation-proof"));
     }
-    Ok(())
+    Ok(CheckedPluginLink::Artifact {
+        build_attempt: input.envelope().attempt_id,
+    })
 }
 
 pub(super) fn validate_translation_link(
@@ -2317,10 +2404,10 @@ impl ProjectStore {
             return Err(error(ErrorCode::OutcomeUnknown, "reconcile"));
         }
         validate(connection)?;
-        super::content::validate(connection)?;
+        super::content::validate(connection, None)?;
         super::translation::validate(connection)
             .map_err(|_| error(ErrorCode::CorruptLedger, "translation"))?;
-        super::release::validate(connection)
+        super::release::validate(connection, None)
             .map_err(|_| error(ErrorCode::CorruptLedger, "release"))?;
         super::application::validate(connection)?;
         self.execution_unknown

@@ -1,6 +1,7 @@
 //! Saved releases bind exact frozen inputs, original results and adoption
 //! receipts. Reading historical plugin output needs no live process or grant.
 use super::*;
+use crate::persistence::ledger::{CheckedPluginLink, OpenPluginProofs};
 #[cfg(any(
     test,
     feature = "execution-test-host",
@@ -242,6 +243,7 @@ pub(super) fn prepare(
 pub(super) fn load(
     connection: &Connection,
     release_id: ExecutionId,
+    open_proofs: Option<&OpenPluginProofs<'_>>,
 ) -> Result<Record, ExecutionError> {
     let (action_id, project_id, attempt_id, bytes, digest, created): (
         String,
@@ -323,7 +325,15 @@ pub(super) fn load(
             }
         }
         for result in &results {
-            super::super::ledger::validate_plugin_link(connection, &input, result, true)?;
+            let envelope = result.envelope();
+            let link = CheckedPluginLink::Artifact {
+                build_attempt: envelope.attempt_id,
+            };
+            if !open_proofs
+                .is_some_and(|proofs| proofs.matches(connection, envelope.result_id, link, true))
+            {
+                super::super::ledger::validate_plugin_link(connection, &input, result, true)?;
+            }
         }
     }
     let receipt = super::super::ledger::read_receipt(connection, action_id)?

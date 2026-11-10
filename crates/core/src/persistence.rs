@@ -1252,7 +1252,7 @@ fn validate_schema_shape_version(connection: &Connection, version: i64) -> Resul
             stage: PersistenceStage::Open,
         })?;
     let mut planning_attempts = 0;
-    ledger::validate_for_open(connection, |connection, input, results| {
+    let open_proofs = ledger::validate_for_open(connection, |connection, input, results| {
         review_open.validate_input(connection, input, results)?;
         if version >= 65 && application::conversations::planning::history::validate_input(connection, input)? {
             planning_attempts += 1;
@@ -1271,7 +1271,7 @@ fn validate_schema_shape_version(connection: &Connection, version: i64) -> Resul
         .map_err(|_| PersistenceError::CorruptProject {
             stage: PersistenceStage::Open,
         })?;
-    content::validate(connection).map_err(|_| PersistenceError::CorruptProject {
+    content::validate(connection, Some(&open_proofs)).map_err(|_| PersistenceError::CorruptProject {
         stage: PersistenceStage::Open,
     })?;
     translation::validate(connection).map_err(|_| PersistenceError::CorruptProject {
@@ -1280,7 +1280,7 @@ fn validate_schema_shape_version(connection: &Connection, version: i64) -> Resul
     resources::validate_version(connection, version).map_err(|_| PersistenceError::CorruptProject {
         stage: PersistenceStage::Open,
     })?;
-    release::validate(connection).map_err(|_| PersistenceError::CorruptProject {
+    release::validate(connection, Some(&open_proofs)).map_err(|_| PersistenceError::CorruptProject {
         stage: PersistenceStage::Open,
     })?;
     arena::validate(connection).map_err(|_| PersistenceError::CorruptProject {

@@ -1968,8 +1968,12 @@ fn open_result_projection_keeps_terminal_unknown_and_invalid_read_semantics() {
         )
         .unwrap();
     let mut results = OpenResultReader::new(connection, &input);
+    let check_link = |result: &FixedResult| {
+        require_open_valid_plugin_link(connection, result.envelope().result_id)
+    };
     let opened =
-        read_attempt_with_results(connection, &input, false, |id| results.load(id)).unwrap();
+        read_attempt_with_results(connection, &input, false, |id| results.load(id), check_link)
+            .unwrap();
     for result in &saved {
         let actual = opened
             .items
@@ -1986,7 +1990,8 @@ fn open_result_projection_keeps_terminal_unknown_and_invalid_read_semantics() {
         )
         .unwrap();
     let opened =
-        read_attempt_with_results(connection, &input, false, |id| results.load(id)).unwrap();
+        read_attempt_with_results(connection, &input, false, |id| results.load(id), check_link)
+            .unwrap();
     let ordinary = read_attempt_in(connection, &input, false).unwrap();
     for view in [opened, ordinary] {
         let item = view

@@ -76,10 +76,19 @@ fn finish_history_preserves_a_after_b_replaces_current_proof_and_after_reopen() 
     assert_eq!(fixture.store.connection().unwrap().total_changes(), writes);
     let path = fixture.directory.path().join("project");
     drop(fixture.store);
-    let reopened = ProjectStore::open(path).unwrap();
+    let reopened = ProjectStore::open(&path).unwrap();
     assert_eq!(reopened.source_check_finish_request_observation(fixture.project, a_attempt, a_result).unwrap(), Some(true));
     assert_eq!(reopened.source_check_finish_request_observation(fixture.project, b_attempt, b_result).unwrap(), Some(false));
     assert_eq!(current_link(reopened.connection().unwrap(), fixture.result), b_result.to_string());
+    reopened.connection().unwrap().execute(
+        "UPDATE source_validation_history SET checker_attempt_id=?1 WHERE checker_result_id=?2",
+        params![a_attempt.to_string(), b_result.to_string()],
+    ).unwrap();
+    drop(reopened);
+    assert!(matches!(
+        ProjectStore::open(path),
+        Err(crate::PersistenceError::CorruptProject { .. })
+    ));
 }
 
 fn old_rows(c: &Connection) -> Vec<(String, Vec<Vec<rusqlite::types::Value>>)> {

@@ -305,13 +305,16 @@ pub(super) fn record_input(
     }
     Ok(())
 }
-pub(super) fn validate(connection: &Connection) -> Result<(), ExecutionError> {
+pub(super) fn validate(
+    connection: &Connection,
+    open_proofs: Option<&super::ledger::OpenPluginProofs<'_>>,
+) -> Result<(), ExecutionError> {
     maintenance_hook::validate(connection)?;
     let version: i64 = connection
         .pragma_query_value(None, "user_version", |r| r.get(0))
         .map_err(sql_error)?;
     if version >= 69 {
-        validation_history::validate(connection)?;
+        validation_history::validate(connection, open_proofs)?;
     }
     if version >= 70 {
         lineage_corrections::validate(connection)?;

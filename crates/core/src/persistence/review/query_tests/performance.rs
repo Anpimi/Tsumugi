@@ -498,7 +498,7 @@ fn measure_retained_supported_reads() {
         });
         report_read(&store, "retained", 0, "validate_content", || {
             queries::read_snapshot(store.connection().unwrap(), |connection| {
-                crate::persistence::content::validate(connection).unwrap();
+                crate::persistence::content::validate(connection, None).unwrap();
                 Ok(())
             })
             .unwrap()

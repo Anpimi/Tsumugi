@@ -126,7 +126,10 @@ pub(super) fn initialize(connection: &Connection) -> rusqlite::Result<()> {
     }
     Ok(())
 }
-pub(super) fn validate(connection: &Connection) -> rusqlite::Result<()> {
+pub(super) fn validate(
+    connection: &Connection,
+    open_proofs: Option<&super::ledger::OpenPluginProofs<'_>>,
+) -> rusqlite::Result<()> {
     for (name, expected) in TABLES {
         let actual: String = connection.query_row(
             "SELECT sql FROM sqlite_master WHERE type='table' AND name=?1",
@@ -146,7 +149,7 @@ pub(super) fn validate(connection: &Connection) -> rusqlite::Result<()> {
         .collect::<Result<Vec<_>, _>>()?;
     for id in ids {
         let id = parse_id(id).map_err(|_| rusqlite::Error::InvalidQuery)?;
-        record::load(connection, id).map_err(|_| rusqlite::Error::InvalidQuery)?;
+        record::load(connection, id, open_proofs).map_err(|_| rusqlite::Error::InvalidQuery)?;
     }
     delivery::validate(connection).map_err(|_| rusqlite::Error::InvalidQuery)?;
     Ok(())
@@ -773,7 +776,7 @@ impl ProjectStore {
             .map_err(|_| failure(ErrorCode::StorageFailed, "release-read"))?
             .unchecked_transaction()
             .map_err(sql)?;
-        let record = record::load(&snapshot, release_id)?;
+        let record = record::load(&snapshot, release_id, None)?;
         snapshot.commit().map_err(sql)?;
         Ok(record)
     }

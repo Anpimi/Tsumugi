@@ -1,5 +1,6 @@
 //! Exact source-check publication history beside the original current proof link.
 use super::*;
+use crate::persistence::ledger::{CheckedPluginLink, OpenPluginProofs};
 use rusqlite::OptionalExtension;
 
 pub(in crate::persistence) const TABLE: &str = "source_validation_history";
@@ -116,7 +117,10 @@ pub(in crate::persistence) fn migrate(c: &Connection) -> Result<(), ExecutionErr
     Ok(())
 }
 
-pub(in crate::persistence) fn validate(c: &Connection) -> Result<(), ExecutionError> {
+pub(in crate::persistence) fn validate(
+    c: &Connection,
+    open_proofs: Option<&OpenPluginProofs<'_>>,
+) -> Result<(), ExecutionError> {
     let sql: String = c.query_row("SELECT sql FROM sqlite_master WHERE type='table' AND name=?1", [TABLE], |r| r.get(0))
         .map_err(sql_error)?;
     if sql != SQL { return Err(corrupt()); }
@@ -126,7 +130,14 @@ pub(in crate::persistence) fn validate(c: &Connection) -> Result<(), ExecutionEr
         .map_err(sql_error)?;
     for row in rows {
         let (attempt, checker, producer, valid) = row.map_err(sql_error)?;
-        checked_record(c, id(attempt)?, id(checker)?, id(producer)?, valid)?;
+        let (attempt, checker, producer) = (id(attempt)?, id(checker)?, id(producer)?);
+        let link = CheckedPluginLink::Source {
+            checker_attempt: attempt,
+            checker_result: checker,
+        };
+        if !open_proofs.is_some_and(|proofs| proofs.matches(c, producer, link, valid)) {
+            checked_record(c, attempt, checker, producer, valid)?;
+        }
     }
     let missing: bool = c.query_row(
         "SELECT EXISTS(SELECT 1 FROM plugin_validation_links l
