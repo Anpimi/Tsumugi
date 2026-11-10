@@ -65,15 +65,15 @@ impl ArtifactValidationCapture {
             &build.input,
             result.envelope().dispatch_token,
         )?;
-        let output = plan.artifact_set(result)?;
+        let output = plan.parse_artifact_set(result)?;
         let item = build.input.item(result.envelope().item_id)?;
         let locale = item.scope.locale.as_deref().ok_or_else(invalid)?;
+        if output.target_language != locale {
+            return Err(invalid());
+        }
         let input = plan.plugin_input(locale)?;
         let environment = plan.build_environment();
         let binding = environment.binding();
-        binding
-            .validate_artifacts(&input, &output)
-            .map_err(|_| invalid())?;
         let targets: Vec<_> = output.artifacts.iter().map(|a| a.id().to_owned()).collect();
         let requirement = |key| sdk::CheckRequirement {
             key,

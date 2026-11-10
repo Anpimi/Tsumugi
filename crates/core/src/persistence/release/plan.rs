@@ -138,6 +138,20 @@ impl ReleasePlan {
         &self,
         result: &FixedResult,
     ) -> Result<sdk::ArtifactSet, ExecutionError> {
+        let output = self.parse_artifact_set(result)?;
+        let input = self.plugin_input(&output.target_language)?;
+        self.build
+            .binding
+            .validate_artifacts(&input, &output)
+            .map_err(|_| failure(ErrorCode::OutputInvalid, "release-artifacts"))?;
+        Ok(output)
+    }
+    /// Decode the declared builder output. Callers must still verify its
+    /// association with the build input before accepting it.
+    pub(crate) fn parse_artifact_set(
+        &self,
+        result: &FixedResult,
+    ) -> Result<sdk::ArtifactSet, ExecutionError> {
         let invalid = || failure(ErrorCode::OutputInvalid, "release-artifacts");
         let evidence = result.envelope().plugin.as_ref().ok_or_else(invalid)?;
         let sdk::InvocationOutcome::Succeeded { output } = &evidence.result.outcome else {
@@ -146,13 +160,7 @@ impl ReleasePlan {
         if output.schema != self.build.binding.builder.declaration.output_schema {
             return Err(invalid());
         }
-        let output = sdk::parse_artifact_set(output.utf8.as_bytes()).map_err(|_| invalid())?;
-        let input = self.plugin_input(&output.target_language)?;
-        self.build
-            .binding
-            .validate_artifacts(&input, &output)
-            .map_err(|_| invalid())?;
-        Ok(output)
+        sdk::parse_artifact_set(output.utf8.as_bytes()).map_err(|_| invalid())
     }
     pub(super) fn release_summary(&self) -> super::record::ManifestSummary {
         let binding = &self.build.binding;
@@ -257,28 +265,22 @@ impl ReleasePlan {
                 |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
             )
             .map_err(|_| invalid())?;
-        let input = super::super::ledger::load_input(connection, self.source_attempt_id)?;
         if associated
             != (
                 self.project_id.to_string(),
                 self.source_attempt_id.to_string(),
                 self.source_result_id.to_string(),
             )
-            || input.envelope().project_id != self.project_id
-            || input.digest() != self.source_input_digest
         {
             return Err(invalid());
         }
-        let result = super::super::ledger::load_result(connection, &input, self.source_result_id)?;
-        if result.digest() != self.source_result_digest {
-            return Err(invalid());
-        }
-        if input.envelope().plugin.is_some() {
-            super::super::ledger::validate_source_link(connection, &input, &result, true)?;
-        }
-        let (_, (_, _, output, rows)) =
+        let (_, (input, result, output, rows)) =
             super::super::content::snapshot_rows(connection, self.source_snapshot_id, true)?;
-        if output.exchange != self.source {
+        if input.envelope().project_id != self.project_id
+            || input.digest() != self.source_input_digest
+            || result.digest() != self.source_result_digest
+            || output.exchange != self.source
+        {
             return Err(invalid());
         }
         let version = self.source_mapping_revision.unwrap_or(Revision::new(0)?);
@@ -354,6 +356,13 @@ impl ReleasePlan {
         Ok(input)
     }
     fn validate(&self) -> Result<(), ExecutionError> {
+        self.validate_structure()?;
+        for locale in &self.locales {
+            self.plugin_input(&locale.choice.locale)?;
+        }
+        Ok(())
+    }
+    fn validate_structure(&self) -> Result<(), ExecutionError> {
         self.build.validate()?;
         self.source.validate().map_err(|_| invalid())?;
         let staged = self.locales.iter().any(|locale| locale.choice.translation_units.is_some());
@@ -412,7 +421,6 @@ impl ReleasePlan {
             if translated.as_ref().is_some_and(|units| !units.is_subset(&mapped)) {
                 return Err(invalid());
             }
-            self.plugin_input(&locale.choice.locale)?;
         }
         sdk::validate_build_output_paths(
             self.locales
@@ -423,7 +431,7 @@ impl ReleasePlan {
         Ok(())
     }
     fn fixed_input(&self, attempt: ExecutionId) -> Result<FixedInput, ExecutionError> {
-        self.validate()?;
+        self.validate_structure()?;
         let binding = self.build.builder();
         let items = self
             .locales
@@ -466,7 +474,7 @@ impl ReleasePlan {
         let envelope = input.envelope();
         let plan: Self =
             serde_json::from_value(envelope.settings.clone()).map_err(|_| invalid())?;
-        plan.validate()?;
+        plan.validate_structure()?;
         if envelope.operation != BUILD_OPERATION
             || envelope.project_id != plan.project_id
             || envelope.plugin.as_ref() != Some(&plan.build.builder())

@@ -95,7 +95,7 @@ fn prepare_data(
             }
             // Generic builds count the frozen source units, not parsed domain
             // entries in each artifact. Domain interpretation belongs to its checker.
-            let count = u32::try_from(plan.plugin_input(locale)?.targets.len())
+            let count = u32::try_from(plan.source().units.len())
                 .map_err(|_| failure(ErrorCode::OutputInvalid, "release-unit-count"))?;
             let report = (version == 3)
                 .then(|| plan.delivery_report(input.digest(), &output))
