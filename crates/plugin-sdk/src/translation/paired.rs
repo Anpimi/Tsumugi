@@ -51,6 +51,7 @@ impl TranslationPairSource {
             &self.source_language,
             &self.artifacts,
         )
+        .map(|_| ())
     }
 }
 

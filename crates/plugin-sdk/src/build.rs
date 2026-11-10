@@ -169,7 +169,11 @@ pub struct ArtifactSet {
 }
 impl ArtifactSet {
     pub fn validate(&self) -> Result<(), ContractError> {
-        crate::content::validate_source_material(
+        self.validate_and_count_bytes().map(|_| ())
+    }
+
+    fn validate_and_count_bytes(&self) -> Result<usize, ContractError> {
+        let bytes = crate::content::validate_source_material(
             &self.profile,
             &self.source_set_id,
             &self.target_language,
@@ -179,7 +183,8 @@ impl ArtifactSet {
             return Err(invalid("artifactSet.artifacts"));
         }
         validate_build_output_paths(self.artifacts.iter().map(|a| a.logical_path()))?;
-        encoded_limit(self, MAX_ARTIFACT_SET_BYTES, "artifactSet")
+        encoded_limit(self, MAX_ARTIFACT_SET_BYTES, "artifactSet")?;
+        Ok(bytes)
     }
 }
 /// Portable path, alias and file/directory collision checks shared by one build
@@ -214,7 +219,14 @@ pub fn validate_build_artifacts(
     output: &ArtifactSet,
 ) -> Result<(), ContractError> {
     input.validate()?;
-    output.validate()?;
+    validate_artifacts_for_checked_input(input, output)
+}
+
+fn validate_artifacts_for_checked_input(
+    input: &BuildInput,
+    output: &ArtifactSet,
+) -> Result<(), ContractError> {
+    let bytes = output.validate_and_count_bytes()?;
     if input.source.profile != output.profile
         || input.source.source_set_id != output.source_set_id
         || input.target_language != output.target_language
@@ -227,12 +239,6 @@ pub fn validate_build_artifacts(
     {
         return Err(mismatch("artifactSet.input"));
     }
-    let bytes = output
-        .artifacts
-        .iter()
-        .try_fold(0usize, |total, artifact| {
-            artifact.bytes().map(|bytes| total + bytes.len())
-        })?;
     if output.artifacts.len() > input.output_limits.max_artifacts as usize
         || bytes > input.output_limits.max_total_bytes as usize
     {
@@ -255,6 +261,10 @@ pub struct ArtifactCheckInput {
 impl ArtifactCheckInput {
     pub fn validate(&self) -> Result<(), ContractError> {
         validate_build_artifacts(&self.input, &self.output)?;
+        self.validate_requirements_and_size()
+    }
+
+    fn validate_requirements_and_size(&self) -> Result<(), ContractError> {
         if self.requirements.is_empty() || self.requirements.len() > 32 {
             return Err(ContractError::at(
                 ContractErrorCode::InvalidCoverage,
@@ -422,7 +432,7 @@ impl BuildBinding {
         output: &ArtifactSet,
     ) -> Result<(), ContractError> {
         self.validate_input(input)?;
-        validate_build_artifacts(input, output)?;
+        validate_artifacts_for_checked_input(input, output)?;
         if self.builder.declaration.input_schema.schema_version == 1 {
             crate::artifact::require_text_artifacts(
                 &output.artifacts,
@@ -437,7 +447,7 @@ impl BuildBinding {
     }
     pub fn validate_check_input(&self, input: &ArtifactCheckInput) -> Result<(), ContractError> {
         self.validate_artifacts(&input.input, &input.output)?;
-        input.validate()?;
+        input.validate_requirements_and_size()?;
         let expected: std::collections::BTreeSet<_> =
             self.declaration.artifact_rules.iter().collect();
         if input

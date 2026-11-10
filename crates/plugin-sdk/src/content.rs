@@ -354,7 +354,7 @@ pub(crate) fn validate_source_material(
     source_set_id: &str,
     source_language: &str,
     artifacts: &[CapturedArtifact],
-) -> Result<(), ContractError> {
+) -> Result<usize, ContractError> {
     reference(profile, "content.profile")?;
     opaque_id(source_set_id, "content.sourceSetId")?;
     crate::validation::language_label(source_language, "content.sourceLanguage")?;
@@ -382,7 +382,7 @@ pub(crate) fn validate_source_material(
             ));
         }
     }
-    Ok(())
+    Ok(total_bytes)
 }
 
 /// Verifies raw fidelity and opaque extension preservation, not domain meaning,
