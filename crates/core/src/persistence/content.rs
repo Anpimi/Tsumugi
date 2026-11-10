@@ -240,9 +240,10 @@ fn read_bundle_limited(
         let (path,role,bytes,digest):(String,String,Vec<u8>,String)=connection.query_row(
             "SELECT logical_path,role,CASE WHEN length(bytes)<=?3 THEN bytes END,digest FROM source_files WHERE set_id=?1 AND artifact_id=?2",
             params![set.to_string(),file.id(),file_limit as i64],|r|Ok((r.get(0)?,r.get(1)?,r.get(2)?,r.get(3)?))).map_err(sql_error)?;
+        // The source validation has already checked each captured digest.
         if path != file.logical_path()
             || role != file.role()
-            || bytes != file.validated_bytes().map_err(|_| corrupt())?.as_ref()
+            || bytes != file.bytes().map_err(|_| corrupt())?.as_ref()
             || digest != file.sha256()
         {
             return Err(corrupt());
@@ -309,6 +310,13 @@ pub(super) fn validate(
     connection: &Connection,
     open_proofs: Option<&super::ledger::OpenPluginProofs<'_>>,
 ) -> Result<(), ExecutionError> {
+    super::review::read_snapshot(connection, |connection| validate_in(connection, open_proofs))
+}
+
+fn validate_in(
+    connection: &Connection,
+    open_proofs: Option<&super::ledger::OpenPluginProofs<'_>>,
+) -> Result<(), ExecutionError> {
     maintenance_hook::validate(connection)?;
     let version: i64 = connection
         .pragma_query_value(None, "user_version", |r| r.get(0))
@@ -331,28 +339,14 @@ pub(super) fn validate(
             return Err(corrupt());
         }
     }
-    let mut sets = connection
-        .prepare("SELECT set_id FROM source_sets")
-        .map_err(sql_error)?;
-    for set in sets
-        .query_map([], |r| r.get::<_, String>(0))
-        .map_err(sql_error)?
-    {
-        let (input_limit, file_limit) = if version < 76 {
-            (1024 * 1024, 1024 * 1024)
-        } else {
-            (
-                MAX_CAPTURED_SOURCE_INPUT_BYTES,
-                tsumugi_plugin_sdk::MAX_EXCHANGE_BYTES,
-            )
-        };
-        let _ = read_bundle_limited(
-            connection,
-            id(set.map_err(sql_error)?)?,
-            input_limit,
-            file_limit,
-        )?;
-    }
+    let (input_limit, file_limit) = if version < 76 {
+        (1024 * 1024, 1024 * 1024)
+    } else {
+        (
+            MAX_CAPTURED_SOURCE_INPUT_BYTES,
+            tsumugi_plugin_sdk::MAX_EXCHANGE_BYTES,
+        )
+    };
     let mut referenced_sets = std::collections::BTreeSet::new();
     let mut attempts=connection.prepare("SELECT attempt_id FROM execution_attempts a JOIN execution_tasks t ON t.task_id=a.task_id WHERE t.operation=?1").map_err(sql_error)?;
     for attempt in attempts
@@ -361,11 +355,15 @@ pub(super) fn validate(
     {
         let input = load_input(connection, id(attempt.map_err(sql_error)?)?)?;
         let bundle = SourceBundle::from_input(&input)?;
-        referenced_sets.insert(bundle.set_id);
-        if bundle.source_input() != read_bundle(connection, bundle.set_id)? {
+        if bundle.source_input()
+            != read_bundle_limited(connection, bundle.set_id, input_limit, file_limit)?
+        {
             return Err(corrupt());
         }
+        referenced_sets.insert(bundle.set_id);
     }
+    // Each referenced ID has a validated primary-key row in this snapshot.
+    // Matching the table count rules out any unvisited source sets.
     let set_count: i64 = connection
         .query_row("SELECT COUNT(*) FROM source_sets", [], |r| r.get(0))
         .map_err(sql_error)?;
@@ -426,11 +424,10 @@ pub(super) fn validate(
     if revisions != (2..=state.revision.get()).collect() {
         return Err(corrupt());
     }
-    if let Some(snapshot) = state.current_snapshot {
-        let (receipt_revision, _) = snapshot_rows(connection, snapshot, has_lineage)?;
-        if receipt_revision != state.revision.get() {
-            return Err(corrupt());
-        }
+    if let Some(snapshot) = state.current_snapshot
+        && snapshot_revisions.get(&snapshot).copied() != Some(state.revision.get())
+    {
+        return Err(corrupt());
     }
     if has_lineage {
         let mut statement = connection.prepare(

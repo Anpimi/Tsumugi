@@ -17,6 +17,34 @@ fn finish(store: &mut ProjectStore, input: &FixedInput) -> ExecutionId {
 }
 
 #[test]
+fn opening_rejects_a_valid_source_set_without_an_attempt() {
+    let (_directory, store, _, _) = super::super::review::tests::fixture();
+    let bundle = SourceBundle::capture(
+        br#"{"UniqueID":"Review.Test","Name":"Review","Version":"1.0.0","EntryDll":"Review.dll"}"#,
+        br#"{"orphan":"No import attempt"}"#,
+        "en",
+    )
+    .unwrap();
+    let input = bundle
+        .fixed_input(store.metadata().unwrap().project_id())
+        .unwrap();
+    let path = store.directory().to_path_buf();
+    let connection = store.connection().unwrap();
+    record_input(connection, &input).unwrap();
+    assert_eq!(
+        read_bundle(connection, bundle.set_id).unwrap(),
+        bundle.source_input()
+    );
+    store.close().unwrap();
+    assert_eq!(
+        ProjectStore::open(path).unwrap_err(),
+        crate::PersistenceError::CorruptProject {
+            stage: crate::PersistenceStage::Open,
+        }
+    );
+}
+
+#[test]
 fn source_original_observations_are_pure_and_settlement_is_receipt_first() {
     let directory = tempfile::tempdir().unwrap();
     let mut store = ProjectStore::create(directory.path().join("project"),
