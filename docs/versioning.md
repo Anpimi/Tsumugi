@@ -4,10 +4,11 @@
 
 `[workspace.package].version` in [Cargo.toml](../Cargo.toml) is the single source of truth for the desktop application's version. Both `tsumugi-core` and `tsumugi-desktop` inherit this field. The Tauri configuration omits `version` so it reads the Cargo package version directly, and the frontend `package.json` is marked `private` without an independent release number.
 
-Whenever you change the workspace version, refresh the workspace entries in `Cargo.lock` using the local cache:
+Whenever you change the workspace version, refresh both lockfiles using the local cache. The plugin compatibility workspace has its own lockfile and resolves Core and Host from this checkout.
 
 ```sh
 cargo update --workspace --offline
+cargo update --manifest-path crates/plugin-host/compatibility/Cargo.toml --workspace --offline
 ```
 
 A desktop release is built from a single verified source commit. Database schemas, bundled format integrations, caption profiles, and capability/exchange contracts carry their own version numbers. Update those internal versions only when their own format or behavior changes—not merely to match an application bump.
