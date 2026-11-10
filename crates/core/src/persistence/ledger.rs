@@ -973,6 +973,30 @@ impl OpenCheckerFrames {
     }
 }
 
+/// Borrow the original build plan and one decoded output during one attempt scan.
+pub(super) struct OpenBuildEvidence {
+    pub(super) plan: crate::ReleasePlan,
+    pub(super) artifact: Option<OpenBuildArtifact>,
+}
+
+pub(super) struct OpenBuildArtifact {
+    result: FixedResult,
+    pub(super) output: tsumugi_plugin_sdk::ArtifactSet,
+}
+
+impl OpenBuildArtifact {
+    pub(super) fn matches(&self, result: &FixedResult) -> bool {
+        self.result.envelope().result_id == result.envelope().result_id
+            && self.result.digest() == result.digest()
+            && self.result.bytes() == result.bytes()
+    }
+}
+
+struct OpenArtifactValidation<'a> {
+    checker: &'a mut OpenCheckerFrames,
+    build: &'a mut Option<OpenBuildEvidence>,
+}
+
 /// One strictly received result for the exact input in the current open snapshot.
 /// A different result replaces the slot; the entire slot dies with this attempt.
 /// Mutable rows and original grants are checked on every load, including hits.
@@ -981,6 +1005,7 @@ pub(super) struct OpenResultReader<'a> {
     input: &'a FixedInput,
     verified: Option<FixedResult>,
     checker: Option<&'a mut OpenCheckerFrames>,
+    build: Option<OpenBuildEvidence>,
 }
 
 impl<'a> OpenResultReader<'a> {
@@ -990,11 +1015,16 @@ impl<'a> OpenResultReader<'a> {
             input,
             verified: None,
             checker: None,
+            build: None,
         }
     }
 
     pub(super) fn input(&self) -> &'a FixedInput {
         self.input
+    }
+
+    pub(super) fn take_build_evidence(&mut self) -> Option<OpenBuildEvidence> {
+        self.build.take()
     }
 
     fn validate_links(
@@ -1004,12 +1034,16 @@ impl<'a> OpenResultReader<'a> {
     ) -> Result<(), ExecutionError> {
         for (id, valid) in links {
             let result = self.load(id)?;
-            let link = validate_plugin_link_with_checker(
+            let open = self.checker.as_deref_mut().map(|checker| OpenArtifactValidation {
+                checker,
+                build: &mut self.build,
+            });
+            let link = validate_plugin_link_with_open_evidence(
                 self.connection,
                 self.input,
                 &result,
                 valid,
-                self.checker.as_deref_mut(),
+                open,
             )?;
             checked(id, link, valid);
         }
@@ -1542,17 +1576,18 @@ pub(super) fn validate_plugin_link(
     result: &FixedResult,
     expected_valid: bool,
 ) -> Result<CheckedPluginLink, ExecutionError> {
-    validate_plugin_link_with_checker(connection, input, result, expected_valid, None)
+    validate_plugin_link_with_open_evidence(connection, input, result, expected_valid, None)
 }
 
-fn validate_plugin_link_with_checker(
+fn validate_plugin_link_with_open_evidence(
     connection: &Connection,
     input: &FixedInput,
     result: &FixedResult,
     expected_valid: bool,
-    checker: Option<&mut OpenCheckerFrames>,
+    mut open: Option<OpenArtifactValidation<'_>>,
 ) -> Result<CheckedPluginLink, ExecutionError> {
     let original = result_input(connection, input, result.envelope().result_id)?;
+    let same_attempt = std::ptr::eq(input, original.as_ref());
     let input = original.as_ref();
     if input.envelope().operation == crate::content::OPERATION {
         let proof = validate_source_link(connection, input, result, expected_valid)?;
@@ -1574,19 +1609,37 @@ fn validate_plugin_link_with_checker(
         ));
     }
     let (check_input, check_result, saved_valid) = load_check_link(connection, result)?;
-    let prepared = ArtifactValidationCapture::restore(
-        ResultValidationCapture {
-            input: input.clone(),
-            result: result.clone(),
-        },
-        check_input,
-    )?
-    .prepare(check_result)?;
+    let build_result = ResultValidationCapture {
+        input: input.clone(),
+        result: result.clone(),
+    };
+    let build = open.as_mut().filter(|_| same_attempt).map(|open| &mut *open.build);
+    let (capture, artifact) = if let Some(build) = build {
+        let evidence = match build {
+            Some(evidence) => evidence,
+            None => build.insert(OpenBuildEvidence {
+                plan: crate::ReleasePlan::from_input(input)?,
+                artifact: None,
+            }),
+        };
+        let (capture, output) = ArtifactValidationCapture::restore_with_plan(
+            build_result,
+            check_input,
+            &evidence.plan,
+        )?;
+        (capture, Some((&mut evidence.artifact, output)))
+    } else {
+        (ArtifactValidationCapture::restore(build_result, check_input)?, None)
+    };
+    let prepared = capture.prepare(check_result)?;
     if saved_valid != expected_valid || prepared.proof.valid != saved_valid {
         return Err(error(ErrorCode::CorruptLedger, "semantic-validation-proof"));
     }
-    if let Some(checker) = checker {
-        checker.remember(&prepared);
+    if let Some((slot, output)) = artifact.filter(|_| saved_valid) {
+        *slot = Some(OpenBuildArtifact { result: result.clone(), output });
+    }
+    if let Some(open) = open {
+        open.checker.remember(&prepared);
     }
     Ok(CheckedPluginLink::Artifact {
         build_attempt: input.envelope().attempt_id,

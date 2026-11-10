@@ -1,7 +1,7 @@
 //! Saved releases bind exact frozen inputs, original results and adoption
 //! receipts. Reading historical plugin output needs no live process or grant.
 use super::*;
-use crate::persistence::ledger::{CheckedPluginLink, OpenPluginProofs, OpenResultReader};
+use crate::persistence::ledger::{CheckedPluginLink, OpenBuildEvidence, OpenPluginProofs, OpenResultReader};
 #[cfg(any(
     test,
     feature = "execution-test-host",
@@ -80,6 +80,7 @@ fn prepare_data(
     action: &AdoptionAction,
     results: &[FixedResult],
     version: u32,
+    open_build: Option<OpenBuildEvidence>,
 ) -> Result<PreparedRecord, ExecutionError> {
     if ![1, 2, 3].contains(&version) || version >= 2 && input.envelope().plugin.is_none() {
         return Err(failure(ErrorCode::CorruptLedger, "release-manifest-version"));
@@ -89,7 +90,10 @@ fn prepare_data(
     let mut artifacts = Vec::new();
     let mut referenced_plan = None;
     let (plan, summary) = if input.envelope().plugin.is_some() {
-        let plan = ReleasePlan::from_input(input)?;
+        let (plan, mut artifact) = match open_build {
+            Some(evidence) => (evidence.plan, evidence.artifact),
+            None => (ReleasePlan::from_input(input)?, None),
+        };
         let summary = plan.release_summary();
         for result in results {
             let item = input.item(result.envelope().item_id)?;
@@ -98,7 +102,10 @@ fn prepare_data(
                 .locale
                 .as_deref()
                 .ok_or_else(|| failure(ErrorCode::OutputInvalid, "release-locale"))?;
-            let output = plan.artifact_set(result)?;
+            let output = match artifact.take_if(|cached| cached.matches(result)) {
+                Some(cached) => cached.output,
+                None => plan.artifact_set(result)?,
+            };
             if output.target_language != locale || !seen.insert(locale.to_owned()) {
                 return Err(failure(ErrorCode::ResultMismatch, "release-coverage"));
             }
@@ -110,8 +117,9 @@ fn prepare_data(
                 .then(|| plan.delivery_report(input.digest(), &output))
                 .transpose()?;
             for artifact in output.artifacts {
+                // The selected artifact set has already checked the exact bytes and digest.
                 let bytes = artifact
-                    .validated_bytes()
+                    .bytes()
                     .map_err(|_| failure(ErrorCode::OutputInvalid, "release-artifact-bytes"))?
                     .into_owned();
                 artifacts.push(Artifact {
@@ -203,7 +211,7 @@ pub(super) fn prepare(
 ) -> Result<PreparedMutation, ExecutionError> {
     let version = if input.envelope().plugin.is_some() { 3 } else { 1 };
     let PreparedRecord { manifest, summary, artifacts, .. } =
-        prepare_data(input, action, results, version)?;
+        prepare_data(input, action, results, version, None)?;
     let manifest_bytes = codec::encode(&manifest, MAX_INPUT_BYTES)?;
     let digest = codec::digest(&manifest_bytes);
     let action = action.clone();
@@ -312,12 +320,13 @@ pub(super) fn load(
             None => super::super::ledger::load_result(connection, &input, *id),
         })
         .collect::<Result<Vec<_>, _>>()?;
+    let build = open.as_mut().and_then(|frames| frames.results.take_build_evidence());
     let PreparedRecord {
         manifest: expected_manifest,
         summary,
         artifacts: expected_artifacts,
         referenced_plan,
-    } = prepare_data(&input, &action, &results, manifest.version)?;
+    } = prepare_data(&input, &action, &results, manifest.version, build)?;
     if manifest != expected_manifest || bytes != codec::encode(&expected_manifest, MAX_INPUT_BYTES)?
     {
         return Err(failure(ErrorCode::CorruptLedger, "release-fixed-input"));

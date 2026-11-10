@@ -60,7 +60,8 @@ impl ArtifactValidationCapture {
         build: ResultValidationCapture,
         attempt: Option<ExecutionId>,
     ) -> Result<Self, ExecutionError> {
-        let (mut envelope, checks) = Self::reconstruct(&build)?;
+        let plan = ReleasePlan::from_input(&build.input)?;
+        let (mut envelope, checks, _) = Self::reconstruct(&build, &plan)?;
         envelope.attempt_id = attempt.unwrap_or(envelope.attempt_id);
         let check_input = FixedInput::capture(envelope)?;
         Ok(Self { build, check_input, checks })
@@ -68,8 +69,8 @@ impl ArtifactValidationCapture {
 
     fn reconstruct(
         build: &ResultValidationCapture,
-    ) -> Result<(InputEnvelope, sdk::FixedCheckSet), ExecutionError> {
-        let plan = ReleasePlan::from_input(&build.input)?;
+        plan: &ReleasePlan,
+    ) -> Result<(InputEnvelope, sdk::FixedCheckSet, sdk::ArtifactSet), ExecutionError> {
         let result = &build.result;
         result.validate_for_input(&build.input)?;
         let output = plan.parse_artifact_set(result)?;
@@ -135,7 +136,7 @@ impl ArtifactValidationCapture {
                 id: payload.input.source.source_set_id.clone(),
                 locale: Some(locale.into()),
             },
-            serde_json::to_value(payload).map_err(|_| invalid())?,
+            serde_json::to_value(&payload).map_err(|_| invalid())?,
             vec![],
         );
         let project = build
@@ -159,7 +160,7 @@ impl ArtifactValidationCapture {
             .timeout_ms
             .min(selected.capability.declaration.limits.timeout_ms);
         envelope.plugin = Some(selected);
-        Ok((envelope, checks))
+        Ok((envelope, checks, payload.output))
     }
     pub fn check_input(&self) -> &FixedInput {
         &self.check_input
@@ -168,9 +169,19 @@ impl ArtifactValidationCapture {
         build: ResultValidationCapture,
         check_input: FixedInput,
     ) -> Result<Self, ExecutionError> {
-        let (envelope, checks) = Self::reconstruct(&build)?;
+        let plan = ReleasePlan::from_input(&build.input)?;
+        Self::restore_with_plan(build, check_input, &plan).map(|(capture, _)| capture)
+    }
+
+    /// The caller has checked the plan against the original build input.
+    pub(crate) fn restore_with_plan(
+        build: ResultValidationCapture,
+        check_input: FixedInput,
+        plan: &ReleasePlan,
+    ) -> Result<(Self, sdk::ArtifactSet), ExecutionError> {
+        let (envelope, checks, output) = Self::reconstruct(&build, plan)?;
         validation::restore_reconstructed_check_input(envelope, &check_input)?;
-        Ok(Self { build, check_input, checks })
+        Ok((Self { build, check_input, checks }, output))
     }
     /// Coverage can be complete and still have blocking findings. The ledger
     /// records valid/invalid against these exact producer and checker results.

@@ -9,7 +9,7 @@ import { clearMocks, mockIPC } from "@tauri-apps/api/mocks";
 import { i18n } from "../i18n";
 import { SessionReads } from "../sessionReads";
 import { sourceCommands, type NativeSourceDropEvent, type SourceContextPage } from "../sourceCommands";
-import { sourceDraftCommands } from "../sourceDraftCommands";
+import { sourceDraftCommands, type SourceDraftHead } from "../sourceDraftCommands";
 import { sourceDraftValue } from "../sourceDraftJournal";
 import { sourceDraftStateFixture } from "../testSupport/sourceDraftStateFixture";
 import { pluginCommands } from "../pluginCommands";
@@ -31,6 +31,7 @@ import { executionCommands } from "../executionCommands";
 import { installDesktopBehavior } from "../desktopBehavior";
 import { reviewCommands } from "../reviewCommands";
 import { resourceCommands } from "../resourceCommands";
+import { resourceDraftCommands, type ResourceDraftHead } from "../resourceDraftCommands";
 import { reviewTargetFixture } from "../testSupport/reviewFixture";
 import { validateResponseRead, validateResponseWritten, validateResponseCleared } from "../generated/draft.validators";
 import { validateResponseRecoverSave } from "../generated/translation.validators";
@@ -55,7 +56,7 @@ vi.mock("@tauri-apps/api/core", { spy: true });
 vi.mock("@tauri-apps/api/event", { spy: true });
 vi.mock("@tauri-apps/api/path", () => ({ sep: () => "/", join: async (...parts: string[]) => parts.join("/") }));
 vi.mock("./nativeMenu", { spy: true });
-const ownerLoad = vi.hoisted(() => ({ execution: null as Promise<void> | null, knowledge: null as Promise<void> | null, source: null as Promise<void> | null,
+const ownerLoad = vi.hoisted(() => ({ execution: null as Promise<void> | Error | null, knowledge: null as Promise<void> | null, source: null as Promise<void> | Error | null,
   knowledgeValue: null as KnowledgeOwner | null, sourceValue: null as SourceOwner | null, deliveryFail: false }));
 const entriesPresentation = vi.hoisted(() => vi.fn());
 vi.mock("./features/entries/EntriesView", async original => {
@@ -735,24 +736,77 @@ it("updates native command readiness and suspends the workspace group without re
   }
 }, 15000);
 
-it("lets the first entries read finish before starting the passive decision count", async () => {
+it("lets the first entries and startup journals settle before starting the passive decision count", async () => {
   let finishPage!: (value: SegmentPage) => void;
   const firstPage = new Promise<SegmentPage>(resolve => { finishPage = resolve; });
   const readEntries = vi.mocked(segmentCommands.page).mockReturnValue(firstPage);
+  let finishSource!: (value: SourceDraftHead) => void;
+  const source = new Promise<SourceDraftHead>(resolve => { finishSource = resolve; });
+  const readSource = vi.mocked(sourceDraftCommands.read).mockReturnValue(source);
+  let failResources!: (cause: Error) => void;
+  const resources = new Promise<ResourceDraftHead>((_, reject) => { failResources = reject; });
+  const readResources = vi.mocked(resourceDraftCommands.read).mockReturnValue(resources);
   const readDecisions = vi.spyOn(decisionCommands, "page").mockRejectedValue(new Error("No decision fixture"));
   await openImportWorkspace();
-  await waitFor(() => expect(readEntries).toHaveBeenCalled());
+  await waitFor(() => {
+    expect(readEntries).toHaveBeenCalled();
+    expect(readSource).toHaveBeenCalled();
+    expect(readResources).toHaveBeenCalled();
+  });
 
   vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
   try {
     await act(async () => { await vi.advanceTimersByTimeAsync(500); });
     expect(readDecisions).not.toHaveBeenCalled();
+    await act(async () => { finishPage(page); });
+    expect(screen.getByText(page.rows[0].content.sourcePreview)).toBeVisible();
+    await act(async () => { await vi.advanceTimersByTimeAsync(500); });
+    expect(readDecisions).not.toHaveBeenCalled();
+    await act(async () => { finishSource({ key: { projectId: project.metadata.projectId }, revision: "0", writerId: null, value: null }); });
+    expect(ownerLoad.sourceValue?.journal.hydration).toBe("ready");
+    await act(async () => { await vi.advanceTimersByTimeAsync(500); });
+    expect(readDecisions).not.toHaveBeenCalled();
+    await act(async () => { failResources(new Error("Synthetic resource journal read failed")); });
+    expect(ownerLoad.knowledgeValue?.journal.hydration).toBe("failed");
+    await act(async () => { await vi.advanceTimersByTimeAsync(500); });
+    expect(readDecisions).toHaveBeenCalledOnce();
   } finally {
     vi.useRealTimers();
   }
+});
 
-  await act(async () => { finishPage(page); });
+it("waits for the new session's journals and still reads decisions when opened explicitly", async () => {
+  const reopened = { ...project, sessionToken: "reopened-session" };
+  const readSource = vi.mocked(sourceDraftCommands.read);
+  const original = readSource.getMockImplementation()!;
+  const held = new Promise<SourceDraftHead>(() => {});
+  readSource.mockImplementation(request => request.sessionToken === reopened.sessionToken ? held : original(request));
+  const readDecisions = vi.spyOn(decisionCommands, "page").mockRejectedValue(new Error("No decision fixture"));
+  await openImportWorkspace(project, { open: vi.fn().mockResolvedValueOnce(project).mockResolvedValueOnce(reopened) });
+  await waitFor(() => expect(readDecisions).toHaveBeenCalledWith(expect.objectContaining({ sessionToken: project.sessionToken })));
+  readDecisions.mockClear();
+  await act(async () => { expect(await controller.open(reopened.locator)).toBe(true); });
+  await waitFor(() => expect(readSource).toHaveBeenCalledWith({ sessionToken: reopened.sessionToken, key: { projectId: reopened.metadata.projectId } }));
   expect(await screen.findByText(page.rows[0].content.sourcePreview)).toBeVisible();
+  const decisions = screen.getByRole("button", { name: i18n.t("workbenchV2.decisions") });
+  await waitFor(() => expect(decisions).toBeEnabled());
+  vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+  try {
+    await act(async () => { await vi.advanceTimersByTimeAsync(500); });
+    expect(readDecisions).not.toHaveBeenCalled();
+  } finally { vi.useRealTimers(); }
+  fireEvent.click(decisions);
+  await waitFor(() => expect(readDecisions).toHaveBeenCalledWith(expect.objectContaining({ sessionToken: reopened.sessionToken })));
+});
+
+it.each([
+  { owner: "source", error: "sourceMaintenance.ownerFailed" },
+  { owner: "execution", error: "knowledge.loadFailed" },
+] as const)("continues the passive decision count when the $owner owner cannot load", async ({ owner, error }) => {
+  ownerLoad[owner] = new Error("Synthetic startup owner load failed");
+  const readDecisions = vi.spyOn(decisionCommands, "page").mockRejectedValue(new Error("No decision fixture"));
+  await openImportWorkspace();
+  expect(await screen.findByText(i18n.t(error))).toBeVisible();
   await waitFor(() => expect(readDecisions).toHaveBeenCalled());
 });
 
