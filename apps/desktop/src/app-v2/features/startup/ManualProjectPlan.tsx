@@ -45,6 +45,7 @@ export default function ManualProjectPlan({ controller, gate, open, onOpenChange
   const picker = useRef(0), openRef = useRef(open);
   const sourceFlight = useRef(0), [sourceOperation, setSourceOperation] = useState<"selecting" | "checking" | null>(null);
   const sourceWorking = useRef(false), [sourceFailure, setSourceFailure] = useState<CommandFailure | null>(null), consumedDrop = useRef<string | null>(null), seenDrop = useRef<string | null>(null);
+  const closingForSource = useRef(false), [sourceCloseStopped, setSourceCloseStopped] = useState(false);
   const client = useApplicationQueryClient(), inventoryOptions = sourceReads.inventory(0);
   const inventory = useQuery({ queryKey: inventoryOptions.key, queryFn: inventoryOptions.read,
   enabled: open && !!draft.sourcePlan, networkMode: "always", retry: false, staleTime: 0, gcTime: 60_000,
@@ -63,7 +64,7 @@ export default function ManualProjectPlan({ controller, gate, open, onOpenChange
     const next = { ...current.current, ...patch, sequence: current.current.sequence + 1 };
     current.current = next; setDraft(next); setErrors({}); setChanged(false);
   }
-  function clear() { sourceFlight.current++; picker.current++; const next = { ...empty(), sequence: current.current.sequence + 1 }; submitted.current = null; current.current = next; setDraft(next); setErrors({}); setSourceFailure(null); }
+  function clear() { sourceFlight.current++; picker.current++; const next = { ...empty(), sequence: current.current.sequence + 1 }; submitted.current = null; current.current = next; setDraft(next); setErrors({}); setSourceFailure(null); setSourceCloseStopped(false); }
   function review(intent: LeaveIntent["kind"] | "dismiss", currentIntent: () => boolean = () => true) {
     if (leaveRef.current) return Promise.resolve(false);
     return new Promise<boolean>(resolve => {
@@ -82,7 +83,8 @@ export default function ManualProjectPlan({ controller, gate, open, onOpenChange
     id: "startup-project-plan", area: "overview", scope: { kind: "application" },
     inspect: intent => intent.kind === "restore" ? { status: "ready", revision: "retained-startup-project-plan" }
       : ({ status: composing.current ? "blocked" : intent.kind === "create-project"
-      || intent.kind === "open-project" && controller.getSnapshot().pending?.kind === "create" ? "ready"
+      || intent.kind === "open-project" && controller.getSnapshot().pending?.kind === "create"
+      || intent.kind === "close-project" && closingForSource.current ? "ready"
       : preparation.current || sourceWorking.current || sourceReading.current ? "blocked" : dirty(current.current) ? "dirty" : "ready", revision: String(current.current.sequence) }),
     prepareLeave: (intent, proof, currentIntent) => review(intent.kind, () => proof() && currentIntent()),
     reveal: () => onOpenChange(true),
@@ -115,16 +117,30 @@ export default function ManualProjectPlan({ controller, gate, open, onOpenChange
     ? { ...sourcePlan, folderName: "" } : sourcePlan;
   async function chooseSource(ticket?: string, folderName = "") {
     if (!native || blocked() || composing.current) return;
-    const before = current.current.sourcePlan ?? emptySource();
-    const expired = !!before.directory || before.expired;
-    const selectedPlan = { ...before, directory: null, preflight: null, folderName: folderName || (expired ? before.folderName : ""), expired };
-    onDropHandled?.();
-    edit({ sourcePlan: selectedPlan });
-    const frame = current.current, flight = ++sourceFlight.current;
-    sourceWorking.current = true; setSourceOperation("selecting"); setSourceFailure(null);
+    let frame = current.current;
+    const flight = ++sourceFlight.current;
+    const currentSelection = () => mounted.current && openRef.current && flight === sourceFlight.current && current.current === frame && !composing.current;
+    sourceWorking.current = true; setSourceOperation("selecting"); setSourceFailure(null); setSourceCloseStopped(false);
     try {
+      if (!ticket && controller.getSnapshot().session) {
+        // This explicit close retains the new plan; other project owners still review their own drafts.
+        closingForSource.current = true;
+        let closed: boolean;
+        try { closed = await controller.close(); }
+        finally { closingForSource.current = false; }
+        const state = controller.getSnapshot();
+        if (!closed || state.session || state.phase !== "idle" || state.pending || state.retainedSession || state.cleanup) {
+          if (mounted.current && openRef.current && flight === sourceFlight.current) setSourceCloseStopped(true);
+          return;
+        }
+        if (!currentSelection()) return;
+      }
+      const before = current.current.sourcePlan ?? emptySource();
+      const expired = !!before.directory || before.expired;
+      const selectedPlan = { ...before, directory: null, preflight: null, folderName: folderName || (expired ? before.folderName : ""), expired };
+      onDropHandled?.(); edit({ sourcePlan: selectedPlan }); frame = current.current;
       const selected = ticket ? await startupCommands.droppedDirectory({ dropTicket: ticket }) : await startupCommands.chooseDirectory();
-      if (!mounted.current || !openRef.current || flight !== sourceFlight.current || current.current !== frame || composing.current) return;
+      if (!currentSelection()) return;
       if (selected) edit({ sourcePlan: { ...selectedPlan, directory: selected, folderName: selected.folderName, expired: false } });
       else if (!ticket && before.directory) edit({ sourcePlan: before });
     } catch (cause) {
@@ -219,8 +235,9 @@ export default function ManualProjectPlan({ controller, gate, open, onOpenChange
         {pendingCreation ? <Banner tone="warning" action={<Button disabled={preparing || lifecycle.phase !== "idle"} onClick={() => void controller.openCreatedProject()}>{t("openDestination")}</Button>}>{t("unknown")}<p>{t("unknownLocation", { path: pendingCreation.locator })}</p></Banner>
           : failure ? <Banner tone="error">{t("createFailed")}<CommandFailureDetails failure={commandFailure(cause)}/></Banner> : null}
         {dropFailure ? <Banner tone="error">{t("sourceSelectionFailed")}<CommandFailureDetails failure={dropFailure}/></Banner> : null}
+        {sourceCloseStopped ? <Banner tone="warning" action={<Button disabled={!!sourceOperation || lifecycle.phase !== "idle"} onClick={() => { if (!composing.current) onOpenChange(false); }}>{t("returnToWorkspace")}</Button>}>{t("sourceCloseStopped")}</Banner> : null}
         <StartupSourcePreparation plan={visibleSourcePlan} inventory={inventory.data} loading={inventory.isFetching} inventoryFailed={!!inventory.error} failure={sourceFailure}
-          busy={busy} native={native} checking={sourceOperation === "checking"} selecting={sourceOperation === "selecting"} ready={sourceReady}
+          busy={busy} native={native} activeProject={!!lifecycle.session} checking={sourceOperation === "checking"} selecting={sourceOperation === "selecting"} ready={sourceReady}
           onChoose={() => void chooseSource()} onRefresh={() => void refreshSources()} onChange={changeSource} onCheck={() => void checkSource()}
           onManual={() => { if (!busy && !sourceWorking.current && !leaveRef.current && !composing.current) { onDropHandled?.(); sourceFlight.current++; edit({ sourcePlan: null }); setSourceFailure(null); } }}/>
         <Field label={t("name")} required error={error("name", "displayName")}><TextInput value={draft.name} readOnly={busy} onChange={event => edit({ name: event.target.value })}/></Field>

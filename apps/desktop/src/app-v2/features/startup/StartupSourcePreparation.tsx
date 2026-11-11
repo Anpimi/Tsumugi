@@ -19,10 +19,10 @@ export interface StartupSourcePlan {
 export type StartupSourceInventory = Awaited<ReturnType<ReturnType<typeof sourceReads.inventory>["read"]>>;
 
 /** The editable plan displays the existing Source owner's declarations; it never starts an import. */
-export default function StartupSourcePreparation({ plan, inventory, loading, inventoryFailed, failure, busy, native, checking, selecting, ready,
+export default function StartupSourcePreparation({ plan, inventory, loading, inventoryFailed, failure, busy, native, activeProject, checking, selecting, ready,
   onChoose, onRefresh, onChange, onCheck, onManual }: {
   plan: StartupSourcePlan | null; inventory: StartupSourceInventory | undefined; loading: boolean; inventoryFailed: boolean;
-  failure: CommandFailure | null; busy: boolean; native: boolean; checking: boolean; selecting: boolean; ready: boolean;
+  failure: CommandFailure | null; busy: boolean; native: boolean; activeProject: boolean; checking: boolean; selecting: boolean; ready: boolean;
   onChoose: () => void; onRefresh: () => void; onChange: (choice: string, runtime: string) => void; onCheck: () => void; onManual: () => void;
 }) {
   const { t, i18n } = useTranslation(undefined, { keyPrefix: "startup" });
@@ -31,8 +31,9 @@ export default function StartupSourcePreparation({ plan, inventory, loading, inv
   return <section className={styles.sourcePlan} aria-label={t("sourcePlanTitle")}>
     <h2 className={styles.sectionTitle}>{t("sourcePlanTitle")}</h2>
     <p className={styles.destination}>{t("sourcePlanHelp")}</p>
+    {activeProject ? <p className={styles.destination}>{t("sourceCloseHelp")}</p> : null}
     <div className={styles.actions}>
-      <Button disabled={!native || busy || selecting || checking || loading} pending={selecting} onClick={onChoose}>{t("chooseSourceFolder")}</Button>
+      <Button disabled={!native || busy || selecting || checking || loading} pending={selecting} onClick={onChoose}>{t(activeProject ? "closeProjectAndChooseSource" : "chooseSourceFolder")}</Button>
       {plan ? <Button disabled={busy || selecting || checking} onClick={onManual}>{t("useManual")}</Button> : null}
     </div>
     {plan ? <>

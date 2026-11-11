@@ -18,11 +18,13 @@ vi.mock("@tauri-apps/api/path", () => ({ sep: () => "/", join: async (...parts: 
 const project: ProjectView = { sessionToken: "created-session", locator: "/synthetic/projects/new-project", reconciliationState: "settled",
   metadata: { projectId: "11111111-1111-4111-8111-111111111111", displayName: "A human project", sourceLocale: "en-US", targetLocales: ["zh-Hans"], metadataRevision: "1" } };
 type LabelKey = "name" | "parent" | "folder" | "source" | "target" | "addTarget" | "create" | "title" | "createFailed" | "unknown" | "openDestination" | "chooseParent" | "discardTitle" | "keep" | "discard"
-  | "chooseSourceFolder" | "sourceFormat" | "sourceRuntime" | "checkSource" | "sourceReady" | "sourceMissing" | "sourceCheckFailed" | "sourceSelectionFailed" | "sourceNeedsCheck" | "sourceSelectionExpired" | "useManual" | "noSourceRuntime" | "refreshSourceOptions";
+  | "chooseSourceFolder" | "closeProjectAndChooseSource" | "sourceCloseHelp" | "sourceCloseStopped" | "returnToWorkspace" | "sourceFormat" | "sourceRuntime" | "checkSource" | "sourceReady" | "sourceMissing" | "sourceCheckFailed" | "sourceSelectionFailed" | "sourceNeedsCheck" | "sourceSelectionExpired" | "useManual" | "noSourceRuntime" | "refreshSourceOptions";
 const t = (key: LabelKey) => i18n.t(`startup.${key}`);
 function deferred<T>() { let resolve!: (value: T) => void; const promise = new Promise<T>(done => { resolve = done; }); return { resolve, promise }; }
 function fixture(options: { drop?: { dropTicket: string; folderName: string } | null } = {}) {
   const ports = { create: vi.fn(async (_request: CreateProjectRequest) => project), open: vi.fn(async (_request: { locator: string }) => project),
+    close: vi.fn(async (_request: { sessionToken: string }) => ({ closed: true })),
+    status: vi.fn(async () => ({ active: false, quiescing: false, queryCount: 0, error: null })),
     stopCleanup: vi.fn(async ({ actionId }: { actionId: string }) => ({ actionId, state: "stopped" as const })) };
   const controller = new ProjectLifecycle(ports), gate = new InteractionGate();
   const onCreated = vi.fn((_request: StartupClaimRequest) => {}), onDropHandled = vi.fn();
@@ -140,6 +142,85 @@ async function checkedSource(user: ReturnType<typeof userEvent.setup>) {
   await chooseSource(user); await user.click(screen.getByRole("button", { name: t("checkSource") }));
   await screen.findByText(t("sourceReady"));
 }
+
+it.each(["en-US", "zh-CN"] as const)("closes the current project before choosing a source and keeps the plan when the picker is cancelled in %s", async language => {
+  await i18n.changeLanguage(language); nativeSourceReads();
+  const { controller, ports } = fixture();
+  await act(async () => { expect(await controller.open(project.locator)).toBe(true); });
+  const user = await fill(), closed = deferred<{ closed: boolean }>(), picked = deferred<null>();
+  ports.close.mockReturnValueOnce(closed.promise);
+  const choose = vi.spyOn(startupCommands, "chooseDirectory").mockImplementationOnce(() => {
+    expect(controller.getSnapshot().session).toBeNull();
+    return picked.promise;
+  });
+  expect(screen.getByText(t("sourceCloseHelp"))).toBeVisible();
+  await user.click(screen.getByRole("button", { name: t("closeProjectAndChooseSource") }));
+  await waitFor(() => expect(ports.close).toHaveBeenCalledExactlyOnceWith({ sessionToken: project.sessionToken }));
+  expect(choose).not.toHaveBeenCalled(); expect(invoke).not.toHaveBeenCalled();
+  expect(screen.queryByRole("dialog", { name: t("discardTitle") })).not.toBeInTheDocument();
+  await act(async () => closed.resolve({ closed: true }));
+  await waitFor(() => expect(choose).toHaveBeenCalledOnce());
+  await act(async () => picked.resolve(null));
+  expect(screen.getByRole("textbox", { name: t("name") })).toHaveValue("A human project");
+  expect(screen.getByRole("textbox", { name: t("parent") })).toHaveValue("/synthetic/projects");
+  expect(screen.getByRole("combobox", { name: t("source") })).toHaveValue("en-US");
+  expect(screen.getByRole("dialog", { name: t("title") })).toBeVisible(); controller.dispose();
+});
+
+it("keeps the current project and new settings without startup reads when another owner cancels closing", async () => {
+  const { controller, ports } = fixture();
+  await act(async () => { expect(await controller.open(project.locator)).toBe(true); });
+  const user = await fill(), choose = vi.spyOn(startupCommands, "chooseDirectory");
+  const prepareLeave = vi.fn(async () => false);
+  const unregister = controller.register({ id: "source-draft", area: "source", scope: { kind: "project", projectId: project.metadata.projectId, sessionToken: project.sessionToken },
+    inspect: () => ({ status: "dirty", revision: "draft-1" }), prepareLeave });
+  await user.click(screen.getByRole("button", { name: t("closeProjectAndChooseSource") }));
+  await screen.findByText(t("sourceCloseStopped"));
+  expect(prepareLeave).toHaveBeenCalledOnce(); expect(ports.close).not.toHaveBeenCalled();
+  expect(choose).not.toHaveBeenCalled(); expect(invoke).not.toHaveBeenCalled();
+  expect(controller.getSnapshot().session?.project).toEqual(project);
+  expect(screen.getByRole("textbox", { name: t("name") })).toHaveValue("A human project");
+  expect(screen.getByRole("dialog", { name: t("title") })).toBeVisible();
+  unregister();
+  let closing!: Promise<boolean>; act(() => { closing = controller.close(); });
+  const dialog = await screen.findByRole("dialog", { name: t("discardTitle") });
+  await user.click(within(dialog).getByRole("button", { name: t("keep") }));
+  expect(await closing).toBe(false); expect(ports.close).not.toHaveBeenCalled(); controller.dispose();
+});
+
+it.each(["rejected", "unknown"] as const)("keeps the project and new settings after a %s close result without choosing a source", async outcome => {
+  const { controller, ports, setVisible } = fixture();
+  await act(async () => { expect(await controller.open(project.locator)).toBe(true); });
+  const user = await fill(), choose = vi.spyOn(startupCommands, "chooseDirectory");
+  ports.close.mockRejectedValueOnce(outcome === "rejected"
+    ? { code: "busy", stage: "close", outcome: "rejected", recoveryRequired: false } : new Error("Lost close acknowledgement"));
+  await user.click(screen.getByRole("button", { name: t("closeProjectAndChooseSource") }));
+  await screen.findByText(t("sourceCloseStopped"));
+  expect(ports.close).toHaveBeenCalledOnce(); expect(choose).not.toHaveBeenCalled(); expect(invoke).not.toHaveBeenCalled();
+  expect(controller.getSnapshot().session?.project).toEqual(project);
+  expect(controller.getSnapshot().pending?.kind ?? null).toBe(outcome === "unknown" ? "close" : null);
+  expect(screen.getByRole("textbox", { name: t("name") })).toHaveValue("A human project");
+  await user.click(screen.getByRole("button", { name: t("returnToWorkspace") }));
+  expect(screen.queryByRole("dialog", { name: t("title") })).not.toBeInTheDocument();
+  act(() => setVisible(true));
+  expect(screen.getByRole("textbox", { name: t("name") })).toHaveValue("A human project"); controller.dispose();
+});
+
+it("does not choose a source after close when the new plan changed while closing", async () => {
+  const { controller, ports } = fixture();
+  await act(async () => { expect(await controller.open(project.locator)).toBe(true); });
+  const user = await fill(), closed = deferred<{ closed: boolean }>(), choose = vi.spyOn(startupCommands, "chooseDirectory");
+  ports.close.mockReturnValueOnce(closed.promise);
+  await user.click(screen.getByRole("button", { name: t("closeProjectAndChooseSource") }));
+  await waitFor(() => expect(ports.close).toHaveBeenCalledOnce());
+  fireEvent.change(screen.getByRole("textbox", { name: t("name") }), { target: { value: "Newer project B" } });
+  await act(async () => closed.resolve({ closed: true }));
+  await screen.findByText(t("sourceCloseStopped"));
+  expect(choose).not.toHaveBeenCalled(); expect(invoke).not.toHaveBeenCalled();
+  expect(controller.getSnapshot().session).toBeNull();
+  expect(controller.getSnapshot().retainedSession?.project).toEqual(project);
+  expect(screen.getByRole("textbox", { name: t("name") })).toHaveValue("Newer project B"); controller.dispose();
+});
 
 it.each(["en-US", "zh-CN"] as const)("checks declared native files without execution and hands the exact source to the new project in %s", async language => {
   const preview = structuredClone(sourcePreview);
