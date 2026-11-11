@@ -1229,6 +1229,11 @@ fn skyrim_normal_core_adopts_maximum_escaped_capture_and_reopens_every_field() {
             .bytes(),
         saved_result
     );
+    if let Some(destination) = std::env::var_os("TSUMUGI_TEST_SKYRIM_BACKUP") {
+        let destination = PathBuf::from(destination);
+        reopened.backup_to(&destination).unwrap();
+        println!("skyrim_capacity_backup={}", destination.display());
+    }
     eprintln!(
         "capacity Core capture/adopt/read/reopen completed in {:?}",
         started.elapsed()

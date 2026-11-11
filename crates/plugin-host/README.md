@@ -156,3 +156,18 @@ The `skyrim_j2_repeated_capture_keeps_source_semantics_and_manual_work` case req
 The `skyrim_j2_two_versions_preserve_work_review_ambiguity_and_both_releases` case extends that foundation through paired record/MCM import, a manual revision, source changes/additions/removals and two same-text mapping ambiguities. Unresolved identity blocks even a source-retained stage; explicit human edge rejection and continuation resolve the fixture's renames without approving translations. Stable work and human approval survive the update; file QA must be rerun, while changed text requires renewed human approval. Both versions use explicit staged translation scopes, Native builds and independent artifact checks. Every native field is extracted again from each saved output, and both releases, historical work, mapping decisions and receipts survive project reopen. This is normal Core and Native package integration coverage; desktop file selection, bulk-adoption UI, filesystem delivery and game loading remain separate acceptance work.
 
 These cases install and reopen the immutable package, run all five Native operations on mixed materials and a 476-field escaped-text capture, and verify missing-table errors and rejected altered output. The 476-field capture also passes Core grants, extraction, independent source checks and adoption; every field and the exact original bytes are read before and after project reopen. A separate tiny binary fixture exercises human translation and approval, independent artifact checks, saved release bytes, and project reopen. These tests do not establish a native GUI or game-loading result. Local dev/test builds optimize SHA-256 while retaining complete package-byte checks and the existing deadlines; delivery workers use their release profile.
+
+To retain a current-format project backup for desktop restoration and export checks, select the capacity case and set `TSUMUGI_TEST_SKYRIM_BACKUP` to a new file in an existing directory:
+
+```sh
+TSUMUGI_TEST_PLUGIN_PACKAGE=/absolute/prebuilt/skyrim-se \
+TSUMUGI_TEST_PLUGIN_DIGEST=independently-inspected-package-digest \
+TSUMUGI_TEST_SKYRIM_FIXTURES=/absolute/synthetic/format-probe-output \
+TSUMUGI_TEST_SKYRIM_BACKUP=/absolute/new-output/skyrim-476.backup \
+  cargo test --manifest-path crates/plugin-host/compatibility/Cargo.toml \
+  --features core-adapter --test skyrim_se --locked \
+  skyrim_normal_core_adopts_maximum_escaped_capture_and_reopens_every_field \
+  -- --ignored --exact --nocapture
+```
+
+The test saves the backup through the normal Core backup boundary after reopening and checking the project. It refuses an existing destination. The generated project contains 476 source fields and one independently checked release with an explicit all-source scope, not 476 approved translations. Each run creates new project, execution and release identities; a new backup is a reproducible synthetic scenario, not the identical database from an earlier measurement. The default test run retains no fixture.
