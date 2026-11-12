@@ -191,6 +191,8 @@ The current workspace targets **`0.3.0-alpha.1`**. The published `0.2.0-alpha.1`
 
 ### Fixed
 
+- Keep repeated task details responsive for large imports. Apply captured sources within their declared material limits, including after worker permissions expire if the saved independent check passed. Cancelled or revoked work remains ineligible.
+
 - Read large-material plugin recipes in the desktop app using the current SDK limits.
 
 - Preparing source content for a new project while another project is open now explicitly closes the current project through its normal unsaved-work and running-operation checks before opening the folder chooser. Cancelled or unsuccessful closes never start source selection; the new project settings remain available, including when the folder chooser is cancelled.

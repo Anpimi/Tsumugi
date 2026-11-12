@@ -68,6 +68,52 @@ fn fixture_input(store: &ProjectStore, grouped: bool) -> FixedInput {
     }
     FixedInput::capture(envelope).unwrap()
 }
+#[test]
+fn attempt_detail_reuses_verified_page_but_detects_changed_result_bytes() {
+    use rusqlite::trace::{TraceEvent, TraceEventCodes};
+
+    std::thread_local! { static FRAME_READS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) }; }
+
+    let _schema = TestSchema::enable();
+    let temp = tempfile::tempdir().unwrap();
+    let path = temp.path().join("project");
+    let mut store = store(&path);
+    let input = fixture_input(&store, false);
+    let attempt = input.envelope().attempt_id;
+    let item = input.envelope().items[0].item_id;
+    store.enqueue_read_only_execution(&input).unwrap();
+    let result = produce(&mut store, &input, item);
+    let result_id = result.envelope().result_id;
+    store.save_execution_result(&result).unwrap();
+    store.validate_execution_result(attempt, result_id).unwrap();
+
+    store.connection().unwrap().trace_v2(TraceEventCodes::SQLITE_TRACE_STMT, Some(|event| {
+        if let TraceEvent::Stmt(_, sql) = event
+            && sql.contains("SELECT CASE WHEN length(bytes)<=")
+        {
+            FRAME_READS.with(|reads| reads.set(reads.get() + 1));
+        }
+    }));
+    let status = |store: &ProjectStore| {
+        store.execution_attempt_detail(attempt, false, 0, 100).unwrap()
+            .items.into_iter().find(|row| row.status.item_id == item).unwrap().status
+    };
+    assert_eq!(status(&store).validation, ValidationState::Valid);
+    assert_eq!(FRAME_READS.with(|reads| reads.replace(0)), 1);
+    assert_eq!(status(&store).validation, ValidationState::Valid);
+    assert_eq!(FRAME_READS.with(|reads| reads.get()), 0);
+
+    // An external edit to the same frame must invalidate the derived page,
+    // even when its persisted identifier, size and claimed digest match.
+    let external = Connection::open(path.join("project.sqlite3")).unwrap();
+    external.execute(
+        "UPDATE execution_results SET bytes=zeroblob(length(bytes)) WHERE result_id=?1",
+        [result_id.to_string()],
+    ).unwrap();
+    assert_eq!(status(&store).validation, ValidationState::Invalid);
+    assert_eq!(FRAME_READS.with(|reads| reads.get()), 1);
+}
+
 fn install_targets(store: &ProjectStore) {
     store.execution_connection().unwrap().execute_batch("CREATE TABLE fixture_targets(id TEXT PRIMARY KEY, revision INTEGER NOT NULL, value TEXT NOT NULL); INSERT INTO fixture_targets VALUES ('a',1,'original'),('b',1,'original'),('c',1,'original');").unwrap();
 }

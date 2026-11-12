@@ -1392,7 +1392,15 @@ fn load_check_frames(
         )
         .map_err(sql_error)?;
     let check_input = load_input(connection, parse_id(checker_attempt)?)?;
-    let check_result = load_result(connection, &check_input, parse_id(checker_id.to_owned())?)?;
+    let check_result = load_result(connection, &check_input, parse_id(checker_id.to_owned())?)
+        .map_err(|failure| {
+            // This is a saved proof frame, not a fresh worker response.
+            if failure.stage == "result-digest" {
+                error(ErrorCode::CorruptLedger, "result-bytes")
+            } else {
+                failure
+            }
+        })?;
     Ok((check_input, check_result))
 }
 
@@ -1457,15 +1465,15 @@ pub(super) fn artifact_check_proof_in(
     }))
 }
 
-#[derive(Clone, PartialEq, Eq)]
-pub(super) struct SourceReadStamp {
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(super) struct ReadSnapshotStamp {
     connection: String,
     data_version: i64,
     schema_version: i64,
     total_changes: u64,
 }
 
-pub(super) fn source_read_stamp(connection: &Connection) -> Result<Option<SourceReadStamp>, ExecutionError> {
+pub(super) fn read_snapshot_stamp(connection: &Connection) -> Result<Option<ReadSnapshotStamp>, ExecutionError> {
     if connection.is_autocommit() {
         return Ok(None);
     }
@@ -1478,7 +1486,7 @@ pub(super) fn source_read_stamp(connection: &Connection) -> Result<Option<Source
     {
         return Ok(None);
     }
-    Ok(Some(SourceReadStamp {
+    Ok(Some(ReadSnapshotStamp {
         connection: connection.query_row("SELECT tsumugi_connection_identity()", [], |r| r.get(0)).map_err(sql_error)?,
         data_version: connection.query_row("PRAGMA main.data_version", [], |r| r.get(0)).map_err(sql_error)?,
         schema_version: connection.query_row("PRAGMA main.schema_version", [], |r| r.get(0)).map_err(sql_error)?,
@@ -1486,8 +1494,23 @@ pub(super) fn source_read_stamp(connection: &Connection) -> Result<Option<Source
     }))
 }
 
+// Retain only UI projections, never the underlying large frames or permits.
+#[derive(Debug, Default)]
+pub(super) struct AttemptDetailCache {
+    stamp: Option<ReadSnapshotStamp>,
+    pages: std::collections::VecDeque<(AttemptDetailKey, AttemptDetail)>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct AttemptDetailKey {
+    attempt_id: ExecutionId,
+    active: bool,
+    offset: u32,
+    limit: u32,
+}
+
 struct SourceReadValidation {
-    stamp: SourceReadStamp,
+    stamp: ReadSnapshotStamp,
     bundle: bool,
     snapshot: Option<(ExecutionId, bool, u64)>,
     summary: Option<Option<tsumugi_plugin_sdk::SourceCaptureSummary>>,
@@ -1519,7 +1542,7 @@ pub(super) fn source_read_validation(
     connection: &Connection,
     result: ExecutionId,
 ) -> Result<Option<(bool, Option<(ExecutionId, bool, u64)>)>, ExecutionError> {
-    let Some(stamp) = source_read_stamp(connection)? else { return Ok(None); };
+    let Some(stamp) = read_snapshot_stamp(connection)? else { return Ok(None); };
     Ok(source_validation_cache().lock().unwrap_or_else(std::sync::PoisonError::into_inner)
         .as_ref().filter(|memo| memo.source.result.envelope().result_id == result)
         .and_then(|memo| memo.read.as_ref())
@@ -1532,7 +1555,7 @@ pub(super) fn remember_source_read_validation(
     result: ExecutionId,
     snapshot: Option<(ExecutionId, bool, u64)>,
 ) -> Result<(), ExecutionError> {
-    let Some(stamp) = source_read_stamp(connection)? else { return Ok(()); };
+    let Some(stamp) = read_snapshot_stamp(connection)? else { return Ok(()); };
     let mut cache = source_validation_cache().lock().unwrap_or_else(std::sync::PoisonError::into_inner);
     if let Some(memo) = cache.as_mut().filter(|memo| memo.source.result.envelope().result_id == result) {
         if let Some(read) = memo.read.as_mut().filter(|read| read.stamp == stamp) {
@@ -1548,7 +1571,7 @@ pub(super) fn source_capture_summary(
     result: ExecutionId,
     output: &crate::content::SourceOutput,
 ) -> Result<Option<tsumugi_plugin_sdk::SourceCaptureSummary>, ExecutionError> {
-    let stamp = source_read_stamp(connection)?;
+    let stamp = read_snapshot_stamp(connection)?;
     let cached = source_validation_cache().lock().unwrap_or_else(std::sync::PoisonError::into_inner)
         .as_ref().filter(|memo| memo.source.result.envelope().result_id == result)
         .and_then(|memo| memo.read.as_ref()).filter(|read| Some(&read.stamp) == stamp.as_ref())
@@ -1584,7 +1607,7 @@ pub(super) fn load_source_projection(
     result: ExecutionId,
     require_semantic: bool,
 ) -> Result<(FixedInput, FixedResult, std::sync::Arc<crate::content::SourceOutput>), ExecutionError> {
-    let stamp = source_read_stamp(connection)?;
+    let stamp = read_snapshot_stamp(connection)?;
     let verified = source_validation_cache().lock().unwrap_or_else(std::sync::PoisonError::into_inner)
         .as_ref().filter(|memo| {
             let source = &memo.source;
@@ -2281,9 +2304,21 @@ impl ProjectStore {
         attempt: ExecutionId,
         active: bool,
     ) -> Result<RecoveryPlan, ExecutionError> {
-        let input = self.execution_input(attempt)?;
-        let view = self.execution_attempt(attempt, active)?;
         let connection = self.execution_connection()?;
+        super::review::read_snapshot(connection, |connection| {
+            let input = load_input(connection, attempt)?;
+            let view = read_attempt_in(connection, &input, active)?;
+            self.execution_recovery_in(connection, &input, &view)
+        })
+    }
+
+    fn execution_recovery_in(
+        &self,
+        connection: &Connection,
+        input: &FixedInput,
+        view: &AttemptView,
+    ) -> Result<RecoveryPlan, ExecutionError> {
+        let attempt = view.attempt_id;
         let metadata = self
             .metadata()
             .map_err(|_| error(ErrorCode::CorruptLedger, "project"))?;
@@ -2320,16 +2355,16 @@ impl ProjectStore {
             }
             // Planning never offers execution replay. A validated typed revision
             // can be saved as an unselected candidate through the original result.
-            if is_conversation_planning(&input) {
+            if is_conversation_planning(input) {
                 if input.envelope().capability_version == "4"
                     && let [result_id] = entry.result_ids.as_slice()
                     && let [status] = statuses.as_slice()
                     && status.execution == ExecutionState::Succeeded
                     && status.validation == ValidationState::Valid
                 {
-                    let result = load_result(connection, &input, *result_id)?;
+                    let result = load_result(connection, input, *result_id)?;
                     if matches!(
-                        crate::ai::conversation_planning::validate_output(&input, &result)?.model,
+                        crate::ai::conversation_planning::validate_output(input, &result)?.model,
                         crate::ai::conversation_planning::ConversationPlanningModelOutput::Revision { .. }
                     ) {
                         if let Some(receipt) = read_receipt(connection, *result_id)? {
@@ -3491,18 +3526,30 @@ impl ProjectStore {
         limit: u32,
     ) -> Result<AttemptDetail, ExecutionError> {
         let connection = self.execution_connection()?;
-        super::review::read_snapshot(connection, |_| {
+        super::review::read_snapshot(connection, |connection| {
             if limit == 0 || limit > 100 {
                 return Err(error(ErrorCode::LimitExceeded, "execution-page-limit"));
             }
-            let view = self.execution_attempt(attempt_id, active)?;
-            let input = self.execution_input(attempt_id)?;
+            let key = AttemptDetailKey { attempt_id, active, offset, limit };
+            let stamp = read_snapshot_stamp(connection)?;
+            if let Some(stamp) = &stamp {
+                let mut cache = self.attempt_details.borrow_mut();
+                if cache.stamp.as_ref() != Some(stamp) {
+                    cache.pages.clear();
+                    cache.stamp = Some(stamp.clone());
+                }
+                if let Some(page) = cache.pages.iter().find(|(saved, _)| *saved == key) {
+                    return Ok(page.1.clone());
+                }
+            }
+            let input = load_input(connection, attempt_id)?;
+            let mut view = read_attempt_in(connection, &input, active)?;
             let total = view.items.len();
             if offset as usize > total {
                 return Err(error(ErrorCode::InvalidInput, "offset"));
             }
-            let items = view
-                .items
+            let mut recovery = self.execution_recovery_in(connection, &input, &view)?;
+            let items = std::mem::take(&mut view.items)
                 .into_iter()
                 .skip(offset as usize)
                 .take(limit as usize)
@@ -3514,7 +3561,6 @@ impl ProjectStore {
                     })
                 })
                 .collect::<Result<Vec<_>, ExecutionError>>()?;
-            let mut recovery = self.execution_recovery(attempt_id, active)?;
             // A unit can span pages. Return it on each page containing a member so its
             // full scope remains explicit before an action is requested.
             recovery.units.retain(|unit| {
@@ -3535,7 +3581,7 @@ impl ProjectStore {
                 }
             }
             let end = offset + items.len() as u32;
-            Ok(AttemptDetail {
+            let detail = AttemptDetail {
                 attempt_id: view.attempt_id,
                 task_id: view.task_id,
                 operation: view.operation,
@@ -3543,7 +3589,15 @@ impl ProjectStore {
                 items,
                 recovery,
                 next_offset: ((end as usize) < total).then_some(end),
-            })
+            };
+            if stamp.is_some() {
+                let mut cache = self.attempt_details.borrow_mut();
+                if cache.pages.len() == 4 {
+                    cache.pages.pop_front();
+                }
+                cache.pages.push_back((key, detail.clone()));
+            }
+            Ok(detail)
         })
     }
     pub fn execution_tasks(
@@ -4850,7 +4904,16 @@ fn capture_adoption_in(
     {
         super::release::ReleasePlan::from_input(&input)?.validate_source_reference(connection)?;
     }
-    let permit = super::plugin_execution::check_input_in(connection, &input, authority)?;
+    // Explicit Source adoption publishes completed evidence. It does not start
+    // a worker, so process permit expiry or a new store epoch is immaterial.
+    let publish_source = input.envelope().operation == crate::content::OPERATION
+        && input.envelope().plugin.is_some()
+        && input.envelope().automation.is_none();
+    let permit = if publish_source {
+        None
+    } else {
+        super::plugin_execution::check_input_in(connection, &input, authority)?
+    };
     let results = action
         .result_ids
         .iter()
@@ -4860,6 +4923,15 @@ fn capture_adoption_in(
     check_planning_candidate_result(&input, &results)?;
     for result in &results {
         let original = result_input(connection, &input, result.envelope().result_id)?;
+        if publish_source {
+            // Keep currentness, cancellation, revocation and grant provenance
+            // independent of the runtime deadline and process generation.
+            require_current_result(connection, &original, result)?;
+            super::plugin_execution::check_source_publication_provenance_in(
+                connection, &original, result,
+            )?;
+            continue;
+        }
         let result_permit = if original.envelope().attempt_id == input.envelope().attempt_id {
             permit.clone()
         } else {
@@ -4878,7 +4950,29 @@ fn capture_adoption_in(
     let state = if crate::content::is_translation_projection(&input) {
         None
     } else {
-        Some(read_attempt(connection, action.attempt_id, true)?)
+        Some(read_attempt_with_results(
+            connection,
+            &input,
+            true,
+            |id| match results.iter().find(|result| result.envelope().result_id == id) {
+                Some(result) => Ok(result.clone()),
+                None => load_result(connection, &input, id),
+            },
+            |result| {
+                if publish_source {
+                    let prepared = validate_source_link(connection, &input, result, true)?;
+                    let checker_input = &prepared.capture.check_input;
+                    let checker_result = &prepared.check_result;
+                    require_current_result(connection, checker_input, checker_result)?;
+                    require_unsuperseded_result(connection, checker_input, checker_result)?;
+                    super::plugin_execution::check_source_publication_provenance_in(
+                        connection, checker_input, checker_result,
+                    )
+                } else {
+                    validate_plugin_link(connection, &input, result, true).map(|_| ())
+                }
+            },
+        )?)
     };
     for result in &results {
         require_unsuperseded_result(connection, &input, result)?;
@@ -4904,10 +4998,8 @@ fn capture_adoption_in(
         {
             return Err(error(ErrorCode::ResultMismatch, "adoption-result"));
         }
-        if requires_semantic_check(&input) {
-            // Historical proof remains readable. New adoption also requires
-            // the exact checker's live grant and unsuperseded result, both at
-            // capture and again in the short commit transaction.
+        if requires_semantic_check(&input) && !publish_source {
+            // Other plugin operations retain their original live-grant gate.
             let (check_input, check_result, _) = load_check_link(connection, result)?;
             require_current_result(connection, &check_input, &check_result)?;
             let permit =

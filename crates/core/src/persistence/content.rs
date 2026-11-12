@@ -2031,33 +2031,8 @@ impl AdoptionHandler for SourceAdoptionHandler {
                 check_adoption_scope(tx.connection(), action.project_id, &confirmation)?;
             let project = action.project_id.to_string();
             maintenance_hook::check_available(tx, &confirmation)?;
-            let (stored_project,stored,digest):(String,Vec<u8>,String)=tx.query_row("SELECT project_id,CASE WHEN length(payload)<=?2 THEN payload END,digest FROM source_sets WHERE set_id=?1",params![bundle.set_id.to_string(),MAX_CAPTURED_SOURCE_INPUT_BYTES as i64],|r|Ok((r.get(0)?,r.get(1)?,r.get(2)?)))?;
-            if stored_project != project
-                || codec::digest(&stored) != digest
-                || codec::decode::<tsumugi_plugin_sdk::SourceExtractionInput>(
-                    &stored,
-                    MAX_INPUT_BYTES,
-                )? != bundle.source_input()
-            {
+            if read_bundle(tx.connection(), bundle.set_id)? != bundle.source_input() {
                 return Err(corrupt());
-            }
-            let file_count: i64 = tx.query_row(
-                "SELECT COUNT(*) FROM source_files WHERE set_id=?1",
-                [bundle.set_id.to_string()],
-                |r| r.get(0),
-            )?;
-            if file_count as usize != bundle.files.len() {
-                return Err(corrupt());
-            }
-            for f in &bundle.files {
-                let (path,role,bytes,digest):(String,String,Vec<u8>,String)=tx.query_row("SELECT logical_path,role,CASE WHEN length(bytes)<=?3 THEN bytes END,digest FROM source_files WHERE set_id=?1 AND artifact_id=?2",params![bundle.set_id.to_string(),f.artifact_id.to_string(),tsumugi_plugin_sdk::MAX_MATERIAL_BYTES as i64],|r|Ok((r.get(0)?,r.get(1)?,r.get(2)?,r.get(3)?)))?;
-                if path != f.logical_path
-                    || role != f.role
-                    || bytes != f.bytes()?.as_ref()
-                    || digest != f.sha256
-                {
-                    return Err(corrupt());
-                }
             }
             if let Some(previous) = current {
                 let changes = apply_update(

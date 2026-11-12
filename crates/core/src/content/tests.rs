@@ -2645,7 +2645,7 @@ fn source_projection_preserves_coordinates_and_rejects_invalid_binary_and_text_e
 }
 
 #[test]
-fn generic_source_two_mib_binary_capture_is_checked_adopted_and_reopened_from_original_blobs() {
+fn generic_source_adopts_large_binary_capture_and_reopens_original_blobs() {
     let temp = tempfile::tempdir().unwrap();
     let path = temp.path().join("project");
     let mut store = create(&path);
@@ -2654,7 +2654,8 @@ fn generic_source_two_mib_binary_capture_is_checked_adopted_and_reopened_from_or
     let mut config: serde_json::Value = serde_json::from_slice(&bundle.files[0].bytes().unwrap()).unwrap();
     config["capacity"] = json!(true);
     let original = serde_json::to_vec(&config).unwrap();
-    let mut companion = vec![0xff; sdk::MAX_EXCHANGE_BYTES - original.len()];
+    const CAPTURE_BYTES: usize = 4 * 1024 * 1024;
+    let mut companion = vec![0xff; CAPTURE_BYTES - original.len()];
     let artifact = sdk::CapturedArtifact::from_bytes(bundle.files[0].artifact_id.to_string(), "records.bin".into(), "source".into(), &original).unwrap();
     bundle.files[0] = CapturedFile::from_artifact(&artifact, bundle.files[0].artifact_id).unwrap();
     let id = ExecutionId::new();
@@ -2662,6 +2663,10 @@ fn generic_source_two_mib_binary_capture_is_checked_adopted_and_reopened_from_or
     bundle.files.push(CapturedFile::from_artifact(&artifact, id).unwrap());
     bundle.manifest_digest = bundle.calculate_digest().unwrap();
     let input = bundle.fixed_plugin_input(store.metadata().unwrap().project_id(), generic_source_binding(false), SourceSettings::from_input(&seed).unwrap()).unwrap();
+    assert!(
+        codec::encode(&bundle.source_input(), MAX_CAPTURED_SOURCE_INPUT_BYTES).unwrap().len() > MAX_INPUT_BYTES,
+        "the stored source set exceeds the ordinary input ceiling"
+    );
     companion.fill(0); // Caller buffers cannot alter the already captured set.
     let mut runtime = ExecutionRuntime::new(&store).unwrap();
     for checker in [false, true] {
@@ -2688,14 +2693,14 @@ fn generic_source_two_mib_binary_capture_is_checked_adopted_and_reopened_from_or
     assert_eq!(saved, bundle);
     assert_eq!(reopened.execution_input(checker_input.envelope().attempt_id).unwrap().bytes(), checker_input.bytes());
     assert_eq!(saved.files[0].bytes().unwrap().as_ref(), original);
-    assert_eq!(saved.files[1].bytes().unwrap().as_ref(), vec![0xff; sdk::MAX_EXCHANGE_BYTES - original.len()]);
+    assert_eq!(saved.files[1].bytes().unwrap().as_ref(), vec![0xff; CAPTURE_BYTES - original.len()]);
     assert_eq!(reopened.execution_input(input.envelope().attempt_id).unwrap().bytes(), input.bytes());
     assert_eq!(reopened.execution_result(input.envelope().attempt_id, result.envelope().result_id).unwrap().bytes(), result.bytes());
     assert_eq!(reopened.source_content(snapshot, 0, 10).unwrap().total, 3);
     reopened.close().unwrap();
     let raw = rusqlite::Connection::open(path.join("project.sqlite3")).unwrap();
     let bytes: Vec<u8> = raw.query_row("SELECT bytes FROM source_files WHERE artifact_id=?1", [id.to_string()], |row| row.get(0)).unwrap();
-    assert_eq!(bytes, vec![0xff; sdk::MAX_EXCHANGE_BYTES - original.len()]);
+    assert_eq!(bytes, vec![0xff; CAPTURE_BYTES - original.len()]);
     let stored: Vec<u8> = raw.query_row("SELECT input FROM execution_attempts WHERE attempt_id=?1", [checker_input.envelope().attempt_id.to_string()], |row| row.get(0)).unwrap();
     let manifest: serde_json::Value = serde_json::from_slice(&stored).unwrap();
     assert_eq!(manifest["format"], 1);
@@ -3074,6 +3079,47 @@ fn source_adoption_does_not_match_a_changed_identity_policy_or_missing_identity(
             assert!(evidence.is_empty());
         }
     }
+}
+
+#[test]
+fn checked_source_can_be_adopted_after_execution_grants_expire_and_project_reopens() {
+    let temp = tempfile::tempdir().unwrap();
+    let path = temp.path().join("project");
+    let mut store = create(&path);
+    let mut runtime = ExecutionRuntime::new(&mut store).unwrap();
+    for checker in [false, true] {
+        runtime.register_read_only(Arc::new(GenericSourcePlugin(generic_source_binding(checker)))).unwrap();
+    }
+    let input = generic_source_input(&store, 1, 1, "CaseKey", false);
+    let result = run_generic_source(&mut runtime, &mut store, &input);
+    let capture = store.capture_source_validation(input.envelope().attempt_id, result.envelope().result_id).unwrap();
+    let check_input = capture.check_input().clone();
+    let checked = run_generic_source(&mut runtime, &mut store, &check_input);
+    store.commit_source_validation(capture.prepare(checked).unwrap()).unwrap();
+
+    drop(runtime);
+    store.close().unwrap();
+    let external = rusqlite::Connection::open(path.join("project.sqlite3")).unwrap();
+    assert_eq!(external.execute(
+        "UPDATE plugin_execution_grants SET expires_at_ms=1 WHERE attempt_id IN (?1,?2)",
+        rusqlite::params![input.envelope().attempt_id.to_string(), check_input.envelope().attempt_id.to_string()],
+    ).unwrap(), 2);
+    drop(external);
+
+    let mut store = ProjectStore::open(&path).unwrap();
+    assert!(store.check_plugin_input(&input).is_err());
+    assert!(store.check_plugin_input(&check_input).is_err());
+    let action = prepare(&mut store, &input, &result);
+    let receipt = store.adopt_execution(&action, &SourceAdoptionHandler).unwrap();
+    let snapshot = store.content_scope().unwrap().current_snapshot.unwrap();
+    assert_eq!(store.source_content(snapshot, 0, 50).unwrap().total, 3);
+    assert!(store.check_plugin_input(&input).is_err());
+    assert!(store.check_plugin_input(&check_input).is_err());
+
+    drop(store);
+    let mut store = ProjectStore::open(&path).unwrap();
+    assert_eq!(store.content_scope().unwrap().current_snapshot, Some(snapshot));
+    assert_eq!(store.adopt_execution(&action, &SourceAdoptionHandler).unwrap(), receipt);
 }
 
 #[test]

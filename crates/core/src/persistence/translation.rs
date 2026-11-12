@@ -210,7 +210,7 @@ pub struct TranslationPreview {
 // snapshot. Any local write, external commit or reopened connection invalidates
 // it; adoption always rechecks its mutation boundary independently.
 struct TranslationPreviewMemo {
-    stamp: super::ledger::SourceReadStamp,
+    stamp: super::ledger::ReadSnapshotStamp,
     summary: TranslationPreview,
     rows: std::sync::Arc<[TranslationPreviewRow]>,
 }
@@ -1362,7 +1362,7 @@ impl ProjectStore {
             .connection()
             .map_err(|_| error(ErrorCode::StorageFailed, "translation-read"))?;
         super::review::read_snapshot(connection, |connection| {
-        let stamp = super::ledger::source_read_stamp(connection)?;
+        let stamp = super::ledger::read_snapshot_stamp(connection)?;
         let cached = translation_preview_cache().lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner)
             .as_ref()

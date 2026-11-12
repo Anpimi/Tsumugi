@@ -432,6 +432,7 @@ pub struct ProjectStore {
     execution_unknown: std::sync::Arc<std::sync::atomic::AtomicBool>,
     plugin_authority: std::sync::Arc<crate::execution::plugin_authority::PluginAuthority>,
     review_scopes: review::ReadScopes,
+    attempt_details: std::cell::RefCell<ledger::AttemptDetailCache>,
     changes: std::sync::Arc<changes::ChangeClock>,
     source_hook_deadlines:
         std::collections::BTreeMap<crate::execution::ExecutionId, std::time::Instant>,
@@ -483,6 +484,7 @@ impl ProjectStore {
             plugin_authority: Default::default(),
             review_scopes: Default::default(),
             changes: Default::default(),
+            attempt_details: Default::default(),
             source_hook_deadlines: Default::default(),
             #[cfg(test)]
             fault: None,
@@ -542,6 +544,7 @@ impl ProjectStore {
             plugin_authority: Default::default(),
             review_scopes: Default::default(),
             changes: Default::default(),
+            attempt_details: Default::default(),
             source_hook_deadlines: Default::default(),
             #[cfg(test)]
             fault: None,
