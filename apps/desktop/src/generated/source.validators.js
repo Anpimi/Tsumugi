@@ -10326,7 +10326,7 @@ validate230.errors = vErrors;
 return errors === 0;
 }
 
-const schema336 = {"additionalProperties":false,"description":"Fixed materials and explicitly chosen file sets share one captured input.","properties":{"checker":{"type":"string"},"displayName":{"type":"string"},"extractor":{"type":"string"},"fileSets":{"items":{"$ref":"#/definitions/SourceFileSetDeclaration"},"type":"array"},"materials":{"items":{"$ref":"#/definitions/SourceMaterialDeclaration"},"type":"array"},"maxTotalBytes":{"description":"v5 caps the sum of actual captured bytes, independently of the per-file\nceilings. Absence retains the exact v2/v3/v4 reservation semantics.","maximum":2097152,"minimum":1,"type":"integer"},"profile":{"$ref":"#/definitions/ContractRef"},"reviewResource":{"description":"Exact immutable Resource whose domain rules are adopted with this source.","type":"string"},"revisionPolicy":{"$ref":"#/definitions/SourceRevisionPolicy"},"semanticRules":{"items":{"$ref":"#/definitions/ContractRef"},"type":"array"}},"required":["displayName","profile","materials","extractor","checker","reviewResource","revisionPolicy","semanticRules"],"type":"object"};
+const schema336 = {"additionalProperties":false,"description":"Fixed materials and explicitly chosen file sets share one captured input.","properties":{"checker":{"type":"string"},"displayName":{"type":"string"},"extractor":{"type":"string"},"fileSets":{"items":{"$ref":"#/definitions/SourceFileSetDeclaration"},"type":"array"},"materials":{"items":{"$ref":"#/definitions/SourceMaterialDeclaration"},"type":"array"},"maxTotalBytes":{"description":"v5 caps the sum of actual captured bytes, independently of the per-file\nceilings. Absence retains the exact v2/v3/v4 reservation semantics.","maximum":268435456,"minimum":1,"type":"integer"},"profile":{"$ref":"#/definitions/ContractRef"},"reviewResource":{"description":"Exact immutable Resource whose domain rules are adopted with this source.","type":"string"},"revisionPolicy":{"$ref":"#/definitions/SourceRevisionPolicy"},"semanticRules":{"items":{"$ref":"#/definitions/ContractRef"},"type":"array"}},"required":["displayName","profile","materials","extractor","checker","reviewResource","revisionPolicy","semanticRules"],"type":"object"};
 const schema337 = {"additionalProperties":false,"description":"Explicit user choices within one authorized root. No glob, directory scan,\nabsolute path, or permission is part of this declaration or its resolution.","properties":{"displayName":{"type":"string"},"encoding":{"$ref":"#/definitions/SourceMaterialEncoding"},"extensions":{"items":{"type":"string"},"type":"array"},"id":{"type":"string"},"maxBytes":{"format":"uint32","maximum":4294967295,"minimum":0,"type":"integer"},"maxFiles":{"format":"uint32","maximum":4294967295,"minimum":0,"type":"integer"},"minFiles":{"format":"uint32","maximum":4294967295,"minimum":0,"type":"integer"},"role":{"type":"string"}},"required":["id","displayName","role","encoding","extensions","minFiles","maxFiles","maxBytes"],"type":"object"};
 const schema338 = {"enum":["utf8","binary"],"type":"string"};
 
@@ -11018,8 +11018,8 @@ return false;
 }
 if(errors === _errs14){
 if((typeof data7 == "number") && (isFinite(data7))){
-if(data7 > 2097152 || isNaN(data7)){
-validate238.errors = [{instancePath:instancePath+"/maxTotalBytes",schemaPath:"#/properties/maxTotalBytes/maximum",keyword:"maximum",params:{comparison: "<=", limit: 2097152},message:"must be <= 2097152"}];
+if(data7 > 268435456 || isNaN(data7)){
+validate238.errors = [{instancePath:instancePath+"/maxTotalBytes",schemaPath:"#/properties/maxTotalBytes/maximum",keyword:"maximum",params:{comparison: "<=", limit: 268435456},message:"must be <= 268435456"}];
 return false;
 }
 else {

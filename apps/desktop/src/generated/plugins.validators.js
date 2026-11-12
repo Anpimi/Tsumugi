@@ -4829,7 +4829,7 @@ return errors === 0;
 }
 
 const schema165 = {"additionalProperties":false,"properties":{"artifactRules":{"items":{"$ref":"#/definitions/ContractRef"},"type":"array"},"builder":{"type":"string"},"checker":{"type":"string"},"configuration":{"items":{"$ref":"#/definitions/BuildConfigurationDeclaration"},"type":"array"},"displayName":{"type":"string"},"outputLimits":{"$ref":"#/definitions/BuildOutputLimits"},"profile":{"$ref":"#/definitions/ContractRef"}},"required":["displayName","profile","builder","checker","outputLimits","artifactRules"],"type":"object"};
-const schema171 = {"additionalProperties":false,"properties":{"maxArtifacts":{"maximum":32,"minimum":1,"type":"integer"},"maxTotalBytes":{"maximum":2097152,"minimum":1,"type":"integer"}},"required":["maxArtifacts","maxTotalBytes"],"type":"object"};
+const schema171 = {"additionalProperties":false,"properties":{"maxArtifacts":{"maximum":32,"minimum":1,"type":"integer"},"maxTotalBytes":{"maximum":268435456,"minimum":1,"type":"integer"}},"required":["maxArtifacts","maxTotalBytes"],"type":"object"};
 const schema167 = {"additionalProperties":false,"description":"All options require an explicit selection; neither source nor target locale\nsupplies a default. Values carry no file access or execution authority.","properties":{"displayName":{"type":"string"},"options":{"items":{"$ref":"#/definitions/BuildOptionDeclaration"},"type":"array"},"schema":{"$ref":"#/definitions/ContractRef"}},"required":["schema","displayName","options"],"type":"object"};
 const schema168 = {"additionalProperties":false,"properties":{"choices":{"items":{"$ref":"#/definitions/BuildOptionChoice"},"type":"array"},"displayName":{"type":"string"},"id":{"type":"string"}},"required":["id","displayName","choices"],"type":"object"};
 const schema169 = {"additionalProperties":false,"properties":{"displayName":{"type":"string"},"id":{"type":"string"}},"required":["id","displayName"],"type":"object"};
@@ -5410,8 +5410,8 @@ return false;
 }
 if(errors === _errs29){
 if((typeof data12 == "number") && (isFinite(data12))){
-if(data12 > 2097152 || isNaN(data12)){
-validate167.errors = [{instancePath:instancePath+"/outputLimits/maxTotalBytes",schemaPath:"#/definitions/BuildOutputLimits/properties/maxTotalBytes/maximum",keyword:"maximum",params:{comparison: "<=", limit: 2097152},message:"must be <= 2097152"}];
+if(data12 > 268435456 || isNaN(data12)){
+validate167.errors = [{instancePath:instancePath+"/outputLimits/maxTotalBytes",schemaPath:"#/definitions/BuildOutputLimits/properties/maxTotalBytes/maximum",keyword:"maximum",params:{comparison: "<=", limit: 268435456},message:"must be <= 268435456"}];
 return false;
 }
 else {
@@ -16163,7 +16163,7 @@ return errors === 0;
 export const validateResponseSource = validate401;
 const schema428 = {"$id":"urn:tsumugi:ipc:plugins:responses:source","$ref":"urn:tsumugi:ipc:plugins:responses#/properties/source"};
 const schema301 = {"additionalProperties":false,"properties":{"checker":{"$ref":"#/definitions/CapabilityBinding"},"declaration":{"$ref":"#/definitions/SourceImportDeclaration"},"environment":{"$ref":"#/definitions/ExecutionEnvironmentDescriptor"},"environmentDigest":{"type":"string"},"extractor":{"$ref":"#/definitions/CapabilityBinding"},"packageOrigin":{"$ref":"#/definitions/PluginOriginView"},"resourceId":{"type":"string"},"review":{"$ref":"#/definitions/ReviewBinding"},"runtimeOrigin":{"$ref":"#/definitions/PluginOriginView"},"settingsRevision":{"$ref":"#/definitions/UnsignedDecimal"}},"required":["settingsRevision","resourceId","declaration","extractor","checker","review","packageOrigin","environment","environmentDigest","runtimeOrigin"],"type":"object"};
-const schema302 = {"additionalProperties":false,"description":"Fixed materials and explicitly chosen file sets share one captured input.","properties":{"checker":{"type":"string"},"displayName":{"type":"string"},"extractor":{"type":"string"},"fileSets":{"items":{"$ref":"#/definitions/SourceFileSetDeclaration"},"type":"array"},"materials":{"items":{"$ref":"#/definitions/SourceMaterialDeclaration"},"type":"array"},"maxTotalBytes":{"description":"v5 caps the sum of actual captured bytes, independently of the per-file\nceilings. Absence retains the exact v2/v3/v4 reservation semantics.","maximum":2097152,"minimum":1,"type":"integer"},"profile":{"$ref":"#/definitions/ContractRef"},"reviewResource":{"description":"Exact immutable Resource whose domain rules are adopted with this source.","type":"string"},"revisionPolicy":{"$ref":"#/definitions/SourceRevisionPolicy"},"semanticRules":{"items":{"$ref":"#/definitions/ContractRef"},"type":"array"}},"required":["displayName","profile","materials","extractor","checker","reviewResource","revisionPolicy","semanticRules"],"type":"object"};
+const schema302 = {"additionalProperties":false,"description":"Fixed materials and explicitly chosen file sets share one captured input.","properties":{"checker":{"type":"string"},"displayName":{"type":"string"},"extractor":{"type":"string"},"fileSets":{"items":{"$ref":"#/definitions/SourceFileSetDeclaration"},"type":"array"},"materials":{"items":{"$ref":"#/definitions/SourceMaterialDeclaration"},"type":"array"},"maxTotalBytes":{"description":"v5 caps the sum of actual captured bytes, independently of the per-file\nceilings. Absence retains the exact v2/v3/v4 reservation semantics.","maximum":268435456,"minimum":1,"type":"integer"},"profile":{"$ref":"#/definitions/ContractRef"},"reviewResource":{"description":"Exact immutable Resource whose domain rules are adopted with this source.","type":"string"},"revisionPolicy":{"$ref":"#/definitions/SourceRevisionPolicy"},"semanticRules":{"items":{"$ref":"#/definitions/ContractRef"},"type":"array"}},"required":["displayName","profile","materials","extractor","checker","reviewResource","revisionPolicy","semanticRules"],"type":"object"};
 const schema303 = {"additionalProperties":false,"description":"Explicit user choices within one authorized root. No glob, directory scan,\nabsolute path, or permission is part of this declaration or its resolution.","properties":{"displayName":{"type":"string"},"encoding":{"$ref":"#/definitions/SourceMaterialEncoding"},"extensions":{"items":{"type":"string"},"type":"array"},"id":{"type":"string"},"maxBytes":{"format":"uint32","maximum":4294967295,"minimum":0,"type":"integer"},"maxFiles":{"format":"uint32","maximum":4294967295,"minimum":0,"type":"integer"},"minFiles":{"format":"uint32","maximum":4294967295,"minimum":0,"type":"integer"},"role":{"type":"string"}},"required":["id","displayName","role","encoding","extensions","minFiles","maxFiles","maxBytes"],"type":"object"};
 const schema304 = {"enum":["utf8","binary"],"type":"string"};
 
@@ -16855,8 +16855,8 @@ return false;
 }
 if(errors === _errs14){
 if((typeof data7 == "number") && (isFinite(data7))){
-if(data7 > 2097152 || isNaN(data7)){
-validate261.errors = [{instancePath:instancePath+"/maxTotalBytes",schemaPath:"#/properties/maxTotalBytes/maximum",keyword:"maximum",params:{comparison: "<=", limit: 2097152},message:"must be <= 2097152"}];
+if(data7 > 268435456 || isNaN(data7)){
+validate261.errors = [{instancePath:instancePath+"/maxTotalBytes",schemaPath:"#/properties/maxTotalBytes/maximum",keyword:"maximum",params:{comparison: "<=", limit: 268435456},message:"must be <= 268435456"}];
 return false;
 }
 else {

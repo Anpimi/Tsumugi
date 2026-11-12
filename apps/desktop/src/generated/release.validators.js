@@ -4563,7 +4563,7 @@ return errors === 0;
 }
 
 const schema188 = {"additionalProperties":false,"properties":{"artifactRules":{"items":{"$ref":"#/definitions/ContractRef"},"type":"array"},"builder":{"type":"string"},"checker":{"type":"string"},"configuration":{"items":{"$ref":"#/definitions/BuildConfigurationDeclaration"},"type":"array"},"displayName":{"type":"string"},"outputLimits":{"$ref":"#/definitions/BuildOutputLimits"},"profile":{"$ref":"#/definitions/ContractRef"}},"required":["displayName","profile","builder","checker","outputLimits","artifactRules"],"type":"object"};
-const schema194 = {"additionalProperties":false,"properties":{"maxArtifacts":{"maximum":32,"minimum":1,"type":"integer"},"maxTotalBytes":{"maximum":2097152,"minimum":1,"type":"integer"}},"required":["maxArtifacts","maxTotalBytes"],"type":"object"};
+const schema194 = {"additionalProperties":false,"properties":{"maxArtifacts":{"maximum":32,"minimum":1,"type":"integer"},"maxTotalBytes":{"maximum":268435456,"minimum":1,"type":"integer"}},"required":["maxArtifacts","maxTotalBytes"],"type":"object"};
 const schema190 = {"additionalProperties":false,"description":"All options require an explicit selection; neither source nor target locale\nsupplies a default. Values carry no file access or execution authority.","properties":{"displayName":{"type":"string"},"options":{"items":{"$ref":"#/definitions/BuildOptionDeclaration"},"type":"array"},"schema":{"$ref":"#/definitions/ContractRef"}},"required":["schema","displayName","options"],"type":"object"};
 const schema191 = {"additionalProperties":false,"properties":{"choices":{"items":{"$ref":"#/definitions/BuildOptionChoice"},"type":"array"},"displayName":{"type":"string"},"id":{"type":"string"}},"required":["id","displayName","choices"],"type":"object"};
 const schema192 = {"additionalProperties":false,"properties":{"displayName":{"type":"string"},"id":{"type":"string"}},"required":["id","displayName"],"type":"object"};
@@ -5144,8 +5144,8 @@ return false;
 }
 if(errors === _errs29){
 if((typeof data12 == "number") && (isFinite(data12))){
-if(data12 > 2097152 || isNaN(data12)){
-validate142.errors = [{instancePath:instancePath+"/outputLimits/maxTotalBytes",schemaPath:"#/definitions/BuildOutputLimits/properties/maxTotalBytes/maximum",keyword:"maximum",params:{comparison: "<=", limit: 2097152},message:"must be <= 2097152"}];
+if(data12 > 268435456 || isNaN(data12)){
+validate142.errors = [{instancePath:instancePath+"/outputLimits/maxTotalBytes",schemaPath:"#/definitions/BuildOutputLimits/properties/maxTotalBytes/maximum",keyword:"maximum",params:{comparison: "<=", limit: 268435456},message:"must be <= 268435456"}];
 return false;
 }
 else {

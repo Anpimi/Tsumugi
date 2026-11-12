@@ -73,6 +73,17 @@ it("reads an exact source environment through the shared adapter and rejects mal
   await expect(pluginCommands.source(source.request)).rejects.toThrow("Invalid IPC response: read_plugin_source");
 });
 
+it("reads a source recipe at the current native material limits", async () => {
+  const declaration = { ...source.view.declaration, materials: [], fileSets: [{
+    id: "plugin", displayName: "Plugin file", role: "plugin", encoding: "binary", extensions: ["esp"],
+    minFiles: 1, maxFiles: 1, maxBytes: 128 * 1024 * 1024,
+  }], maxTotalBytes: 256 * 1024 * 1024 };
+  const view = { ...source.view, declaration };
+  invoke.mockResolvedValueOnce(view);
+  await expect(pluginCommands.source(source.request)).resolves.toEqual(view);
+  expect(validateResponseSource({ ...view, declaration: { ...declaration, maxTotalBytes: declaration.maxTotalBytes + 1 } })).toBe(false);
+});
+
 it("keeps the shared Serde fixture's installation and approval observations separate", () => {
   expect(validateRequestInventory(fixture.request)).toBe(true);
   expect(validateResponseInventory(fixture.empty)).toBe(true);

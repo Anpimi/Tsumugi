@@ -5465,7 +5465,7 @@
           },
           "maxTotalBytes": {
             "description": "v5 caps the sum of actual captured bytes, independently of the per-file\nceilings. Absence retains the exact v2/v3/v4 reservation semantics.",
-            "maximum": 2097152,
+            "maximum": 268435456,
             "minimum": 1,
             "type": "integer"
           },
