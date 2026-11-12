@@ -1,7 +1,7 @@
 //! Fixed build inputs, verified locale artifacts and immutable local releases.
 
 use super::ProjectStore;
-use super::ledger::{OpenPluginProofs, OpenResultReader};
+use super::ledger::{OpenPluginProofs, OpenResultReader, ReadSnapshotStamp, read_snapshot_stamp};
 #[cfg(any(test, feature = "execution-test-host", feature = "legacy-desktop-domain"))]
 use crate::content::{
     BUILDER_VERSION, BuildEntry, BuildLocale, BuildManifest, BuildOutput, VALIDATOR_VERSION,
@@ -17,6 +17,7 @@ use crate::{
 use rusqlite::{Connection, TransactionBehavior, params};
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet};
+use std::sync::Arc;
 
 mod plan;
 mod record;
@@ -158,27 +159,32 @@ pub(super) fn validate(connection: &Connection) -> rusqlite::Result<()> {
     Ok(())
 }
 
-/// Only release identities survive between attempts. Full frames are borrowed
-/// from the ledger owner while it is verifying their original attempt.
+/// Full frames are borrowed from the ledger owner while it verifies their
+/// original attempt. Retain only the newest verified release projection.
 pub(super) struct OpenReleaseValidation {
     pending: BTreeMap<ExecutionId, Vec<ExecutionId>>,
+    newest: Option<ExecutionId>,
+    verified: Option<record::VerifiedRelease>,
 }
 
 pub(super) fn prepare_open(connection: &Connection) -> Result<OpenReleaseValidation, ExecutionError> {
     // The ledger checks all foreign keys in this same open snapshot.
     validate_schema(connection).map_err(sql)?;
     let mut records = connection
-        .prepare("SELECT attempt_id,release_id FROM release_records")
+        .prepare("SELECT attempt_id,release_id FROM release_records ORDER BY created_at DESC,release_id DESC")
         .map_err(sql)?;
     let rows = records
         .query_map([], |row| Ok((row.get(0)?, row.get(1)?)))
         .map_err(sql)?;
     let mut pending: BTreeMap<ExecutionId, Vec<ExecutionId>> = BTreeMap::new();
+    let mut newest = None;
     for row in rows {
         let (attempt, release) = row.map_err(sql)?;
-        pending.entry(parse_id(attempt)?).or_default().push(parse_id(release)?);
+        let release = parse_id(release)?;
+        newest.get_or_insert(release);
+        pending.entry(parse_id(attempt)?).or_default().push(release);
     }
-    Ok(OpenReleaseValidation { pending })
+    Ok(OpenReleaseValidation { pending, newest, verified: None })
 }
 
 impl OpenReleaseValidation {
@@ -190,16 +196,58 @@ impl OpenReleaseValidation {
     ) -> Result<(), ExecutionError> {
         let attempt = results.input().envelope().attempt_id;
         for id in self.pending.remove(&attempt).into_iter().flatten() {
-            record::load(connection, id, Some(record::OpenRecordFrames { results, proofs }))?;
+            let record = record::load(connection, id, Some(record::OpenRecordFrames { results, proofs }))?;
+            if self.newest == Some(id) {
+                self.verified = record::VerifiedRelease::capture(&record);
+            }
         }
         Ok(())
     }
 
-    pub(super) fn finish(self, connection: &Connection) -> Result<(), ExecutionError> {
+    pub(super) fn finish(self, connection: &Connection) -> Result<ReleaseReadCache, ExecutionError> {
         if !self.pending.is_empty() {
             return Err(failure(ErrorCode::CorruptLedger, "release-attempt"));
         }
-        delivery::validate(connection)
+        delivery::validate(connection)?;
+        ReleaseReadCache::from_verified(connection, self.verified)
+    }
+}
+
+/// Retain one release projection from a fully validated read snapshot. The
+/// original frames and artifacts are released before the store becomes usable.
+#[derive(Clone, Debug, Default)]
+pub(super) struct ReleaseReadCache(Option<(ReadSnapshotStamp, Arc<record::VerifiedRelease>)>);
+
+impl ReleaseReadCache {
+    fn from_verified(
+        connection: &Connection,
+        verified: Option<record::VerifiedRelease>,
+    ) -> Result<Self, ExecutionError> {
+        let Some(verified) = verified else { return Ok(Self::default()) };
+        let entry = read_snapshot_stamp(connection)?.map(|stamp| (stamp, Arc::new(verified)));
+        Ok(Self(entry))
+    }
+
+    fn get(
+        &self,
+        connection: &Connection,
+        id: ExecutionId,
+    ) -> Result<Option<&record::VerifiedRelease>, ExecutionError> {
+        match &self.0 {
+            Some((stamp, release))
+                if release.view.release_id == id && stamp.still_matches(connection)? =>
+            {
+                Ok(Some(release))
+            }
+            _ => Ok(None),
+        }
+    }
+
+    fn load(&self, connection: &Connection, id: ExecutionId) -> Result<record::Record, ExecutionError> {
+        match self.get(connection, id)? {
+            Some(release) => release.read(connection),
+            None => record::load(connection, id, None),
+        }
     }
 }
 
@@ -411,6 +459,7 @@ impl ProjectStore {
     ) -> Result<(DeliveryView, Option<record::Record>), ExecutionError> {
         let changes = self.changes.clone();
         let unknown = self.execution_unknown.clone();
+        let release_reads = self.release_reads.get_mut().clone();
         let tx = self.connection_mut().map_err(|_| failure(ErrorCode::StorageFailed, "delivery-write"))?
             .transaction_with_behavior(TransactionBehavior::Immediate).map_err(sql)?;
         let observer = changes.observe(&tx, super::ChangeScope::Delivery);
@@ -426,7 +475,7 @@ impl ProjectStore {
         if directory.is_empty() || directory.len() > 4096 {
             return Err(failure(ErrorCode::InvalidInput, "delivery-directory"));
         }
-        let record = record::load(&tx, release_id, None)?;
+        let record = release_reads.load(&tx, release_id)?;
         let files: Vec<_> = record.view
             .artifacts
             .iter()
@@ -841,7 +890,7 @@ impl ProjectStore {
     }
 
     pub fn release_view(&self, release_id: ExecutionId) -> Result<ReleaseView, ExecutionError> {
-        Ok(self.read_release_record(release_id)?.view)
+        self.read_release(release_id, |_, release| Ok(release.view.clone()), |record| Ok(record.view))
     }
 
     /// Read the verified release and its exact artifact bytes in one snapshot.
@@ -856,14 +905,27 @@ impl ProjectStore {
     }
 
     fn read_release_record(&self, release_id: ExecutionId) -> Result<record::Record, ExecutionError> {
-        let snapshot = self
+        self.read_release(release_id, |connection, release| release.read(connection), Ok)
+    }
+
+    fn read_release<T>(
+        &self,
+        release_id: ExecutionId,
+        cached: impl FnOnce(&Connection, &record::VerifiedRelease) -> Result<T, ExecutionError>,
+        loaded: impl FnOnce(record::Record) -> Result<T, ExecutionError>,
+    ) -> Result<T, ExecutionError> {
+        let connection = self
             .connection()
-            .map_err(|_| failure(ErrorCode::StorageFailed, "release-read"))?
-            .unchecked_transaction()
-            .map_err(sql)?;
-        let record = record::load(&snapshot, release_id, None)?;
-        snapshot.commit().map_err(sql)?;
-        Ok(record)
+            .map_err(|_| failure(ErrorCode::StorageFailed, "release-read"))?;
+        super::review::read_snapshot(connection, |connection| {
+            if let Some(release) = self.release_reads.borrow().get(connection, release_id)? {
+                return cached(connection, release);
+            }
+            let record = record::load(connection, release_id, None)?;
+            let cache = ReleaseReadCache::from_verified(connection, record::VerifiedRelease::capture(&record))?;
+            *self.release_reads.borrow_mut() = cache;
+            loaded(record)
+        })
     }
 
     /// Select a locale only when it has exactly one artifact. Callers exporting

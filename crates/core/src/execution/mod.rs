@@ -591,7 +591,7 @@ impl InputEnvelope {
 #[derive(Clone, Debug)]
 pub struct FixedInput {
     envelope: Arc<InputEnvelope>,
-    bytes: Arc<[u8]>,
+    bytes: Arc<Vec<u8>>,
     digest: String,
 }
 impl FixedInput {
@@ -625,29 +625,37 @@ impl FixedInput {
         let digest = codec::digest(&bytes);
         Ok(Self {
             envelope: Arc::new(envelope),
-            bytes: bytes.into(),
+            bytes: Arc::new(bytes),
             digest,
         })
     }
     pub fn restore(bytes: &[u8], expected_digest: &str) -> Result<Self, ExecutionError> {
+        Self::restore_bytes(bytes.into(), expected_digest)
+    }
+
+    pub(crate) fn restore_owned(bytes: Vec<u8>, expected_digest: &str) -> Result<Self, ExecutionError> {
+        Self::restore_bytes(bytes.into(), expected_digest)
+    }
+
+    fn restore_bytes(bytes: std::borrow::Cow<'_, [u8]>, expected_digest: &str) -> Result<Self, ExecutionError> {
         if bytes.len() > MAX_FIXED_INPUT_BYTES {
             return Err(ExecutionError::new(ErrorCode::LimitExceeded, "input"));
         }
-        let digest = codec::digest(bytes);
+        let digest = codec::digest(&bytes);
         if digest != expected_digest {
             return Err(ExecutionError::new(
                 ErrorCode::CorruptLedger,
                 "input-digest",
             ));
         }
-        let envelope: InputEnvelope = codec::decode(bytes, MAX_FIXED_INPUT_BYTES)?;
+        let envelope: InputEnvelope = codec::decode(&bytes, MAX_FIXED_INPUT_BYTES)?;
         envelope.validate()?;
         if bytes.len() > Self::byte_limit(&envelope) {
             return Err(ExecutionError::new(ErrorCode::LimitExceeded, "input"));
         }
         Ok(Self {
             envelope: Arc::new(envelope),
-            bytes: Arc::from(bytes),
+            bytes: Arc::new(bytes.into_owned()),
             digest,
         })
     }
@@ -1050,7 +1058,7 @@ impl ResultEnvelope {
 #[derive(Clone, Debug)]
 pub struct FixedResult {
     envelope: Arc<ResultEnvelope>,
-    bytes: Arc<[u8]>,
+    bytes: Arc<Vec<u8>>,
     digest: String,
     validated_input_digest: Arc<str>,
     pub(crate) semantic_validation: Option<validation::ValidationProof>,
@@ -1066,7 +1074,7 @@ impl FixedResult {
         let digest = codec::digest(&bytes);
         Ok(Self {
             envelope: Arc::new(envelope),
-            bytes: bytes.into(),
+            bytes: Arc::new(bytes),
             digest,
             validated_input_digest: Arc::from(input.digest()),
             semantic_validation: None,
@@ -1077,22 +1085,23 @@ impl FixedResult {
         input: &FixedInput,
         token: ExecutionId,
     ) -> Result<Self, ExecutionError> {
-        Self::receive_frame(bytes, input, token, None)
+        Self::receive_frame(bytes.into(), input, token, None)
     }
 
     fn receive_frame(
-        bytes: &[u8],
+        bytes: std::borrow::Cow<'_, [u8]>,
         input: &FixedInput,
         token: ExecutionId,
         verified_digest: Option<String>,
     ) -> Result<Self, ExecutionError> {
         let envelope: ResultEnvelope =
-            codec::decode(bytes, input.envelope().limits.max_result_bytes as usize)?;
+            codec::decode(&bytes, input.envelope().limits.max_result_bytes as usize)?;
         envelope.validate(input, token)?;
+        let digest = verified_digest.unwrap_or_else(|| codec::digest(&bytes));
         Ok(Self {
             envelope: Arc::new(envelope),
-            bytes: Arc::from(bytes),
-            digest: verified_digest.unwrap_or_else(|| codec::digest(bytes)),
+            bytes: Arc::new(bytes.into_owned()),
+            digest,
             validated_input_digest: Arc::from(input.digest()),
             semantic_validation: None,
         })
@@ -1103,10 +1112,28 @@ impl FixedResult {
         input: &FixedInput,
         token: ExecutionId,
     ) -> Result<Self, ExecutionError> {
+        Self::restore_bytes(bytes.into(), expected_digest, input, token)
+    }
+
+    pub(crate) fn restore_owned(
+        bytes: Vec<u8>,
+        expected_digest: &str,
+        input: &FixedInput,
+        token: ExecutionId,
+    ) -> Result<Self, ExecutionError> {
+        Self::restore_bytes(bytes.into(), expected_digest, input, token)
+    }
+
+    fn restore_bytes(
+        bytes: std::borrow::Cow<'_, [u8]>,
+        expected_digest: &str,
+        input: &FixedInput,
+        token: ExecutionId,
+    ) -> Result<Self, ExecutionError> {
         if bytes.len() > input.envelope().limits.max_result_bytes as usize {
             return Err(ExecutionError::new(ErrorCode::LimitExceeded, "result"));
         }
-        let digest = codec::digest(bytes);
+        let digest = codec::digest(&bytes);
         if digest != expected_digest {
             return Err(ExecutionError::new(
                 ErrorCode::OutputInvalid,

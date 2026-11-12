@@ -279,7 +279,9 @@ fn all_artifacts_survive_frozen_edits_delivery_outcomes_and_current_format_move(
     let admission = store.begin_delivery_for_export(delivery_action, release, "isolated-destination", false, &expected).unwrap();
     let replay = store.begin_delivery_for_export(delivery_action, release, "isolated-destination", false, &expected).unwrap();
     store.connection().unwrap().trace_v2(TraceEventCodes::empty(), None);
-    assert_eq!(RELEASE_READS.with(|count| count.replace(0)), 1);
+    // list_releases verified the release after the last write. Admission can
+    // read the bytes directly, and replay must continue to return only a receipt.
+    assert_eq!(RELEASE_READS.with(|count| count.replace(0)), 0);
     let ExportAdmission::Started { release: captured, bytes } = admission else { panic!("new action must carry bytes"); };
     assert_eq!(captured, view);
     assert!(bytes.iter().eq(saved.iter().map(|(_, bytes)| bytes)));
@@ -558,7 +560,12 @@ fn release_reads_and_reopen_refuse_rehashed_substitution_or_missing_links_withou
             .unwrap();
         let release = release_id(&receipt);
         let path = store.directory().to_owned();
-        let connection = store.connection().unwrap();
+        let expected = store.release_view(release).unwrap();
+        store.close().unwrap();
+        let store = ProjectStore::open(&path).unwrap();
+        assert_eq!(store.release_view(release).unwrap(), expected);
+        let external = (damage == 0).then(|| Connection::open(path.join("project.sqlite3")).unwrap());
+        let connection = external.as_ref().unwrap_or_else(|| store.connection().unwrap());
         let id = release.to_string();
         match damage {
             0 => {

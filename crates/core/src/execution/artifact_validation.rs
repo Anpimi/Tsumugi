@@ -79,7 +79,7 @@ impl ArtifactValidationCapture {
         if output.target_language != locale {
             return Err(invalid());
         }
-        let input = plan.plugin_input(locale)?;
+        let input = plan.project_plugin_input(locale)?;
         let environment = plan.build_environment();
         let binding = environment.binding();
         let targets: Vec<_> = output.artifacts.iter().map(|a| a.id().to_owned()).collect();

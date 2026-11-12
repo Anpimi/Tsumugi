@@ -191,6 +191,8 @@ The current workspace targets **`0.3.0-alpha.1`**. The published `0.2.0-alpha.1`
 
 ### Fixed
 
+- Avoid repeatedly processing large evidence when opening a project or reading, saving, and exporting plugin releases.
+
 - Reuse the checked review scope for plugin builds and store their frozen source only once. Older development builds cannot read new build attempts saved in this format.
 
 - Keep repeated task details responsive for large imports. Apply captured sources within their declared material limits, including after worker permissions expire if the saved independent check passed. Cancelled or revoked work remains ineligible.

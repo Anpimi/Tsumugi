@@ -145,7 +145,7 @@ impl ReleasePlan {
         result: &FixedResult,
     ) -> Result<sdk::ArtifactSet, ExecutionError> {
         let output = self.parse_artifact_set(result)?;
-        let input = self.plugin_input(&output.target_language)?;
+        let input = self.project_plugin_input(&output.target_language)?;
         self.build
             .binding
             .validate_artifacts(&input, &output)
@@ -327,13 +327,20 @@ impl ReleasePlan {
         self.locales.iter().map(|l| l.choice.clone()).collect()
     }
     pub fn plugin_input(&self, locale: &str) -> Result<sdk::BuildInput, ExecutionError> {
+        let input = self.project_plugin_input(locale)?;
+        self.build.binding.validate_input(&input).map_err(|_| invalid())?;
+        Ok(input)
+    }
+
+    /// Callers must pass this projection to a BuildBinding validator before use.
+    pub(crate) fn project_plugin_input(&self, locale: &str) -> Result<sdk::BuildInput, ExecutionError> {
         let entry = self
             .locales
             .iter()
             .find(|l| l.choice.locale == locale)
             .ok_or_else(invalid)?;
         let translated = entry.choice.translated();
-        let input = sdk::BuildInput {
+        Ok(sdk::BuildInput {
             source: self.source.clone(),
             target_language: entry.choice.locale.clone(),
             targets: entry
@@ -354,12 +361,7 @@ impl ReleasePlan {
             configuration: entry.choice.configuration.clone(),
             output_paths: entry.choice.output_paths.clone(),
             output_limits: self.build.binding.declaration.output_limits.clone(),
-        };
-        self.build
-            .binding
-            .validate_input(&input)
-            .map_err(|_| invalid())?;
-        Ok(input)
+        })
     }
     fn validate(&self) -> Result<(), ExecutionError> {
         self.validate_structure()?;
@@ -481,7 +483,7 @@ impl ReleasePlan {
     pub fn from_input(input: &FixedInput) -> Result<Self, ExecutionError> {
         let envelope = input.envelope();
         let plan: Self =
-            serde_json::from_value(envelope.settings.clone()).map_err(|_| invalid())?;
+            Self::deserialize(&envelope.settings).map_err(|_| invalid())?;
         plan.validate_structure()?;
         if envelope.operation != BUILD_OPERATION
             || envelope.project_id != plan.project_id

@@ -45,8 +45,7 @@ fn compare_check_input(mut rebuilt: InputEnvelope, actual: &FixedInput) -> Resul
     // Both inputs were already validated. Exact canonical bytes also check
     // the rebound identities without decoding and validating another frame.
     rebuilt.normalize();
-    let canonical = codec::encode(&rebuilt, FixedInput::byte_limit(&rebuilt))?;
-    if canonical.as_slice() != actual.bytes() {
+    if !codec::matches_encoding(&rebuilt, FixedInput::byte_limit(&rebuilt), actual.bytes())? {
         return Err(ExecutionError::new(
             ErrorCode::ResultMismatch,
             "semantic-check-input",

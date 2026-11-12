@@ -306,12 +306,27 @@ impl PluginResultEvidence {
         token: ExecutionId,
     ) -> Result<(), ExecutionError> {
         let request = input.plugin_request(envelope.item_id, token, &self.channel)?;
-        let document = sdk::ExchangeDocument {
+        // The ledger already decoded the typed response. Measure its complete
+        // wire envelope without copying it or passing it through the decoder again.
+        #[derive(Serialize)]
+        #[serde(rename_all = "camelCase")]
+        struct ResultDocument<'a> {
+            protocol_version: u32,
+            body: ResultBody<'a>,
+        }
+        #[derive(Serialize)]
+        #[serde(tag = "kind", content = "data", rename_all = "kebab-case")]
+        enum ResultBody<'a> {
+            Result(&'a sdk::InvocationResult),
+        }
+        let document = ResultDocument {
             protocol_version: sdk::EXCHANGE_PROTOCOL,
-            body: sdk::ExchangeBody::Result(self.result.clone()),
+            body: ResultBody::Result(&self.result),
         };
-        let bytes = codec::encode(&document, sdk::MAX_PROCESS_FRAME_BYTES)?;
-        sdk::receive_invocation_result(&bytes, &request, &self.channel).map_err(contract_error)?;
+        codec::check_encoded_size(&document, request.max_result_bytes as usize)
+            .map_err(|_| ExecutionError::new(ErrorCode::ResultMismatch, "plugin-contract"))?;
+        sdk::validate_invocation_result(&self.result, &request, &self.channel)
+            .map_err(contract_error)?;
         let payload = match &self.result.outcome {
             sdk::InvocationOutcome::Succeeded { output } => output,
             sdk::InvocationOutcome::Failed { error }

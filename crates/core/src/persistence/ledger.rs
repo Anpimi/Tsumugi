@@ -856,7 +856,7 @@ pub(super) fn load_input_cached(
         let input = if let Some((_, input, _)) = cached.filter(|(digest, _, _)| digest == &stored.digest) {
             if bytes != input.bytes() { return Err(error(ErrorCode::CorruptLedger, "input-bytes")); }
             input
-        } else { FixedInput::restore(&bytes, &stored.digest)? };
+        } else { FixedInput::restore_owned(bytes, &stored.digest)? };
         check_input_association(&input, attempt, &stored.task, &stored.project, stored.previous.as_deref())?;
         let guard = observed.map(|observed| observed.finish(connection, &[&input], &[])).transpose()?.flatten();
         *cache.lock().unwrap_or_else(std::sync::PoisonError::into_inner) =
@@ -940,7 +940,7 @@ fn load_result_with_verified(
         {
             verified.clone()
         }
-        _ => FixedResult::restore(&bytes, &digest, &result_input, token)?,
+        _ => FixedResult::restore_owned(bytes, &digest, &result_input, token)?,
     };
     if reused.is_some_and(|reference| {
         reference.item_id != result_value.envelope().item_id
@@ -1051,6 +1051,7 @@ impl<'a> OpenResultReader<'a> {
                 &result,
                 valid,
                 open,
+                None,
             )?;
             checked(id, link, valid);
         }
@@ -1146,7 +1147,7 @@ pub(super) fn visit_result_pairs(
             &project,
             previous.as_deref(),
         )?;
-        let fixed = FixedResult::restore(&result_bytes, &result_digest, &input, parse_id(token)?)?;
+        let fixed = FixedResult::restore_owned(result_bytes, &result_digest, &input, parse_id(token)?)?;
         if fixed.envelope().result_id.to_string() != result
             || fixed.envelope().item_id.to_string() != item
         {
@@ -1473,25 +1474,44 @@ pub(super) struct ReadSnapshotStamp {
     total_changes: u64,
 }
 
+impl ReadSnapshotStamp {
+    /// A new transaction can consume read evidence before it changes the database.
+    pub(super) fn still_matches(&self, connection: &Connection) -> Result<bool, ExecutionError> {
+        if connection.is_autocommit() {
+            return Ok(false);
+        }
+        pin_snapshot(connection)?;
+        Ok(*self == snapshot_stamp(connection)?)
+    }
+}
+
+fn pin_snapshot(connection: &Connection) -> Result<(), ExecutionError> {
+    connection.query_row("SELECT count(*) FROM main.sqlite_schema", [], |_| Ok(()))
+        .map_err(sql_error)
+}
+
+fn snapshot_stamp(connection: &Connection) -> Result<ReadSnapshotStamp, ExecutionError> {
+    Ok(ReadSnapshotStamp {
+        connection: connection.query_row("SELECT tsumugi_connection_identity()", [], |r| r.get(0)).map_err(sql_error)?,
+        data_version: connection.query_row("PRAGMA main.data_version", [], |r| r.get(0)).map_err(sql_error)?,
+        schema_version: connection.query_row("PRAGMA main.schema_version", [], |r| r.get(0)).map_err(sql_error)?,
+        total_changes: connection.total_changes(),
+    })
+}
+
 pub(super) fn read_snapshot_stamp(connection: &Connection) -> Result<Option<ReadSnapshotStamp>, ExecutionError> {
     if connection.is_autocommit() {
         return Ok(None);
     }
     // Pin the database before observing its version. A write transaction may
     // roll back without decrementing total_changes, so it cannot qualify reuse.
-    connection.query_row("SELECT count(*) FROM main.sqlite_schema", [], |_| Ok(()))
-        .map_err(sql_error)?;
+    pin_snapshot(connection)?;
     if connection.transaction_state(Some(rusqlite::MAIN_DB)).map_err(sql_error)?
         != rusqlite::TransactionState::Read
     {
         return Ok(None);
     }
-    Ok(Some(ReadSnapshotStamp {
-        connection: connection.query_row("SELECT tsumugi_connection_identity()", [], |r| r.get(0)).map_err(sql_error)?,
-        data_version: connection.query_row("PRAGMA main.data_version", [], |r| r.get(0)).map_err(sql_error)?,
-        schema_version: connection.query_row("PRAGMA main.schema_version", [], |r| r.get(0)).map_err(sql_error)?,
-        total_changes: connection.total_changes(),
-    }))
+    snapshot_stamp(connection).map(Some)
 }
 
 // Retain only UI projections, never the underlying large frames or permits.
@@ -1741,7 +1761,7 @@ pub(super) fn validate_plugin_link(
     result: &FixedResult,
     expected_valid: bool,
 ) -> Result<CheckedPluginLink, ExecutionError> {
-    validate_plugin_link_with_open_evidence(connection, input, result, expected_valid, None)
+    validate_plugin_link_with_open_evidence(connection, input, result, expected_valid, None, None)
 }
 
 fn validate_plugin_link_with_open_evidence(
@@ -1750,6 +1770,7 @@ fn validate_plugin_link_with_open_evidence(
     result: &FixedResult,
     expected_valid: bool,
     mut open: Option<OpenArtifactValidation<'_>>,
+    live_artifact_authority: Option<&crate::execution::plugin_authority::PluginAuthority>,
 ) -> Result<CheckedPluginLink, ExecutionError> {
     let original = result_input(connection, input, result.envelope().result_id)?;
     let same_attempt = std::ptr::eq(input, original.as_ref());
@@ -1802,6 +1823,14 @@ fn validate_plugin_link_with_open_evidence(
     let prepared = capture.prepare(check_result)?;
     if saved_valid != expected_valid || prepared.proof.valid != saved_valid {
         return Err(error(ErrorCode::CorruptLedger, "semantic-validation-proof"));
+    }
+    if let Some(authority) = live_artifact_authority {
+        require_live_checker(
+            connection,
+            &prepared.capture.check_input,
+            &prepared.check_result,
+            authority,
+        )?;
     }
     if let Some((slot, output)) = artifact.filter(|_| saved_valid) {
         *slot = Some(OpenBuildArtifact { result: result.clone(), output });
@@ -4861,6 +4890,22 @@ pub(super) fn recheck_current_review_result_in(
     Ok(())
 }
 
+fn require_live_checker(
+    connection: &Connection,
+    input: &FixedInput,
+    result: &FixedResult,
+    authority: &crate::execution::plugin_authority::PluginAuthority,
+) -> Result<(), ExecutionError> {
+    require_current_result(connection, input, result)?;
+    let permit = super::plugin_execution::check_input_in(connection, input, authority)?;
+    if permit.as_ref().map(PluginPermit::grant_id)
+        != result.envelope().plugin.as_ref().map(|e| e.authorization_id)
+    {
+        return Err(error(ErrorCode::Unauthorized, "semantic-check-adoption-grant"));
+    }
+    Ok(())
+}
+
 fn capture_adoption_in(
     connection: &Connection,
     action: &AdoptionAction,
@@ -4899,9 +4944,9 @@ fn capture_adoption_in(
     super::application::check_input(connection, &input)?;
     super::application::check_service_input(connection, &input, authority)?;
     check_translation_projection(connection, &input, Some(authority))?;
-    if input.envelope().plugin.is_some()
-        && input.envelope().operation == crate::content::BUILD_OPERATION
-    {
+    let plugin_build = input.envelope().plugin.is_some()
+        && input.envelope().operation == crate::content::BUILD_OPERATION;
+    if plugin_build {
         super::release::ReleasePlan::from_input(&input)?.validate_source_reference(connection)?;
     }
     // Explicit Source adoption publishes completed evidence. It does not start
@@ -4947,6 +4992,7 @@ fn capture_adoption_in(
     if cancel_revision(connection, input.envelope().task_id)? != action.cancellation_revision {
         return Err(error(ErrorCode::Cancelled, "adoption"));
     }
+    let mut checked_build_results = std::collections::BTreeSet::new();
     let state = if crate::content::is_translation_projection(&input) {
         None
     } else {
@@ -4968,6 +5014,12 @@ fn capture_adoption_in(
                     super::plugin_execution::check_source_publication_provenance_in(
                         connection, checker_input, checker_result,
                     )
+                } else if plugin_build && action.result_ids.contains(&result.envelope().result_id) {
+                    validate_plugin_link_with_open_evidence(
+                        connection, &input, result, true, None, Some(authority),
+                    )?;
+                    checked_build_results.insert(result.envelope().result_id);
+                    Ok(())
                 } else {
                     validate_plugin_link(connection, &input, result, true).map(|_| ())
                 }
@@ -4998,24 +5050,13 @@ fn capture_adoption_in(
         {
             return Err(error(ErrorCode::ResultMismatch, "adoption-result"));
         }
-        if requires_semantic_check(&input) && !publish_source {
+        if requires_semantic_check(&input)
+            && !publish_source
+            && !checked_build_results.contains(&result.envelope().result_id)
+        {
             // Other plugin operations retain their original live-grant gate.
             let (check_input, check_result, _) = load_check_link(connection, result)?;
-            require_current_result(connection, &check_input, &check_result)?;
-            let permit =
-                super::plugin_execution::check_input_in(connection, &check_input, authority)?;
-            if permit.as_ref().map(PluginPermit::grant_id)
-                != check_result
-                    .envelope()
-                    .plugin
-                    .as_ref()
-                    .map(|e| e.authorization_id)
-            {
-                return Err(error(
-                    ErrorCode::Unauthorized,
-                    "semantic-check-adoption-grant",
-                ));
-            }
+            require_live_checker(connection, &check_input, &check_result, authority)?;
         }
         let scope = &input.item(result.envelope().item_id)?.scope;
         if let Some(locale) = &scope.locale {

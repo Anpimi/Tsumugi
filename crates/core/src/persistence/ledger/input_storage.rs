@@ -126,7 +126,7 @@ pub(super) fn restore(
     bytes: Option<Vec<u8>>,
     digest: &str,
 ) -> Result<FixedInput, ExecutionError> {
-    FixedInput::restore(&reconstructed_bytes(stored, bytes)?, digest)
+    FixedInput::restore_owned(reconstructed_bytes(stored, bytes)?, digest)
 }
 
 pub(super) fn register(connection: &Connection) -> rusqlite::Result<()> {

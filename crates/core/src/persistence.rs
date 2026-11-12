@@ -433,6 +433,7 @@ pub struct ProjectStore {
     plugin_authority: std::sync::Arc<crate::execution::plugin_authority::PluginAuthority>,
     review_scopes: review::ReadScopes,
     attempt_details: std::cell::RefCell<ledger::AttemptDetailCache>,
+    release_reads: std::cell::RefCell<release::ReleaseReadCache>,
     changes: std::sync::Arc<changes::ChangeClock>,
     source_hook_deadlines:
         std::collections::BTreeMap<crate::execution::ExecutionId, std::time::Instant>,
@@ -485,6 +486,7 @@ impl ProjectStore {
             review_scopes: Default::default(),
             changes: Default::default(),
             attempt_details: Default::default(),
+            release_reads: Default::default(),
             source_hook_deadlines: Default::default(),
             #[cfg(test)]
             fault: None,
@@ -529,7 +531,7 @@ impl ProjectStore {
         let mut connection =
             Connection::open_with_flags(&database_path, OpenFlags::SQLITE_OPEN_READ_WRITE)
                 .map_err(|error| map_sqlite(error, PersistenceStage::Open))?;
-        validate_existing_database(&mut connection)?;
+        let release_reads = validate_existing_database(&mut connection)?;
 
         Ok(Self {
             mcp_query_liveness: std::sync::Arc::new(std::sync::atomic::AtomicBool::new(true)),
@@ -545,6 +547,7 @@ impl ProjectStore {
             review_scopes: Default::default(),
             changes: Default::default(),
             attempt_details: Default::default(),
+            release_reads: release_reads.into(),
             source_hook_deadlines: Default::default(),
             #[cfg(test)]
             fault: None,
@@ -1006,7 +1009,9 @@ fn require_current_schema(
     Ok(())
 }
 
-fn validate_existing_database(connection: &mut Connection) -> Result<(), PersistenceError> {
+fn validate_existing_database(
+    connection: &mut Connection,
+) -> Result<release::ReleaseReadCache, PersistenceError> {
     connection
         .pragma_update(None, "foreign_keys", true)
         .map_err(|error| map_sqlite(error, PersistenceStage::Open))?;
@@ -1038,15 +1043,16 @@ fn validate_existing_database(connection: &mut Connection) -> Result<(), Persist
             stage: PersistenceStage::Open,
         });
     }
-    validate_schema_shape(&snapshot)?;
+    let releases = validate_schema_shape(&snapshot)?;
     let _ = read_metadata_from(&snapshot)?;
     snapshot
         .commit()
-        .map_err(|error| map_sqlite(error, PersistenceStage::Open))
+        .map_err(|error| map_sqlite(error, PersistenceStage::Open))?;
+    Ok(releases)
 }
 
 
-fn validate_schema_shape(connection: &Connection) -> Result<(), PersistenceError> {
+fn validate_schema_shape(connection: &Connection) -> Result<release::ReleaseReadCache, PersistenceError> {
     let table_names: Vec<String> = connection
         .prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%' ORDER BY name")
         .map_err(|error| map_sqlite(error, PersistenceStage::Open))?
@@ -1139,7 +1145,7 @@ fn validate_schema_shape(connection: &Connection) -> Result<(), PersistenceError
     resources::validate(connection).map_err(|_| PersistenceError::CorruptProject {
         stage: PersistenceStage::Open,
     })?;
-    release_open.finish(connection).map_err(|_| PersistenceError::CorruptProject {
+    let release_reads = release_open.finish(connection).map_err(|_| PersistenceError::CorruptProject {
         stage: PersistenceStage::Open,
     })?;
     arena::validate(connection).map_err(|_| PersistenceError::CorruptProject {
@@ -1153,7 +1159,7 @@ fn validate_schema_shape(connection: &Connection) -> Result<(), PersistenceError
             stage: PersistenceStage::Open,
         }
     })?;
-    Ok(())
+    Ok(release_reads)
 }
 
 fn acquire_lock(lock: &File) -> Result<(), PersistenceError> {

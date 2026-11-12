@@ -34,6 +34,40 @@ pub(crate) fn encode<T: Serialize>(value: &T, limit: usize) -> Result<Vec<u8>, E
     Ok(bytes)
 }
 
+pub(crate) fn check_encoded_size<T: Serialize>(
+    value: &T,
+    limit: usize,
+) -> Result<(), ExecutionError> {
+    encode_to(value, limit, std::io::sink())
+}
+
+pub(crate) fn matches_encoding<T: Serialize>(
+    value: &T,
+    limit: usize,
+    bytes: &[u8],
+) -> Result<bool, ExecutionError> {
+    struct Comparison<'a> {
+        rest: &'a [u8],
+        equal: bool,
+    }
+    impl Write for Comparison<'_> {
+        fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
+            if let Some(rest) = self.rest.strip_prefix(bytes) {
+                self.rest = rest;
+            } else {
+                self.equal = false;
+            }
+            Ok(bytes.len())
+        }
+        fn flush(&mut self) -> std::io::Result<()> {
+            Ok(())
+        }
+    }
+    let mut comparison = Comparison { rest: bytes, equal: true };
+    encode_to(value, limit, std::io::BufWriter::new(&mut comparison))?;
+    Ok(comparison.equal && comparison.rest.is_empty())
+}
+
 pub(crate) fn digest_encoded<T: Serialize>(value: &T, limit: usize) -> Result<String, ExecutionError> {
     struct HashWriter(aws_lc_rs::digest::Context);
     impl Write for HashWriter {

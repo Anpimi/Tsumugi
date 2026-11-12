@@ -68,6 +68,41 @@ pub(super) struct Record {
     pub report_paths: BTreeSet<String>,
 }
 
+#[derive(Debug)]
+pub(super) struct VerifiedRelease {
+    pub(super) view: ReleaseView,
+    report_paths: BTreeSet<String>,
+}
+
+impl VerifiedRelease {
+    pub(super) fn capture(record: &Record) -> Option<Self> {
+        // Bound the retained projection independently of the artifact budget.
+        const MAX_VIEW_BYTES: usize = 16 * 1024 * 1024;
+        codec::check_encoded_size(&record.view, MAX_VIEW_BYTES).ok()?;
+        Some(Self {
+            view: record.view.clone(),
+            report_paths: record.report_paths.clone(),
+        })
+    }
+
+    /// Only use after confirming the snapshot that qualified this release.
+    pub(super) fn read(&self, connection: &Connection) -> Result<Record, ExecutionError> {
+        let artifacts = read_artifacts(connection, self.view.release_id)?;
+        if artifacts.len() != self.view.artifacts.len()
+            || artifacts.iter().zip(&self.view.artifacts).any(|(artifact, expected)| {
+                artifact.summary != *expected || codec::digest(&artifact.bytes) != expected.sha256
+            })
+        {
+            return Err(failure(ErrorCode::CorruptLedger, "release-artifacts"));
+        }
+        Ok(Record {
+            view: self.view.clone(),
+            artifacts,
+            report_paths: self.report_paths.clone(),
+        })
+    }
+}
+
 struct PreparedRecord {
     manifest: ReleaseManifest,
     summary: ManifestSummary,
@@ -374,39 +409,12 @@ pub(super) fn load(
     {
         return Err(failure(ErrorCode::CorruptLedger, "release-receipt"));
     }
-    let mut query = connection
-        .prepare(
-            "SELECT locale,artifact_id,role,file_name,bytes,sha256,validator_version,entry_count
-         FROM release_artifacts WHERE release_id=?1 ORDER BY locale,file_name",
-        )
-        .map_err(sql)?;
-    let rows = query
-        .query_map([release_id.to_string()], |r| {
-            Ok((
-                Artifact {
-                    id: r.get(1)?,
-                    role: r.get(2)?,
-                    validator_version: r.get(6)?,
-                    summary: ReleasedArtifact {
-                        locale: r.get(0)?,
-                        file_name: r.get(3)?,
-                        sha256: r.get(5)?,
-                        entry_count: r.get(7)?,
-                    },
-                    bytes: r.get(4)?,
-                },
-                r.get::<_, String>(6)?,
-            ))
-        })
-        .map_err(sql)?;
-    let mut artifacts = Vec::new();
-    for row in rows {
-        let (artifact, validator) = row.map_err(sql)?;
+    let artifacts = read_artifacts(connection, release_id)?;
+    for artifact in &artifacts {
         if expected_artifacts.iter().find(|expected| expected.summary.locale == artifact.summary.locale
-            && expected.summary.file_name == artifact.summary.file_name).is_some_and(|expected| expected.validator_version != validator) {
+            && expected.summary.file_name == artifact.summary.file_name).is_some_and(|expected| expected.validator_version != artifact.validator_version) {
             return Err(failure(ErrorCode::CorruptLedger, "release-validator"));
         }
-        artifacts.push(artifact);
     }
     // Comparing all bytes, IDs, roles and paths to original verified results
     // also rejects a substituted file whose own digest was recomputed.
@@ -445,4 +453,29 @@ pub(super) fn load(
         artifacts,
         report_paths,
     })
+}
+
+fn read_artifacts(
+    connection: &Connection,
+    release_id: ExecutionId,
+) -> Result<Vec<Artifact>, ExecutionError> {
+    let mut query = connection.prepare(
+        "SELECT locale,artifact_id,role,file_name,bytes,sha256,validator_version,entry_count
+         FROM release_artifacts WHERE release_id=?1 ORDER BY locale,file_name",
+    ).map_err(sql)?;
+    let rows = query.query_map([release_id.to_string()], |r| {
+        Ok(Artifact {
+            id: r.get(1)?,
+            role: r.get(2)?,
+            validator_version: r.get(6)?,
+            summary: ReleasedArtifact {
+                locale: r.get(0)?,
+                file_name: r.get(3)?,
+                sha256: r.get(5)?,
+                entry_count: r.get(7)?,
+            },
+            bytes: r.get(4)?,
+        })
+    }).map_err(sql)?;
+    rows.collect::<Result<_, _>>().map_err(sql)
 }
