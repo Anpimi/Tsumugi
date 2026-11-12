@@ -35,6 +35,8 @@ pub mod model_connections;
 mod plugin_execution;
 mod release;
 mod project_backup;
+mod reopen;
+pub use reopen::ProjectReopenProof;
 mod resources;
 mod review;
 mod translation;
@@ -426,6 +428,7 @@ pub struct ProjectStore {
     planning_authority_revision: std::sync::Arc<std::sync::atomic::AtomicU64>,
     directory: PathBuf,
     restored_instance: Option<crate::execution::ExecutionId>,
+    open_basis: Option<reopen::OpenBasis>,
     connection: Option<Connection>,
     lock: Option<File>,
     pending: Option<PendingChange>,
@@ -471,6 +474,8 @@ impl ProjectStore {
 
         configure_new_connection(&connection)?;
         initialize_schema(&connection, &metadata)?;
+        let open_basis = reopen::FileStamp::read(&database_path)
+            .and_then(|file| reopen::OpenBasis::read(&connection, file));
 
         Ok(Self {
             mcp_query_liveness: std::sync::Arc::new(std::sync::atomic::AtomicBool::new(true)),
@@ -478,6 +483,7 @@ impl ProjectStore {
             planning_authority_revision: Default::default(),
             directory,
             restored_instance: None,
+            open_basis,
             connection: Some(connection),
             lock: Some(lock),
             pending: None,
@@ -497,6 +503,14 @@ impl ProjectStore {
 
     /// Open and validate a current-format project without upgrading unsupported schemas.
     pub fn open<P: AsRef<Path>>(directory: P) -> Result<Self, PersistenceError> {
+        Self::open_with_reopen_proof(directory, None)
+    }
+
+    /// Reuse a clean-close audit only for the exact same persisted bytes.
+    pub fn open_with_reopen_proof<P: AsRef<Path>>(
+        directory: P,
+        proof: Option<&ProjectReopenProof>,
+    ) -> Result<Self, PersistenceError> {
         let directory = directory.as_ref().to_path_buf();
         if !directory.is_dir() {
             return Err(PersistenceError::MissingProject {
@@ -528,10 +542,16 @@ impl ProjectStore {
         acquire_lock(&lock)?;
         let restored_instance = project_backup::read_restored_instance(&mut lock)?;
 
+        let file = reopen::FileStamp::read(&database_path);
         let mut connection =
             Connection::open_with_flags(&database_path, OpenFlags::SQLITE_OPEN_READ_WRITE)
                 .map_err(|error| map_sqlite(error, PersistenceStage::Open))?;
-        let release_reads = validate_existing_database(&mut connection)?;
+        let proof = proof.filter(|proof| proof.directory == directory);
+        let (release_reads, open_basis) = validate_database(
+            &mut connection,
+            file.as_ref().map(|file| (database_path.as_path(), file)),
+            proof,
+        )?;
 
         Ok(Self {
             mcp_query_liveness: std::sync::Arc::new(std::sync::atomic::AtomicBool::new(true)),
@@ -539,6 +559,7 @@ impl ProjectStore {
             planning_authority_revision: Default::default(),
             directory,
             restored_instance,
+            open_basis,
             connection: Some(connection),
             lock: Some(lock),
             pending: None,
@@ -641,6 +662,42 @@ impl ProjectStore {
 
     /// Release the database connection and ownership marker lock.
     pub fn close(mut self) -> Result<(), PersistenceError> {
+        self.release_ownership()
+    }
+
+    /// Fingerprint a settled, owned database before releasing its connection.
+    /// Any external SQLite commit since admission disqualifies the proof.
+    pub fn close_with_reopen_proof(mut self) -> Result<Option<ProjectReopenProof>, PersistenceError> {
+        let proof = (!self.is_reconciling())
+            .then(|| self.reopen_proof())
+            .flatten();
+        self.release_ownership()?;
+        Ok(proof)
+    }
+
+    fn reopen_proof(&self) -> Option<ProjectReopenProof> {
+        let opening = self.open_basis.as_ref()?;
+        let connection = self.connection().ok()?;
+        let path = self.directory.join(DATABASE_FILENAME);
+        let database = File::open(&path).ok()?;
+        let snapshot = connection.unchecked_transaction().ok()?;
+        read_metadata_from(&snapshot).ok()?;
+        let file = reopen::FileStamp::read(&path)?;
+        let current = reopen::OpenBasis::read(&snapshot, file.clone())?;
+        if !opening.permits_close(&current) {
+            return None;
+        }
+        let digest = reopen::database_digest(&path, &database, &file)?;
+        let releases = self.release_reads.borrow().for_reopen(&snapshot);
+        snapshot.commit().ok()?;
+        Some(ProjectReopenProof {
+            directory: self.directory.clone(),
+            digest,
+            releases,
+        })
+    }
+
+    fn release_ownership(&mut self) -> Result<(), PersistenceError> {
         self.mcp_query_liveness
             .store(false, std::sync::atomic::Ordering::Release);
         self.plugin_authority.revoke_all();
@@ -1012,6 +1069,14 @@ fn require_current_schema(
 fn validate_existing_database(
     connection: &mut Connection,
 ) -> Result<release::ReleaseReadCache, PersistenceError> {
+    validate_database(connection, None, None).map(|(releases, _)| releases)
+}
+
+fn validate_database(
+    connection: &mut Connection,
+    file: Option<(&Path, &reopen::FileStamp)>,
+    proof: Option<&ProjectReopenProof>,
+) -> Result<(release::ReleaseReadCache, Option<reopen::OpenBasis>), PersistenceError> {
     connection
         .pragma_update(None, "foreign_keys", true)
         .map_err(|error| map_sqlite(error, PersistenceStage::Open))?;
@@ -1020,6 +1085,7 @@ fn validate_existing_database(
         .map_err(|error| map_sqlite(error, PersistenceStage::Open))?;
     ledger::register_input_reader(connection)
         .map_err(|error| map_sqlite(error, PersistenceStage::Open))?;
+    let database = proof.and(file).and_then(|(path, _)| File::open(path).ok());
     // Every open-time association check must see the same database snapshot.
     // A deferred transaction keeps validation read-only while excluding
     // changes between the ledger scan, grant scan, and final metadata read.
@@ -1043,12 +1109,26 @@ fn validate_existing_database(
             stage: PersistenceStage::Open,
         });
     }
-    let releases = validate_schema_shape(&snapshot)?;
+    let current_file =
+        file.filter(|(path, initial)| reopen::FileStamp::read(path).as_ref() == Some(*initial));
+    let open_basis =
+        current_file.and_then(|(_, file)| reopen::OpenBasis::read(&snapshot, file.clone()));
+    let verified = proof
+        .zip(current_file)
+        .zip(database.as_ref())
+        .and_then(|((proof, (path, file)), database)| {
+            (reopen::database_digest(path, database, file) == Some(proof.digest)).then_some(proof)
+        });
+    let releases = if let Some(proof) = verified {
+        proof.releases.rebind(&snapshot)
+    } else {
+        validate_schema_shape(&snapshot)?
+    };
     let _ = read_metadata_from(&snapshot)?;
     snapshot
         .commit()
         .map_err(|error| map_sqlite(error, PersistenceStage::Open))?;
-    Ok(releases)
+    Ok((releases, open_basis))
 }
 
 

@@ -24,7 +24,7 @@ use serde::{Deserialize, Serialize};
 use tauri::State;
 use tsumugi_core::{
     ChangeOutcome, MetadataError, MetadataField, PersistenceError, PersistenceStage, ProjectId,
-    ProjectMetadata, ProjectStore, Reconciliation,
+    ProjectMetadata, ProjectReopenProof, ProjectStore, Reconciliation,
 };
 
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -454,6 +454,7 @@ struct SessionManager {
     source_hooks: source_hooks::SourceHooks,
     services: Option<ProjectServiceContext>,
     active: Option<ActiveSession>,
+    reopen_proof: Option<ProjectReopenProof>,
     directory_recovery: Option<DirectoryRecovery>,
     package_operation: Option<SessionPackageOperation>,
 }
@@ -625,7 +626,7 @@ impl SessionManager {
         }
 
         self.ensure_switch_allowed(CommandStage::Open)?;
-        let store = ProjectStore::open(&locator)
+        let store = ProjectStore::open_with_reopen_proof(&locator, self.reopen_proof.as_ref())
             .map_err(|error| map_persistence_error(error, CommandStage::Open))?;
         let metadata = store
             .metadata()
@@ -1036,9 +1037,9 @@ impl SessionManager {
             .pause_idle_automation(CommandStage::Close)?;
         let active = self.active.take().expect("active session checked above");
         self.startup.retire();
-        active
+        self.reopen_proof = active
             .store
-            .close()
+            .close_with_reopen_proof()
             .map_err(|error| map_persistence_error(error, CommandStage::Close))?;
         Ok(CloseProjectView { closed: true })
     }

@@ -11,6 +11,41 @@ use std::{
     time::Instant,
 };
 
+#[cfg(unix)]
+#[test]
+fn clean_reopen_accepts_owned_commits_but_revalidates_an_externally_changed_database() {
+    let temp = tempfile::tempdir().unwrap();
+    let directory = temp.path().join("project");
+    let metadata = ProjectMetadata::create("Before", "en", ["zh-CN"]).unwrap();
+    let mut store = ProjectStore::create(&directory, metadata).unwrap();
+    store.rename(1, "After").unwrap();
+    let proof = store.close_with_reopen_proof().unwrap().unwrap();
+
+    let reopened = ProjectStore::open_with_reopen_proof(&directory, Some(&proof)).unwrap();
+    assert_eq!(reopened.metadata().unwrap().display_name(), "After");
+    reopened.close().unwrap();
+
+    let database = directory.join(DATABASE_FILENAME);
+    let external = Connection::open(&database).unwrap();
+    external.execute_batch("ALTER TABLE translation_contributors ADD COLUMN invalid TEXT").unwrap();
+    drop(external);
+    let error = ProjectStore::open_with_reopen_proof(&directory, Some(&proof)).unwrap_err();
+    assert_eq!(error.code(), PersistenceErrorCode::CorruptProject);
+}
+
+#[cfg(unix)]
+#[test]
+fn clean_close_does_not_vouch_for_an_external_commit_during_the_session() {
+    let temp = tempfile::tempdir().unwrap();
+    let directory = temp.path().join("project");
+    let metadata = ProjectMetadata::create("Before", "en", ["zh-CN"]).unwrap();
+    let store = ProjectStore::create(&directory, metadata).unwrap();
+    let external = Connection::open(directory.join(DATABASE_FILENAME)).unwrap();
+    external.execute("UPDATE project_metadata SET display_name = 'External'", []).unwrap();
+    drop(external);
+    assert!(store.close_with_reopen_proof().unwrap().is_none());
+}
+
 fn facts(connection: &Connection) -> BTreeMap<String, Vec<Vec<Value>>> {
     let tables = connection.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%' ORDER BY name")
         .unwrap().query_map([], |r| r.get::<_, String>(0)).unwrap()

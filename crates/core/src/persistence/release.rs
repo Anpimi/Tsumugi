@@ -219,6 +219,25 @@ impl OpenReleaseValidation {
 pub(super) struct ReleaseReadCache(Option<(ReadSnapshotStamp, Arc<record::VerifiedRelease>)>);
 
 impl ReleaseReadCache {
+    pub(super) fn for_reopen(&self, connection: &Connection) -> Self {
+        match &self.0 {
+            Some((stamp, _)) if stamp.still_matches(connection).unwrap_or(false) => self.clone(),
+            _ => Self::default(),
+        }
+    }
+
+    pub(super) fn rebind(&self, connection: &Connection) -> Self {
+        match &self.0 {
+            Some((_, release)) => Self(
+                read_snapshot_stamp(connection)
+                    .ok()
+                    .flatten()
+                    .map(|stamp| (stamp, Arc::clone(release))),
+            ),
+            None => Self::default(),
+        }
+    }
+
     fn from_verified(
         connection: &Connection,
         verified: Option<record::VerifiedRelease>,

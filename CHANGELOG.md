@@ -191,6 +191,8 @@ The current workspace targets **`0.3.0-alpha.1`**. The published `0.2.0-alpha.1`
 
 ### Fixed
 
+- Reopen a cleanly closed project faster in the same desktop process by checking its exact database bytes before reusing the completed history validation.
+
 - Avoid repeatedly processing large evidence when opening a project or reading, saving, and exporting plugin releases.
 
 - Reuse the checked review scope for plugin builds and store their frozen source only once. Older development builds cannot read new build attempts saved in this format.

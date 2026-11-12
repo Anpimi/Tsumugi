@@ -44,7 +44,7 @@ pub use persistence::{
     DeliveryView, Eligibility, EligibilityLocale, EligibilityReason, FallbackDecision,
     FallbackWrite, GlossaryCapture, GlossaryCaptureOrigin, GlossaryEntry, GlossaryFile, ImpactItem,
     ImpactPage, ImpactReason, PersistenceError, PersistenceErrorCode, PersistenceStage,
-    PreparedAutomaticSelection, PreparedReviewCheck, ProjectStore, ProviderBudget, Reconciliation,
+    PreparedAutomaticSelection, PreparedReviewCheck, ProjectReopenProof, ProjectStore, ProviderBudget, Reconciliation,
     RecoveryPlan, RecoveryUnit, ReportedTokenTotal, ReleaseAdoptionHandler, ReleaseException, ReleaseExceptionKind,
     ReleaseView, ReleasedArtifact, ResourceChangeKind, ResourceDecision, ResourceDecisionKind,
     ResourceDecisionResult, ResourceDecisionActionRead, ResourceImpactConfidence, ResourceImpactKind, ResourceImpactStatus,

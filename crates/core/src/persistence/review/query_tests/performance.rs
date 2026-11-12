@@ -468,6 +468,36 @@ fn measure_retained_supported_reads() {
         std::env::var_os("TSUMUGI_PERFORMANCE_PROJECT")
             .expect("Select a retained synthetic project"),
     );
+    if std::env::var_os("TSUMUGI_PERFORMANCE_CLEAN_REOPEN").is_some() {
+        let started = Instant::now();
+        let mut store = ProjectStore::open(&path).unwrap();
+        println!("{}", json!({"operation":"full_open", "elapsed_us":started.elapsed().as_micros()}));
+        let project = parse_id(store.metadata().unwrap().project_id().to_string()).unwrap();
+        let query = SegmentQuery {
+            text: String::new(),
+            selection: SegmentSelectionFilter::All,
+            status: SegmentStatusFilter::All,
+        };
+        let started = Instant::now();
+        let original = store.read_segment_page(project, "zh-CN", &query, None, None, 50).unwrap();
+        println!("{}", json!({"operation":"full_open_first_page", "elapsed_us":started.elapsed().as_micros(), "total":original.total}));
+        for round in 0..3 {
+            let started = Instant::now();
+            let proof = store.close_with_reopen_proof().unwrap().expect("clean close proof");
+            let close_us = started.elapsed().as_micros();
+            let started = Instant::now();
+            store = ProjectStore::open_with_reopen_proof(&path, Some(&proof)).unwrap();
+            let open_us = started.elapsed().as_micros();
+            let started = Instant::now();
+            let page = store.read_segment_page(project, "zh-CN", &query, None, None, 50).unwrap();
+            println!("{}", json!({"operation":"clean_reopen", "round":round, "close_us":close_us,
+                "open_us":open_us, "first_page_us":started.elapsed().as_micros(), "total":page.total}));
+            assert_eq!(page.total, original.total);
+            assert_eq!(page.rows, original.rows);
+        }
+        store.close().unwrap();
+        return;
+    }
     let connection = Connection::open_with_flags(
         path.join("project.sqlite3"),
         rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY,
