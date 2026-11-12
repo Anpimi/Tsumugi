@@ -1837,6 +1837,18 @@ impl ProjectStore {
         translation_scopes: &BTreeMap<String, Vec<ExecutionId>>,
         cancellation: &Cancellation,
     ) -> Result<Eligibility, ExecutionError> {
+        self.review_build_targets(project_id, locales, translation_scopes, cancellation, |_, _| {})
+    }
+
+    /// Supply the exact targets used to qualify each locale from this snapshot.
+    pub(super) fn review_build_targets(
+        &self,
+        project_id: ExecutionId,
+        locales: &[String],
+        translation_scopes: &BTreeMap<String, Vec<ExecutionId>>,
+        cancellation: &Cancellation,
+        mut capture: impl FnMut(&str, Vec<ReviewTarget>),
+    ) -> Result<Eligibility, ExecutionError> {
         if locales.is_empty()
             || locales.len() > 16
             || locales.iter().collect::<BTreeSet<_>>().len() != locales.len()
@@ -1884,16 +1896,13 @@ impl ProjectStore {
                 let mut blocking_units = 0u32;
                 let mut blocker_count = 0u32;
                 let mut exception_count = 0u32;
-                for target in queries::targets_in_with_cancel(
-                    connection,
-                    project_id,
-                    &units,
-                    locale,
-                    cancellation,
-                )? {
+                let targets = queries::targets_in_with_cancel(
+                    connection, project_id, &units, locale, cancellation,
+                )?;
+                for target in &targets {
                     let unit_id = target.unit_id;
                     let (mut unit_blockers, unit_exceptions) =
-                        assess_build_scope(&target, impacts.contains_key(&unit_id), translated.as_ref());
+                        assess_build_scope(target, impacts.contains_key(&unit_id), translated.as_ref());
                     let retained = translated.as_ref().is_some_and(|units| !units.contains(&unit_id));
                     retained_source_units += u32::from(retained);
                     if unresolved.contains(&unit_id) {unit_blockers.push("correspondence-unresolved".into());}
@@ -1930,12 +1939,12 @@ impl ProjectStore {
                     ));
                     for reason in unit_blockers {
                         if blockers.len() < 100 {
-                            blockers.push(eligibility_reason(&target, &reason));
+                            blockers.push(eligibility_reason(target, &reason));
                         }
                     }
                     for reason in unit_exceptions {
                         if exceptions.len() < 100 {
-                            exceptions.push(eligibility_reason(&target, &reason));
+                            exceptions.push(eligibility_reason(target, &reason));
                         }
                     }
                 }
@@ -1951,6 +1960,7 @@ impl ProjectStore {
                     exception_count,
                     retained_source_units,
                 });
+                capture(locale, targets);
             }
             queries::check_read_cancel(cancellation)?;
             let ready = outcomes.iter().all(|item| item.ready);

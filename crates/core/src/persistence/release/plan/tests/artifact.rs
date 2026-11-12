@@ -505,8 +505,8 @@ fn builder_result(store: &mut ProjectStore, input: &FixedInput, item: ExecutionI
     let request = store
         .dispatch_execution_item(input.envelope().attempt_id, item)
         .unwrap();
-    let build: sdk::BuildInput =
-        serde_json::from_value(input.item(item).unwrap().payload.clone()).unwrap();
+    let build = ReleasePlan::from_input(input).unwrap()
+        .plugin_input(input.item(item).unwrap().scope.locale.as_deref().unwrap()).unwrap();
     let artifacts = build
         .output_paths
         .iter()

@@ -178,6 +178,13 @@ impl FixedInput {
         let bytes = if envelope.operation == TRANSLATION_CHECK_OPERATION {
             let payload = translation_validation::expand_translation_check_payload(&item.payload)?;
             codec::encode(&payload, limit)?
+        } else if envelope.operation == crate::content::BUILD_OPERATION
+            && crate::ReleasePlan::is_projected_payload(&item.payload)
+        {
+            let locale = item.scope.locale.as_deref()
+                .ok_or_else(|| ExecutionError::new(ErrorCode::InvalidInput, "release-plan"))?;
+            let payload = crate::ReleasePlan::from_input(self)?.plugin_input(locale)?;
+            codec::encode(&payload, limit)?
         } else {
             codec::encode(&item.payload, limit)?
         };
@@ -274,10 +281,10 @@ impl FixedInput {
                     MAX_INPUT_BYTES,
                 )?),
                 environment_digest: binding.environment_digest()?,
-                configuration_digest: codec::digest(&codec::encode(
+                configuration_digest: codec::digest_encoded(
                     &envelope.settings,
                     MAX_FIXED_INPUT_BYTES,
-                )?),
+                )?,
             },
             provider: channel.clone(),
             capability: declaration.contract.clone(),

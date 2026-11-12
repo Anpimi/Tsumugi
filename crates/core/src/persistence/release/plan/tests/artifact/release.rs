@@ -815,8 +815,8 @@ fn assert_large_artifact_storage(binary: bool) {
     let request = store
         .dispatch_execution_item(input.envelope().attempt_id, item)
         .unwrap();
-    let build: sdk::BuildInput =
-        serde_json::from_value(input.item(item).unwrap().payload.clone()).unwrap();
+    let build = ReleasePlan::from_input(&input).unwrap()
+        .plugin_input(input.item(item).unwrap().scope.locale.as_deref().unwrap()).unwrap();
     let large = vec![if binary { 0xff } else { b'A' }; 1024 * 1024 + 17];
     let artifact = |id: &str, path: &str, role: &str, bytes: &[u8]| -> sdk::CapturedArtifact {
         if binary {
@@ -1227,7 +1227,8 @@ fn release_report_omits_opaque_settings_and_cannot_steal_component_artifact_iden
     let request = store
         .dispatch_execution_item(input.envelope().attempt_id, item.item_id)
         .unwrap();
-    let build: sdk::BuildInput = serde_json::from_value(item.payload.clone()).unwrap();
+    let build = ReleasePlan::from_input(&input).unwrap()
+        .plugin_input(item.scope.locale.as_deref().unwrap()).unwrap();
     let output = sdk::ArtifactSet {
         profile: build.source.profile,
         source_set_id: build.source.source_set_id,

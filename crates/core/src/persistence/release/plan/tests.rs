@@ -219,14 +219,27 @@ fn captures_core_qualification_and_sends_only_fixed_build_data() {
     let build = environment(&store);
     let changes = store.connection().unwrap().total_changes();
     let scope = store.content_scope().unwrap();
+    use rusqlite::trace::{TraceEvent, TraceEventCodes};
+    thread_local! { static REVIEW_PAGE_SCANS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) }; }
+    store.connection().unwrap().trace_v2(TraceEventCodes::SQLITE_TRACE_STMT, Some(|event| {
+        if let TraceEvent::Stmt(_, sql) = event
+            && sql.starts_with("SELECT COUNT(DISTINCT unit_id) FROM source_effective_occurrences")
+        {
+            REVIEW_PAGE_SCANS.with(|count| count.set(count.get() + 1));
+        }
+    }));
     let input = store
         .prepare_plugin_build(project, ExecutionId::new(), &choices(), &basis, &build)
         .unwrap();
+    store.connection().unwrap().trace_v2(TraceEventCodes::empty(), None);
+    assert_eq!(REVIEW_PAGE_SCANS.with(|count| count.replace(0)), 0);
     assert_eq!(store.connection().unwrap().total_changes(), changes);
     assert_eq!(store.content_scope().unwrap(), scope);
     let plan = ReleasePlan::from_input(&input).unwrap();
+    assert!(input.envelope().items.iter().all(|item| ReleasePlan::is_projected_payload(&item.payload)));
     assert_eq!(input.envelope().limits.max_result_bytes, MAX_PLUGIN_RESULT_BYTES as u32);
     let mut historical = input.envelope().clone();
+    historical.items[0].payload = serde_json::to_value(plan.plugin_input("zh-CN").unwrap()).unwrap();
     historical.limits.max_result_bytes = MAX_RESULT_BYTES as u32;
     historical.limits.max_attempt_result_bytes = MAX_RESULT_BYTES as u32;
     assert_eq!(ReleasePlan::from_input(&FixedInput::capture(historical.clone()).unwrap()).unwrap(), plan);
@@ -476,7 +489,7 @@ fn ledger_rechecks_qualified_plan_even_when_forged_payload_matches_it() {
         .unwrap();
     assert_eq!(count, 0);
     let mut envelope = input.envelope().clone();
-    envelope.items[0].payload["targets"][0]["text"] = serde_json::json!("Mismatch");
+    envelope.items[0].payload = serde_json::json!({"targets": [{"text":"Mismatch"}]});
     assert!(ReleasePlan::from_input(&FixedInput::capture(envelope).unwrap()).is_err());
 }
 
@@ -778,7 +791,7 @@ fn staged_build_retains_unselected_source_without_changing_saved_translations() 
     forged.settings["version"] = serde_json::json!(1);
     assert!(ReleasePlan::from_input(&FixedInput::capture(forged).unwrap()).is_err());
     let mut forged = input.envelope().clone();
-    forged.items[0].payload["targets"][1]["text"] = serde_json::json!("Unapproved saved work");
+    forged.items[0].payload = serde_json::json!({"targets": [{"text":"Unapproved saved work"}]});
     assert!(ReleasePlan::from_input(&FixedInput::capture(forged).unwrap()).is_err());
     enqueue_fixture(&mut store, &input);
     let path = directory.path().join("project");

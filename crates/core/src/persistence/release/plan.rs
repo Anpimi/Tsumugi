@@ -134,6 +134,12 @@ pub(super) fn decided_text(target: &ReviewTarget) -> Result<&str, ExecutionError
 }
 
 impl ReleasePlan {
+    const PROJECTED_PAYLOAD: &str = "release-plan-input-v1";
+
+    pub(crate) fn is_projected_payload(payload: &serde_json::Value) -> bool {
+        payload.as_str() == Some(Self::PROJECTED_PAYLOAD)
+    }
+
     pub(crate) fn artifact_set(
         &self,
         result: &FixedResult,
@@ -431,24 +437,23 @@ impl ReleasePlan {
         Ok(())
     }
     fn fixed_input(&self, attempt: ExecutionId) -> Result<FixedInput, ExecutionError> {
-        self.validate_structure()?;
+        self.validate()?;
         let binding = self.build.builder();
+        // The checked plan owns the frozen source and selections. Persist the
+        // item identity, then derive its SDK request from that same plan.
         let items = self
             .locales
             .iter()
-            .map(|l| {
-                Ok(InputItem::new(
-                    Scope {
-                        kind: "release-build".into(),
-                        id: self.source_snapshot_id.to_string(),
-                        locale: Some(l.choice.locale.clone()),
-                    },
-                    serde_json::to_value(self.plugin_input(&l.choice.locale)?)
-                        .map_err(|_| invalid())?,
-                    vec![],
-                ))
-            })
-            .collect::<Result<Vec<_>, ExecutionError>>()?;
+            .map(|l| InputItem::new(
+                Scope {
+                    kind: "release-build".into(),
+                    id: self.source_snapshot_id.to_string(),
+                    locale: Some(l.choice.locale.clone()),
+                },
+                serde_json::Value::String(Self::PROJECTED_PAYLOAD.into()),
+                vec![],
+            ))
+            .collect::<Vec<_>>();
         let ids = items.iter().map(|i| i.item_id).collect();
         let project = self.project_id.to_string().parse().map_err(|_| invalid())?;
         let mut envelope = InputEnvelope::new(
@@ -465,7 +470,13 @@ impl ReleasePlan {
         envelope.limits.max_attempt_result_bytes = MAX_PLUGIN_RESULT_BYTES as u32;
         envelope.limits.timeout_ms = binding.capability.declaration.limits.timeout_ms.min(300_000);
         envelope.plugin = Some(binding);
-        FixedInput::capture(envelope)
+        FixedInput::capture(envelope).map_err(|failure| {
+            if failure.stage == "limit-exceeded" {
+                ExecutionError::new(ErrorCode::LimitExceeded, "build-fixed-input-bytes")
+            } else {
+                failure
+            }
+        })
     }
     pub fn from_input(input: &FixedInput) -> Result<Self, ExecutionError> {
         let envelope = input.envelope();
@@ -484,6 +495,7 @@ impl ReleasePlan {
         {
             return Err(invalid());
         }
+        let projected = envelope.items.first().is_some_and(|item| Self::is_projected_payload(&item.payload));
         let mut seen = BTreeSet::new();
         for item in &envelope.items {
             let locale = item.scope.locale.as_deref().ok_or_else(invalid)?;
@@ -491,8 +503,13 @@ impl ReleasePlan {
                 || item.scope.kind != "release-build"
                 || item.scope.id != plan.source_snapshot_id.to_string()
                 || !item.dependencies.is_empty()
-                || item.payload
-                    != serde_json::to_value(plan.plugin_input(locale)?).map_err(|_| invalid())?
+                || !plan.locales.iter().any(|entry| entry.choice.locale == locale)
+                || Self::is_projected_payload(&item.payload) != projected
+            {
+                return Err(invalid());
+            }
+            if !projected && item.payload
+                != serde_json::to_value(plan.plugin_input(locale)?).map_err(|_| invalid())?
             {
                 return Err(invalid());
             }
@@ -573,8 +590,21 @@ impl ProjectStore {
         let languages: Vec<_> = choices.iter().map(|c| c.locale.clone()).collect();
         let scopes = choices.iter().filter_map(|choice| choice.translation_units.as_ref()
             .map(|units| (choice.locale.clone(), units.clone()))).collect();
-        let qualified = self.capture_qualified_release_scope(project, &languages, &scopes, basis)?;
-        let source_snapshot_id = qualified.eligibility.source_snapshot_id;
+        let mut targets_by_locale = BTreeMap::new();
+        let eligibility = self.review_build_targets(
+            project, &languages, &scopes, &crate::execution::Cancellation::default(),
+            |locale, targets| { targets_by_locale.insert(locale.to_owned(), targets); },
+        )?;
+        if eligibility.basis != basis {
+            return Err(failure(ErrorCode::DependencyConflict, "review-eligibility-stale")
+                .with_conflict(crate::execution::ConflictEvidence::BuildEligibility {
+                    expected: basis.into(), current: eligibility.basis,
+                }));
+        }
+        if !eligibility.ready {
+            return Err(failure(ErrorCode::DependencyConflict, "build-ineligible"));
+        }
+        let source_snapshot_id = eligibility.source_snapshot_id;
         let connection = self
             .connection()
             .map_err(|_| failure(ErrorCode::StorageFailed, "build-read"))?;
@@ -595,9 +625,9 @@ impl ProjectStore {
             }
         }
         let mut locales = Vec::new();
-        for (choice, targets) in choices.iter().zip(qualified.locales) {
-            let mut targets: BTreeMap<_, _> =
-                targets.into_iter().map(|(_, t)| (t.unit_id, t)).collect();
+        for choice in choices {
+            let mut targets: BTreeMap<_, _> = targets_by_locale.remove(&choice.locale)
+                .ok_or_else(invalid)?.into_iter().map(|t| (t.unit_id, t)).collect();
             let mut mapped = Vec::new();
             for unit in &output.exchange.units {
                 let (core_unit, core_revision) = mapping.get(&unit.id).ok_or_else(invalid)?;
@@ -633,8 +663,8 @@ impl ProjectStore {
             source_result_id: result.envelope().result_id,
             source_input_digest: source_input.digest().into(),
             source_result_digest: result.digest().into(),
-            policy_version: qualified.eligibility.policy_version,
-            eligibility_basis: qualified.eligibility.basis,
+            policy_version: eligibility.policy_version,
+            eligibility_basis: eligibility.basis,
             source: output.exchange.clone(),
             build: build.clone(),
             locales,
