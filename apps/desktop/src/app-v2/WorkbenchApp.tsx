@@ -738,9 +738,12 @@ function WorkspaceShell() {
   const [entriesReadSettled, setEntriesReadSettled] = useState(false);
   const settleEntriesRead = useCallback(() => setEntriesReadSettled(true), []);
   const waitingForEntries = view?.kind === "entries" && !importVisible && !entriesReadSettled;
+  const [deliveryReadSettled, setDeliveryReadSettled] = useState(false);
+  const settleDeliveryRead = useCallback(() => setDeliveryReadSettled(true), []);
+  const waitingForDelivery = view?.kind === "delivery" && !importVisible && !deliveryReadSettled && !deliveryLoadFailed;
   const decisionFeed = useDecisionFeed(session.reads, strategyActivity ? [drafts, conversations, resourceActivity, sourceActivity, strategyActivity] : [drafts, conversations, resourceActivity, sourceActivity], view?.kind === "decisions" ? view.decisionCursor : null,
-    { visible: view?.kind === "decisions" && !importVisible, enabled: !disabled, foreground: view?.kind === "delivery",
-      backgroundReady: !!view && !waitingForEntries && draftIndexSettled && conversationsSettled && ownerJournalsSettled && !draftState.mutationReserved });
+    { visible: view?.kind === "decisions" && !importVisible, enabled: !disabled,
+      backgroundReady: !!view && !waitingForEntries && !waitingForDelivery && draftIndexSettled && conversationsSettled && ownerJournalsSettled && !draftState.mutationReserved });
   const decisionBadgeId = useId();
   const lastDecisionView = useRef<string | null>(null);
   useEffect(() => { if (view?.kind === "decisions") lastDecisionView.current = view.id; }, [view?.kind, view?.id]);
@@ -1730,10 +1733,11 @@ function WorkspaceShell() {
                   onOpenConnections={() => settings.open("connections")} onOpenEntry={async (unitId, locale) => { try { return await inspectCandidate(unitId, locale, null); } catch { setCommandFailed(true); return false; } }}/>
                 : <LoadingState label={message("strategyLoading")}/>}</TabsContent>
             </TabsRoot>
-          </Suspense></FeatureBoundary> : view.kind === "delivery" ? <FeatureBoundary key="delivery-presentation" fallback={<ErrorState title={t("deliveryWorkbench.ownerFailed")}/>}><Suspense fallback={<LoadingState label={t("deliveryWorkbench.loading")}/>}>
+          </Suspense></FeatureBoundary> : view.kind === "delivery" ? <FeatureBoundary key="delivery-presentation" onFailure={settleDeliveryRead} fallback={<ErrorState title={t("deliveryWorkbench.ownerFailed")}/>}><Suspense fallback={<LoadingState label={t("deliveryWorkbench.loading")}/>}>
             {deliveryLoadFailed ? <ErrorState title={t("deliveryWorkbench.ownerFailed")} action={canRetryDelivery ? <Button onClick={retryDelivery}>{t("deliveryWorkbench.retryOwner")}</Button> : undefined}/>
               : deliveryOwner && executionTasks && commands ? <DeliveryView project={session.project} owner={deliveryOwner} tasks={executionTasks} commands={commands} gate={gate} viewId={view.id}
               visible={!importVisible} disabled={disabled || !commandsReady}
+              onInitialReadSettled={deliveryReadSettled ? undefined : settleDeliveryRead}
               target={view.deliveryTarget} inbox={{ page: decisionFeed.first.data, loading: decisionFeed.firstLoading, failure: decisionFeed.first.error, current: decisionFeed.current, retry: () => { void decisionFeed.refresh(); } }}
               onOpenDecision={openDeliveryDecision}
               onOpenEntry={async (unitId, locale) => decisionCurrent() && gate.canDispatch({ viewId: currentId, source: "button" }) ? inspectReview(unitId, locale) : false}

@@ -53,11 +53,11 @@ function page(basis: string, cursor: DecisionCursor | null = null, activity: Dec
   return value;
 }
 
-interface Presentation { owners: DecisionOwners; cursor: DecisionCursor | null; visible: boolean; enabled: boolean; foreground: boolean; backgroundReady: boolean }
+interface Presentation { owners: DecisionOwners; cursor: DecisionCursor | null; visible: boolean; enabled: boolean; backgroundReady: boolean }
 function harness(read: (request: DecisionPageRequest) => Promise<DecisionPage>, initial?: Partial<Presentation>) {
   const reads = new SessionReads(context); retained.push(reads);
   const first = owner(id(85000)), second = owner(id(85001));
-  let presentation: Presentation = { owners: [first, second], cursor: null, visible: true, enabled: true, foreground: false, backgroundReady: true, ...initial };
+  let presentation: Presentation = { owners: [first, second], cursor: null, visible: true, enabled: true, backgroundReady: true, ...initial };
   function useConsumers(value: Presentation) {
     const one = useDecisionFeed(reads, value.owners, value.cursor, value, read);
     const two = useDecisionFeed(reads, value.owners, value.cursor, value, read);

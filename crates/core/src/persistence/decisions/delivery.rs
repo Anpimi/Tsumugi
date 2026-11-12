@@ -4,13 +4,13 @@ use super::*;
 use crate::{DeliveryFileState, DeliveryState};
 
 pub(super) fn project(
-    _store: &ProjectStore,
+    store: &ProjectStore,
     c: &Connection,
     project: ExecutionId,
     locale: Option<&str>,
     activity: &[DecisionDeliveryActivity],
 ) -> Result<SourceProjection, ExecutionError> {
-    let page = super::super::release::project_delivery_observations_in(c, project, None, SOURCE_LIMIT)?;
+    let page = super::super::release::project_delivery_observations_in(store, c, project, SOURCE_LIMIT)?;
     let mut items = Vec::new();
     for delivery in page.rows {
         let locales = delivery.files.iter().map(|file| file.locale.clone()).collect::<BTreeSet<_>>()
@@ -44,7 +44,7 @@ pub(super) fn project(
                     .map_err(|_| failure(ErrorCode::LimitExceeded, "decision-delivery-files"))? }),
         });
     }
-    Ok(SourceProjection { items, complete: page.next.is_none() })
+    Ok(SourceProjection { items, complete: page.complete })
 }
 
 #[cfg(test)]

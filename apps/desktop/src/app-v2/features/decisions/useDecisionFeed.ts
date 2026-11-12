@@ -13,14 +13,13 @@ const backgroundSettleMs = 100;
 interface DecisionFeedAccess {
   visible: boolean;
   enabled: boolean;
-  foreground: boolean;
   backgroundReady: boolean;
 }
 
 /** The shell owns one first-page read for the badge and tray. A paged list uses
  * that same record at its start and the same session cache for later cursors. */
 export function useDecisionFeed(reads: SessionReads, owners: DecisionOwners, cursor: DecisionCursor | null,
-  { visible, enabled, foreground, backgroundReady }: DecisionFeedAccess, read = decisionCommands.page,
+  { visible, enabled, backgroundReady }: DecisionFeedAccess, read = decisionCommands.page,
 ) {
   const firstOwner = owners[0], secondOwner = owners[1], resourceOwner = owners[2], sourceOwner = owners[3], strategyOwner = owners[4];
   const firstActivity = useSyncExternalStore(firstOwner?.subscribe ?? noSubscription, firstOwner?.getDecisionActivity ?? noActivity);
@@ -42,15 +41,14 @@ export function useDecisionFeed(reads: SessionReads, owners: DecisionOwners, cur
     [reads, firstOwner, secondOwner, resourceOwner, sourceOwner, strategyOwner, identity, getOwners, cursor, read, canDispatch]);
   const live = enabled && !reads.retired;
   const [settledBackground, setSettledBackground] = useState<typeof firstOptions.queryKey | null>(null);
-  const onDemand = foreground || visible;
   useEffect(() => {
-    if (!live || onDemand || !backgroundReady || settledBackground === firstOptions.queryKey) return;
+    if (!live || visible || !backgroundReady || settledBackground === firstOptions.queryKey) return;
     // Owner publication can change the exact request several times at startup.
     // Only the passive count waits for a stable binding. Explicit reads start immediately.
     const timer = setTimeout(() => setSettledBackground(firstOptions.queryKey), backgroundSettleMs);
     return () => clearTimeout(timer);
-  }, [live, onDemand, backgroundReady, settledBackground, firstOptions.queryKey]);
-  const active = live && (onDemand || backgroundReady && settledBackground === firstOptions.queryKey);
+  }, [live, visible, backgroundReady, settledBackground, firstOptions.queryKey]);
+  const active = live && (visible || backgroundReady && settledBackground === firstOptions.queryKey);
   readable.current = active;
   const first = useQuery({ ...firstOptions, enabled: active });
   const changed = cursor !== null && first.data !== undefined && cursor.basis !== first.data.basis;

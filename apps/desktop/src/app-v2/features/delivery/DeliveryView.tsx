@@ -33,6 +33,7 @@ export interface DeliveryViewProps {
   onOpenDecisions: () => void;
   onOpenKnowledge: () => void;
   onOpenExtensions: () => void;
+  onInitialReadSettled?: () => void;
   inbox?: { page: DecisionPage | undefined; loading: boolean; failure: unknown; current: (basis: string) => boolean; retry: () => void };
   onOpenDecision?: (item: DecisionItem) => Promise<boolean>;
   target?: { releaseId: string; deliveryId: string; actionId: string } | null;
@@ -65,6 +66,10 @@ export function DeliveryView(props: DeliveryViewProps) {
       : gate.getSnapshot().visibleViewId === viewId && gate.getSnapshot().dialogs.length === 0 && gate.getSnapshot().intentOwner === null);
   const delivery = useDeliveryCommands({ project, owner, commands, gate, viewId, visible, disabled, onOpenEntry });
   const { releasesRead, deliveriesRead, commandScope } = delivery;
+  const historySettled = releasesRead.isSuccess || releasesRead.isError;
+  useEffect(() => {
+    if (visible && historySettled) props.onInitialReadSettled?.();
+  }, [visible, historySettled, props.onInitialReadSettled]);
   const { chosen, selection, preview, overwrite, result, pending, busy } = owner;
   const showExportSource = visible && !!chosen && !reads.retired;
   const savedSource = useSessionQuery({ key: ["workbench-source-scope"], scopes: ["source"], enabled: showExportSource,

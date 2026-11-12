@@ -69,6 +69,26 @@ fn activity(kind: DecisionDeliveryJobKind, release_id: ExecutionId, action_id: O
 }
 
 #[test]
+fn completed_delivery_does_not_reload_the_build_for_the_inbox() {
+    let (_directory, mut store, project, release) = fixture();
+    let completed = pending(&mut store, release, "completed");
+    let files = completed.files.into_iter().map(|mut file| {
+        file.state = DeliveryFileState::Succeeded;
+        file.actual_sha256 = Some(file.expected_sha256.clone());
+        file
+    }).collect();
+    store.finish_delivery(completed.action_id, files).unwrap();
+    let connection = store.connection().unwrap();
+    assert!(connection.execute(
+        "UPDATE release_artifacts SET bytes=zeroblob(length(bytes)) WHERE release_id=?1",
+        [release.to_string()],
+    ).unwrap() > 0);
+    let inbox = read(&store, project, None, &[]);
+    assert!(inbox.complete && inbox.items.is_empty());
+    assert!(store.release_view(release).is_err());
+}
+
+#[test]
 fn original_unknowns_survive_live_jobs_while_only_exact_pending_exports_are_progress() {
     let (directory, mut store, project, release) = fixture();
     let orphan = pending(&mut store, release, "orphan");

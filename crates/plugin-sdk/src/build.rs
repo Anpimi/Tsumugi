@@ -111,6 +111,10 @@ pub struct BuildInput {
 }
 impl BuildInput {
     pub fn validate(&self) -> Result<(), ContractError> {
+        self.validate_with_limit(MAX_MATERIAL_INVOCATION_BYTES)
+    }
+
+    fn validate_with_limit(&self, limit: usize) -> Result<(), ContractError> {
         self.source.validate()?;
         language(&self.target_language)?;
         self.output_limits.validate()?;
@@ -152,7 +156,7 @@ impl BuildInput {
         for configuration in &self.configuration {
             configuration.validate()?;
         }
-        encoded_limit(self, MAX_MATERIAL_INVOCATION_BYTES, "buildInput")
+        encoded_limit(self, limit.min(MAX_MATERIAL_INVOCATION_BYTES), "buildInput")
     }
 }
 
@@ -169,10 +173,10 @@ pub struct ArtifactSet {
 }
 impl ArtifactSet {
     pub fn validate(&self) -> Result<(), ContractError> {
-        self.validate_and_count_bytes().map(|_| ())
+        self.validate_and_count_bytes(MAX_ARTIFACT_SET_BYTES).map(|_| ())
     }
 
-    fn validate_and_count_bytes(&self) -> Result<usize, ContractError> {
+    fn validate_and_count_bytes(&self, limit: usize) -> Result<usize, ContractError> {
         let bytes = crate::content::validate_source_material(
             &self.profile,
             &self.source_set_id,
@@ -183,7 +187,7 @@ impl ArtifactSet {
             return Err(invalid("artifactSet.artifacts"));
         }
         validate_build_output_paths(self.artifacts.iter().map(|a| a.logical_path()))?;
-        encoded_limit(self, MAX_ARTIFACT_SET_BYTES, "artifactSet")?;
+        encoded_limit(self, limit.min(MAX_ARTIFACT_SET_BYTES), "artifactSet")?;
         Ok(bytes)
     }
 }
@@ -219,14 +223,15 @@ pub fn validate_build_artifacts(
     output: &ArtifactSet,
 ) -> Result<(), ContractError> {
     input.validate()?;
-    validate_artifacts_for_checked_input(input, output)
+    validate_artifacts_for_checked_input(input, output, MAX_ARTIFACT_SET_BYTES)
 }
 
 fn validate_artifacts_for_checked_input(
     input: &BuildInput,
     output: &ArtifactSet,
+    limit: usize,
 ) -> Result<(), ContractError> {
-    let bytes = output.validate_and_count_bytes()?;
+    let bytes = output.validate_and_count_bytes(limit)?;
     if input.source.profile != output.profile
         || input.source.source_set_id != output.source_set_id
         || input.target_language != output.target_language
@@ -261,10 +266,10 @@ pub struct ArtifactCheckInput {
 impl ArtifactCheckInput {
     pub fn validate(&self) -> Result<(), ContractError> {
         validate_build_artifacts(&self.input, &self.output)?;
-        self.validate_requirements_and_size()
+        self.validate_requirements_and_size(MAX_MATERIAL_INVOCATION_BYTES)
     }
 
-    fn validate_requirements_and_size(&self) -> Result<(), ContractError> {
+    fn validate_requirements_and_size(&self, limit: usize) -> Result<(), ContractError> {
         if self.requirements.is_empty() || self.requirements.len() > 32 {
             return Err(ContractError::at(
                 ContractErrorCode::InvalidCoverage,
@@ -308,7 +313,7 @@ impl ArtifactCheckInput {
             provider = Some(selected);
             basis = Some((&requirement.input_digest, &requirement.scope_digest));
         }
-        encoded_limit(self, MAX_MATERIAL_INVOCATION_BYTES, "artifactCheckInput")
+        encoded_limit(self, limit.min(MAX_MATERIAL_INVOCATION_BYTES), "artifactCheckInput")
     }
 }
 
@@ -406,7 +411,7 @@ impl BuildDeclaration {
 impl BuildBinding {
     pub fn validate_input(&self, input: &BuildInput) -> Result<(), ContractError> {
         self.validate()?;
-        input.validate()?;
+        input.validate_with_limit(self.builder.declaration.limits.max_input_bytes as usize)?;
         self.declaration
             .validate_configuration(&input.configuration)?;
         if self.builder.declaration.input_schema.schema_version == 1 {
@@ -420,11 +425,7 @@ impl BuildBinding {
         {
             return Err(mismatch("buildDeclaration.input"));
         }
-        encoded_limit(
-            input,
-            self.builder.declaration.limits.max_input_bytes as usize,
-            "buildInput",
-        )
+        Ok(())
     }
     pub fn validate_artifacts(
         &self,
@@ -432,22 +433,20 @@ impl BuildBinding {
         output: &ArtifactSet,
     ) -> Result<(), ContractError> {
         self.validate_input(input)?;
-        validate_artifacts_for_checked_input(input, output)?;
+        validate_artifacts_for_checked_input(
+            input, output, self.builder.declaration.limits.max_output_bytes as usize,
+        )?;
         if self.builder.declaration.input_schema.schema_version == 1 {
             crate::artifact::require_text_artifacts(
                 &output.artifacts,
                 "buildDeclaration.output.artifacts",
             )?;
         }
-        encoded_limit(
-            output,
-            self.builder.declaration.limits.max_output_bytes as usize,
-            "artifactSet",
-        )
+        Ok(())
     }
     pub fn validate_check_input(&self, input: &ArtifactCheckInput) -> Result<(), ContractError> {
         self.validate_artifacts(&input.input, &input.output)?;
-        input.validate_requirements_and_size()?;
+        input.validate_requirements_and_size(self.checker.declaration.limits.max_input_bytes as usize)?;
         let expected: std::collections::BTreeSet<_> =
             self.declaration.artifact_rules.iter().collect();
         if input
@@ -468,11 +467,7 @@ impl BuildBinding {
                 "buildDeclaration.requirements",
             ));
         }
-        encoded_limit(
-            input,
-            self.checker.declaration.limits.max_input_bytes as usize,
-            "artifactCheckInput",
-        )
+        Ok(())
     }
     pub fn validate(&self) -> Result<(), ContractError> {
         self.declaration.validate()?;

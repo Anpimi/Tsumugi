@@ -2,7 +2,7 @@ use super::ProjectStore;
 use crate::execution::{codec, *};
 use rusqlite::{Connection, OptionalExtension, TransactionBehavior, params};
 use serde::{Deserialize, Serialize};
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 mod activity;
 mod frame_read_guard;
 mod input_storage;
@@ -117,6 +117,7 @@ pub(super) enum CheckedPluginLink {
 pub(super) struct OpenPluginProofs<'a> {
     connection: &'a Connection,
     links: BTreeMap<ExecutionId, (CheckedPluginLink, bool)>,
+    pub(super) source_sets: BTreeSet<ExecutionId>,
 }
 
 impl OpenPluginProofs<'_> {
@@ -145,7 +146,11 @@ pub(super) fn validate_for_open<'a>(
     if connection.is_autocommit() {
         return Err(error(ErrorCode::StorageFailed, "open-proof-snapshot"));
     }
-    let mut proofs = OpenPluginProofs { connection, links: BTreeMap::new() };
+    let mut proofs = OpenPluginProofs {
+        connection,
+        links: BTreeMap::new(),
+        source_sets: BTreeSet::new(),
+    };
     validate_schema(
         connection,
         true,
@@ -157,6 +162,10 @@ pub(super) fn validate_for_open<'a>(
                 |result| require_open_valid_plugin_link(connection, result.envelope().result_id),
             )?;
             super::plugin_execution::validate_associated_input(connection, input, results)?;
+            if input.envelope().operation == crate::content::OPERATION {
+                let set = super::content::validate_input_bundle(connection, input)?;
+                proofs.source_sets.insert(set);
+            }
             results.validate_links(links, |result, link, valid| {
                 proofs.links.insert(result, (link, valid));
             })?;
@@ -291,23 +300,35 @@ fn validate_schema(
     }
     let mut checker = opening.then(OpenCheckerFrames::default);
     let mut statement = connection
-        .prepare("SELECT attempt_id FROM execution_attempts ORDER BY sequence")
+        .prepare("SELECT a.attempt_id,t.operation FROM execution_attempts a
+                  JOIN execution_tasks t ON t.task_id=a.task_id ORDER BY a.sequence")
         .map_err(sql_error)?;
     let ids = statement
-        .query_map([], |r| r.get::<_, String>(0))
-        .map_err(sql_error)?;
-    for id in ids {
-        let id = parse_id(id.map_err(sql_error)?)?;
-        let (input, verified) = match checker.as_mut().and_then(|slot| slot.take_for(id)) {
-            Some(ResultValidationCapture { input, result }) => {
-                check_stored_input(connection, &input)?;
-                super::resources::verify_input_fact_decisions(connection, &input)?;
-                (input, Some(result))
-            }
+        .query_map([], |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?)))
+        .map_err(sql_error)?
+        .map(|row| {
+            let (id, operation) = row.map_err(sql_error)?;
+            Ok::<_, ExecutionError>((parse_id(id)?, operation))
+        });
+    let mut ids = ids.peekable();
+    while let Some(id) = ids.next() {
+        let (id, operation) = id?;
+        if let Some(slot) = &mut checker {
+            slot.next_attempt = ids.peek().and_then(|next| next.as_ref().ok()).map(|(id, _)| *id);
+        }
+        let (mut input, verified) = match checker.as_mut().and_then(|slot| slot.take_for(id)) {
+            // The link reader qualified both original frames on this pinned
+            // connection. The item, grant and association checks below still run.
+            Some(ResultValidationCapture { input, result }) => (input, Some(result)),
             None => (load_input(connection, id)?, None),
         };
-        if input.envelope().project_id.to_string() != project.project_id().to_string() {
+        if input.envelope().project_id.to_string() != project.project_id().to_string()
+            || input.envelope().operation != operation
+        {
             return Err(error(ErrorCode::CorruptLedger, "project"));
+        }
+        if opening && operation == crate::content::BUILD_OPERATION && links_by_attempt.contains_key(&id) {
+            input.cache_open_build_plan()?;
         }
         let mut results = OpenResultReader::new(connection, &input);
         results.verified = verified;
@@ -960,29 +981,36 @@ fn load_result_with_verified(
 /// Hold at most one source or artifact checker pair until its attempt is scanned.
 /// The slot belongs to the open transaction and never carries execution authority.
 #[derive(Default)]
-struct OpenCheckerFrames(Option<ResultValidationCapture>);
+struct OpenCheckerFrames {
+    next_attempt: Option<ExecutionId>,
+    capture: Option<ResultValidationCapture>,
+}
 
 impl OpenCheckerFrames {
     fn take_for(&mut self, attempt: ExecutionId) -> Option<ResultValidationCapture> {
-        if self.0.as_ref().is_some_and(|capture| capture.input.envelope().attempt_id == attempt) {
-            return self.0.take();
+        if self.capture.as_ref().is_some_and(|capture| capture.input.envelope().attempt_id == attempt) {
+            return self.capture.take();
         }
         None
     }
 
     fn remember(&mut self, input: &FixedInput, result: &FixedResult) {
-        const MAX_FRAME_BYTES: usize = 16 * 1024 * 1024;
-        if input.envelope().attempt_id == result.envelope().attempt_id
-            && input.bytes().len() + result.bytes().len() <= MAX_FRAME_BYTES
+        const MAX_DEFERRED_FRAME_BYTES: usize = 16 * 1024 * 1024;
+        let attempt = input.envelope().attempt_id;
+        // An adjacent checker never overlaps the next producer's large
+        // frames. Keep the small bound when a checker is further away.
+        if attempt == result.envelope().attempt_id
+            && (self.next_attempt == Some(attempt)
+                || input.bytes().len() + result.bytes().len() <= MAX_DEFERRED_FRAME_BYTES)
         {
-            self.0 = Some(ResultValidationCapture { input: input.clone(), result: result.clone() });
+            self.capture = Some(ResultValidationCapture { input: input.clone(), result: result.clone() });
         }
     }
 }
 
 /// Borrow the original build plan and one decoded output during one attempt scan.
 pub(super) struct OpenBuildEvidence {
-    pub(super) plan: crate::ReleasePlan,
+    pub(super) plan: std::sync::Arc<crate::ReleasePlan>,
     pub(super) artifact: Option<OpenBuildArtifact>,
 }
 
@@ -1006,7 +1034,7 @@ struct OpenArtifactValidation<'a> {
 
 /// One strictly received result for the exact input in the current open snapshot.
 /// A different result replaces the slot; the entire slot dies with this attempt.
-/// Mutable rows and original grants are checked on every load, including hits.
+/// The original rows and grants cannot change inside this pinned transaction.
 pub(super) struct OpenResultReader<'a> {
     connection: &'a Connection,
     input: &'a FixedInput,
@@ -1059,7 +1087,6 @@ impl<'a> OpenResultReader<'a> {
     }
 
     pub(super) fn load(&mut self, result: ExecutionId) -> Result<FixedResult, ExecutionError> {
-        let previous = self.verified.take();
         // Reused results retain their original input and permission owner. Do
         // not reuse qualification under the retry attempt's different input.
         if self
@@ -1069,12 +1096,19 @@ impl<'a> OpenResultReader<'a> {
             .iter()
             .any(|reference| reference.result_id == result)
         {
-            drop(previous);
+            self.verified = None;
             return load_result(self.connection, self.input, result);
         }
-        let previous = previous.filter(|fixed| fixed.envelope().result_id == result);
-        let fixed =
-            load_result_with_verified(self.connection, self.input, result, previous.as_ref())?;
+        if let Some(verified) = self.verified.as_ref()
+            .filter(|fixed| fixed.envelope().result_id == result)
+        {
+            if !self.connection.is_autocommit() {
+                return Ok(verified.clone());
+            }
+            return load_result_with_verified(self.connection, self.input, result, Some(verified));
+        }
+        self.verified = None;
+        let fixed = load_result(self.connection, self.input, result)?;
         self.verified = Some(fixed.clone());
         Ok(fixed)
     }
@@ -1779,6 +1813,17 @@ fn validate_plugin_link_with_open_evidence(
         let proof = validate_source_link(connection, input, result, expected_valid)?;
         if let Some(open) = open {
             open.checker.remember(&proof.capture.check_input, &proof.check_result);
+            if same_attempt && let Some(stamp) = read_snapshot_stamp(connection)? {
+                // The source association, bundle and checker all passed in
+                // this transaction. The snapshot owner can consume them now.
+                *source_validation_cache().lock().unwrap_or_else(std::sync::PoisonError::into_inner) =
+                    Some(SourceValidationMemo {
+                        source: proof.capture.source.clone(),
+                        projected: proof.capture.projected.clone(),
+                        prepared: Some(proof.clone()),
+                        read: Some(SourceReadValidation { stamp, bundle: true, snapshot: None, summary: None }),
+                    });
+            }
         }
         return Ok(CheckedPluginLink::Source {
             checker_attempt: proof.check_result.envelope().attempt_id,
@@ -1807,7 +1852,10 @@ fn validate_plugin_link_with_open_evidence(
         let evidence = match build {
             Some(evidence) => evidence,
             None => build.insert(OpenBuildEvidence {
-                plan: crate::ReleasePlan::from_input(input)?,
+                plan: match input.open_build_plan() {
+                    Some(plan) => plan.clone(),
+                    None => std::sync::Arc::new(crate::ReleasePlan::from_input(input)?),
+                },
                 artifact: None,
             }),
         };

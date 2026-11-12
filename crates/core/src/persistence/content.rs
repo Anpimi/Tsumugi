@@ -302,6 +302,17 @@ pub(super) fn validate(
     super::review::read_snapshot(connection, |connection| validate_in(connection, open_proofs))
 }
 
+pub(super) fn validate_input_bundle(
+    connection: &Connection,
+    input: &FixedInput,
+) -> Result<ExecutionId, ExecutionError> {
+    let bundle = SourceBundle::from_input(input)?;
+    if bundle.source_input() != read_bundle(connection, bundle.set_id)? {
+        return Err(corrupt());
+    }
+    Ok(bundle.set_id)
+}
+
 fn validate_in(
     connection: &Connection,
     open_proofs: Option<&super::ledger::OpenPluginProofs<'_>>,
@@ -321,25 +332,23 @@ fn validate_in(
             return Err(corrupt());
         }
     }
-    let mut referenced_sets = std::collections::BTreeSet::new();
-    let mut attempts=connection.prepare("SELECT attempt_id FROM execution_attempts a JOIN execution_tasks t ON t.task_id=a.task_id WHERE t.operation=?1").map_err(sql_error)?;
-    for attempt in attempts
-        .query_map([OPERATION], |r| r.get::<_, String>(0))
-        .map_err(sql_error)?
-    {
-        let input = load_input(connection, id(attempt.map_err(sql_error)?)?)?;
-        let bundle = SourceBundle::from_input(&input)?;
-        if bundle.source_input() != read_bundle(connection, bundle.set_id)? {
-            return Err(corrupt());
+    let referenced_set_count = if let Some(proofs) = open_proofs {
+        proofs.source_sets.len()
+    } else {
+        let mut referenced_sets = std::collections::BTreeSet::new();
+        let mut attempts = connection.prepare("SELECT attempt_id FROM execution_attempts a JOIN execution_tasks t ON t.task_id=a.task_id WHERE t.operation=?1").map_err(sql_error)?;
+        for attempt in attempts.query_map([OPERATION], |r| r.get::<_, String>(0)).map_err(sql_error)? {
+            let input = load_input(connection, id(attempt.map_err(sql_error)?)?)?;
+            referenced_sets.insert(validate_input_bundle(connection, &input)?);
         }
-        referenced_sets.insert(bundle.set_id);
-    }
+        referenced_sets.len()
+    };
     // Each referenced ID has a validated primary-key row in this snapshot.
     // Matching the table count rules out any unvisited source sets.
     let set_count: i64 = connection
         .query_row("SELECT COUNT(*) FROM source_sets", [], |r| r.get(0))
         .map_err(sql_error)?;
-    if set_count as usize != referenced_sets.len() {
+    if set_count as usize != referenced_set_count {
         return Err(corrupt());
     }
     let state = scope(connection)?;
@@ -387,7 +396,7 @@ fn validate_in(
         .map_err(sql_error)?
     {
         let snapshot = id(raw.map_err(sql_error)?)?;
-        let (receipt_revision, _) = snapshot_rows(connection, snapshot, has_lineage)?;
+        let (receipt_revision, _) = snapshot_qualification(connection, snapshot, has_lineage)?;
         if !revisions.insert(receipt_revision) {
             return Err(corrupt());
         }
@@ -579,10 +588,7 @@ fn check_source_bundle(
     {
         return Ok(());
     }
-    let bundle = SourceBundle::from_input(input)?;
-    if read_bundle(connection, bundle.set_id)? != bundle.source_input() {
-        return Err(corrupt());
-    }
+    validate_input_bundle(connection, input)?;
     super::ledger::remember_source_read_validation(connection, result.envelope().result_id, None)
 }
 

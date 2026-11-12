@@ -47,9 +47,6 @@ pub(in crate::persistence) fn pending_in(
         // First imports have no predecessor correspondence to decide.
         return Ok((Vec::new(), true));
     };
-    let (_, (old_input, _, old_output, mut old_rows)) =
-        snapshot_rows(connection, previous_snapshot_id, true)?;
-    lineage_corrections::effective_rows(connection,&mut old_rows)?;
     let query_limit = scan_limit.checked_add(1)
         .and_then(|limit| i64::try_from(limit).ok())
         .ok_or_else(|| failure(ErrorCode::LimitExceeded, "source-mapping-limit"))?;
@@ -73,6 +70,12 @@ pub(in crate::persistence) fn pending_in(
             row.get::<_, String>(2)?, row.get::<_, String>(3)?, row.get::<_, i64>(4)?)),
     ).map_err(sql_error)?.collect::<Result<Vec<_>, _>>().map_err(sql_error)?;
     let complete = candidates.len() <= scan_limit;
+    if candidates.is_empty() || scan_limit == 0 {
+        return Ok((Vec::new(), complete));
+    }
+    let (_, (old_input, _, old_output, mut old_rows)) =
+        snapshot_rows(connection, previous_snapshot_id, true)?;
+    lineage_corrections::effective_rows(connection, &mut old_rows)?;
     let mut groups = Vec::new();
     for (attempt, task, item, result, captured_cancel) in candidates.into_iter().take(scan_limit) {
         let attempt_id = id(attempt)?;

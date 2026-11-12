@@ -183,7 +183,11 @@ impl FixedInput {
         {
             let locale = item.scope.locale.as_deref()
                 .ok_or_else(|| ExecutionError::new(ErrorCode::InvalidInput, "release-plan"))?;
-            let payload = crate::ReleasePlan::from_input(self)?.plugin_input(locale)?;
+            let payload = if let Some(plan) = self.open_build_plan() {
+                plan.plugin_input(locale)?
+            } else {
+                crate::ReleasePlan::from_input(self)?.plugin_input(locale)?
+            };
             codec::encode(&payload, limit)?
         } else {
             codec::encode(&item.payload, limit)?
@@ -434,20 +438,15 @@ fn ledger_output(
     input: &FixedInput,
     output: &sdk::EncodedPayload,
 ) -> Result<Value, ExecutionError> {
-    // Decode strict JSON before accepting the original bytes even when the
-    // ledger projects only their schema/hash. Qualification parses the SDK
-    // source/translation contract from those same immutable bytes.
-    let parsed: Value = codec::decode(
-        output.utf8.as_bytes(),
-        input.envelope().limits.max_result_bytes as usize,
-    )?;
+    let limit = input.envelope().limits.max_result_bytes as usize;
     if matches!(
         input.envelope().operation.as_str(),
         crate::content::OPERATION | crate::content::TRANSLATION_EXTRACTION_OPERATION
     ) {
+        codec::validate_json(output.utf8.as_bytes(), limit)?;
         serde_json::to_value((&output.schema, &output.sha256))
             .map_err(|_| ExecutionError::new(ErrorCode::OutputInvalid, "plugin-output"))
     } else {
-        Ok(parsed)
+        codec::decode(output.utf8.as_bytes(), limit)
     }
 }

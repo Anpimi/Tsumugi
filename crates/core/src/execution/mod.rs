@@ -593,6 +593,7 @@ pub struct FixedInput {
     envelope: Arc<InputEnvelope>,
     bytes: Arc<Vec<u8>>,
     digest: String,
+    open_build_plan: Option<Arc<crate::ReleasePlan>>,
 }
 impl FixedInput {
     fn byte_limit(envelope: &InputEnvelope) -> usize {
@@ -627,6 +628,7 @@ impl FixedInput {
             envelope: Arc::new(envelope),
             bytes: Arc::new(bytes),
             digest,
+            open_build_plan: None,
         })
     }
     pub fn restore(bytes: &[u8], expected_digest: &str) -> Result<Self, ExecutionError> {
@@ -657,6 +659,7 @@ impl FixedInput {
             envelope: Arc::new(envelope),
             bytes: Arc::new(bytes.into_owned()),
             digest,
+            open_build_plan: None,
         })
     }
     pub fn envelope(&self) -> &InputEnvelope {
@@ -667,6 +670,13 @@ impl FixedInput {
     }
     pub fn digest(&self) -> &str {
         &self.digest
+    }
+    pub(crate) fn cache_open_build_plan(&mut self) -> Result<(), ExecutionError> {
+        self.open_build_plan = Some(Arc::new(crate::ReleasePlan::from_input(self)?));
+        Ok(())
+    }
+    pub(crate) fn open_build_plan(&self) -> Option<&Arc<crate::ReleasePlan>> {
+        self.open_build_plan.as_ref()
     }
     pub fn item(&self, id: ExecutionId) -> Result<&InputItem, ExecutionError> {
         self.envelope

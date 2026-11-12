@@ -107,7 +107,7 @@ struct PreparedRecord {
     manifest: ReleaseManifest,
     summary: ManifestSummary,
     artifacts: Vec<Artifact>,
-    referenced_plan: Option<ReleasePlan>,
+    referenced_plan: Option<Arc<ReleasePlan>>,
 }
 
 fn prepare_data(
@@ -127,7 +127,7 @@ fn prepare_data(
     let (plan, summary) = if input.envelope().plugin.is_some() {
         let (plan, mut artifact) = match open_build {
             Some(evidence) => (evidence.plan, evidence.artifact),
-            None => (ReleasePlan::from_input(input)?, None),
+            None => (Arc::new(ReleasePlan::from_input(input)?), None),
         };
         let summary = plan.release_summary();
         for result in results {
@@ -202,7 +202,7 @@ fn prepare_data(
             referenced_plan = Some(plan);
             FrozenPlan::PluginInput
         } else {
-            FrozenPlan::Plugin(plan)
+            FrozenPlan::Plugin(Arc::unwrap_or_clone(plan))
         };
         (frozen, summary)
     } else {

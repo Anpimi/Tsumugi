@@ -126,23 +126,33 @@ pub(crate) fn decode<T: serde::de::DeserializeOwned>(
     bytes: &[u8],
     limit: usize,
 ) -> Result<T, ExecutionError> {
+    serde_json::from_value(read_json::<true>(bytes, limit)?)
+        .map_err(|_| ExecutionError::new(ErrorCode::InvalidInput, "decoding"))
+}
+
+/// Verify the original syntax, depth, and unique object keys when the ledger
+/// only needs a digest projection. The domain reader will decode the payload.
+pub(crate) fn validate_json(bytes: &[u8], limit: usize) -> Result<(), ExecutionError> {
+    read_json::<false>(bytes, limit).map(drop)
+}
+
+fn read_json<const KEEP: bool>(bytes: &[u8], limit: usize) -> Result<Value, ExecutionError> {
     if bytes.len() > limit {
         return Err(ExecutionError::new(ErrorCode::LimitExceeded, "decoding"));
     }
     let mut decoder = serde_json::Deserializer::from_slice(bytes);
-    let value = StrictValue(0)
+    let value = StrictValue::<KEEP>(0)
         .deserialize(&mut decoder)
         .map_err(|_| ExecutionError::new(ErrorCode::InvalidInput, "decoding"))?;
     decoder
         .end()
         .map_err(|_| ExecutionError::new(ErrorCode::InvalidInput, "decoding"))?;
-    serde_json::from_value(value)
-        .map_err(|_| ExecutionError::new(ErrorCode::InvalidInput, "decoding"))
+    Ok(value)
 }
 
-struct StrictValue(usize);
+struct StrictValue<const KEEP: bool>(usize);
 
-impl<'de> DeserializeSeed<'de> for StrictValue {
+impl<'de, const KEEP: bool> DeserializeSeed<'de> for StrictValue<KEEP> {
     type Value = Value;
     fn deserialize<D: serde::Deserializer<'de>>(self, deserializer: D) -> Result<Value, D::Error> {
         if self.0 > MAX_DEPTH {
@@ -152,7 +162,7 @@ impl<'de> DeserializeSeed<'de> for StrictValue {
     }
 }
 
-impl<'de> Visitor<'de> for StrictValue {
+impl<'de, const KEEP: bool> Visitor<'de> for StrictValue<KEEP> {
     type Value = Value;
     fn expecting(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.write_str("bounded JSON without duplicate keys")
@@ -172,10 +182,10 @@ impl<'de> Visitor<'de> for StrictValue {
             .ok_or_else(|| E::custom("non-finite number"))
     }
     fn visit_str<E: serde::de::Error>(self, v: &str) -> Result<Value, E> {
-        Ok(Value::String(v.to_owned()))
+        Ok(if KEEP { Value::String(v.to_owned()) } else { Value::Null })
     }
     fn visit_string<E: serde::de::Error>(self, v: String) -> Result<Value, E> {
-        Ok(Value::String(v))
+        Ok(if KEEP { Value::String(v) } else { Value::Null })
     }
     fn visit_none<E: serde::de::Error>(self) -> Result<Value, E> {
         Ok(Value::Null)
@@ -185,22 +195,37 @@ impl<'de> Visitor<'de> for StrictValue {
     }
     fn visit_seq<A: SeqAccess<'de>>(self, mut seq: A) -> Result<Value, A::Error> {
         let mut values = Vec::new();
-        while let Some(value) = seq.next_element_seed(StrictValue(self.0 + 1))? {
-            values.push(value);
+        while let Some(value) = seq.next_element_seed(StrictValue::<KEEP>(self.0 + 1))? {
+            if KEEP {
+                values.push(value);
+            }
         }
         Ok(Value::Array(values))
     }
     fn visit_map<A: MapAccess<'de>>(self, mut map: A) -> Result<Value, A::Error> {
-        let mut values = serde_json::Map::new();
-        let mut keys = BTreeSet::new();
-        while let Some(key) = map.next_key::<String>()? {
-            if !keys.insert(key.clone()) {
-                return Err(serde::de::Error::custom("duplicate member"));
+        if KEEP {
+            let mut values = serde_json::Map::new();
+            while let Some(key) = map.next_key::<String>()? {
+                match values.entry(key) {
+                    serde_json::map::Entry::Vacant(entry) => {
+                        entry.insert(map.next_value_seed(StrictValue::<KEEP>(self.0 + 1))?);
+                    }
+                    serde_json::map::Entry::Occupied(_) => {
+                        return Err(serde::de::Error::custom("duplicate member"));
+                    }
+                }
             }
-            let value = map.next_value_seed(StrictValue(self.0 + 1))?;
-            values.insert(key, value);
+            Ok(Value::Object(values))
+        } else {
+            let mut keys = BTreeSet::new();
+            while let Some(key) = map.next_key::<String>()? {
+                if !keys.insert(key) {
+                    return Err(serde::de::Error::custom("duplicate member"));
+                }
+                map.next_value_seed(StrictValue::<KEEP>(self.0 + 1))?;
+            }
+            Ok(Value::Null)
         }
-        Ok(Value::Object(values))
     }
 }
 
@@ -222,4 +247,20 @@ pub(crate) fn validate_depth(value: &Value, depth: usize) -> Result<(), Executio
         _ => {}
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn validation_without_a_projection_checks_nested_members_and_depth() {
+        let valid = br#"{"units":[{"text":"\u661f","ranges":[1,2]}]}"#;
+        assert!(validate_json(valid, valid.len()).is_ok());
+        assert!(validate_json(valid, valid.len() - 1).is_err());
+        let duplicates = br#"{"units":[{"text":"a","\u0074ext":"b"}]}"#;
+        assert!(validate_json(duplicates, duplicates.len()).is_err());
+        let deep = format!("{}0{}", "[".repeat(MAX_DEPTH + 1), "]".repeat(MAX_DEPTH + 1));
+        assert!(validate_json(deep.as_bytes(), deep.len()).is_err());
+    }
 }

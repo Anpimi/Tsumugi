@@ -30,13 +30,15 @@ let releases: typeof wire.responses.releases;
 let installed: boolean, loseExport: boolean, readAttempts: number, prepared: PluginBuildPrepareRequest | null;
 let reads: ReturnType<typeof useSessionReads>;
 let readSourceScope: () => Promise<{ currentSnapshot: string; revision: string }>;
-function Harness({ visible = true, target = null, inbox, onOpenDecision }: { visible?: boolean; target?: DeliveryViewProps["target"]; project?: ProjectView; inbox?: DeliveryViewProps["inbox"]; onOpenDecision?: DeliveryViewProps["onOpenDecision"] }) {
+let readReleases: () => Promise<typeof releases>;
+function Harness({ visible = true, target = null, inbox, onOpenDecision, onInitialReadSettled }: { visible?: boolean; target?: DeliveryViewProps["target"]; project?: ProjectView; inbox?: DeliveryViewProps["inbox"]; onOpenDecision?: DeliveryViewProps["onOpenDecision"]; onInitialReadSettled?: DeliveryViewProps["onInitialReadSettled"] }) {
   reads = useSessionReads();
   owner = useReleaseDraftSession();
   const tasks = useExecutionTaskSession(), commands = useWorkbenchCommands();
   registry = commands;
   return <Delivery project={project} owner={owner} tasks={tasks} commands={commands} gate={gate} viewId="delivery-view" visible={visible} disabled={false}
-    onOpenDecisions={() => {}} onOpenKnowledge={() => {}} onOpenExtensions={() => {}} target={target} inbox={inbox} onOpenDecision={onOpenDecision}/>;
+    onOpenDecisions={() => {}} onOpenKnowledge={() => {}} onOpenExtensions={() => {}} target={target} inbox={inbox} onOpenDecision={onOpenDecision}
+    onInitialReadSettled={onInitialReadSettled}/>;
 }
 function mainAction() {
   const header = screen.getByRole("heading", { name: w("title"), level: 1 }).closest("header");
@@ -67,9 +69,10 @@ beforeEach(async () => {
   await i18n.changeLanguage("en-US"); gate = new InteractionGate(); gate.setVisibleOwner("delivery-view");
   releases = [release]; stored = null; serial = 720; installed = false; loseExport = false; readAttempts = 0; prepared = null;
   readSourceScope = async () => ({ currentSnapshot: id(707), revision: "1" });
+  readReleases = async () => releases;
   invoke.mockReset().mockImplementation(async (command: string, args: { request: Record<string, unknown> }) => {
     const request = args?.request;
-    if (command === "list_releases") return releases;
+    if (command === "list_releases") return readReleases();
     if (command === "read_saved_plugin_build") return { ...structuredClone(savedPluginBuild), projectId: project.metadata.projectId, attemptId: request.attemptId };
     if (command === "list_deliveries") return stored && stored.releaseId === request.releaseId ? [stored] : [];
     if (command === "read_plugin_inventory") return installed ? pluginBuildInventory : { ...pluginBuildInventory, packages: [], packageDecisions: [], runtimes: [], runtimeDecisions: [] };
@@ -95,6 +98,17 @@ beforeEach(async () => {
   });
 });
 afterEach(() => { cleanup(); gate.dispose(); });
+
+it("lets the passive decision read proceed after the initial visible history read settles", async () => {
+  let finishHistory!: (records: typeof releases) => void;
+  readReleases = () => new Promise(resolve => { finishHistory = resolve; });
+  const settled = vi.fn();
+  render(<Harness project={project} onInitialReadSettled={settled}/>);
+  await waitFor(() => expect(finishHistory).toBeDefined());
+  expect(settled).not.toHaveBeenCalled();
+  await act(async () => { finishHistory(releases); });
+  await waitFor(() => expect(settled).toHaveBeenCalledTimes(1));
+});
 
 it.each([
   { locale: "en-US", title: "Delivery", steps: ["Readiness", "Build", "Verification", "Export", "History"], settings: "Build settings" },

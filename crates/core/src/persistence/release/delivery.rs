@@ -83,13 +83,13 @@ pub(super) fn validate(c: &Connection) -> Result<(), ExecutionError> {
 
 pub(in crate::persistence) struct DeliveryObservationPage {
     pub rows: Vec<DeliveryView>,
-    pub next: Option<ExecutionId>,
+    pub complete: bool,
 }
 
-/// Seek across every release belonging to this project. The continuation and
-/// sentinel distinguish a bounded prefix from a completely observed source.
+/// Inspect a bounded prefix across all releases. A sentinel distinguishes
+/// partial coverage from a completely observed source.
 pub(in crate::persistence) fn project_observations_in(
-    c: &Connection, project: ExecutionId, after: Option<ExecutionId>, limit: usize,
+    store: &ProjectStore, c: &Connection, project: ExecutionId, limit: usize,
 ) -> Result<DeliveryObservationPage, ExecutionError> {
     if limit == 0 || limit > 1_000 { return Err(failure(ErrorCode::InvalidInput, "delivery-page")); }
     let metadata = super::super::read_metadata_from(c)
@@ -99,8 +99,8 @@ pub(in crate::persistence) fn project_observations_in(
     }
     let mut statement = c.prepare("SELECT d.delivery_id,d.action_id,d.release_id FROM release_deliveries d
         JOIN release_records r ON r.release_id=d.release_id AND r.project_id=?1
-        WHERE (?2 IS NULL OR d.delivery_id>?2) ORDER BY d.delivery_id LIMIT ?3").map_err(sql)?;
-    let mut references = statement.query_map(params![project.to_string(), after.map(|id| id.to_string()), (limit + 1) as i64], |row| {
+        ORDER BY d.delivery_id LIMIT ?2").map_err(sql)?;
+    let mut references = statement.query_map(params![project.to_string(), (limit + 1) as i64], |row| {
         Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?, row.get::<_, String>(2)?))
     }).map_err(sql)?.collect::<Result<Vec<_>, _>>().map_err(sql)?;
     let more = references.len() > limit;
@@ -110,12 +110,18 @@ pub(in crate::persistence) fn project_observations_in(
     for (delivery, action, release) in references {
         let delivery = parse_id(delivery)?;
         let release = parse_id(release)?;
-        if verified.insert(release) { record::load(c, release, None)?; }
         let value = by_action_in(c, parse_id(action)?)?
             .filter(|value| value.delivery_id == delivery && value.release_id == release)
             .ok_or_else(|| failure(ErrorCode::CorruptLedger, "delivery-identity"))?;
+        // Terminal receipts still contribute to the scan bound and undergo
+        // file-basis validation. Only an unresolved receipt needs to qualify
+        // its build evidence for a recovery decision.
+        if matches!(value.state, DeliveryState::Pending | DeliveryState::Unknown)
+            && verified.insert(release)
+        {
+            store.read_release(release, |_, _| Ok(()), |_| Ok(()))?;
+        }
         rows.push(value);
     }
-    let next = if more { rows.last().map(|value| value.delivery_id) } else { None };
-    Ok(DeliveryObservationPage { rows, next })
+    Ok(DeliveryObservationPage { rows, complete: !more })
 }

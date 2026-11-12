@@ -97,6 +97,23 @@ fn first_import_has_no_mapping_questions_but_changed_native_keys_require_review(
 }
 
 #[test]
+fn inbox_without_a_candidate_does_not_reload_adopted_history() {
+    let (directory, store, project, _) = fixture();
+    let connection = store.connection().unwrap();
+    let changed = connection.execute(
+        "UPDATE execution_results SET digest=?1 WHERE result_id IN (SELECT result_id FROM source_snapshots)",
+        ["0".repeat(64)],
+    ).unwrap();
+    assert_eq!(changed, 1);
+    assert_eq!(pending(&store, project, 100), (Vec::new(), true));
+
+    let locator = store.directory().to_path_buf();
+    store.close().unwrap();
+    assert!(ProjectStore::open(locator).is_err());
+    drop(directory);
+}
+
+#[test]
 fn cancellation_preserves_evidence_but_never_restores_the_old_action() {
     let (directory, mut store, project, _) = fixture();
     let (input, result) = extract(&mut store, MANIFEST,
