@@ -204,7 +204,7 @@ fn javascript_sdk_calls_keep_identity_unicode_and_independent_lifetimes() {
         let InvocationOutcome::Succeeded { output } = &result.result().outcome else {
             panic!()
         };
-        assert_eq!(output.utf8, "answer:\u{feff}你好 👩🏽‍💻\r\n");
+        assert_eq!(output.utf8.as_ref(), "answer:\u{feff}你好 👩🏽‍💻\r\n");
         for index in 0..8 {
             let next = request(&b, &format!("serial-{index}"), "next");
             assert_eq!(

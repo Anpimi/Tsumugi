@@ -1479,34 +1479,62 @@ fn encoded_source_contract_limit_rejects_escaping_expansion_without_truncation()
     let output = extract(&bundle, &Cancellation::default()).unwrap();
     assert_eq!(output.occurrences.len(), MAX_OCCURRENCES);
     let mut exchange = output.exchange;
-    exchange.domain_blocks.push(sdk::DomainBlock {
-        target: sdk::ContentTarget::Snapshot,
-        schema: contract_ref("fixture.escaping"),
-        handling: sdk::ExtensionHandling::Preserve,
-        payload_utf8: String::new(),
-    });
-    // An opaque NUL needs six JSON bytes, independently of its raw payload
-    // limit. Fill the complete exchange to its current encoded ceiling.
-    let remaining =
-        sdk::MAX_CONTENT_EXCHANGE_BYTES - serde_json::to_vec(&exchange).unwrap().len();
-    let payload = &mut exchange.domain_blocks.last_mut().unwrap().payload_utf8;
-    *payload = "\0".repeat(remaining / 6);
-    payload.push_str(&"x".repeat(remaining % 6));
-    assert!(payload.len() < sdk::MAX_EXCHANGE_BYTES);
-    assert_eq!(
-        serde_json::to_vec(&exchange).unwrap().len(),
-        sdk::MAX_CONTENT_EXCHANGE_BYTES
-    );
+    fn encoded_size(value: &impl serde::Serialize) -> usize {
+        #[derive(Default)]
+        struct Count(usize);
+        impl std::io::Write for Count {
+            fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
+                self.0 += bytes.len();
+                Ok(bytes.len())
+            }
+            fn flush(&mut self) -> std::io::Result<()> { Ok(()) }
+        }
+        let mut count = Count::default();
+        serde_json::to_writer(&mut count, value).unwrap();
+        count.0
+    }
+    // NUL expands to six JSON bytes. Each opaque block keeps its independent
+    // two MiB budget; count serialized bytes without allocating a 512 MiB frame.
+    let initial_blocks = exchange.domain_blocks.len();
+    let mut length = encoded_size(&exchange);
+    let chunk = "\0".repeat(sdk::MAX_EXCHANGE_BYTES / 2);
+    loop {
+        let block = sdk::DomainBlock {
+            target: sdk::ContentTarget::Snapshot,
+            schema: contract_ref(&format!("fixture.escaping-{}", exchange.domain_blocks.len())),
+            handling: sdk::ExtensionHandling::Preserve,
+            payload_utf8: String::new(),
+        };
+        length += encoded_size(&block) + usize::from(!exchange.domain_blocks.is_empty());
+        exchange.domain_blocks.push(block);
+        let remaining = sdk::MAX_CONTENT_EXCHANGE_BYTES - length;
+        let payload = &mut exchange.domain_blocks.last_mut().unwrap().payload_utf8;
+        if remaining <= chunk.len() * 6 + 1024 {
+            *payload = "\0".repeat(remaining / 6);
+            payload.push_str(&"x".repeat(remaining % 6));
+            break;
+        }
+        *payload = chunk.clone();
+        length += chunk.len() * 6;
+    }
+    assert!(exchange.domain_blocks.iter().all(|block| block.payload_utf8.len() <= sdk::MAX_EXCHANGE_BYTES));
+    let padding: Vec<_> = exchange.domain_blocks[initial_blocks..].iter().map(|block| {
+        (block.schema.clone(), block.payload_utf8.len(), block.payload_utf8.bytes().take_while(|byte| *byte == 0).count())
+    }).collect();
+    assert_eq!(encoded_size(&exchange), sdk::MAX_CONTENT_EXCHANGE_BYTES);
     let accepted =
-        project_source_output(&bundle, exchange.clone(), output.revision_policy.clone()).unwrap();
+        project_source_output(&bundle, exchange, output.revision_policy.clone()).unwrap();
     assert_eq!(accepted.occurrences.len(), MAX_OCCURRENCES);
-    assert!(accepted.exchange == exchange, "source evidence must not be truncated");
-
+    let mut exchange = accepted.exchange;
+    assert_eq!(exchange.domain_blocks.len(), initial_blocks + padding.len());
+    for (block, (schema, size, nul_bytes)) in exchange.domain_blocks[initial_blocks..].iter().zip(padding) {
+        assert_eq!(block.schema, schema);
+        assert_eq!(block.payload_utf8.len(), size);
+        assert!(block.payload_utf8.as_bytes()[..nul_bytes].iter().all(|byte| *byte == 0));
+        assert!(block.payload_utf8.as_bytes()[nul_bytes..].iter().all(|byte| *byte == b'x'));
+    }
     exchange.domain_blocks.last_mut().unwrap().payload_utf8.push('x');
-    assert_eq!(
-        serde_json::to_vec(&exchange).unwrap().len(),
-        sdk::MAX_CONTENT_EXCHANGE_BYTES + 1
-    );
+    assert_eq!(encoded_size(&exchange), sdk::MAX_CONTENT_EXCHANGE_BYTES + 1);
     let error = project_source_output(&bundle, exchange, output.revision_policy)
         .err()
         .expect("an oversized encoded exchange must not return partial coverage");
@@ -1828,10 +1856,13 @@ fn generic_source_input(
     canonical: &str,
     reject: bool,
 ) -> FixedInput {
-    // Synthetic domain material. Core captures it without interpreting these fields.
-    let bytes = serde_json::to_vec(&json!({ "basis": basis, "metadata": metadata,
+    generic_source_input_config(store, json!({ "basis": basis, "metadata": metadata,
         "canonical": canonical, "reject": reject }))
-    .unwrap();
+}
+
+fn generic_source_input_config(store: &ProjectStore, config: serde_json::Value) -> FixedInput {
+    // Synthetic domain material. Core captures it without interpreting these fields.
+    let bytes = serde_json::to_vec(&config).unwrap();
     let mut capture = SourceBundle::capture_webvtt(&bytes, "en").unwrap();
     capture.profile = contract_ref("example.source-profile");
     capture.format_id = capture.profile.id.clone();
@@ -2040,6 +2071,24 @@ fn generic_source_proposal(source: &sdk::SourceExtractionInput) -> sdk::ContentE
                 handling: sdk::ExtensionHandling::Preserve,
                 payload_utf8: "\n".repeat(1024 * 1024),
             });
+        }
+    }
+    if config["historyUnicode"] == true {
+        proposal.units[0].text = "ÉCLAIR".into();
+        proposal.units[0].protected_fragments.clear();
+        proposal.units[0].occurrences[0].native_identity.as_mut().unwrap().display.value = "Äpfel".into();
+        proposal.units[1].text = "Elsewhere".into();
+    }
+    if config["interleaved"] == true {
+        proposal.order.swap(0, 1);
+        proposal.order.swap(1, 2);
+        proposal.units.reverse();
+    }
+    for occurrence in proposal.units.iter_mut().flat_map(|unit| &mut unit.occurrences) {
+        if config["withoutIdentity"] == true {
+            occurrence.native_identity = None;
+        } else if let Some(version) = config["identityPolicy"].as_u64() {
+            occurrence.native_identity.as_mut().unwrap().policy.behavior_version = version as u32;
         }
     }
     proposal
@@ -2647,8 +2696,19 @@ fn generic_source_two_mib_binary_capture_is_checked_adopted_and_reopened_from_or
     let raw = rusqlite::Connection::open(path.join("project.sqlite3")).unwrap();
     let bytes: Vec<u8> = raw.query_row("SELECT bytes FROM source_files WHERE artifact_id=?1", [id.to_string()], |row| row.get(0)).unwrap();
     assert_eq!(bytes, vec![0xff; sdk::MAX_EXCHANGE_BYTES - original.len()]);
-    let header: i64 = raw.query_row("SELECT length(input) FROM execution_attempts WHERE attempt_id=?1", [checker_input.envelope().attempt_id.to_string()], |row| row.get(0)).unwrap();
-    assert!(header > 18 * 1024, "the exact checker frame needs a larger chunk manifest, not larger chunks");
+    let stored: Vec<u8> = raw.query_row("SELECT input FROM execution_attempts WHERE attempt_id=?1", [checker_input.envelope().attempt_id.to_string()], |row| row.get(0)).unwrap();
+    let manifest: serde_json::Value = serde_json::from_slice(&stored).unwrap();
+    assert_eq!(manifest["format"], 1);
+    assert_eq!(manifest["rawBytes"].as_u64().unwrap() as usize, checker_input.bytes().len());
+    let chunks = manifest["chunks"].as_array().unwrap();
+    const STORAGE_CHUNK_BYTES: usize = 64 * 1024;
+    assert_eq!(chunks.len(), checker_input.bytes().len().div_ceil(STORAGE_CHUNK_BYTES));
+    for (index, digest) in chunks.iter().enumerate() {
+        let length: i64 = raw.query_row("SELECT length(bytes) FROM execution_input_chunks WHERE digest=?1", [digest.as_str().unwrap()], |row| row.get(0)).unwrap();
+        let expected = (checker_input.bytes().len() - index * STORAGE_CHUNK_BYTES).min(STORAGE_CHUNK_BYTES);
+        assert_eq!(length, expected as i64);
+    }
+    assert!(stored.len() < checker_input.bytes().len(), "the ledger stores bounded chunk references");
     raw.execute("UPDATE source_files SET bytes=?1 WHERE artifact_id=?2", rusqlite::params![vec![0_u8, 0, 0, 0], id.to_string()]).unwrap();
     drop(raw);
     assert!(ProjectStore::open(&path).is_err(), "stored raw bytes must match their fixed capture");
@@ -2854,6 +2914,166 @@ fn generic_source_adoption_maps_shared_units_and_preserves_fixed_revision_eviden
         .unwrap();
     assert_eq!(result.bytes(), saved.bytes());
     assert_eq!(validate_output(&input, &result).unwrap().exchange, exchange);
+}
+
+#[test]
+fn source_history_pages_filter_unicode_before_applying_the_offset() {
+    let temp = tempfile::tempdir().unwrap();
+    let mut store = create(&temp.path().join("project"));
+    // Generic source identities may contain Unicode; the legacy SMAPI
+    // extractor deliberately supports only ASCII keys.
+    let input = generic_source_input_config(&store, json!({
+        "basis": 1, "metadata": 1, "canonical": "CaseKey", "reject": false, "historyUnicode": true,
+    }));
+    let mut runtime = ExecutionRuntime::new(&store).unwrap();
+    for checker in [false, true] {
+        runtime.register_read_only(Arc::new(GenericSourcePlugin(generic_source_binding(checker)))).unwrap();
+    }
+    let result = run_generic_source(&mut runtime, &mut store, &input);
+    check_generic_source(&mut runtime, &mut store, &input, &result);
+    let action = prepare(&mut store, &input, &result);
+    store.adopt_execution(&action, &SourceAdoptionHandler).unwrap();
+    let snapshot = store.content_scope().unwrap().current_snapshot.unwrap();
+    let first = store.source_history_content(snapshot, "écla", 0, 1).unwrap();
+    assert_eq!(first.total, 2);
+    assert_eq!(first.next_ordinal, Some(1));
+    let second = store.source_history_content(snapshot, "ÉCLA", 1, 1).unwrap();
+    assert_eq!(second.total, 2);
+    assert_eq!(second.next_ordinal, None);
+    assert_ne!(first.rows[0].occurrence_id, second.rows[0].occurrence_id);
+    let key = store.source_history_content(snapshot, "äpf", 0, 1).unwrap();
+    assert_eq!(key.total, 1);
+    assert_eq!(key.rows[0].occurrence.key, "Äpfel");
+}
+
+#[test]
+fn source_adoption_keeps_interleaved_shared_units_and_exact_selected_predecessors() {
+    let temp = tempfile::tempdir().unwrap();
+    let mut store = create(&temp.path().join("project"));
+    let mut runtime = ExecutionRuntime::new(&mut store).unwrap();
+    for checker in [false, true] {
+        runtime.register_read_only(Arc::new(GenericSourcePlugin(generic_source_binding(checker)))).unwrap();
+    }
+    let initial = generic_source_input_config(&store, json!({
+        "basis": 1, "metadata": 1, "canonical": "CaseKey", "reject": false, "interleaved": true,
+    }));
+    let result = run_generic_source(&mut runtime, &mut store, &initial);
+    check_generic_source(&mut runtime, &mut store, &initial, &result);
+    let action = prepare(&mut store, &initial, &result);
+    store.adopt_execution(&action, &SourceAdoptionHandler).unwrap();
+    let first = store.source_content(store.content_scope().unwrap().current_snapshot.unwrap(), 0, 50).unwrap();
+    assert_eq!(first.rows.iter().map(|row| row.occurrence.key.as_str()).collect::<Vec<_>>(),
+        ["Original B", "Original Case", "Original A"]);
+    assert_eq!(first.rows[0].unit_id, first.rows[2].unit_id);
+    assert_ne!(first.rows[0].unit_id, first.rows[1].unit_id);
+
+    let next = generic_source_input(&store, 1, 2, "CaseKey", false);
+    let result = run_generic_source(&mut runtime, &mut store, &next);
+    check_generic_source(&mut runtime, &mut store, &next, &result);
+    let comparison = store.source_comparison(next.envelope().attempt_id, result.envelope().result_id, 0, 50).unwrap();
+    assert_eq!(comparison.rows[0].candidates.iter().map(|row| row.occurrence.key.as_str()).collect::<Vec<_>>(),
+        ["Original B", "Original A"]);
+    assert_eq!(comparison.rows[0].old.as_ref().unwrap().occurrence.key, "Original B");
+    let action = prepare(&mut store, &next, &result);
+    store.adopt_execution(&action, &SourceAdoptionHandler).unwrap();
+    let second = store.source_content(store.content_scope().unwrap().current_snapshot.unwrap(), 0, 50).unwrap();
+    assert_eq!(second.rows.iter().map(|row| row.occurrence.key.as_str()).collect::<Vec<_>>(),
+        ["Original A", "Original B", "Original Case"]);
+    for (new, old) in second.rows.iter().zip([&first.rows[2], &first.rows[0], &first.rows[1]]) {
+        assert_eq!(new.unit_id, old.unit_id);
+        assert_eq!(new.source_revision_id, old.source_revision_id);
+    }
+    let evidence = store.source_lineage_evidence(second.snapshot_id.unwrap(), 0).unwrap();
+    assert_eq!(evidence.iter().map(|edge| edge.old.occurrence.key.as_str()).collect::<Vec<_>>(),
+        ["Original B", "Original A"]);
+    assert!(evidence.iter().all(|edge| edge.relationship == "same-key"));
+    assert_eq!(evidence[0].applied_relation.as_deref(), Some("unchanged"));
+    assert_eq!(evidence[1].applied_relation, None);
+
+    let next = generic_source_input_config(&store, json!({
+        "basis": 2, "metadata": 3, "canonical": "CaseKey", "reject": false, "interleaved": true,
+    }));
+    let result = run_generic_source(&mut runtime, &mut store, &next);
+    check_generic_source(&mut runtime, &mut store, &next, &result);
+    let mut confirmation = store.source_preview(next.envelope().attempt_id, result.envelope().result_id, 0, 50).unwrap().confirmation;
+    confirmation.actor = Some("Fixture reviewer".into());
+    confirmation.lineage.push(LineageChoice {
+        new_ordinal: 2, old_occurrence_id: second.rows[1].occurrence_id.unwrap(), decision: LineageDecision::Continue,
+        reason: "Continue the explicitly selected occurrence of the shared unit".into(),
+    });
+    let action = store.prepare_adoption_with_id(ExecutionId::new(), next.envelope().attempt_id,
+        next.envelope().units[0].unit_id, vec![result.envelope().result_id], value(&confirmation).unwrap()).unwrap();
+    store.adopt_execution(&action, &SourceAdoptionHandler).unwrap();
+    let third = store.source_content(store.content_scope().unwrap().current_snapshot.unwrap(), 0, 50).unwrap();
+    assert_eq!(third.rows[0].unit_id, first.rows[0].unit_id);
+    assert_eq!(third.rows[2].unit_id, first.rows[0].unit_id);
+    assert_ne!(third.rows[0].source_revision_id, first.rows[0].source_revision_id);
+    assert_eq!(third.rows[0].source_revision_id, third.rows[2].source_revision_id);
+    let evidence = store.source_lineage_evidence(third.snapshot_id.unwrap(), 2).unwrap();
+    let selected = evidence.iter().find(|edge| edge.decision == "continue").unwrap();
+    assert_eq!(selected.old.occurrence_id, second.rows[1].occurrence_id);
+    assert_eq!(selected.applied_relation.as_deref(), Some("changed"));
+}
+
+#[test]
+fn source_adoption_does_not_match_a_changed_identity_policy_or_missing_identity() {
+    for without_identity in [false, true] {
+        let temp = tempfile::tempdir().unwrap();
+        let mut store = create(&temp.path().join("project"));
+        let mut runtime = ExecutionRuntime::new(&mut store).unwrap();
+        for checker in [false, true] {
+            runtime.register_read_only(Arc::new(GenericSourcePlugin(generic_source_binding(checker)))).unwrap();
+        }
+        let initial = generic_source_input_config(&store, json!({
+            "basis": 1, "metadata": 1, "canonical": "CaseKey", "reject": false,
+            "identityPolicy": 1, "withoutIdentity": without_identity,
+        }));
+        let result = run_generic_source(&mut runtime, &mut store, &initial);
+        check_generic_source(&mut runtime, &mut store, &initial, &result);
+        let action = prepare(&mut store, &initial, &result);
+        store.adopt_execution(&action, &SourceAdoptionHandler).unwrap();
+        let first = store.source_content(store.content_scope().unwrap().current_snapshot.unwrap(), 0, 50).unwrap();
+        let next = generic_source_input_config(&store, json!({
+            "basis": 1, "metadata": 2, "canonical": "CaseKey", "reject": false,
+            "identityPolicy": 2, "withoutIdentity": without_identity,
+        }));
+        let result = run_generic_source(&mut runtime, &mut store, &next);
+        check_generic_source(&mut runtime, &mut store, &next, &result);
+        let comparison = store.source_comparison(next.envelope().attempt_id, result.envelope().result_id, 0, 50).unwrap();
+        assert_eq!(comparison.counts.removed, 3);
+        if without_identity {
+            assert_eq!(comparison.counts.ambiguous, 2);
+            assert_eq!(comparison.counts.rename_candidate, 1);
+        } else {
+            assert_eq!(comparison.counts.added, 3);
+            assert!(comparison.rows.iter().all(|row| row.candidates.is_empty()));
+        }
+        if !without_identity {
+            let mut confirmation = store.source_preview(next.envelope().attempt_id, result.envelope().result_id, 0, 50).unwrap().confirmation;
+            confirmation.actor = Some("Fixture reviewer".into());
+            confirmation.lineage.push(LineageChoice {
+                new_ordinal: 0, old_occurrence_id: first.rows[0].occurrence_id.unwrap(), decision: LineageDecision::Continue,
+                reason: "A different identity policy must not be continued".into(),
+            });
+            let action = store.prepare_adoption_with_id(ExecutionId::new(), next.envelope().attempt_id,
+                next.envelope().units[0].unit_id, vec![result.envelope().result_id], value(&confirmation).unwrap()).unwrap();
+            assert_eq!(store.adopt_execution(&action, &SourceAdoptionHandler).unwrap_err().stage, "source-namespace");
+            assert_eq!(store.content_scope().unwrap().current_snapshot, first.snapshot_id);
+        }
+        let action = prepare(&mut store, &next, &result);
+        store.adopt_execution(&action, &SourceAdoptionHandler).unwrap();
+        let second = store.source_content(store.content_scope().unwrap().current_snapshot.unwrap(), 0, 50).unwrap();
+        for (old, new) in first.rows.iter().zip(&second.rows) {
+            assert_ne!(new.unit_id, old.unit_id);
+        }
+        let evidence = store.source_lineage_evidence(second.snapshot_id.unwrap(), 0).unwrap();
+        if without_identity {
+            assert_eq!(evidence.len(), 2);
+            assert!(evidence.iter().all(|edge| edge.relationship == "same-text" && edge.decision == "candidate" && edge.applied_relation.is_none()));
+        } else {
+            assert!(evidence.is_empty());
+        }
+    }
 }
 
 #[test]

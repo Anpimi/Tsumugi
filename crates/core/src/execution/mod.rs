@@ -46,17 +46,17 @@ pub(crate) use validation::{ValidationProof, requires_semantic_check, restore_ch
 /// Read-only domain Review computation; QA adoption remains a separate boundary.
 pub const REVIEW_CHECK_OPERATION: &str = "review-semantic-check";
 
-pub const MAX_ITEMS: usize = 2000;
+pub const MAX_ITEMS: usize = tsumugi_plugin_sdk::MAX_CONTENT_ITEMS;
 pub const MAX_INPUT_BYTES: usize = 4 * 1024 * 1024;
 /// Plugin frames can retain a checked Core plan and its SDK request together.
 /// Ordinary inputs retain MAX_INPUT_BYTES and cannot select this allowance.
 pub const MAX_FIXED_INPUT_BYTES: usize =
-    2 * tsumugi_plugin_sdk::MAX_INVOCATION_PAYLOAD_BYTES + 64 * 1024;
+    768 * 1024 * 1024;
 pub const DEFAULT_RESULT_BYTES: usize = 256 * 1024;
 pub const MAX_RESULT_BYTES: usize = 8 * 1024 * 1024;
 /// The exact quoted SDK response and its checked ledger projection are bounded
 /// together. Ordinary operation defaults and result ceilings stay unchanged.
-pub const MAX_PLUGIN_RESULT_BYTES: usize = 32 * 1024 * 1024;
+pub const MAX_PLUGIN_RESULT_BYTES: usize = 768 * 1024 * 1024;
 pub const MAX_ATTEMPT_RESULT_BYTES: usize = 8 * 1024 * 1024;
 pub const MAX_DIAGNOSTIC_BYTES: usize = 4096;
 pub const MAX_DEPTH: usize = 32;
@@ -507,6 +507,8 @@ impl InputEnvelope {
                     | crate::application::MCP_TERM_QUERY_OPERATION
             ) {
                 600_000
+            } else if self.plugin.is_some() {
+                300_000
             } else {
                 60_000
             },
@@ -618,7 +620,14 @@ impl FixedInput {
     pub fn capture(mut envelope: InputEnvelope) -> Result<Self, ExecutionError> {
         Self::validate_capture(&mut envelope)?;
         let bytes = codec::encode(&envelope, Self::byte_limit(&envelope))?;
-        Self::restore(&bytes, &codec::digest(&bytes))
+        // The owned envelope is already normalized and validated. Re-parsing
+        // our own encoding would retain a second complete material tree.
+        let digest = codec::digest(&bytes);
+        Ok(Self {
+            envelope: Arc::new(envelope),
+            bytes: bytes.into(),
+            digest,
+        })
     }
     pub fn restore(bytes: &[u8], expected_digest: &str) -> Result<Self, ExecutionError> {
         if bytes.len() > MAX_FIXED_INPUT_BYTES {
@@ -1052,8 +1061,16 @@ impl FixedResult {
         input: &FixedInput,
         token: ExecutionId,
     ) -> Result<Self, ExecutionError> {
+        envelope.validate(input, token)?;
         let bytes = codec::encode(&envelope, input.envelope().limits.max_result_bytes as usize)?;
-        Self::receive(&bytes, input, token)
+        let digest = codec::digest(&bytes);
+        Ok(Self {
+            envelope: Arc::new(envelope),
+            bytes: bytes.into(),
+            digest,
+            validated_input_digest: Arc::from(input.digest()),
+            semantic_validation: None,
+        })
     }
     pub fn receive(
         bytes: &[u8],

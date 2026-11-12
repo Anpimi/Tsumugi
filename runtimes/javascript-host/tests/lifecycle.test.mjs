@@ -7,7 +7,7 @@ import { readFile, writeFile, mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
-import { FrameDecoder, encodeFrame } from '../dist/codec.js';
+import { FrameDecoder, encodeFrame, frameByteLength } from '../dist/codec.js';
 import { PROCESS_PROFILE } from '../dist/generated/protocol.js';
 
 const fixture = JSON.parse(await readFile(new URL('../../../crates/plugin-sdk/tests/fixtures/invocation.request.json', import.meta.url), 'utf8')).body.data;
@@ -486,9 +486,9 @@ test('complete result budgets can exceed raw declaration limits without rejectin
     const payload = result.data.outcome[kind === 'succeeded' ? 'output' : 'error'];
     assert.equal(payload.utf8, 'éé');
     assert.equal(Buffer.byteLength(payload.utf8), captured.capabilities[0].capability.limits.maxOutputBytes);
-    const framed = encodeFrame({ protocolVersion: PROCESS_PROFILE.protocolVersion, body: result });
-    assert.ok(framed.length - 4 > captured.capabilities[0].capability.limits.maxOutputBytes);
-    assert.ok(framed.length - 4 <= request.maxResultBytes);
+    const framed = frameByteLength({ protocolVersion: PROCESS_PROFILE.protocolVersion, body: result });
+    assert.ok(framed > captured.capabilities[0].capability.limits.maxOutputBytes);
+    assert.ok(framed <= request.maxResultBytes);
     h.send({ kind: 'close', data: { instance: captured.instance } });
     assert.deepEqual(await h.ended, [0, null]);
   }
@@ -517,7 +517,7 @@ test('result frame budget includes opaque payload escaping and metadata', { time
     profile: request.profile, resultId: '11111111-1111-4111-8111-111111111111',
     outcome: { kind: 'succeeded', output: { schema: request.outputSchema, utf8,
       sha256: createHash('sha256').update(utf8, 'utf8').digest('hex') } } };
-  request.maxResultBytes = encodeFrame({ protocolVersion: PROCESS_PROFILE.protocolVersion, body: { kind: 'result', data: result } }).length - 5;
+  request.maxResultBytes = frameByteLength({ protocolVersion: PROCESS_PROFILE.protocolVersion, body: { kind: 'result', data: result } }) - 1;
   assert.ok(Buffer.byteLength(utf8) < captured.capabilities[0].capability.limits.maxOutputBytes);
   assert.ok(Buffer.byteLength(utf8) < request.maxResultBytes);
   h.send({ kind: 'activate', data: captured });
@@ -527,11 +527,11 @@ test('result frame budget includes opaque payload escaping and metadata', { time
   assert.deepEqual(h.frames.map(frame => frame.kind), ['ready']);
 });
 
-test('a larger raw declaration cannot enlarge the generated SDK payload ceiling', { timeout: 10000 }, async t => {
-  const limit = PROCESS_PROFILE.maxInvocationPayloadBytes;
+test('captured raw input and output limits are enforced before delivery', { timeout: 10000 }, async t => {
+  const limit = 64 * 1024;
   const captured = structuredClone(activation);
-  captured.capabilities[0].capability.limits.maxInputBytes = limit + 1;
-  captured.capabilities[0].capability.limits.maxOutputBytes = limit + 1;
+  captured.capabilities[0].capability.limits.maxInputBytes = limit;
+  captured.capabilities[0].capability.limits.maxOutputBytes = limit;
   const outgoing = await harness(t, `export default {activate(api){api.register(api.contributions[0].id, () => ({kind:'succeeded',utf8:'x'.repeat(${limit + 1})}));}};`);
   outgoing.send({ kind: 'activate', data: captured });
   await outgoing.waitFor(() => outgoing.frames.length === 1);

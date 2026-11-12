@@ -248,6 +248,25 @@ fn frozen_inputs_retain_bytes_and_retry_only_creates_a_new_attempt() {
 }
 
 #[test]
+fn captured_frames_restore_the_same_floating_point_values() {
+    // This decimal rounds differently in serde_json's fast float parser.
+    let number = f64::from_bits(0xb63e23aa31a1756a);
+    let mut draft = input().envelope().clone();
+    draft.settings = json!({"ratio": number});
+    let fixed = FixedInput::capture(draft).unwrap();
+    let restored = FixedInput::restore(fixed.bytes(), fixed.digest()).unwrap();
+    assert_eq!(restored.envelope().settings, fixed.envelope().settings);
+
+    let token = ExecutionId::new();
+    let mut draft = result(&fixed, fixed.envelope().items[0].item_id, token);
+    draft.output = Some(json!({"ratio": number}));
+    let fixed_result = FixedResult::capture(draft, &fixed, token).unwrap();
+    let restored_result =
+        FixedResult::restore(fixed_result.bytes(), fixed_result.digest(), &restored, token).unwrap();
+    assert_eq!(restored_result.envelope().output, fixed_result.envelope().output);
+}
+
+#[test]
 fn decoding_rejects_duplicates_unknown_fields_invalid_ids_and_excessive_depth() {
     let fixed = input();
     let bytes = fixed.bytes();

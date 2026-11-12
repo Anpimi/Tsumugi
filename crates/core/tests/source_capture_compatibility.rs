@@ -1,4 +1,7 @@
-use tsumugi_core::{content::SourceBundle, execution::FixedInput};
+use tsumugi_core::{
+    content::SourceBundle,
+    execution::{ErrorCode, FixedInput},
+};
 
 const BUNDLE: &[u8] = include_bytes!("fixtures/sdk-v1-capture/source-bundle.json");
 const INPUT: &[u8] = include_bytes!("fixtures/sdk-v1-capture/fixed-input.json");
@@ -16,14 +19,15 @@ fn supported_text_capture_keeps_its_original_serialization_and_manifest() {
 }
 
 #[test]
-fn frozen_sdk_v1_input_restores_without_rewriting_evidence_or_running_a_worker() {
+fn frozen_process3_input_is_rejected_without_rewriting_its_evidence() {
     let provenance: serde_json::Value = serde_json::from_slice(PROVENANCE).unwrap();
-    let fixed =
-        FixedInput::restore(INPUT, provenance["fixedInputDigest"].as_str().unwrap()).unwrap();
-    assert_eq!(fixed.bytes(), INPUT);
-    let bundle = SourceBundle::from_input(&fixed).unwrap();
-    assert_eq!(serde_json::to_vec(&bundle).unwrap(), BUNDLE);
-    assert_eq!(fixed.digest(), provenance["fixedInputDigest"]);
+    assert_eq!(provenance["processProtocol"], 3);
+    let error =
+        FixedInput::restore(INPUT, provenance["fixedInputDigest"].as_str().unwrap()).unwrap_err();
+    // The original digest is valid. Rejection belongs to the captured runtime,
+    // not corrupted bytes, a rewritten identity or a worker launch.
+    assert_eq!(error.code, ErrorCode::InvalidInput);
+    assert_eq!(error.stage, "plugin-environment");
 }
 
 #[test]
@@ -57,14 +61,30 @@ fn supported_bindings_and_context_keep_their_exact_baseline_meaning() {
         .unwrap();
     let facts = sdk::parse_source_context_block(block, &context.artifacts).unwrap();
     assert_eq!(facts.facts[0].text, "Fixture speaker");
-    let environment: sdk::RuntimeEnvironmentDescriptor = serde_json::from_slice(include_bytes!(
-        "fixtures/sdk-v1-capture/node-environment.json"
-    ))
-    .unwrap();
+}
+
+#[test]
+fn frozen_process3_runtime_descriptors_are_structurally_readable_but_unsupported() {
+    use tsumugi_plugin_sdk as sdk;
+    let native_bytes = include_bytes!("fixtures/sdk-v1-capture/environment.json");
+    let native: sdk::NativeHostEnvironmentDescriptor =
+        serde_json::from_slice(native_bytes).unwrap();
+    assert_eq!(serde_json::to_vec(&native).unwrap(), native_bytes);
+    assert_eq!(native.process_protocol, 3);
     assert_eq!(
-        environment.digest().unwrap(),
-        "fb82574603deea27d971fc878cf63fd8563e2c05d98b7ffc7ba29fe362759396"
+        native.validate().unwrap_err().code,
+        sdk::ContractErrorCode::UnsupportedProtocol
     );
+    assert!(native.digest().is_err());
+    let node_bytes = include_bytes!("fixtures/sdk-v1-capture/node-environment.json");
+    let node: sdk::RuntimeEnvironmentDescriptor = serde_json::from_slice(node_bytes).unwrap();
+    assert_eq!(serde_json::to_vec(&node).unwrap(), node_bytes);
+    assert_eq!(node.process_protocol, 3);
+    assert_eq!(
+        node.validate().unwrap_err().code,
+        sdk::ContractErrorCode::UnsupportedProtocol
+    );
+    assert!(node.digest().is_err());
 }
 
 #[test]
@@ -96,6 +116,17 @@ fn text_only_frozen_binding_cannot_accept_a_binary_transport() {
     use tsumugi_plugin_sdk as sdk;
     let mut envelope: tsumugi_core::execution::InputEnvelope =
         serde_json::from_slice(INPUT).unwrap();
+    // This is a new synthetic capture with current runtime metadata, not a
+    // restoration or migration of the frozen Process3 evidence above.
+    let mut environment: sdk::NativeHostEnvironmentDescriptor =
+        serde_json::from_slice(include_bytes!("fixtures/sdk-v1-capture/environment.json")).unwrap();
+    environment.sdk_version = sdk::SDK_VERSION.into();
+    environment.process_protocol = sdk::PROCESS_PROTOCOL;
+    envelope.plugin.as_mut().unwrap().environment = environment.clone().into();
+    envelope.settings["checker"]["environment"] = serde_json::to_value(&environment).unwrap();
+    envelope.settings["review"]["checker"]["environment"] =
+        serde_json::to_value(&environment).unwrap();
+    SourceBundle::from_input(&FixedInput::capture(envelope.clone()).unwrap()).unwrap();
     let mut source: sdk::SourceExtractionInput =
         serde_json::from_value(envelope.items[0].payload.clone()).unwrap();
     let original = &source.artifacts[0];

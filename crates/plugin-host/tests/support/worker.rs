@@ -1,31 +1,39 @@
 //! Independently executed synthetic protocol peer. Enabled only by the explicit
 //! conformance-worker feature; it never receives a project or Core API.
-use std::{
-    io::{Read, Write},
-    time::Duration,
-};
+use std::{io::Write, time::Duration};
 use tsumugi_plugin_sdk::*;
 fn read_frame() -> ProcessFrame {
-    let mut header = [0u8; 4];
-    std::io::stdin().read_exact(&mut header).unwrap();
-    let length = u32::from_be_bytes(header) as usize;
-    assert!(length <= MAX_PROCESS_FRAME_BYTES);
-    let mut bytes = vec![0u8; length];
-    std::io::stdin().read_exact(&mut bytes).unwrap();
-    parse_process_frame(&bytes).unwrap()
+    read_process_frame(
+        &mut std::io::stdin().lock(),
+        &mut 0,
+        MAX_PROCESS_FRAME_BYTES,
+        MAX_PROCESS_SESSION_BYTES,
+    )
+    .unwrap()
+    .0
 }
 fn write_frame(body: ProcessBody) {
-    let bytes = ProcessFrame::new(body).encode().unwrap();
-    raw(&bytes);
+    write_process_frame(
+        &mut std::io::stdout().lock(),
+        &ProcessFrame::new(body),
+        &mut 0,
+        MAX_PROCESS_FRAME_BYTES,
+        MAX_PROCESS_SESSION_BYTES,
+    )
+    .unwrap();
 }
 fn raw(bytes: &[u8]) {
     let mut stdout = std::io::stdout().lock();
-    stdout
-        .write_all(&(bytes.len() as u32).to_be_bytes())
-        .unwrap();
-    stdout.write_all(bytes).unwrap();
+    for chunk in bytes.chunks(MAX_PROCESS_CHUNK_BYTES) {
+        stdout
+            .write_all(&(chunk.len() as u32).to_be_bytes())
+            .unwrap();
+        stdout.write_all(chunk).unwrap();
+    }
+    stdout.write_all(&0u32.to_be_bytes()).unwrap();
     stdout.flush().unwrap();
 }
+
 fn hang() -> ! {
     loop {
         std::thread::sleep(Duration::from_secs(60));
@@ -94,7 +102,7 @@ fn main() {
                     return;
                 }
                 if mode == "duplicate-fields" {
-                    raw(br#"{"protocolVersion":2,"protocolVersion":2,"body":{"kind":"pong","data":{"nonce":"nonce"}}}"#);
+                    raw(br#"{"protocolVersion":4,"protocolVersion":4,"body":{"kind":"pong","data":{"nonce":"nonce"}}}"#);
                     hang();
                 }
                 if mode == "stderr-flood" {
@@ -109,7 +117,7 @@ fn main() {
                 let output = EncodedPayload::capture(
                     request.output_schema.clone(),
                     if mode == "core-echo" {
-                        request.input.utf8.clone()
+                        request.input.utf8.to_string()
                     } else {
                         format!("answer:{}", request.input.utf8)
                     },

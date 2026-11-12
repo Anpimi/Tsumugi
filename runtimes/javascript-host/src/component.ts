@@ -4,7 +4,7 @@ import { pathToFileURL } from 'node:url';
 import type { ComponentAPI, CapabilityHandler, CapabilityOutput, ComponentModule } from '../../../crates/plugin-sdk/javascript/component.js';
 import type { InvocationRequest, ProcessActivation, ProcessBody, ProcessFrame, ServiceBinding, ServiceRequest, ServiceResponse } from '../../../crates/plugin-sdk/javascript/process.js';
 import { PROCESS_PROFILE } from './generated/protocol.js';
-import { encodeFrame, scalarString } from './codec.js';
+import { frameByteLength, scalarString } from './codec.js';
 
 function immutable<T>(value: T): T {
   if (value && typeof value === 'object') {
@@ -39,9 +39,9 @@ function validateServices(bindings: ServiceBinding[]): void {
     if (limits.concurrency !== 1 || !Number.isSafeInteger(limits.timeoutMs) || limits.timeoutMs <= 0
       || limits.timeoutMs > 0xffffffff
       || !Number.isSafeInteger(limits.maxInputBytes) || limits.maxInputBytes <= 0
-      || limits.maxInputBytes > PROCESS_PROFILE.maxInvocationPayloadBytes
+      || limits.maxInputBytes > PROCESS_PROFILE.maxServicePayloadBytes
       || !Number.isSafeInteger(limits.maxOutputBytes) || limits.maxOutputBytes <= 0
-      || limits.maxOutputBytes > PROCESS_PROFILE.maxInvocationPayloadBytes) throw new Error('Service limits');
+      || limits.maxOutputBytes > PROCESS_PROFILE.maxServicePayloadBytes) throw new Error('Service limits');
     handles.add(binding.handleId);
     providers.add(selection);
   }
@@ -50,6 +50,7 @@ interface PendingService {
   request: ServiceRequest;
   binding: ServiceBinding;
   abort: AbortController;
+  sent?: Promise<void>;
   resolve(response: Readonly<ServiceResponse>): void;
   reject(error: Error): void;
 }
@@ -77,7 +78,7 @@ export class ComponentSession {
   ) {}
   private emit(body: ProcessBody, maxResultBytes?: number): Promise<void> {
     const frame: ProcessFrame = { protocolVersion: PROCESS_PROFILE.protocolVersion, body };
-    if (maxResultBytes !== undefined && encodeFrame(frame).byteLength - 4 > maxResultBytes) {
+    if (maxResultBytes !== undefined && frameByteLength(frame) > maxResultBytes) {
       throw new Error('Output limit');
     }
     return this.send(frame);
@@ -97,7 +98,10 @@ export class ComponentSession {
       this.starting = this.activate();
       void this.starting.catch(this.fail);
     } else if (body.kind === 'invoke' && this.phase === 'active' && !this.invocation) {
-      const request = immutable(structuredClone(body.data));
+      // Strings are immutable: retain the large payload while copying only
+      // the metadata that callers could otherwise mutate after admission.
+      const request = immutable({ ...structuredClone({ ...body.data, input: null }),
+        input: { ...body.data.input, schema: structuredClone(body.data.input.schema) } });
       const member = this.activation!.capabilities.find(value => value.contributionId === request.provider.contributionId);
       const { contributionId, ...instance } = request.provider;
       if (!member || !isDeepStrictEqual(instance, this.activation!.instance)) throw new Error('Request provider mismatch');
@@ -223,8 +227,12 @@ export class ComponentSession {
       throw error;
     }
     if (this.phase !== 'active' || abort.signal.aborted) return;
-    if (this.pendingService?.abort === abort) {
+    const pending = this.pendingService;
+    if (pending?.abort === abort) {
       this.rejectService(new Error('Service call was not awaited'));
+      // The accepted request may be between chunks. Finish its framing before
+      // failing the channel; never publish the handler's premature proposal.
+      await pending.sent;
       throw new Error('Unawaited service call');
     }
     if (!output) throw new Error('Invalid output');
@@ -256,7 +264,7 @@ export class ComponentSession {
       || typeof utf8 !== 'string') throw new Error('Service request mismatch');
     scalarString(utf8);
     if (Buffer.byteLength(utf8) > binding.limits.maxInputBytes
-      || Buffer.byteLength(utf8) > PROCESS_PROFILE.maxInvocationPayloadBytes) throw new Error('Service input limit');
+      || Buffer.byteLength(utf8) > PROCESS_PROFILE.maxServicePayloadBytes) throw new Error('Service input limit');
     const request: ServiceRequest = immutable({ callId, handleId, context: outer.context,
       input: { schema: binding.inputSchema, utf8, sha256: digest(utf8) } });
     let resolve!: PendingService['resolve'];
@@ -265,11 +273,12 @@ export class ComponentSession {
     // Observe rejection even when a component forgets to await its call. The
     // invocation still fails rather than hanging or emitting a false result.
     void promise.catch(() => {});
-    const pending = { request, binding, abort, resolve, reject };
+    const pending: PendingService = { request, binding, abort, resolve, reject };
     this.serviceCalls.add(callId);
     this.pendingService = pending;
     try {
-      void this.emit({ kind: 'service-request', data: request }).catch(() => {
+      pending.sent = this.emit({ kind: 'service-request', data: request });
+      void pending.sent.catch(() => {
         if (this.pendingService === pending) this.rejectService(new Error('Service transport unavailable'));
         this.fail();
       });
@@ -291,7 +300,7 @@ export class ComponentSession {
       || typeof payload.utf8 !== 'string' || !isDeepStrictEqual(payload.schema, schema)
       || payload.sha256 !== digest(payload.utf8)
       || Buffer.byteLength(payload.utf8) > pending.binding.limits.maxOutputBytes
-      || Buffer.byteLength(payload.utf8) > PROCESS_PROFILE.maxInvocationPayloadBytes) throw new Error('Service response mismatch');
+      || Buffer.byteLength(payload.utf8) > PROCESS_PROFILE.maxServicePayloadBytes) throw new Error('Service response mismatch');
     scalarString(payload.utf8);
     this.pendingService = undefined;
     pending.resolve(immutable(structuredClone(response)));

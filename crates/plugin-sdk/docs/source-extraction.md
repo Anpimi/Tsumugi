@@ -20,7 +20,7 @@ The supported text-only family retains source input `1/1`, content exchange `2/1
 
 - `profile`: the target domain profile (`ContractRef`).
 - `sourceSetId` and `sourceLanguage` (wire label validated by the SDK; canonical language support is checked by the application's locale owner).
-- `artifacts`: up to 2,000 source files (bounded to 2 MiB total and 4 MiB for the entire encoded `SourceExtractionInput`), each carrying a unique artifact ID, safe relative logical path, role, exact text or binary bytes, and SHA-256 digest. See [artifact representations and source coordinates](exchange.md#captured-artifacts-and-source-coordinates).
+- `artifacts`: up to 100,000 source files in the general payload (128 MiB decoded per file, 256 MiB decoded per set, and 384 MiB for the entire encoded `SourceExtractionInput`), each carrying a unique artifact ID, safe relative logical path, role, exact text or binary bytes, and SHA-256 digest. Package import recipes retain their separate 32-file maximum and may declare smaller byte limits. See [artifact representations and source coordinates](exchange.md#captured-artifacts-and-source-coordinates).
 
 `SourceExtractionInput::validate` and `ContentExchange::validate` share the same artifact validator to enforce size limits, unique IDs and paths, portable relative path rules, and exact SHA-256 byte digests.
 
@@ -47,7 +47,7 @@ A plugin package can bundle a non-executable JSON resource with schema `tsumugi.
 - `displayName` and exact domain `profile`.
 - `materials`: an ordered list of required fixed relative files, each with a literal `logicalPath` up to 16 segments, `role`, explicit `encoding` (`utf8` or `binary`), and `maxBytes`.
 - `fileSets`: an explicit array, empty for a fixed-only recipe. Each set has an exact `id`, readable `displayName`, `role`, explicit encoding, 1 to 16 distinct lowercase alphanumeric `extensions` (without dots or globs), `minFiles`, `maxFiles`, and per-file `maxBytes`. A zero minimum makes the set optional. Fixed files plus the sets' maximum counts must fit 32 files. All groups may be optional, but a resolved selection must contain at least one file. No discovery script or filesystem permission is included.
-- `maxTotalBytes`: an explicit, non-null positive integer up to 2 MiB. It caps the sum of actual captured raw bytes across fixed and selected files, independently of their per-file ceilings. Every per-file ceiling must fit this total, but the sum of all per-file maxima need not fit. This is a capture budget; encoded exchange, execution and persistence limits are still enforced separately.
+- `maxTotalBytes`: an explicit, non-null positive integer up to 256 MiB. It caps the sum of actual captured raw bytes across fixed and selected files, independently of their per-file ceilings, which cannot exceed 128 MiB. Every per-file ceiling must fit this total, but the sum of all per-file maxima need not fit. This is a capture budget; encoded exchange, execution and persistence limits are still enforced separately.
 - `extractor` and `checker`: distinct capability contribution IDs in the same package.
 - `reviewResource`: the contribution ID of a [`ReviewDeclaration`](review.md) resource (`tsumugi.review-declaration/1/1`) in the same package.
 - `revisionPolicy` (`SourceRevisionPolicy`) and a non-empty list of mandatory `semanticRules`.
@@ -76,13 +76,15 @@ cargo run -p tsumugi-plugin-sdk --features schema --bin tsumugi-plugin-contract 
 
 Because `validate_source_extraction` checks structural and coordinate integrity rather than domain format grammar, extracted proposals are verified by an independent semantic checker capability before adoption.
 
-`SourceExtractionCheckInput` (up to 16 MiB encoded; `source` retains its 4 MiB encoded ceiling and `proposal` its 8 MiB ceiling, independently of the 2 MiB decoded material budget) bundles:
+`SourceExtractionCheckInput` (up to 1 GiB encoded; `source` retains its 384 MiB encoded ceiling and `proposal` its 512 MiB ceiling, independently of the 128 MiB/file and 256 MiB/set decoded-material limits) bundles:
 
 - `source`: the original `SourceExtractionInput`.
 - `proposal`: the extractor's `ContentExchange`.
 - `requirements`: non-empty, mandatory, non-waivable plugin check requirements targeting `sourceSetId` and pinned to the checker's `ProviderSelectionBinding`.
 
 The checker returns `CheckResult[]` (`tsumugi.check-results`), which Core combines with its built-in checks and evaluates via `FixedCheckSet::evaluate`.
+
+Source extraction and checking use the [material-backed invocation and Process4 budgets](exchange.md). Transport chunking does not permit partial proposals: the checker still receives and independently validates the complete capture and proposal. These ceilings define admissible payloads; they are not measured domain capacity or runtime guarantees.
 
 ## Error Contract (`SourceExtractionError`)
 

@@ -442,3 +442,62 @@ pub(crate) fn encoded_limit<T: serde::Serialize>(
         )
     })
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn encoded_limit_counts_exact_utf8_and_escaped_bytes_without_a_full_buffer() {
+        let mut input = parse_review_check_input(include_bytes!("../tests/fixtures/review.input.json")).unwrap();
+        input.source.domain_blocks.last_mut().unwrap().payload_utf8.push_str("🧵 e\u{301} \"\\\0\t\r\n");
+        input.validate().unwrap();
+        let exact = serde_json::to_vec(&input).unwrap().len();
+        encoded_limit(&input, exact, "reviewCheckInput").unwrap();
+        input.source.domain_blocks.last_mut().unwrap().payload_utf8.push('x');
+        assert_eq!(serde_json::to_vec(&input).unwrap().len(), exact + 1);
+        input.validate().unwrap();
+        assert_eq!(encoded_limit(&input, exact, "reviewCheckInput").unwrap_err(),
+            ContractError::at(ContractErrorCode::LimitExceeded, "reviewCheckInput"));
+        encoded_limit(&input, exact + 1, "reviewCheckInput").unwrap();
+    }
+
+    #[test]
+    fn encoded_limit_distinguishes_serialization_failure_from_an_exceeded_budget() {
+        struct Invalid;
+        impl Serialize for Invalid {
+            fn serialize<S: serde::Serializer>(&self, _: S) -> Result<S::Ok, S::Error> {
+                Err(serde::ser::Error::custom("synthetic serialization failure"))
+            }
+        }
+        let value = ("\0".repeat(32), Invalid);
+        assert_eq!(encoded_limit(&value, 8, "fixture").unwrap_err(),
+            ContractError::at(ContractErrorCode::LimitExceeded, "fixture"));
+        assert_eq!(encoded_limit(&value, 1024, "fixture").unwrap_err(),
+            ContractError::at(ContractErrorCode::InvalidSchema, "fixture"));
+    }
+
+    #[test]
+    fn material_parser_boundaries_precede_schema_decoding() {
+        type Parse = fn(&[u8]) -> Result<(), ContractError>;
+        // One zero-filled buffer covers all physical length guards. At the
+        // exact ceiling invalid JSON reaches schema decoding; +1 must be
+        // rejected by the length guard first. This is not a maximum-size
+        // semantically valid material fixture.
+        let bytes = vec![0; MAX_MATERIAL_INVOCATION_BYTES + 1];
+        let receivers: &[(usize, Parse, &str)] = &[
+            (MAX_SOURCE_EXTRACTION_INPUT_BYTES, |bytes| parse_source_extraction_input(bytes).map(drop), "sourceExtractionInput"),
+            (MAX_MATERIAL_INVOCATION_BYTES, |bytes| parse_source_extraction_check_input(bytes).map(drop), "sourceExtractionCheckInput"),
+            (MAX_MATERIAL_INVOCATION_BYTES, |bytes| parse_build_input(bytes).map(drop), "BuildInput"),
+            (MAX_ARTIFACT_SET_BYTES, |bytes| parse_artifact_set(bytes).map(drop), "ArtifactSet"),
+            (MAX_MATERIAL_INVOCATION_BYTES, |bytes| parse_artifact_check_input(bytes).map(drop), "ArtifactCheckInput"),
+            (MAX_MATERIAL_INVOCATION_BYTES, |bytes| parse_review_check_input(bytes).map(drop), "reviewCheckInput"),
+        ];
+        for &(limit, parse, field) in receivers {
+            assert_eq!(parse(&bytes[..limit]).unwrap_err(),
+                ContractError::at(ContractErrorCode::InvalidSchema, field));
+            assert_eq!(parse(&bytes[..limit + 1]).unwrap_err(),
+                ContractError::at(ContractErrorCode::LimitExceeded, field));
+        }
+    }
+}

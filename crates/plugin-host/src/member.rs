@@ -460,7 +460,12 @@ pub async fn run_member_observed(
         let child = OwnedChild::spawn(&command).map_err(|_| HostError::SpawnFailed)?;
         let mut pending = PendingChild::new(child, directory, None);
         let child_pid = pending.pid.ok_or(HostError::SpawnFailed)?;
-        let pipes = match attach_pipes(pending.child.as_mut().unwrap(), &options.limits) {
+        let mut pipe_limits = options.limits.clone();
+        pipe_limits.max_frame_bytes = pipe_limits.max_frame_bytes.min(wire::MAX_FRAME_BYTES);
+        pipe_limits.max_session_output_bytes = pipe_limits
+            .max_session_output_bytes
+            .min(wire::MAX_SESSION_BYTES);
+        let pipes = match attach_pipes(pending.child.as_mut().unwrap(), &pipe_limits) {
             Ok(pipes) => pipes,
             Err(error) => {
                 pending.rollback(options.limits.cleanup_timeout_ms).await;
@@ -500,7 +505,7 @@ pub async fn run_member_observed(
             next_input: 0,
             next_output: 0,
             input_bytes: 0,
-            limits: options.limits,
+            limits: pipe_limits,
             cancellation: options.cancellation,
             io_stop,
             observation,

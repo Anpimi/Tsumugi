@@ -215,7 +215,7 @@ it("keeps single-file and paired translation resource shapes mutually exclusive"
 
 it("reads strict Native decisions without treating them as installed Node environments", async () => {
   const environment = { protocolVersion: 1, platform: runtime.environment.platform,
-    sdkVersion: "0.1.0-alpha.1", processProtocol: 3, profile: "native-application-host-v1",
+    sdkVersion: "0.1.0-alpha.9", processProtocol: 4, profile: "native-application-host-v1",
     hostVersion: "0.2.0-alpha.1", executable: { kind: "darwin-code-directory-hash-v1", value: "a".repeat(40) } };
   const decision = { environment, environmentDigest: "b".repeat(64), origin: runtime.origin };
   const view = { ...fixture.empty, runtimeDecisions: [decision] };
@@ -234,7 +234,7 @@ it("reads strict Native decisions without treating them as installed Node enviro
 
 it("keeps current Native offers separate from installed Node files and refuses polluted offers", () => {
   const environment = { protocolVersion: 1, platform: runtime.environment.platform,
-    sdkVersion: "0.1.0-alpha.1", processProtocol: 3, profile: "native-application-host-v1",
+    sdkVersion: "0.1.0-alpha.9", processProtocol: 4, profile: "native-application-host-v1",
     hostVersion: "0.2.0-alpha.1", executable: { kind: "darwin-code-directory-hash-v1", value: "a".repeat(40) } };
   const offer = { availability: "available", environment, environmentDigest: "b".repeat(64), origin: runtime.origin };
   expect(validateResponseInventory({ ...fixture.empty, nativeHostOffer: offer })).toBe(true);

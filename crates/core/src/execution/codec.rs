@@ -29,30 +29,53 @@ pub(crate) fn digest_hex(digest: Digest) -> String {
 
 /// Limit serialization as it happens, before allocating an unbounded buffer.
 pub(crate) fn encode<T: Serialize>(value: &T, limit: usize) -> Result<Vec<u8>, ExecutionError> {
-    struct BoundedWriter {
-        bytes: Vec<u8>,
-        limit: usize,
-        exceeded: bool,
-    }
-    impl Write for BoundedWriter {
+    let mut bytes = Vec::new();
+    encode_to(value, limit, &mut bytes)?;
+    Ok(bytes)
+}
+
+pub(crate) fn digest_encoded<T: Serialize>(value: &T, limit: usize) -> Result<String, ExecutionError> {
+    struct HashWriter(aws_lc_rs::digest::Context);
+    impl Write for HashWriter {
         fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
-            if bytes.len() > self.limit.saturating_sub(self.bytes.len()) {
-                self.exceeded = true;
-                return Err(std::io::Error::other("encoded value exceeds limit"));
-            }
-            self.bytes.extend_from_slice(bytes);
+            self.0.update(bytes);
             Ok(bytes.len())
         }
         fn flush(&mut self) -> std::io::Result<()> {
             Ok(())
         }
     }
+    let mut writer = HashWriter(aws_lc_rs::digest::Context::new(&SHA256));
+    encode_to(value, limit, std::io::BufWriter::new(&mut writer))?;
+    Ok(digest_hex(writer.0.finish()))
+}
+
+fn encode_to<T: Serialize>(value: &T, limit: usize, writer: impl Write) -> Result<(), ExecutionError> {
+    struct BoundedWriter<W> {
+        writer: W,
+        remaining: usize,
+        exceeded: bool,
+    }
+    impl<W: Write> Write for BoundedWriter<W> {
+        fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
+            if bytes.len() > self.remaining {
+                self.exceeded = true;
+                return Err(std::io::Error::other("encoded value exceeds limit"));
+            }
+            let written = self.writer.write(bytes)?;
+            self.remaining -= written;
+            Ok(written)
+        }
+        fn flush(&mut self) -> std::io::Result<()> {
+            self.writer.flush()
+        }
+    }
     let mut writer = BoundedWriter {
-        bytes: Vec::new(),
-        limit,
+        writer,
+        remaining: limit,
         exceeded: false,
     };
-    if serde_json::to_writer(&mut writer, value).is_err() {
+    if serde_json::to_writer(&mut writer, value).is_err() || writer.flush().is_err() {
         let stage = if writer.exceeded {
             "limit-exceeded"
         } else {
@@ -60,7 +83,7 @@ pub(crate) fn encode<T: Serialize>(value: &T, limit: usize) -> Result<Vec<u8>, E
         };
         return Err(ExecutionError::new(ErrorCode::LimitExceeded, stage));
     }
-    Ok(writer.bytes)
+    Ok(())
 }
 
 /// serde_json::Value accepts duplicate map keys by replacing the first value.

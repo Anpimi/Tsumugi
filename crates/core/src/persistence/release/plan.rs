@@ -463,10 +463,7 @@ impl ReleasePlan {
         envelope.settings = serde_json::to_value(self).map_err(|_| invalid())?;
         envelope.limits.max_result_bytes = MAX_PLUGIN_RESULT_BYTES as u32;
         envelope.limits.max_attempt_result_bytes = MAX_PLUGIN_RESULT_BYTES as u32;
-        envelope.limits.timeout_ms = envelope
-            .limits
-            .timeout_ms
-            .min(binding.capability.declaration.limits.timeout_ms);
+        envelope.limits.timeout_ms = binding.capability.declaration.limits.timeout_ms.min(300_000);
         envelope.plugin = Some(binding);
         FixedInput::capture(envelope)
     }
@@ -638,7 +635,7 @@ impl ProjectStore {
             source_result_digest: result.digest().into(),
             policy_version: qualified.eligibility.policy_version,
             eligibility_basis: qualified.eligibility.basis,
-            source: output.exchange,
+            source: output.exchange.clone(),
             build: build.clone(),
             locales,
         };

@@ -243,7 +243,7 @@ fn paired_resource_requires_its_exact_contract_and_never_rewrites_legacy_bytes()
 }
 
 #[test]
-fn paired_raw_material_ceilings_are_independent_of_encoded_input_allowance() {
+fn paired_declared_capture_budget_is_independent_of_encoded_input_allowance() {
     let mut input = input();
     input.artifacts = vec![
         CapturedArtifact::from_bytes(
@@ -267,11 +267,12 @@ fn paired_raw_material_ceilings_are_independent_of_encoded_input_allowance() {
     let bytes = serde_json::to_vec(&input).unwrap();
     assert!(bytes.len() > MAX_EXCHANGE_BYTES && bytes.len() < MAX_PAIRED_TRANSLATION_INPUT_BYTES);
     parse_paired_translation_extraction_input(&bytes).unwrap();
-    input.paired_source.as_mut().unwrap().artifacts.push(
-        CapturedArtifact::from_bytes("extra".into(), "extra.esp".into(), "source".into(), &[0])
+    input.artifacts.push(
+        CapturedArtifact::from_bytes("extra".into(), "extra.strings".into(), "strings".into(), &[0])
             .unwrap(),
     );
-    assert!(input.validate().is_err());
+    input.validate().unwrap();
+    assert_eq!(binding().validate_input(&input).unwrap_err().code, ContractErrorCode::LimitExceeded);
 }
 
 #[cfg(feature = "schema")]

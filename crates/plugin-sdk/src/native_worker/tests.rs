@@ -71,11 +71,11 @@ impl NativeComponent for Component {
         if matches!(self.behavior, Behavior::Panic) {
             panic!("component failed");
         }
-        match input.utf8.as_str() {
+        match input.utf8.as_ref() {
             "failed" => NativeCapabilityOutput::Failed("{\"code\":\"example.invalid\"}".into()),
             "unknown" => NativeCapabilityOutput::Unknown("{\"code\":\"example.uncertain\"}".into()),
             "oversized" => NativeCapabilityOutput::Succeeded("x".repeat(65537)),
-            _ => NativeCapabilityOutput::Succeeded(input.utf8.clone()),
+            _ => NativeCapabilityOutput::Succeeded(input.utf8.to_string()),
         }
     }
     fn dispose(&mut self) -> Result<(), NativeComponentError> {
@@ -187,9 +187,14 @@ fn activation(request: &InvocationRequest) -> ProcessActivation {
     }
 }
 fn send(peer: &mut Peer, body: ProcessBody) {
-    let bytes = ProcessFrame::new(body).encode().unwrap();
-    peer.write_all(&(bytes.len() as u32).to_be_bytes()).unwrap();
-    peer.write_all(&bytes).unwrap();
+    write_process_frame(
+        peer,
+        &ProcessFrame::new(body),
+        &mut 0,
+        MAX_PROCESS_FRAME_BYTES,
+        MAX_STREAM_BYTES,
+    )
+    .unwrap();
 }
 fn receive(peer: &mut Peer) -> ProcessBody {
     read_frame(peer, &mut 0).unwrap().body
@@ -238,7 +243,7 @@ fn exact_unicode_identity_all_outcomes_heartbeat_and_serial_results() {
     let mut r = request();
     let a = activation(&r);
     activated(&mut h, &a);
-    for (i, utf8) in [r.input.utf8.clone(), "failed".into(), "unknown".into()]
+    for (i, utf8) in [r.input.utf8.to_string(), "failed".into(), "unknown".into()]
         .into_iter()
         .enumerate()
     {
@@ -266,12 +271,12 @@ fn exact_unicode_identity_all_outcomes_heartbeat_and_serial_results() {
         .unwrap();
         assert_eq!(result.result_id, r.context.dispatch_id);
         match (i, result.outcome) {
-            (0, InvocationOutcome::Succeeded { output }) => assert_eq!(output.utf8, utf8),
+            (0, InvocationOutcome::Succeeded { output }) => assert_eq!(output.utf8.as_ref(), utf8),
             (1, InvocationOutcome::Failed { error }) => {
-                assert_eq!(error.utf8, "{\"code\":\"example.invalid\"}")
+                assert_eq!(error.utf8.as_ref(), "{\"code\":\"example.invalid\"}")
             }
             (2, InvocationOutcome::Unknown { error }) => {
-                assert_eq!(error.utf8, "{\"code\":\"example.uncertain\"}")
+                assert_eq!(error.utf8.as_ref(), "{\"code\":\"example.uncertain\"}")
             }
             _ => panic!("wrong outcome"),
         }
@@ -519,9 +524,10 @@ fn conflicting_control_and_worker_direction_are_refused_and_cancel_owned_work() 
 #[test]
 fn malformed_and_incomplete_wire_is_refused_before_component_activation() {
     let duplicate =
-        br#"{"protocolVersion":3,"protocolVersion":3,"body":{"kind":"ping","data":{"nonce":"a"}}}"#;
+        br#"{"protocolVersion":4,"protocolVersion":4,"body":{"kind":"ping","data":{"nonce":"a"}}}"#;
     let mut malformed = (duplicate.len() as u32).to_be_bytes().to_vec();
     malformed.extend_from_slice(duplicate);
+    malformed.extend_from_slice(&[0; 4]);
     for bytes in [
         vec![0, 0],
         vec![0, 0, 0, 0],
@@ -544,6 +550,7 @@ fn aggregate_stream_budget_is_checked_before_allocation_or_write() {
     .unwrap();
     let mut wire = (bytes.len() as u32).to_be_bytes().to_vec();
     wire.extend_from_slice(&bytes);
+    wire.extend_from_slice(&[0; 4]);
     let mut total = MAX_STREAM_BYTES;
     assert!(matches!(
         read_frame(&mut wire.as_slice(), &mut total),

@@ -163,10 +163,7 @@ impl SourceValidationCapture {
         )?;
         envelope.settings = serde_json::to_value(basis).map_err(|_| invalid())?;
         envelope.limits.max_result_bytes = MAX_RESULT_BYTES as u32;
-        envelope.limits.timeout_ms = envelope
-            .limits
-            .timeout_ms
-            .min(binding.capability.declaration.limits.timeout_ms);
+        envelope.limits.timeout_ms = binding.capability.declaration.limits.timeout_ms.min(300_000);
         envelope.plugin = Some(binding);
         Ok((envelope, projected, checks))
     }

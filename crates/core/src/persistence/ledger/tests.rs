@@ -2063,7 +2063,7 @@ fn open_result_hits_recheck_historical_grants_and_scan_noncurrent_results() {
                 operating_system: sdk::RuntimeOperatingSystem::Macos,
                 architecture: sdk::RuntimeArchitecture::Aarch64,
             },
-            sdk_version: "0.1.0-alpha.1".into(),
+            sdk_version: sdk::SDK_VERSION.into(),
             process_protocol: sdk::PROCESS_PROTOCOL,
             profile: sdk::RuntimeEnvironmentProfile::NodeSystemLibrariesV1,
             tool_version: "26.10.0".into(),

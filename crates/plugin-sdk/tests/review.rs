@@ -88,45 +88,43 @@ fn review_roundtrip_preserves_original_evidence_unicode_and_missing_vs_empty_tex
     }
 }
 
-// Exercise source and compound limits independently, without exceeding any
-// individual extension or translation budget to reach the enclosing boundary.
+// Count once and account for each appended JSON string/block. Building a
+// boundary must remain linear even when the content budget is hundreds of MiB.
+fn encoded_size<T: serde::Serialize>(value: &T) -> usize {
+    #[derive(Default)]
+    struct Count(usize);
+    impl std::io::Write for Count {
+        fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
+            self.0 += bytes.len();
+            Ok(bytes.len())
+        }
+        fn flush(&mut self) -> std::io::Result<()> { Ok(()) }
+    }
+    let mut count = Count::default();
+    serde_json::to_writer(&mut count, value).unwrap();
+    count.0
+}
+
 fn input_with_encoded_size(
     size: usize,
     encoded_len: impl Fn(&ReviewCheckInput) -> usize,
 ) -> ReviewCheckInput {
     let mut value = input();
-    if size == MAX_INVOCATION_PAYLOAD_BYTES {
-        for index in 0..256 {
-            let mut unit = value.source.units[0].clone();
-            unit.id = format!("padding-unit-{index}");
-            unit.source_revision_id = format!("padding-revision-{index}");
-            for (position, occurrence) in unit.occurrences.iter_mut().enumerate() {
-                occurrence.id = format!("padding-occurrence-{index}-{position}");
-                occurrence.native_identity = None;
-                value.source.order.push(occurrence.id.clone());
-            }
-            value.selections.push(ReviewSelection {
-                unit_id: unit.id.clone(), source_revision_id: unit.source_revision_id.clone(),
-                translation_text: Some("\n".repeat(MAX_TEXT_BYTES)),
-            });
-            value.source.units.push(unit);
-        }
-        for requirement in &mut value.requirements {
-            requirement.targets = value.selections.iter().map(|s| s.unit_id.clone()).collect();
-        }
-    }
     let template = value.source.domain_blocks.last().unwrap().clone();
     assert_eq!(template.schema.id, "example.unknown.metadata");
     assert_eq!(template.handling, ExtensionHandling::Preserve);
     value.source.domain_blocks.last_mut().unwrap().payload_utf8.push_str("🧵 e\u{301} \"\\\0\t\r\n");
-    let chunk = MAX_EXCHANGE_BYTES / 2;
-    while size - encoded_len(&value) > chunk * 2 + 1024 {
-        value.source.domain_blocks.last_mut().unwrap().payload_utf8.push_str(&"\n".repeat(chunk));
+    let mut length = encoded_len(&value);
+    let chunk = "\n".repeat(MAX_EXCHANGE_BYTES / 2);
+    while size - length > chunk.len() * 2 + 1024 {
+        value.source.domain_blocks.last_mut().unwrap().payload_utf8.push_str(&chunk);
+        length += chunk.len() * 2;
         let mut block = template.clone();
         block.schema.id = format!("example.padding.{}", value.source.domain_blocks.len());
+        length += encoded_size(&block) + 1; // New array element and its comma.
         value.source.domain_blocks.push(block);
     }
-    let padding = size.checked_sub(encoded_len(&value)).unwrap();
+    let padding = size.checked_sub(length).unwrap();
     let block = value.source.domain_blocks.last_mut().unwrap();
     block.payload_utf8.push_str(&"\n".repeat(padding / 2));
     if padding % 2 != 0 { block.payload_utf8.push('x'); }
@@ -136,39 +134,22 @@ fn input_with_encoded_size(
 }
 
 #[test]
-fn review_input_encoded_boundary_preserves_unicode_escapes_and_complete_request_limit() {
-    let mut value = input_with_encoded_size(MAX_INVOCATION_PAYLOAD_BYTES, |input| {
-        serde_json::to_vec(input).unwrap().len()
-    });
-    let bytes = serde_json::to_vec(&value).unwrap();
-    assert_eq!(bytes.len(), MAX_INVOCATION_PAYLOAD_BYTES);
-    assert!(serde_json::to_vec(&value.source).unwrap().len() < MAX_CONTENT_EXCHANGE_BYTES);
-    binding().validate_input(&value).unwrap();
-    assert_eq!(parse_review_check_input(&bytes).unwrap(), value);
-
-    value
-        .source
-        .domain_blocks
-        .last_mut()
-        .unwrap()
-        .payload_utf8
-        .push('x');
+fn review_material_input_accepts_a_complete_request_above_the_ordinary_payload_limit() {
+    let value = input_with_encoded_size(MAX_INVOCATION_PAYLOAD_BYTES + 1, encoded_size);
     let bytes = serde_json::to_vec(&value).unwrap();
     assert_eq!(bytes.len(), MAX_INVOCATION_PAYLOAD_BYTES + 1);
-    value.source.validate().unwrap();
-    let error = value.validate().unwrap_err();
-    assert_eq!(error.code, ContractErrorCode::LimitExceeded);
-    assert_eq!(error.field, "reviewCheckInput");
-    assert_eq!(parse_review_check_input(&bytes).unwrap_err(), error);
+    assert!(encoded_size(&value.source) < MAX_CONTENT_EXCHANGE_BYTES);
+    binding().validate_input(&value).unwrap();
+    assert_eq!(parse_review_check_input(&bytes).unwrap(), value);
 }
 
 #[test]
 fn review_source_validation_keeps_encoded_boundary_and_original_first_error() {
     let mut value = input_with_encoded_size(MAX_CONTENT_EXCHANGE_BYTES, |input| {
-        serde_json::to_vec(&input.source).unwrap().len()
+        encoded_size(&input.source)
     });
     value.source.validate().unwrap();
-    assert!(serde_json::to_vec(&value).unwrap().len() < MAX_INVOCATION_PAYLOAD_BYTES);
+    assert!(encoded_size(&value) < MAX_MATERIAL_INVOCATION_BYTES);
     value.validate().unwrap();
 
     value
@@ -179,7 +160,7 @@ fn review_source_validation_keeps_encoded_boundary_and_original_first_error() {
         .payload_utf8
         .push('x');
     assert_eq!(
-        serde_json::to_vec(&value.source).unwrap().len(),
+        encoded_size(&value.source),
         MAX_CONTENT_EXCHANGE_BYTES + 1
     );
     let error = value.source.validate().unwrap_err();
@@ -415,7 +396,6 @@ fn review_parsers_reject_unknown_duplicate_fields_limits_and_invalid_error_codes
     let mut v: Value = serde_json::from_str(raw).unwrap();
     v["approved"] = json!(true);
     assert!(parse_review_check_input(&serde_json::to_vec(&v).unwrap()).is_err());
-    assert!(parse_review_check_input(&vec![b' '; MAX_INVOCATION_PAYLOAD_BYTES + 1]).is_err());
     assert!(parse_review_declaration(&vec![b' '; MAX_REVIEW_DECLARATION_BYTES + 1]).is_err());
     let error = ReviewCheckError {
         code: ReviewCheckErrorCode::InvalidTranslation,

@@ -1159,7 +1159,7 @@ fn real_application_roster_tool_ipc_shares_one_instance_without_sharing_project_
     let descriptor: sdk::RuntimeEnvironmentDescriptor = serde_json::from_slice(
         &fs::read(
             std::env::var_os("TSUMUGI_TEST_RUNTIME_APPROVAL")
-                .expect("explicit Process3 runtime approval required"),
+                .expect("explicit approval for the matching runtime required"),
         )
         .unwrap(),
     )
@@ -1169,7 +1169,7 @@ fn real_application_roster_tool_ipc_shares_one_instance_without_sharing_project_
             std::env::var_os("TSUMUGI_TEST_RUNTIME_TOOL").expect("explicit runtime tool required"),
         ),
         &PathBuf::from(
-            std::env::var_os("TSUMUGI_TEST_RUNTIME_HOST").expect("explicit Process3 Host required"),
+            std::env::var_os("TSUMUGI_TEST_RUNTIME_HOST").expect("matching Host required"),
         ),
         &descriptor,
         || true,

@@ -1,12 +1,13 @@
 //! Exact captured bytes and source coordinates. These values identify immutable
 //! evidence; they grant no access to local paths, project storage or execution.
 use std::borrow::Cow;
+use std::sync::Arc;
 
 use base64::{Engine, engine::general_purpose::STANDARD};
 use serde::{Deserialize, Serialize};
 use sha2::Sha256;
 
-use crate::{ContractError, ContractErrorCode, MAX_EXCHANGE_BYTES, TextEncoding, TextRange};
+use crate::{ContractError, ContractErrorCode, MAX_MATERIAL_BYTES, TextEncoding, TextRange};
 
 // Payload families 1 and 2 are the exact supported text-only and binary-capable
 // contracts. This does not select a provider or imply execution permission.
@@ -64,7 +65,7 @@ pub struct CapturedBinaryArtifact {
     pub logical_path: String,
     pub role: String,
     pub sha256: String,
-    pub base64: String,
+    pub base64: Arc<str>,
 }
 
 /// Exactly one representation. Text retains its original wire shape; mixed,
@@ -88,7 +89,7 @@ pub enum CapturedArtifact {
 )]
 pub enum CapturedArtifactData {
     Utf8(String),
-    Base64(String),
+    Base64(Arc<str>),
 }
 impl CapturedArtifactData {
     pub fn bytes(&self) -> Result<Cow<'_, [u8]>, ContractError> {
@@ -126,7 +127,7 @@ impl CapturedArtifactData {
 }
 
 fn decode_binary(encoded: &str) -> Result<Vec<u8>, ContractError> {
-    if encoded.len() > MAX_EXCHANGE_BYTES.div_ceil(3) * 4 {
+    if encoded.len() > MAX_MATERIAL_BYTES.div_ceil(3) * 4 {
         return Err(ContractError::at(
             ContractErrorCode::LimitExceeded,
             "content.artifacts.base64",
@@ -138,7 +139,7 @@ fn decode_binary(encoded: &str) -> Result<Vec<u8>, ContractError> {
             "content.artifacts.base64",
         )
     })?;
-    if bytes.len() > MAX_EXCHANGE_BYTES {
+    if bytes.len() > MAX_MATERIAL_BYTES {
         return Err(ContractError::at(
             ContractErrorCode::LimitExceeded,
             "content.artifacts",
@@ -216,6 +217,12 @@ impl CapturedArtifact {
         name(self.role(), "content.artifacts.role")?;
         digest(self.sha256(), "content.artifacts.sha256")?;
         let bytes = self.bytes()?;
+        if bytes.len() > MAX_MATERIAL_BYTES {
+            return Err(ContractError::at(
+                ContractErrorCode::LimitExceeded,
+                "content.artifacts",
+            ));
+        }
         if artifact_bytes_digest(&bytes) != self.sha256() {
             return Err(ContractError::at(
                 ContractErrorCode::ResultMismatch,
@@ -230,7 +237,7 @@ impl CapturedArtifact {
         role: String,
         bytes: &[u8],
     ) -> Result<Self, ContractError> {
-        if bytes.len() > MAX_EXCHANGE_BYTES {
+        if bytes.len() > MAX_MATERIAL_BYTES {
             return Err(ContractError::at(
                 ContractErrorCode::LimitExceeded,
                 "content.artifacts",
@@ -241,7 +248,7 @@ impl CapturedArtifact {
             logical_path,
             role,
             sha256: artifact_bytes_digest(bytes),
-            base64: STANDARD.encode(bytes),
+            base64: STANDARD.encode(bytes).into(),
         });
         artifact.validated_bytes()?;
         Ok(artifact)

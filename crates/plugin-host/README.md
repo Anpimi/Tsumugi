@@ -4,7 +4,7 @@
 
 - **Package & Runtime Inspection**: `PackageImage` archive verification, capability compatibility diagnostics, and runtime tree hashing (`tsumugi-plugin-package` and `tsumugi-plugin-runtime` CLIs).
 - **Local Package Store & Offline Repositories**: `PackageStore` for managing installed package/runtime archives and user approval state, plus offline TUF repository and Pack verification powered by `tough`.
-- **Worker Process & Service Channels**: `ProcessSession` and `ProjectServiceBroker` for spawning and communicating with native Rust workers and [JavaScript component Host](../../runtimes/javascript-host/README.md) workers over stdio using process protocol 3.
+- **Worker Process & Service Channels**: `ProcessSession` and `ProjectServiceBroker` for spawning and communicating with native Rust workers and [JavaScript component Host](../../runtimes/javascript-host/README.md) workers over stdio using process protocol 4.
 - **Optional Core & Member Adapters (`core-adapter`)**: `core::RunnerProxy`, `core::ApplicationInstance`, and `member::run_member` for bridging plugin workers and the [internal Pi member runtime](../../runtimes/agent-service/README.md) into `tsumugi-core`.
 
 By default, `tsumugi-plugin-host` builds without `tsumugi-core`, SQLite, or model provider dependencies. Versioning boundaries between the application and the SDK are documented in [the versioning policy](../../docs/versioning.md).

@@ -11,7 +11,7 @@ impl NativeComponent for Echo {
         input: &EncodedPayload,
         _metadata: &NativeInvocationMetadata,
     ) -> NativeCapabilityOutput {
-        NativeCapabilityOutput::Succeeded(input.utf8.clone())
+        NativeCapabilityOutput::Succeeded(input.utf8.to_string())
     }
 }
 fn main() {

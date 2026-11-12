@@ -54,6 +54,29 @@ If a build, plugin check, or export acknowledgement is lost or interrupted, Tsum
 - **Plugin and build tasks**: When a build confirmation is lost, the view automatically queries the original fixed request once. You can also use the available **Check result** action to repeat that read-only lookup. A saved task preserves its fixed inputs even if project text or target languages are edited later. Retrying the original build is offered only when the lookup confirms that no task was recorded. Reopening a project preserves all historical records and bindings, but starting a new build or semantic check after expiry or restart requires preparing a fresh attempt with new execution consent.
 - **File exports**: If an export or destination check ends in an uncertain state, the view reads the original action record once (and you can click **Check this export** to re-read it without writing files or opening the folder picker). To reconcile an interrupted export on disk, re-authorize the same destination folder if needed and run the file check next to the history entry: matching files are marked confirmed, missing files can be retried, and differing or unreadable files remain flagged for review. **Refresh export attempts** reloads the saved history without touching the filesystem.
 
+## Native application build prerequisites
+
+Follow the [development setup](../README.md#development) for the supported desktop targets and their existing toolchains. Core enables SQLite's pre-update hook, so `libsqlite3-sys` generates bindings with `bindgen` during compilation. In addition to the C/C++ compiler, the build host needs the **libclang shared library**. This is a build-time dependency; it does not add libclang to the application's runtime requirements.
+
+- **macOS**: Use the selected Xcode Command Line Tools or full Xcode toolchain. Command Line Tools provide `usr/lib/libclang.dylib`; full Xcode provides it under `Toolchains/XcodeDefault.xctoolchain/usr/lib`. Resolve the directory from the selected compiler before running Cargo:
+
+  ```sh
+  clang_binary="$(xcrun --find clang)"
+  export LIBCLANG_PATH="$(dirname "$(dirname "$clang_binary")")/lib"
+  test -r "$LIBCLANG_PATH/libclang.dylib"
+  ```
+
+- **Windows**: Keep the Visual Studio C++ Build Tools and Windows SDK prerequisites, and install LLVM with `libclang.dll`. Set `LIBCLANG_PATH` to the directory containing that DLL, commonly `C:\Program Files\LLVM\bin`, in the shell used to run Cargo.
+- **Linux native crate builds**: Install the distribution's LLVM/Clang shared-library development package. If discovery fails, set `LIBCLANG_PATH` to the directory containing `libclang.so` or its versioned shared library. This prerequisite does not extend the desktop or complete-bundle support matrix.
+
+The library must match the build host's architecture, including when cross-compiling. `LIBCLANG_PATH` identifies the shared-library directory, not the `clang` executable or an SDK header directory. The macOS CI job resolves and exports this location from `xcrun` before compiling the Rust crates.
+
+SDK contract tests include large encoded-material boundaries. Run them serially to avoid overlapping their peak memory use, as CI does:
+
+```sh
+cargo test -p tsumugi-plugin-sdk --tests --features schema --locked -- --test-threads=1
+```
+
 ## Synthetic workflow checks
 
 On macOS arm64, you can run automated IPC workflow tests against temporary projects using a synthetic build and check component. Provide `TSUMUGI_TEST_RUNTIME_TOOL`, `TSUMUGI_TEST_RUNTIME_HOST`, and `TSUMUGI_TEST_RUNTIME_APPROVAL` configured with the compatible artifacts and descriptor described in the [Host conformance guide](../crates/plugin-host/README.md). These tests run local workers directly without making model requests or opening an application window:

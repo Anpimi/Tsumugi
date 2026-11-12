@@ -5,7 +5,7 @@
     "architecture": "aarch64"
   },
   "runtimeProfile": "node-system-libraries-v1",
-  "processProtocol": 3,
+  "processProtocol": 4,
   "packages": [
     {
       "id": "webvtt",
@@ -13,15 +13,15 @@
       "plugin": {
         "publisher": "org.tsumugi",
         "id": "webvtt",
-        "version": "0.1.0-alpha.1"
+        "version": "0.1.0-alpha.2"
       },
-      "packageDigest": "243408d0679991d7df5901d515df00f04f217078276ff89ac43b295a5d8d6efa",
+      "packageDigest": "17852f253a5aa71d29c9bec31ec096296851c0443552050d431ba2952b65012f",
       "sourceRepository": "https://github.com/Anpimi/Tsumugi-plugins",
-      "sourceCommit": "d0e8c826ef099cceeab059c7aed5370034296c54",
-      "sdkVersion": "0.1.0-alpha.1",
-      "sdkArtifactSha256": "bc5e8f533ebedd770a41fa25cf4a557cd6a7bab03f930d7a8e40f66e957e5409",
+      "sourceCommit": "27f78eaab4ff3ca44082b144e4e9af6a99cebc59",
+      "sdkVersion": "0.1.0-alpha.9",
+      "sdkArtifactSha256": "529fc51708b8ac0219643e020b1527b8f45dac8e0d08d0f2301370752ceb0e2b",
       "archiveName": "webvtt.tar",
-      "archiveSha256": "efc3200e31d2339100d6297b4827792713c3b6123967e42ee14da0ab65d6135d"
+      "archiveSha256": "e95de158fca5cc302510ecad3cc3e7272413a00be0c6b06f455bbe52588124f8"
     },
     {
       "id": "stardew-smapi",
@@ -29,15 +29,15 @@
       "plugin": {
         "publisher": "org.tsumugi",
         "id": "stardew-smapi",
-        "version": "0.1.0-alpha.1"
+        "version": "0.1.0-alpha.2"
       },
-      "packageDigest": "426b58bbc89068ee77df8ff3a634ec41d17a96f7c9f156559d63d294bb652be6",
+      "packageDigest": "ba7c10210ec93f455a48ba718c19043df467a93b978cb74efac5ca9456bebb06",
       "sourceRepository": "https://github.com/Anpimi/Tsumugi-plugins",
-      "sourceCommit": "d0e8c826ef099cceeab059c7aed5370034296c54",
-      "sdkVersion": "0.1.0-alpha.1",
-      "sdkArtifactSha256": "bc5e8f533ebedd770a41fa25cf4a557cd6a7bab03f930d7a8e40f66e957e5409",
+      "sourceCommit": "27f78eaab4ff3ca44082b144e4e9af6a99cebc59",
+      "sdkVersion": "0.1.0-alpha.9",
+      "sdkArtifactSha256": "529fc51708b8ac0219643e020b1527b8f45dac8e0d08d0f2301370752ceb0e2b",
       "archiveName": "stardew-smapi.tar",
-      "archiveSha256": "68ad88b4fd1f475d3c1a2e40e3c7e146c5a6980a9dc7cf87028a8e209e26c1c5"
+      "archiveSha256": "f16922069ba1dab012d595ee44cc6d85cc20c5a5f0ba72596d358c6db38c6984"
     }
   ]
 }

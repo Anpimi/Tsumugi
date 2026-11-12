@@ -2,9 +2,9 @@
 
 For side-loading local collections of packages, see [manual offline Packs](offline-packs.md); for signed local update catalogs, see [signed offline repositories](offline-repositories.md).
 
-The optional Apple silicon (`aarch64`) macOS desktop bundle includes a pinned Node/Host runtime (requiring macOS 13.5 or later) along with two prebuilt plugins: **WebVTT** and **SMAPI**. End users running the packaged desktop app do not need Node.js, Rust, Python, `pnpm`, or Git installed. The steps below describe how developers stage and build that offline-ready desktop bundle from pre-fetched release artifacts.
+The optional Apple silicon (`aarch64`) macOS desktop bundle includes a pinned Node/Host runtime (requiring macOS 13.5 or later) and prebuilt **WebVTT** and **SMAPI** plugins. End users running the packaged desktop app do not need Node.js, Rust, Python, `pnpm`, or Git installed. Developers stage the exact local archives listed in the application catalog before building the bundle offline.
 
-The current configuration bundles the unsigned experimental plugin archives built for the [Mac application prerelease](experimental-release.md).
+The current development configuration bundles unsigned Process 4 plugin candidates. The [published Mac prerelease](experimental-release.md) has its own frozen package selection.
 
 ## Platform and build support
 
@@ -41,9 +41,9 @@ The desktop application tracks its bundled plugins in [`bundled-plugins.macos-aa
 - The transport `.tar` filename (`archiveName`) and its SHA-256 digest
 - The exact SDK artifact and version
 
-The catalog also locks the target platform, runtime profile, and SDK process protocol. Both the build script and the desktop installer verify these exact pins rather than assuming compatibility from matching `0.1.0-alpha.1` version strings.
+The catalog also locks the target platform, runtime profile, and SDK process protocol. The build script and desktop installer verify these exact pins.
 
-The application build uses the SDK's supported Process3 versions to check the catalog. A compatible older package keeps its exact SDK artifact, source commit, and package and transport digests.
+The application build checks the catalog against the current SDK and Process 4. Rebuild older packages with the matching SDK and update their source commit, SDK archive, package digest and transport digest together.
 
 The pinned WebVTT and SMAPI packages preserve source-extraction context facts and source revisions via the SDK helpers, and the WebVTT package also supports importing existing translated captions from a target-language `.vtt` file (with independent semantic checks and per-entry adoption). When updating a bundled plugin, update its source commit, SDK artifact, transport SHA-256, and `packageDigest` together.
 
@@ -51,15 +51,13 @@ The pinned WebVTT and SMAPI packages preserve source-extraction context facts an
 
 The public [plugin repository](https://github.com/Anpimi/tsumugi-plugins) owns plugin builds, packaging recipes, domain dependencies, and reproducible uncompressed `.tar` archives.
 
-Before running the preparation script, download the matching release archives and place them in a local directory as `webvtt.tar` and `stardew-smapi.tar`:
-- [WebVTT (`webvtt/v0.1.0-alpha.1`)](https://github.com/Anpimi/Tsumugi-plugins/releases/tag/webvtt/v0.1.0-alpha.1)
-- [SMAPI (`stardew-smapi/v0.1.0-alpha.1`)](https://github.com/Anpimi/Tsumugi-plugins/releases/tag/stardew-smapi/v0.1.0-alpha.1)
+Place the exact catalog archives in a local directory as `webvtt.tar` and `stardew-smapi.tar`. Use release assets when they match the catalog. For the current Process 4 development catalog, build the WebVTT and SMAPI `0.1.0-alpha.2` archives from the entries' pinned `sourceCommit` and SDK lock. Use the plugin repository's [candidate build workflow](https://github.com/Anpimi/Tsumugi-plugins#build-and-check-all-independent-candidates).
 
 Verify their transport SHA-256 checksums against `bundled-plugins.macos-aarch64.json`. The preparation script operates strictly offline—if an archive is missing, it fails immediately rather than fetching source code or building a replacement. Note that the transport SHA-256 covers the `.tar` file bytes, while `packageDigest` is computed by the Rust Host over the unpacked manifest, files, and executable flags.
 
 ## Prepare and build
 
-Use a trusted Apple Silicon macOS 13.5+ builder with Rust 1.98+, Node 26.10.x, pnpm 12 and Python 3.11+. Fetch the locked dependencies and the exact archives before working offline. The Node archive is fixed by [`node-distribution.macos-aarch64.json`](../runtimes/javascript-host/scripts/node-distribution.macos-aarch64.json). The plugin archives must match the catalog above. No preparation command downloads a replacement.
+Use a trusted Apple Silicon macOS 13.5+ builder with Rust 1.98+, Node 26.10.x, pnpm 12 and Python 3.11+. Set up [libclang for the native build](build-release.md#native-application-build-prerequisites). Fetch the locked dependencies and prepare the exact archives before working offline. The Node archive is fixed by [`node-distribution.macos-aarch64.json`](../runtimes/javascript-host/scripts/node-distribution.macos-aarch64.json). The plugin archives must match the catalog above. No preparation command downloads a replacement.
 
 From the repository root, first install the frozen dependencies and build the Host. A production deploy must include its compiled `dist` tree:
 

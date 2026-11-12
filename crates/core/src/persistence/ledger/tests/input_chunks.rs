@@ -72,7 +72,9 @@ fn continuation_receipt_chunks_and_attempt_share_one_transaction_and_reopen_exac
     let next = store
         .execution_retry_input(action.source_attempt_id, &action.item_ids)
         .unwrap();
-    assert!(next.bytes().len() > MAX_STORED_INPUT_BYTES);
+    // The receipt must commit a multi-chunk frame. The maximum descriptor
+    // capacity is independent of the size of this particular raw input.
+    assert!(next.bytes().len() > 2 * CHUNK_BYTES);
     let counts = |store: &ProjectStore| {
         [
             "execution_input_chunks",
@@ -137,7 +139,11 @@ fn continuation_receipt_chunks_and_attempt_share_one_transaction_and_reopen_exac
         stored["rawBytes"].as_u64().unwrap(),
         next.bytes().len() as u64
     );
-    assert!(stored["chunks"].as_array().unwrap().len() > 1);
+    assert_eq!(
+        stored["chunks"].as_array().unwrap().len(),
+        next.bytes().len().div_ceil(CHUNK_BYTES)
+    );
+    assert!(serde_json::to_vec(&stored).unwrap().len() < next.bytes().len());
     assert_eq!(
         store.execution_input(receipt.attempt_id).unwrap().bytes(),
         next.bytes()
@@ -213,12 +219,26 @@ fn exact_frames_share_chunks_and_preserve_distinct_identities_after_reopen() {
             .map(|value| value.as_str().unwrap().to_owned())
             .collect::<std::collections::BTreeSet<_>>()
     };
-    assert!(
-        chunks(&first_manifest)
-            .intersection(&chunks(&second_manifest))
-            .count()
-            > 20
+    // Derive the sharing oracle from the original byte slices, independently
+    // of stored digests. Only the identity-bearing first/last chunks differ.
+    let original_chunks = |input: &FixedInput| {
+        input.bytes().chunks(CHUNK_BYTES)
+            .map(<[u8]>::to_vec)
+            .collect::<std::collections::BTreeSet<_>>()
+    };
+    let first_chunks = original_chunks(&first);
+    let second_chunks = original_chunks(&second);
+    let shared = first_chunks.intersection(&second_chunks).count();
+    assert!(first_chunks.len() > 2);
+    assert!(shared >= first_chunks.len() - 2);
+    assert_eq!(
+        chunks(&first_manifest).intersection(&chunks(&second_manifest)).count(),
+        shared
     );
+    let unique_chunks: i64 = connection.query_row(
+        "SELECT COUNT(*) FROM execution_input_chunks", [], |row| row.get(0),
+    ).unwrap();
+    assert_eq!(unique_chunks as usize, first_chunks.union(&second_chunks).count());
     let bytes: i64 = connection
         .query_row(
             "SELECT SUM(length(bytes)) FROM execution_input_chunks",

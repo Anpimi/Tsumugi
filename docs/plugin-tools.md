@@ -56,7 +56,7 @@ Read-only Tool components can also use `Application` scope so a single worker pr
 
 A component qualifies for shared `Application` scope if it declares no required service dependencies and no `ProjectService` permissions, and is either:
 - A **JavaScript Tool component** where every callable capability in its Process protocol 3 roster (up to 128 unique callables) is read-only, or
-- A **Native (Rust) Process 3 worker** with a single read-only callable capability.
+- A **Native (Rust) Process 4 worker** with a single read-only callable capability.
 
 Native multi-callable workers, components that require or offer project services, domain Source/Translation/Review/Build capabilities, work-plan Agent tools, and generation components do not support `Application` scope.
 

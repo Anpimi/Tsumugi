@@ -2,7 +2,7 @@
 
 This guide walks through building, inspecting, and loading a Tsumugi plugin package using two complete reference implementations: a Rust flat-JSON catalog plugin and a JavaScript WebVTT subtitle plugin.
 
-> **Experimental status**: `tsumugi-plugin-sdk` is currently at `0.1.0-alpha.1` and is not yet published to crates.io. Because multiple development snapshots may share the `0.1.0-alpha.1` version string while evolving their contracts, always pair your plugin checkout with the exact matching Tsumugi SDK artifact, Host binary, and runtime environment.
+The experimental `tsumugi-plugin-sdk` `0.1.0-alpha.9` uses Process 4 and is distributed as a pinned archive. Use the exact matching SDK artifact, Host binary, and runtime environment for your plugin checkout.
 
 ## Obtain a complete matching snapshot
 
@@ -39,15 +39,15 @@ cargo test --locked -p tsumugi-sdk-probe
 cargo run --locked -p tsumugi-sdk-probe -- plugins/webvtt/manifest.json
 ```
 
-`prepare-sdk.py` checks the `.crate` archive referenced in `sdk.lock.json` against its SHA-256 digest, extracts it into `.cache/sdk/tsumugi-plugin-sdk-0.1.0-alpha.1/`, and stages the JavaScript SDK helpers, printing:
+`prepare-sdk.py` checks the `.crate` archive referenced in `sdk.lock.json` against its SHA-256 digest, extracts it into `.cache/sdk/tsumugi-plugin-sdk-0.1.0-alpha.9/`, and stages the JavaScript SDK helpers, printing:
 
 ```text
-Prepared tsumugi-plugin-sdk-0.1.0-alpha.1 from the verified SDK artifact
+Prepared tsumugi-plugin-sdk-0.1.0-alpha.9 from the verified SDK artifact
 ```
 
-The `tsumugi-sdk-probe` crate compiles against that extracted SDK; its test suite checks the public data contracts against synthetic inputs, and running it against `plugins/webvtt/manifest.json` prints the validated `org.tsumugi / webvtt @ 0.1.0-alpha.1` identity along with component and contribution counts.
+The `tsumugi-sdk-probe` crate compiles against the extracted SDK and tests the public data contracts with synthetic inputs. Running it against `plugins/webvtt/manifest.json` prints the validated `org.tsumugi / webvtt @ 0.1.0-alpha.2` identity and the component and contribution counts.
 
-Keep `sdk.lock.json` (`archive`, `sha256`, `sourceRepository`, `sourceCommit`, license, and publication fields), dependency lockfiles, and the `.crate` artifact committed together. For details on updating the SDK archive, see the plugin repository's [SDK provenance documentation](https://github.com/Anpimi/tsumugi-plugins/tree/main/artifacts/sdk). Never hand-edit files inside `.cache/sdk/` or generated validators—`prepare-sdk.py` verifies existing cache contents on each run and fails if any file was modified. If you need to replace a dirty cache, move or delete the old `.cache/sdk/tsumugi-plugin-sdk-0.1.0-alpha.1/` directory first.
+Keep `sdk.lock.json` (`archive`, `sha256`, `sourceRepository`, `sourceCommit`, license, and publication fields), dependency lockfiles, and the `.crate` artifact committed together. For details on updating the SDK archive, see the plugin repository's [SDK provenance documentation](https://github.com/Anpimi/tsumugi-plugins/tree/main/artifacts/sdk). Never hand-edit files inside `.cache/sdk/` or generated validators—`prepare-sdk.py` verifies existing cache contents on each run and fails if any file was modified. If you need to replace a dirty cache, move or delete the affected version directory under `.cache/sdk/` first.
 
 ## Choose an implementation
 
@@ -244,7 +244,7 @@ When reporting or debugging an error, note the exact stage and error identifier:
 | `plugin-selection-expired` or `plugin-candidate-changed` | Re-select the package folder in **Extensions** and verify its current fingerprint before approving. |
 | `plugin-approval-mismatch`, unavailable capability or `RuntimeMismatch` | Refresh extension state and verify that the package is installed, approved, and enabled, and that the matching Native Host or JavaScript runtime is approved. |
 | No bundled runtime, unsupported platform or unavailable Native Host identity | Use a desktop build and platform that include the required runtime environment; a system `node` binary on `PATH` cannot substitute for the bundled runtime. |
-| `HandshakeMismatch`, `InvalidFrame`, `RequestMismatch`, `ResultMismatch` | Check that the plugin, Host, and runtime were built from matching SDK snapshots (Process protocol 3), that `activate` registers every assigned contribution, and that workers write only protocol frames to `stdout` (use `stderr` for logs). |
+| `HandshakeMismatch`, `InvalidFrame`, `RequestMismatch`, `ResultMismatch` | Check that the plugin, Host, and runtime use the matching SDK and Process 4, that `activate` registers every assigned contribution, and that workers write only protocol frames to `stdout` (use `stderr` for logs). |
 | `DependencyUnavailable` | Verify that any required service declared by the component is supported and permitted in the target scope by the Host broker. |
 | `Timeout`, `Cancelled`, `AuthorityRevoked`, `Closed` or `OutputLimit` | Check the declared and Host execution limits, ensure your worker handles cancellation signals and `onDispose` cleanup, and start a fresh attempt if the previous grant expired. |
 | Domain error or blocking check findings | Inspect the domain error or check report and fix the input file or plugin logic. Passing execution and coverage checks does not bypass blocking semantic findings. |
@@ -257,10 +257,10 @@ Tsumugi tracks several distinct version and identity boundaries:
 
 | Identity | Current meaning |
 |---|---|
-| SDK package SemVer and archive SHA-256/provenance | Identifies the exact experimental SDK snapshot (`0.1.0-alpha.1` plus archive hash and producer commit). |
+| SDK package SemVer and archive SHA-256/provenance | Identifies the exact experimental SDK snapshot by version, archive digest, and producer commit. |
 | Manifest and content-exchange envelope protocols | Independently versioned SDK data formats (currently protocol `1`). |
 | Capability, payload schema and profile references | Matched by exact `(id, schemaVersion, behaviorVersion)` tuple with no implicit range matching or fallback. |
-| Process protocol | Currently version `3` with a frozen per-component capability roster. Process protocol `1` and `2` workers and runtime descriptors are rejected. |
+| Process protocol | Version `4` uses bounded transport chunks and a frozen per-component capability roster. Workers and runtime descriptors must use version `4`. |
 | Package identity and `packageDigest` | Declared plugin metadata plus the digest of all packaged files and executable permissions, independent of installation origin. |
 | Runtime descriptor/digest and platform | The approved Node/Host directory trees or Native application Host binary, managed separately from plugin packages. |
 | Project storage and installation formats | Owned by Tsumugi Core and PackageStore; updating the SDK does not automatically migrate older development project databases. |

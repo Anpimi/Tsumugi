@@ -241,6 +241,8 @@ impl FixedInput {
             let raw = envelope.limits.max_result_bytes.saturating_sub(64 * 1024) / 3;
             let payload_limit = if declaration.output_schema == sdk::artifact_set_contract() {
                 sdk::MAX_ARTIFACT_SET_BYTES
+            } else if declaration.output_schema == sdk::check_results_contract() {
+                sdk::MAX_CHECK_RESULTS_BYTES
             } else {
                 sdk::MAX_EXCHANGE_BYTES
             };

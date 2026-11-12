@@ -130,7 +130,7 @@ impl Destination<'_> {
         let stamp = platform::stamp(&file)?;
         let bytes = read(
             &mut file,
-            tsumugi_plugin_sdk::MAX_EXCHANGE_BYTES,
+            tsumugi_plugin_sdk::MAX_MATERIAL_BYTES,
             &|| Ok(()),
         )?;
         #[cfg(target_os = "macos")]

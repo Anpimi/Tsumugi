@@ -45,7 +45,7 @@ const TABLES: &[(&str, &str)] = &[
         "CREATE TABLE release_artifacts (
         release_id TEXT NOT NULL REFERENCES release_records(release_id),
         locale TEXT NOT NULL, artifact_id TEXT NOT NULL, role TEXT NOT NULL, file_name TEXT NOT NULL,
-        bytes BLOB NOT NULL CHECK(length(bytes) BETWEEN 0 AND 2097152),
+        bytes BLOB NOT NULL CHECK(length(bytes) BETWEEN 0 AND 134217728),
         sha256 TEXT NOT NULL CHECK(length(sha256)=64),
         validator_version TEXT NOT NULL, entry_count INTEGER NOT NULL CHECK(entry_count>0),
         PRIMARY KEY(release_id,locale,artifact_id), UNIQUE(release_id,file_name))",

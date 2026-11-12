@@ -1,6 +1,6 @@
 import { isAbsolute } from 'node:path';
 import { ComponentSession } from './component.js';
-import { FrameDecoder, encodeFrame } from './codec.js';
+import { FrameDecoder, frameChunks } from './codec.js';
 import { PROCESS_PROFILE } from './generated/protocol.js';
 
 // This is lifecycle isolation, not a Node permission sandbox. The Rust parent
@@ -14,15 +14,21 @@ const [major, minor] = process.versions.node.split('.').map(Number);
 if (process.argv.length !== 3 || !entry || !isAbsolute(entry) || major !== 26 || minor! < 10) fail();
 let pending = 0;
 let total = 0;
+let writing = Promise.resolve();
 const session = new ComponentSession(entry!, frame => {
-  const bytes = encodeFrame(frame);
-  total += bytes.length;
-  if (pending >= 2 || total > PROCESS_PROFILE.maxSessionBytes) throw new Error('Output limit');
+  if (pending >= 2) throw new Error('Output limit');
   pending++;
-  return new Promise<void>((resolve, reject) => process.stdout.write(bytes, error => {
-    pending--;
-    if (error) reject(new Error('Output unavailable')); else resolve();
-  }));
+  const sent = writing.then(async () => {
+    for (const bytes of frameChunks(frame)) {
+      total += bytes.length;
+      if (total > PROCESS_PROFILE.maxSessionBytes) throw new Error('Output limit');
+      await new Promise<void>((resolve, reject) => process.stdout.write(bytes, error => {
+        if (error) reject(new Error('Output unavailable')); else resolve();
+      }));
+    }
+  });
+  writing = sent;
+  return sent.finally(() => { pending--; });
 }, fail, () => process.exit(0));
 const decoder = new FrameDecoder();
 process.on('uncaughtException', fail);

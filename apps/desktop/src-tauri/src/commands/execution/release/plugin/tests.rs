@@ -454,7 +454,7 @@ fn installed_build_and_checks(workflow: bool, failure_outcome: Option<&str>) {
     };
     let host = if workflow {
         PathBuf::from(
-            std::env::var_os("TSUMUGI_TEST_RUNTIME_HOST").expect("explicit Process3 Host required"),
+            std::env::var_os("TSUMUGI_TEST_RUNTIME_HOST").expect("matching Host required"),
         )
     } else {
         resources.join("host")

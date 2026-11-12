@@ -492,11 +492,12 @@ fn captured_runtime_diagnoses_sdk_and_process_versions_independently_of_payload_
     assert_eq!(descriptor.process_protocol, sdk::PROCESS_PROTOCOL);
     let tool = PathBuf::from(std::env::var_os("TSUMUGI_TEST_RUNTIME_TOOL").unwrap());
     let host = PathBuf::from(std::env::var_os("TSUMUGI_TEST_RUNTIME_HOST").unwrap());
-    for axis in ["sdk", "process"] {
+    for axis in ["sdk", "legacy-process", "future-process"] {
         let mut unsupported = descriptor.clone();
         match axis {
-            "sdk" => unsupported.sdk_version = "0.1.0-alpha.2".into(),
-            "process" => unsupported.process_protocol = 1,
+            "sdk" => unsupported.sdk_version = "0.1.0-alpha.8".into(),
+            "legacy-process" => unsupported.process_protocol = 3,
+            "future-process" => unsupported.process_protocol = sdk::PROCESS_PROTOCOL + 1,
             _ => unreachable!(),
         }
         // A structurally valid description is not a compatible runtime.
@@ -517,5 +518,5 @@ fn captured_runtime_diagnoses_sdk_and_process_versions_independently_of_payload_
         assert!(!read_guard_called.get());
     }
     assert_eq!(descriptor.sdk_version, sdk::SDK_VERSION);
-    assert_eq!(descriptor.process_protocol, 3);
+    assert_eq!(descriptor.process_protocol, 4);
 }

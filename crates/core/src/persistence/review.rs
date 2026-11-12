@@ -31,7 +31,9 @@ pub(super) use checks::{
 };
 pub(super) const POLICY_VERSION: &str = "balanced-1";
 pub(super) const STAGED_POLICY_VERSION: &str = "balanced-1-staged-1";
-const MAX_SCOPE: usize = 10_000;
+const MAX_SCOPE: usize = crate::execution::MAX_ITEMS;
+const MAX_HISTORY_OFFSET: u32 = 10_000;
+const MAX_ELIGIBILITY_BASIS_BYTES: usize = 512 * 1024 * 1024;
 
 pub use checks::{SegmentQaCounts, SegmentQaSummary};
 
@@ -1059,7 +1061,7 @@ impl ProjectStore {
         offset: u32,
         limit: u32,
     ) -> Result<ReviewHistoryPage, ExecutionError> {
-        if limit == 0 || limit > 50 || offset > MAX_SCOPE as u32 {
+        if limit == 0 || limit > 50 || offset > MAX_HISTORY_OFFSET {
             return Err(failure(ErrorCode::InvalidInput, "review-history-page"));
         }
         let parsed = crate::Locale::parse(locale)
@@ -1607,11 +1609,11 @@ fn all_units(
     let mut statement = connection
         .prepare(
             "SELECT o.unit_id FROM source_effective_occurrences o JOIN source_units u ON u.unit_id=o.unit_id
-         WHERE o.snapshot_id=?1 AND u.project_id=?2 GROUP BY o.unit_id ORDER BY MIN(o.ordinal) LIMIT 10001",
+         WHERE o.snapshot_id=?1 AND u.project_id=?2 GROUP BY o.unit_id ORDER BY MIN(o.ordinal) LIMIT ?3",
         )
         .map_err(sql)?;
     let units = statement
-        .query_map(params![snapshot, project_id.to_string()], |row| {
+        .query_map(params![snapshot, project_id.to_string(), (MAX_SCOPE + 1) as i64], |row| {
             row.get::<_, String>(0)
         })
         .map_err(sql)?
@@ -1863,6 +1865,7 @@ impl ProjectStore {
                 check_project(connection, project_id, locale)?;
             }
             let (source_snapshot_id, units) = all_units(connection, project_id)?;
+            let source_units: BTreeSet<_> = units.iter().copied().collect();
             let observation = self.changes_since(Revision::new(0)?);
             let unresolved=super::content::maintenance::unresolved_occurrences_in(connection,source_snapshot_id,MAX_SCOPE+1)?.into_iter().map(|(_,unit)|unit).collect::<BTreeSet<_>>();
             let mut outcomes = Vec::new();
@@ -1870,7 +1873,7 @@ impl ProjectStore {
             for locale in &requested {
                 queries::check_read_cancel(cancellation)?;
                 let translated = scopes.get(locale).map(|units| units.iter().copied().collect::<BTreeSet<_>>());
-                if translated.as_ref().is_some_and(|selected| selected.iter().any(|unit| !units.contains(unit))) {
+                if translated.as_ref().is_some_and(|selected| !selected.is_subset(&source_units)) {
                     return Err(failure(ErrorCode::InvalidInput, "build-translation-scope"));
                 }
                 let impacts = self.impact_map(project_id, locale)?;
@@ -1957,9 +1960,9 @@ impl ProjectStore {
                 epoch: observation.epoch,
                 sequence: observation.sequence,
                 basis: if scopes.is_empty() {
-                    digest(&(POLICY_VERSION, source_snapshot_id, &bases))?
+                    codec::digest_encoded(&(POLICY_VERSION, source_snapshot_id, &bases), MAX_ELIGIBILITY_BASIS_BYTES)?
                 } else {
-                    digest(&(policy, source_snapshot_id, &bases, &scopes))?
+                    codec::digest_encoded(&(policy, source_snapshot_id, &bases, &scopes), MAX_ELIGIBILITY_BASIS_BYTES)?
                 },
                 ready,
                 locales: outcomes,

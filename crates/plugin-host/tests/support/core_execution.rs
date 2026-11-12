@@ -12,7 +12,7 @@ pub fn authorize(
         .duration_since(UNIX_EPOCH)
         .unwrap()
         .as_millis() as u64
-        + 180_000;
+        + u64::from(input.envelope().limits.timeout_ms) + 60_000;
     runtime
         .authorize_plugin(
             store,
@@ -42,7 +42,12 @@ pub fn execute_all(
     input: &FixedInput,
 ) -> Vec<FixedResult> {
     runtime.submit(store, input).unwrap();
-    let deadline = Instant::now() + Duration::from_secs(20);
+    // The captured timeout applies to one physical dispatch. A projection has
+    // many independent items; bound the test attempt separately.
+    let attempt_budget = Duration::from_millis(u64::from(input.envelope().limits.timeout_ms))
+        + Duration::from_millis((input.envelope().items.len() as u64).saturating_sub(1) * 20)
+        + Duration::from_secs(10);
+    let deadline = Instant::now() + attempt_budget.min(Duration::from_secs(1800));
     loop {
         runtime.tick(store).unwrap();
         if !runtime.is_active(input.envelope().attempt_id) {

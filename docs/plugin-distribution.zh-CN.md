@@ -4,7 +4,7 @@
 
 可选的 Apple silicon（`aarch64`）macOS 桌面发行包内置了固定版本的 Node/Host 运行环境（要求 macOS 13.5 或更高版本），以及 **WebVTT** 和 **SMAPI** 两个预构建扩展包。终端用户直接运行打包后的桌面应用即可，无需安装 Node.js、Rust、Python、`pnpm` 或 Git。本文介绍开发者如何在离线构建环境中准备并打包这些内置扩展资源。
 
-当前配置使用为 [Mac 应用实验预发布](experimental-release.zh-CN.md) 构建的未签名实验插件归档。
+当前开发配置使用未签名的 Process 4 插件候选包。[已发布的 Mac 预发布版本](experimental-release.zh-CN.md)保留其原有包清单。
 
 ## 平台与构建支持
 
@@ -41,9 +41,9 @@
 - 传输归档文件名（`archiveName`）及其 SHA-256 摘要
 - 精确的 SDK 产物与版本
 
-该清单同时锁定了目标平台、运行环境 profile 与 SDK process protocol。构建脚本和桌面安装流程都会严格校验这些固定值，而不会仅凭相同的 `0.1.0-alpha.1` 版本号推定兼容。
+该清单同时锁定了目标平台、运行环境 profile 与 SDK process protocol。构建脚本和桌面安装流程都会严格校验这些固定值。
 
-应用打包按 SDK 的 Process3 支持范围核对清单。仍受支持的旧插件继续使用准确固定的 SDK 归档、源码提交、插件摘要和传输摘要。
+应用打包按当前 SDK 和 Process 4 核对清单。旧插件需要用匹配的 SDK 重建，并同步更新源码提交、SDK 归档、插件摘要和传输摘要。
 
 当前锁定的 WebVTT 与 SMAPI 候选包通过 SDK helpers 保留源码提取的上下文事实及源码修订号（revision）；WebVTT 包还支持从捕获的目标语言 `.vtt` 文件导入既有译文（经独立语义检查后逐条确认采纳）。升级随附候选包时，必须同步更新源码提交、SDK 产物、传输归档 SHA-256 以及完整的 Host `packageDigest`。
 
@@ -51,15 +51,13 @@
 
 [公开插件仓库](https://github.com/Anpimi/tsumugi-plugins)负责插件构建、文件配方、领域依赖以及确定性的未压缩 `.tar` 归档。
 
-在执行准备脚本前，请下载与清单匹配的发布归档，并在本地目录中分别命名为 `webvtt.tar` 和 `stardew-smapi.tar`：
-- [WebVTT（`webvtt/v0.1.0-alpha.1`）](https://github.com/Anpimi/Tsumugi-plugins/releases/tag/webvtt/v0.1.0-alpha.1)
-- [SMAPI（`stardew-smapi/v0.1.0-alpha.1`）](https://github.com/Anpimi/Tsumugi-plugins/releases/tag/stardew-smapi/v0.1.0-alpha.1)
+将与清单完全匹配的归档放入同一个本地目录，分别命名为 `webvtt.tar` 和 `stardew-smapi.tar`。可使用与清单一致的发布产物。当前 Process 4 开发版清单使用 WebVTT 和 SMAPI 的 `0.1.0-alpha.2` 归档。在插件仓库检出条目固定的 `sourceCommit`，沿用对应的 SDK 锁定信息，按[候选构建流程](https://github.com/Anpimi/Tsumugi-plugins#build-and-check-all-independent-candidates)生成 `.tar`。
 
 请核对归档文件的传输 SHA-256 是否与 `bundled-plugins.macos-aarch64.json` 一致。准备脚本完全离线运行——若归档缺失会直接报错，不会联网拉取分支或重新编译替代产物。请注意：传输 SHA-256 校验的是 `.tar` 归档字节，而 `packageDigest` 由 Rust Host 根据解包后的完整文件内容与可执行权限位计算得出。
 
 ## 准备与构建
 
-使用可信的 Apple Silicon macOS 13.5+ 构建机，准备 Rust 1.98+、Node 26.10.x、pnpm 12、Python 3.11+。离线工作前先获取冻结依赖、[`node-distribution.macos-aarch64.json`](../runtimes/javascript-host/scripts/node-distribution.macos-aarch64.json)固定的 Node 归档和上文清单匹配的插件归档。准备命令不会下载替代品。
+使用可信的 Apple Silicon macOS 13.5+ 构建机，准备 Rust 1.98+、Node 26.10.x、pnpm 12、Python 3.11+，并[配置原生构建所需的 libclang](build-release.md#native-application-build-prerequisites)。离线工作前先获取冻结依赖、[`node-distribution.macos-aarch64.json`](../runtimes/javascript-host/scripts/node-distribution.macos-aarch64.json)固定的 Node 归档和上文清单匹配的插件归档。准备命令不会下载替代品。
 
 从仓库根目录先安装冻结依赖并构建 Host，production deploy 必须包含已编译的 `dist`：
 

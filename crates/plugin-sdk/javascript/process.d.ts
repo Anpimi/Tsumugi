@@ -117,13 +117,13 @@ export type InvocationOutcome =
     };
 
 /**
- * Wire representation: a four-byte big-endian length followed by exactly that
- * many JSON bytes. Stdout is reserved for frames; stderr is a separate bounded
- * diagnostic stream. Hosts must also enforce direction, state and deadlines.
+ * A JSON message carried by bounded length-prefixed chunks and a zero-length
+ * terminator. Stdout is reserved for this stream; stderr remains separately
+ * bounded. Hosts also enforce direction, state, authority and deadlines.
  */
 export interface ProcessFrame {
   body: ProcessBody;
-  protocolVersion: 3;
+  protocolVersion: 4;
 }
 /**
  * A frozen declaration roster for one actual component channel. A Ready

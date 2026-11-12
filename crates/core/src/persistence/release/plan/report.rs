@@ -280,7 +280,7 @@ impl ReleasePlan {
         // project edits, application version and live package metadata.
         Ok((
             path(index, &locale.choice.locale),
-            codec::encode(&report, sdk::MAX_EXCHANGE_BYTES)?,
+            codec::encode(&report, 32 * 1024 * 1024)?,
         ))
     }
 }

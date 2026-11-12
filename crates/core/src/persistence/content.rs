@@ -1,6 +1,6 @@
 use super::{
     ProjectStore,
-    ledger::{load_input, load_input_cached, load_qualified_source, load_result, read_receipt, sql_error},
+    ledger::{load_input, load_qualified_source, load_result, read_receipt, sql_error},
 };
 use crate::{
     content::*,
@@ -46,12 +46,12 @@ impl SourcePositions<'_> {
 pub(super) const TABLES:&[(&str,&str)]=&[
     ("source_sets","CREATE TABLE source_sets (
         set_id TEXT PRIMARY KEY NOT NULL, project_id TEXT NOT NULL,
-        payload BLOB NOT NULL CHECK(length(payload) BETWEEN 1 AND 4194304), digest TEXT NOT NULL CHECK(length(digest)=64),
+        payload BLOB NOT NULL CHECK(length(payload) BETWEEN 1 AND 402653184), digest TEXT NOT NULL CHECK(length(digest)=64),
         UNIQUE(set_id,project_id))"),
     ("source_files","CREATE TABLE source_files (
         artifact_id TEXT PRIMARY KEY NOT NULL, set_id TEXT NOT NULL REFERENCES source_sets(set_id),
         logical_path TEXT NOT NULL, role TEXT NOT NULL,
-        bytes BLOB NOT NULL CHECK(length(bytes)<=2097152), digest TEXT NOT NULL CHECK(length(digest)=64),
+        bytes BLOB NOT NULL CHECK(length(bytes)<=134217728), digest TEXT NOT NULL CHECK(length(digest)=64),
         UNIQUE(set_id,logical_path), UNIQUE(set_id,artifact_id))"),
     ("source_snapshots","CREATE TABLE source_snapshots (
         snapshot_id TEXT PRIMARY KEY NOT NULL, project_id TEXT NOT NULL, set_id TEXT NOT NULL,
@@ -197,7 +197,7 @@ pub(super) fn read_bundle(
     set: ExecutionId,
 ) -> Result<tsumugi_plugin_sdk::SourceExtractionInput, ExecutionError> {
     let input_limit = MAX_CAPTURED_SOURCE_INPUT_BYTES;
-    let file_limit = tsumugi_plugin_sdk::MAX_EXCHANGE_BYTES;
+    let file_limit = tsumugi_plugin_sdk::MAX_MATERIAL_BYTES;
     let (project,payload,digest):(String,Vec<u8>,String)=connection.query_row(
         "SELECT project_id,CASE WHEN length(payload)<=?2 THEN payload END,digest FROM source_sets WHERE set_id=?1",
         params![set.to_string(),input_limit as i64],|r|Ok((r.get(0)?,r.get(1)?,r.get(2)?))).map_err(sql_error)?;
@@ -558,10 +558,39 @@ pub(super) fn snapshot_rows(
 ) -> Result<
     (
         u64,
-        (FixedInput, FixedResult, SourceOutput, Vec<ContentRow>),
+        (FixedInput, FixedResult, std::sync::Arc<SourceOutput>, Vec<ContentRow>),
     ),
     ExecutionError,
 > {
+    super::review::read_snapshot(connection, |connection| {
+        let (revision, (input, result, output)) = snapshot_qualification(connection, snapshot, has_lineage)?;
+        let (_, rows) = read_snapshot_rows(connection, snapshot, &output, "", 0, u32::MAX)?;
+        Ok((revision, (input, result, output, rows)))
+    })
+}
+
+fn check_source_bundle(
+    connection: &Connection,
+    input: &FixedInput,
+    result: &FixedResult,
+) -> Result<(), ExecutionError> {
+    if super::ledger::source_read_validation(connection, result.envelope().result_id)?
+        .is_some_and(|(bundle, _)| bundle)
+    {
+        return Ok(());
+    }
+    let bundle = SourceBundle::from_input(input)?;
+    if read_bundle(connection, bundle.set_id)? != bundle.source_input() {
+        return Err(corrupt());
+    }
+    super::ledger::remember_source_read_validation(connection, result.envelope().result_id, None)
+}
+
+fn snapshot_qualification(
+    connection: &Connection,
+    snapshot: ExecutionId,
+    has_lineage: bool,
+) -> Result<(u64, (FixedInput, FixedResult, std::sync::Arc<SourceOutput>)), ExecutionError> {
     let (project,set,attempt,result,language,policy):(String,String,String,String,String,String)=connection.query_row("SELECT project_id,set_id,attempt_id,result_id,source_language,identity_policy FROM source_snapshots WHERE snapshot_id=?1",[snapshot.to_string()],|r|Ok((r.get(0)?,r.get(1)?,r.get(2)?,r.get(3)?,r.get(4)?,r.get(5)?))).map_err(sql_error)?;
     let (input, result, output) = load_qualified_source(connection, id(attempt)?, id(result)?)?;
     if project != input.envelope().project_id.to_string()
@@ -571,10 +600,14 @@ pub(super) fn snapshot_rows(
     {
         return Err(corrupt());
     }
-    let bundle = SourceBundle::from_input(&input)?;
-    if read_bundle(connection, bundle.set_id)? != bundle.source_input() {
-        return Err(corrupt());
+    if let Some((true, Some((verified, lineage, revision)))) =
+        super::ledger::source_read_validation(connection, result.envelope().result_id)?
+    {
+        if verified == snapshot && (lineage || !has_lineage) {
+            return Ok((revision, (input, result, output)));
+        }
     }
+    check_source_bundle(connection, &input, &result)?;
     let count: i64 = connection
         .query_row(
             "SELECT COUNT(*) FROM source_occurrences WHERE snapshot_id=?1",
@@ -585,7 +618,7 @@ pub(super) fn snapshot_rows(
     if count as usize != output.occurrences.len() {
         return Err(corrupt());
     }
-    let mut rows = Vec::new();
+    let mut occurrence_ids = Vec::with_capacity(output.occurrences.len());
     let mut predecessors = std::collections::BTreeMap::new();
     let lineage_fields = if has_lineage {
         "l.predecessor_id,l.relation"
@@ -660,14 +693,11 @@ pub(super) fn snapshot_rows(
                 artifact: r.get(23)?,
             })
         })
-        .map_err(sql_error)?
-        .collect::<Result<Vec<_>, _>>()
         .map_err(sql_error)?;
-    if stored.len() != output.occurrences.len() {
-        return Err(corrupt());
-    }
     let mut unit_mappings = std::collections::BTreeMap::new();
-    for (expected, row) in output.occurrences.iter().zip(stored) {
+    for (ordinal, row) in stored.enumerate() {
+        let row = row.map_err(sql_error)?;
+        let expected = output.occurrences.get(ordinal).ok_or_else(corrupt)?;
         let projected: SourceOccurrence = codec::decode(&row.projection, MAX_INPUT_BYTES)?;
         if projected != *expected
             || row.ordinal != expected.ordinal
@@ -703,12 +733,9 @@ pub(super) fn snapshot_rows(
                 return Err(corrupt());
             }
         }
-        rows.push(ContentRow {
-            occurrence_id: Some(id(row.occurrence.clone())?),
-            unit_id: Some(id(row.unit)?),
-            source_revision_id: Some(id(row.revision)?),
-            occurrence: expected.clone(),
-        });
+        occurrence_ids.push(id(row.occurrence.clone())?);
+        id(row.unit)?;
+        id(row.revision)?;
         if has_lineage {
             let relation = row.relation.ok_or_else(corrupt)?;
             if (row.predecessor.is_none() && !matches!(relation.as_str(), "initial" | "new"))
@@ -719,6 +746,9 @@ pub(super) fn snapshot_rows(
             }
             predecessors.insert(row.occurrence, row.predecessor);
         }
+    }
+    if occurrence_ids.len() != output.occurrences.len() {
+        return Err(corrupt());
     }
     let mut statement = connection
         .prepare(
@@ -784,6 +814,10 @@ pub(super) fn snapshot_rows(
             return Err(corrupt());
         }
         let mut explicit = std::collections::BTreeSet::new();
+        let mut explicit_choices = std::collections::BTreeMap::new();
+        for choice in &confirmation.lineage {
+            explicit_choices.entry((choice.new_ordinal, choice.old_occurrence_id.to_string())).or_insert(choice);
+        }
         let mut statement = connection.prepare("SELECT n.ordinal,e.old_occurrence_id,e.decision,e.actor,e.reason,e.action_id FROM source_lineage_evidence e JOIN source_occurrences n ON n.occurrence_id=e.new_occurrence_id WHERE n.snapshot_id=?1").map_err(sql_error)?;
         for row in statement
             .query_map([snapshot.to_string()], |r| {
@@ -804,12 +838,7 @@ pub(super) fn snapshot_rows(
                 return Err(corrupt());
             }
             if decision != "candidate" {
-                let choice = confirmation
-                    .lineage
-                    .iter()
-                    .find(|choice| {
-                        choice.new_ordinal == ordinal && choice.old_occurrence_id.to_string() == old
-                    })
+                let choice = explicit_choices.get(&(ordinal, old))
                     .ok_or_else(corrupt)?;
                 let expected = if choice.decision == LineageDecision::Continue {
                     "continue"
@@ -874,25 +903,33 @@ pub(super) fn snapshot_rows(
                 let (new, old) = edge.map_err(sql_error)?;
                 actual_edges.entry(new).or_default().insert(old);
             }
-            for row in &rows {
-                let mut expected = std::collections::BTreeSet::new();
-                for (id, old) in &old_rows {
-                    if identity_family(old, &row.occurrence)
-                        && (row.occurrence.same_identity(old)
-                            || (old.text == row.occurrence.text
-                                && old.comparison_key()?.is_none_or(|key| !keys.contains(&key))))
-                    {
-                        expected.insert(id.clone());
-                    }
+            let mut old_by_identity = std::collections::BTreeMap::new();
+            let mut old_by_family_text = std::collections::BTreeMap::new();
+            for (id, old) in &old_rows {
+                if let Some(identity) = old.matching_identity() {
+                    old_by_identity.entry(identity).or_insert_with(Vec::new).push(id);
                 }
-                if let Some(choice) = confirmation
-                    .lineage
-                    .iter()
-                    .find(|choice| choice.new_ordinal == row.occurrence.ordinal)
-                {
+                if old.comparison_key()?.is_none_or(|key| !keys.contains(&key)) {
+                    old_by_family_text.entry((identity_family_key(old), old.text.as_str()))
+                        .or_insert_with(Vec::new).push(id);
+                }
+            }
+            let mut choices = std::collections::BTreeMap::new();
+            for choice in &confirmation.lineage {
+                choices.entry(choice.new_ordinal).or_insert(choice);
+            }
+            for (occurrence, row) in occurrence_ids.iter().zip(&output.occurrences) {
+                let mut expected = std::collections::BTreeSet::new();
+                if let Some(previous) = row.matching_identity().and_then(|identity| old_by_identity.get(&identity)) {
+                    expected.extend(previous.iter().map(|id| (*id).clone()));
+                }
+                if let Some(previous) = old_by_family_text.get(&(identity_family_key(row), row.text.as_str())) {
+                    expected.extend(previous.iter().map(|id| (*id).clone()));
+                }
+                if let Some(choice) = choices.get(&row.ordinal) {
                     expected.insert(choice.old_occurrence_id.to_string());
                 }
-                let occurrence = row.occurrence_id.unwrap().to_string();
+                let occurrence = occurrence.to_string();
                 if let Some(Some(predecessor)) = predecessors.get(&occurrence) {
                     expected.insert(predecessor.clone());
                 }
@@ -903,28 +940,87 @@ pub(super) fn snapshot_rows(
             }
         }
     }
+    if has_lineage && scope(connection)?.current_snapshot == Some(snapshot) {
+        // Current pages formerly decoded every effective binding. Retain that
+        // page-external integrity check when qualifying the snapshot, even
+        // though only requested rows are materialized for the response.
+        let mut statement = connection.prepare(
+            "SELECT unit_id,revision_id FROM source_effective_occurrences WHERE snapshot_id=?1",
+        ).map_err(sql_error)?;
+        let mut count = 0;
+        for row in statement.query_map([snapshot.to_string()], |row| {
+            Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+        }).map_err(sql_error)? {
+            let (unit, revision) = row.map_err(sql_error)?;
+            id(unit)?;
+            id(revision)?;
+            count += 1;
+        }
+        if count != output.occurrences.len() { return Err(corrupt()); }
+    }
+    super::ledger::remember_source_read_validation(connection, result.envelope().result_id,
+        Some((snapshot, has_lineage, receipt.changes[0].revision.get())))?;
     Ok((
         receipt.changes[0].revision.get(),
-        (input, result, output, rows),
+        (input, result, output),
     ))
 }
 
+fn read_snapshot_rows(
+    connection: &Connection,
+    snapshot: ExecutionId,
+    output: &SourceOutput,
+    query: &str,
+    after: u32,
+    limit: u32,
+) -> Result<(u32, Vec<ContentRow>), ExecutionError> {
+    let query = query.to_lowercase();
+    let total = if query.is_empty() {
+        output.occurrences.len() as u32
+    } else {
+        connection.query_row(
+            "SELECT count(*) FROM source_occurrences o JOIN source_revisions r ON r.revision_id=o.revision_id
+             WHERE o.snapshot_id=?1 AND (instr(tsumugi_lower(o.native_key),?2)>0 OR instr(tsumugi_lower(r.text),?2)>0)",
+            params![snapshot.to_string(), query], |row| row.get(0),
+        ).map_err(sql_error)?
+    };
+    if after > total { return Err(failure(ErrorCode::InvalidInput, "page")); }
+    let mut statement = connection.prepare(
+        "SELECT o.occurrence_id,o.unit_id,o.revision_id,o.ordinal FROM source_occurrences o
+         JOIN source_revisions r ON r.revision_id=o.revision_id WHERE o.snapshot_id=?1
+         AND (?2='' OR instr(tsumugi_lower(o.native_key),?2)>0 OR instr(tsumugi_lower(r.text),?2)>0)
+         ORDER BY o.ordinal LIMIT ?3 OFFSET ?4",
+    ).map_err(sql_error)?;
+    let rows = statement.query_map(params![snapshot.to_string(), query, limit, after], |row| {
+        Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?, row.get::<_, String>(2)?, row.get::<_, u32>(3)?))
+    }).map_err(sql_error)?.map(|row| {
+        let (occurrence, unit, revision, ordinal) = row.map_err(sql_error)?;
+        Ok(ContentRow {
+            occurrence_id: Some(id(occurrence)?), unit_id: Some(id(unit)?), source_revision_id: Some(id(revision)?),
+            occurrence: output.occurrences.get(ordinal as usize).ok_or_else(corrupt)?.clone(),
+        })
+    }).collect::<Result<Vec<_>, ExecutionError>>()?;
+    Ok((total, rows))
+}
+
 fn page(
+    connection: &Connection,
     snapshot: Option<ExecutionId>,
     input: &FixedInput,
     result: &FixedResult,
-    output: SourceOutput,
+    output: &SourceOutput,
     scope: ContentScope,
+    total: u32,
     rows: Vec<ContentRow>,
     mapping_revision: Option<Revision>,
     after: u32,
     limit: u32,
 ) -> Result<ContentPage, ExecutionError> {
-    if limit == 0 || limit > 100 || after as usize > rows.len() {
+    if limit == 0 || limit > 100 || after > total {
         return Err(failure(ErrorCode::InvalidInput, "page"));
     }
     let mut page = ContentPage {
-        capture_summary: output.capture_summary()?,
+        capture_summary: super::ledger::source_capture_summary(connection, result.envelope().result_id, output)?,
         snapshot_id: snapshot,
         attempt_id: input.envelope().attempt_id,
         result_id: result.envelope().result_id,
@@ -941,14 +1037,14 @@ fn page(
             lineage_base_snapshot: None,
         },
         scope,
-        namespace: output.namespace,
-        coverage: output.coverage,
-        total: rows.len() as u32,
+        namespace: output.namespace.clone(),
+        coverage: output.coverage.clone(),
+        total,
         next_ordinal: None,
-        diagnostics: output.diagnostics,
+        diagnostics: output.diagnostics.clone(),
         rows: Vec::new(),
     };
-    for row in rows.into_iter().skip(after as usize).take(limit as usize) {
+    for row in rows.into_iter().take(limit as usize) {
         page.rows.push(row);
         if codec::encode(&page, MAX_CONTENT_PAGE_BYTES).is_err() {
             page.rows.pop();
@@ -971,22 +1067,61 @@ fn page(
     }
     Ok(page)
 }
-fn compare_rows(old: &[ContentRow], new: &[SourceOccurrence]) -> Vec<SourceChange> {
+fn visit_comparison(
+    old: &[ContentRow],
+    new: &[SourceOccurrence],
+    mut visit: impl FnMut(SourceChangeKind, Option<&ContentRow>, Option<&SourceOccurrence>, &[&ContentRow]),
+) -> SourceChangeCounts {
+    let new_identities: std::collections::BTreeSet<_> = new
+        .iter()
+        .filter_map(SourceOccurrence::matching_identity)
+        .collect();
+    let mut previous_by_identity = std::collections::BTreeMap::new();
+    for row in old {
+        if let Some(identity) = row.occurrence.matching_identity() {
+            let (rows, unit) = previous_by_identity
+                .entry(identity)
+                .or_insert_with(|| (Vec::new(), row.unit_id));
+            if *unit != row.unit_id {
+                *unit = None;
+            }
+            rows.push(row);
+        }
+    }
     let removed: Vec<_> = old
         .iter()
-        .filter(|old| !new.iter().any(|new| new.same_identity(&old.occurrence)))
+        .filter(|old| {
+            old.occurrence
+                .matching_identity()
+                .is_none_or(|identity| !new_identities.contains(&identity))
+        })
         .collect();
-    let mut changes = Vec::with_capacity(old.len() + new.len());
+    let mut removed_by_family_text = std::collections::BTreeMap::new();
+    for row in &removed {
+        removed_by_family_text
+            .entry((identity_family_key(&row.occurrence), row.occurrence.text.as_str()))
+            .or_insert_with(Vec::new)
+            .push(*row);
+    }
+    let mut successors_by_family_text = std::collections::BTreeMap::new();
     for row in new {
-        let previous: Vec<_> = old
-            .iter()
-            .filter(|old| row.same_identity(&old.occurrence))
-            .collect();
-        let unique_unit = previous
-            .first()
-            .and_then(|old| old.unit_id)
-            .is_some_and(|unit| previous.iter().all(|old| old.unit_id == Some(unit)));
-        let (kind, candidate, candidates) = match previous.as_slice() {
+        if row
+            .matching_identity()
+            .is_none_or(|identity| !previous_by_identity.contains_key(&identity))
+        {
+            *successors_by_family_text
+                .entry((identity_family_key(row), row.text.as_str()))
+                .or_insert(0usize) += 1;
+        }
+    }
+    let mut counts = SourceChangeCounts::default();
+    for row in new {
+        let previous_group = row
+            .matching_identity()
+            .and_then(|identity| previous_by_identity.get(&identity));
+        let previous = previous_group.map_or(&[][..], |(rows, _)| rows.as_slice());
+        let unique_unit = previous_group.is_some_and(|(_, unit)| unit.is_some());
+        let (kind, candidate, candidates) = match previous {
             [old, ..]
                 if unique_unit
                     && old.occurrence.text == row.text
@@ -998,65 +1133,50 @@ fn compare_rows(old: &[ContentRow], new: &[SourceOccurrence]) -> Vec<SourceChang
                     } else {
                         SourceChangeKind::Moved
                     },
-                    Some((*old).clone()),
-                    previous.iter().map(|old| (**old).clone()).collect(),
+                    Some(*old),
+                    previous,
                 )
             }
             [old, ..] if unique_unit => (
                 SourceChangeKind::Changed,
-                Some((*old).clone()),
-                previous.iter().map(|old| (**old).clone()).collect(),
+                Some(*old),
+                previous,
             ),
             [] => {
-                let matches: Vec<_> = removed
-                    .iter()
-                    .filter(|old| {
-                        identity_family(&old.occurrence, row) && old.occurrence.text == row.text
-                    })
-                    .map(|old| (**old).clone())
-                    .collect();
-                let successors = new
-                    .iter()
-                    .filter(|next| {
-                        identity_family(next, row)
-                            && next.text == row.text
-                            && !old.iter().any(|old| next.same_identity(&old.occurrence))
-                    })
-                    .count();
+                let family_text = (identity_family_key(row), row.text.as_str());
+                let matches = removed_by_family_text
+                    .get(&family_text)
+                    .map_or(&[][..], Vec::as_slice);
+                let successors = successors_by_family_text
+                    .get(&family_text)
+                    .copied()
+                    .unwrap_or(0);
                 if matches.len() == 1 && successors == 1 {
                     (
                         SourceChangeKind::RenameCandidate,
-                        matches.first().cloned(),
+                        matches.first().copied(),
                         matches,
                     )
                 } else if !matches.is_empty() {
                     (SourceChangeKind::Ambiguous, None, matches)
                 } else {
-                    (SourceChangeKind::Added, None, vec![])
+                    (SourceChangeKind::Added, None, &[][..])
                 }
             }
             _ => (
                 SourceChangeKind::Ambiguous,
                 None,
-                previous.into_iter().cloned().collect(),
+                previous,
             ),
         };
-        changes.push(SourceChange {
-            kind,
-            old: candidate,
-            new: Some(row.clone()),
-            candidates,
-        });
+        counts.record(kind);
+        visit(kind, candidate, Some(row), candidates);
     }
     for old in removed {
-        changes.push(SourceChange {
-            kind: SourceChangeKind::Removed,
-            old: Some(old.clone()),
-            new: None,
-            candidates: vec![],
-        });
+        counts.record(SourceChangeKind::Removed);
+        visit(SourceChangeKind::Removed, Some(old), None, &[]);
     }
-    changes
+    counts
 }
 impl ProjectStore {
     pub fn source_import_start_action_read(
@@ -1147,6 +1267,7 @@ impl ProjectStore {
         after: u32,
         limit: u32,
     ) -> Result<ContentPage, ExecutionError> {
+        if limit == 0 || limit > 100 { return Err(failure(ErrorCode::InvalidInput, "page")); }
         let connection = self
             .connection()
             .map_err(|_| failure(ErrorCode::StorageFailed, "source-read"))?;
@@ -1162,14 +1283,8 @@ impl ProjectStore {
                 )
                 .map_err(sql_error)?;
             // Pending or historical results still use the structural preview.
-            let (input, result, projected) = if qualified {
-                let (input, result, output) = load_qualified_source(connection, attempt, result)?;
-                (input, result, Some(output))
-            } else {
-                let input = load_input_cached(connection, attempt)?;
-                let result = load_result(connection, &input, result)?;
-                (input, result, None)
-            };
+            let (input, result, output) =
+                super::ledger::load_source_projection(connection, attempt, result, qualified)?;
             let validation: String = connection
                 .query_row(
                     "SELECT validation FROM execution_items WHERE attempt_id=?1 AND item_id=?2",
@@ -1180,17 +1295,12 @@ impl ProjectStore {
             if validation == "invalid" {
                 return Err(invalid("source-invalid"));
             }
-            let output = match projected {
-                Some(output) => output,
-                None => validate_output(&input, &result)?,
-            };
-            let bundle = SourceBundle::from_input(&input)?;
-            if read_bundle(connection, bundle.set_id)? != bundle.source_input() {
-                return Err(corrupt());
-            }
+            check_source_bundle(connection, &input, &result)?;
             let rows = output
                 .occurrences
                 .iter()
+                .skip(after as usize)
+                .take(limit as usize)
                 .cloned()
                 .map(|occurrence| ContentRow {
                     occurrence_id: None,
@@ -1204,7 +1314,8 @@ impl ProjectStore {
                 .map(|snapshot| lineage_corrections::mapping_revision(connection, snapshot))
                 .transpose()?;
             page(
-                None, &input, &result, output, scope, rows, mapping_revision, after, limit,
+                connection, None, &input, &result, &output, scope, output.occurrences.len() as u32,
+                rows, mapping_revision, after, limit,
             )
         })
     }
@@ -1217,24 +1328,19 @@ impl ProjectStore {
         let connection = self
             .connection()
             .map_err(|_| failure(ErrorCode::StorageFailed, "source-read"))?;
-        let (_, (input, result, output, mut rows)) = snapshot_rows(connection, snapshot, true)?;
-        if scope(connection)?.current_snapshot == Some(snapshot) {
-            lineage_corrections::effective_rows(connection, &mut rows)?;
-        }
-        page(
-            Some(snapshot),
-            &input,
-            &result,
-            output,
-            scope(connection)?,
-            rows,
-            scope(connection)?
-                .current_snapshot
-                .map(|snapshot| lineage_corrections::mapping_revision(connection, snapshot))
-                .transpose()?,
-            after,
-            limit,
-        )
+        if limit == 0 || limit > 100 { return Err(failure(ErrorCode::InvalidInput, "page")); }
+        super::review::read_snapshot(connection, |connection| {
+            let (_, (input, result, output)) = snapshot_qualification(connection, snapshot, true)?;
+            let (total, mut rows) = read_snapshot_rows(connection, snapshot, &output, "", after, limit)?;
+            let scope = scope(connection)?;
+            if scope.current_snapshot == Some(snapshot) {
+                lineage_corrections::effective_rows(connection, &mut rows)?;
+            }
+            let mapping_revision = scope.current_snapshot
+                .map(|snapshot| lineage_corrections::mapping_revision(connection, snapshot)).transpose()?;
+            page(connection, Some(snapshot), &input, &result, &output, scope, total, rows,
+                mapping_revision, after, limit)
+        })
     }
     pub fn source_comparison(
         &self,
@@ -1254,104 +1360,104 @@ impl ProjectStore {
         after: u32,
         limit: u32,
     ) -> Result<SourceChangePage, ExecutionError> {
-        if filter.len() > 256 {
+        if filter.len() > 256 || limit == 0 || limit > 100 {
             return Err(failure(ErrorCode::InvalidInput, "page"));
         }
         let connection = self
             .connection()
             .map_err(|_| failure(ErrorCode::StorageFailed, "source-read"))?;
-        let scope = scope(connection)?;
-        let current = scope
-            .current_snapshot
-            .ok_or_else(|| failure(ErrorCode::DependencyConflict, "source-missing"))?;
-        let previous = base.unwrap_or(current);
-        let (_, (old_input, _, old_output, mut old_rows)) =
-            snapshot_rows(connection, previous, true)?;
-        lineage_corrections::effective_rows(connection, &mut old_rows)?;
-        let input = self.execution_input(attempt)?;
-        let result = self.execution_result(attempt, result)?;
-        let output = validate_output(&input, &result)?;
-        if old_input.envelope().project_id != input.envelope().project_id
-            || old_output.namespace != output.namespace
-            || old_output.source_language != output.source_language
-            || old_output.identity_policy != output.identity_policy
-        {
-            return Err(failure(ErrorCode::DependencyConflict, "source-namespace"));
-        }
-        let rows = compare_rows(&old_rows, &output.occurrences);
-        if limit == 0 || limit > 100 {
-            return Err(failure(ErrorCode::InvalidInput, "page"));
-        }
-        let counts = SourceChangeCounts::from_changes(&rows);
-        let mut page = SourceChangePage {
-            capture_summary: output.capture_summary()?,
-            coverage: output.coverage.clone(),
-            scope: scope.clone(),
-            attempt_id: attempt,
-            result_id: result.envelope().result_id,
-            previous_snapshot_id: previous,
-            confirmation: SourceConfirmation {
-                expected_mapping_revision: Some(lineage_corrections::mapping_revision(
-                    connection, current,
-                )?),
-                maintenance_hook: None,
-                result_digest: result.digest().into(),
-                identity_policy: output.identity_policy.clone(),
-                expected_content_revision: scope.revision,
-                source_language: output.source_language,
-                expected_current_snapshot: Some(current),
-                lineage: Vec::new(),
-                actor: None,
-                lineage_base_snapshot: Some(previous),
-            },
-            total: rows.len() as u32,
-            filtered_total: 0,
-            counts,
-            mapping_review_required: counts.mapping_review_required(),
-            next_ordinal: None,
-            rows: Vec::new(),
-        };
-        let filter = filter.to_lowercase();
-        let rows: Vec<_> = rows
-            .into_iter()
-            .filter(|row| {
-                filter.is_empty()
-                    || row.kind.as_str().contains(&filter)
-                    || row.new.as_ref().is_some_and(|r| {
-                        r.key.to_lowercase().contains(&filter)
-                            || r.text.to_lowercase().contains(&filter)
-                    })
-                    || row.old.as_ref().is_some_and(|r| {
-                        r.occurrence.key.to_lowercase().contains(&filter)
-                            || r.occurrence.text.to_lowercase().contains(&filter)
-                    })
-            })
-            .collect();
-        page.filtered_total = rows.len() as u32;
-        if after > page.filtered_total {
-            return Err(failure(ErrorCode::InvalidInput, "page"));
-        }
-        for row in rows.into_iter().skip(after as usize).take(limit as usize) {
-            page.rows.push(row);
-            if codec::encode(&page, MAX_CONTENT_PAGE_BYTES).is_err() {
-                page.rows.pop();
-                break;
+        super::review::read_snapshot(connection, |connection| {
+            let scope = scope(connection)?;
+            let current = scope
+                .current_snapshot
+                .ok_or_else(|| failure(ErrorCode::DependencyConflict, "source-missing"))?;
+            let previous = base.unwrap_or(current);
+            let (_, (old_input, _, old_output, mut old_rows)) =
+                snapshot_rows(connection, previous, true)?;
+            lineage_corrections::effective_rows(connection, &mut old_rows)?;
+            let (input, result, output) = super::ledger::load_source_projection(connection, attempt, result, false)?;
+            if old_input.envelope().project_id != input.envelope().project_id
+                || old_output.namespace != output.namespace
+                || old_output.source_language != output.source_language
+                || old_output.identity_policy != output.identity_policy
+            {
+                return Err(failure(ErrorCode::DependencyConflict, "source-namespace"));
             }
-        }
-        let next = after + page.rows.len() as u32;
-        if next < page.filtered_total {
-            page.next_ordinal = Some(next);
-        }
-        if page.rows.is_empty() && next < page.filtered_total {
-            return Err(failure(ErrorCode::LimitExceeded, "page"));
-        }
-        while codec::encode(&page, MAX_CONTENT_PAGE_BYTES).is_err() {
-            page.rows
-                .pop()
-                .ok_or_else(|| failure(ErrorCode::LimitExceeded, "page"))?;
-            page.next_ordinal = Some(after + page.rows.len() as u32);
-        }
-        Ok(page)
+            let mut page = SourceChangePage {
+                capture_summary: super::ledger::source_capture_summary(connection, result.envelope().result_id, &output)?,
+                coverage: output.coverage.clone(),
+                scope: scope.clone(),
+                attempt_id: attempt,
+                result_id: result.envelope().result_id,
+                previous_snapshot_id: previous,
+                confirmation: SourceConfirmation {
+                    expected_mapping_revision: Some(lineage_corrections::mapping_revision(
+                        connection, current,
+                    )?),
+                    maintenance_hook: None,
+                    result_digest: result.digest().into(),
+                    identity_policy: output.identity_policy.clone(),
+                    expected_content_revision: scope.revision,
+                    source_language: output.source_language.clone(),
+                    expected_current_snapshot: Some(current),
+                    lineage: Vec::new(),
+                    actor: None,
+                    lineage_base_snapshot: Some(previous),
+                },
+                total: 0,
+                filtered_total: 0,
+                counts: SourceChangeCounts::default(),
+                mapping_review_required: 0,
+                next_ordinal: None,
+                rows: Vec::new(),
+            };
+            let filter = filter.to_lowercase();
+            let mut full = false;
+            let counts = visit_comparison(&old_rows, &output.occurrences, |kind, old, new, candidates| {
+                page.total += 1;
+                let matches = filter.is_empty()
+                        || kind.as_str().contains(&filter)
+                        || new.is_some_and(|r| {
+                            r.key.to_lowercase().contains(&filter)
+                                || r.text.to_lowercase().contains(&filter)
+                        })
+                        || old.is_some_and(|r| {
+                            r.occurrence.key.to_lowercase().contains(&filter)
+                                || r.occurrence.text.to_lowercase().contains(&filter)
+                        });
+                if !matches { return; }
+                let ordinal = page.filtered_total;
+                page.filtered_total += 1;
+                if ordinal < after || full || page.rows.len() == limit as usize { return; }
+                page.rows.push(SourceChange {
+                    kind, old: old.cloned(), new: new.cloned(),
+                    candidates: candidates.iter().map(|row| (**row).clone()).collect(),
+                });
+                if codec::encode(&page, MAX_CONTENT_PAGE_BYTES).is_err() {
+                    page.rows.pop();
+                    full = true;
+                }
+            });
+            page.counts = counts;
+            page.mapping_review_required = counts.mapping_review_required();
+            if after > page.filtered_total {
+                return Err(failure(ErrorCode::InvalidInput, "page"));
+            }
+            let next = after + page.rows.len() as u32;
+            if next < page.filtered_total {
+                page.next_ordinal = Some(next);
+            }
+            if page.rows.is_empty() && next < page.filtered_total {
+                return Err(failure(ErrorCode::LimitExceeded, "page"));
+            }
+            while codec::encode(&page, MAX_CONTENT_PAGE_BYTES).is_err() {
+                page.rows
+                    .pop()
+                    .ok_or_else(|| failure(ErrorCode::LimitExceeded, "page"))?;
+                page.next_ordinal = Some(after + page.rows.len() as u32);
+            }
+            Ok(page)
+        })
     }
 }
 
@@ -1441,13 +1547,25 @@ fn predecessor_rows(
             },occurrence:codec::decode(&projection,MAX_INPUT_BYTES)? })).collect()
 }
 fn identity_family(a: &SourceOccurrence, b: &SourceOccurrence) -> bool {
-    match (a.matching_identity(), b.matching_identity()) {
-        (Some((namespace, policy, _)), Some((other, other_policy, _))) => {
-            namespace == other && policy == other_policy
-        }
-        (None, None) => true,
-        _ => false,
+    identity_family_key(a) == identity_family_key(b)
+}
+fn identity_family_key(
+    row: &SourceOccurrence,
+) -> Option<(&str, &tsumugi_plugin_sdk::ContractRef)> {
+    row.matching_identity().map(|(namespace, policy, _)| (namespace, policy))
+}
+fn unit_occurrences(
+    rows: &[SourceOccurrence],
+) -> std::collections::BTreeMap<&str, Vec<&SourceOccurrence>> {
+    let mut groups = std::collections::BTreeMap::new();
+    // Preserve source order within each unit, independently of SDK unit order.
+    for row in rows {
+        groups
+            .entry(row.operation_unit_id.as_str())
+            .or_insert_with(Vec::new)
+            .push(row);
     }
+    groups
 }
 fn insert_mapping(
     tx: &AdoptionTransaction<'_>,
@@ -1618,6 +1736,47 @@ fn apply_update(
     } else {
         predecessor_rows(tx, base)?
     };
+    let groups = unit_occurrences(&output.occurrences);
+    let mut previous_by_identity = std::collections::BTreeMap::new();
+    let mut previous_by_content = std::collections::BTreeMap::new();
+    // Missing identities never auto-match. Each bucket keeps the same first
+    // predecessor as the original ordinal-ordered scan.
+    for old in &previous_rows {
+        if let Some(identity) = old.occurrence.matching_identity() {
+            let (rows, unit) = previous_by_identity
+                .entry(identity)
+                .or_insert_with(|| (Vec::new(), Some(old.unit_id.as_str())));
+            if *unit != Some(old.unit_id.as_str()) { *unit = None; }
+            rows.push(old);
+        }
+        previous_by_content
+            .entry((
+                old.unit_id.as_str(),
+                old.occurrence.text.as_str(),
+                old.occurrence.identity_basis.as_str(),
+            ))
+            .or_insert(old);
+    }
+    let mut base_by_id = std::collections::BTreeMap::new();
+    let mut base_by_identity = std::collections::BTreeMap::new();
+    let mut base_by_family_text = std::collections::BTreeMap::new();
+    for old in &base_rows {
+        base_by_id.entry(old.occurrence_id.as_str()).or_insert(old);
+        let identity = old.occurrence.matching_identity();
+        if let Some(identity) = identity {
+            base_by_identity
+                .entry(identity)
+                .or_insert_with(Vec::new)
+                .push(old);
+        }
+        base_by_family_text
+            .entry((
+                identity.map(|(namespace, policy, _)| (namespace, policy)),
+                old.occurrence.text.as_str(),
+            ))
+            .or_insert_with(Vec::new)
+            .push(old);
+    }
     let new_keys: std::collections::BTreeSet<_> = output
         .occurrences
         .iter()
@@ -1652,24 +1811,19 @@ fn apply_update(
         )?;
     }
     for sdk_unit in &output.exchange.units {
-        let group: Vec<_> = output
-            .occurrences
-            .iter()
-            .filter(|row| row.operation_unit_id == sdk_unit.id)
-            .collect();
+        let group = groups.get(sdk_unit.id.as_str()).ok_or_else(corrupt)?;
         let first = *group.first().ok_or_else(corrupt)?;
         let mut selected_units = std::collections::BTreeMap::<String, SourcePredecessor>::new();
         let mut rejected_units = std::collections::BTreeSet::new();
         let mut predecessors = std::collections::BTreeMap::<u32, SourcePredecessor>::new();
-        for row in &group {
-            let matches: Vec<_> = previous_rows
-                .iter()
-                .filter(|old| row.same_identity(&old.occurrence))
-                .collect();
+        for row in group {
+            let previous_group = row
+                .matching_identity()
+                .and_then(|identity| previous_by_identity.get(&identity));
+            let matches = previous_group.map_or(&[][..], |(rows, _)| rows.as_slice());
             if let Some(choice) = choices.get(&row.ordinal) {
-                let old = base_rows
-                    .iter()
-                    .find(|old| old.occurrence_id == choice.old_occurrence_id.to_string())
+                let old = *base_by_id
+                    .get(choice.old_occurrence_id.to_string().as_str())
                     .ok_or_else(|| failure(ErrorCode::DependencyConflict, "lineage-choice"))?;
                 if !identity_family(row, &old.occurrence) {
                     return Err(failure(ErrorCode::DependencyConflict, "source-namespace"));
@@ -1680,13 +1834,7 @@ fn apply_update(
                 } else {
                     rejected_units.insert(old.unit_id.clone());
                 }
-            } else if matches
-                .iter()
-                .map(|old| &old.unit_id)
-                .collect::<std::collections::BTreeSet<_>>()
-                .len()
-                == 1
-            {
+            } else if previous_group.is_some_and(|(_, unit)| unit.is_some()) {
                 // Several equivalent occurrences can reference one authoritative
                 // unit. Only competing units make native matching ambiguous;
                 // all occurrence-level alternatives remain in lineage evidence.
@@ -1719,11 +1867,11 @@ fn apply_update(
                     && representative.occurrence.identity_basis == first.identity_basis;
                 let revision = if same_content {
                     id(representative.revision_id)?
-                } else if let Some(current) = previous_rows.iter().find(|row| {
-                    row.unit_id == unit.to_string()
-                        && row.occurrence.text == first.text
-                        && row.occurrence.identity_basis == first.identity_basis
-                }) {
+                } else if let Some(current) = previous_by_content.get(&(
+                    unit.to_string().as_str(),
+                    first.text.as_str(),
+                    first.identity_basis.as_str(),
+                )) {
                     id(current.revision_id.clone())?
                 } else {
                     let latest: i64 = tx.query_row(
@@ -1779,24 +1927,25 @@ fn apply_update(
                     relation
                 ],
             )?;
-            let mut candidates: std::collections::BTreeMap<String, String> = base_rows
-                .iter()
-                .filter(|old| identity_family(row, &old.occurrence))
-                .filter_map(|old| {
-                    if row.same_identity(&old.occurrence) {
-                        Some((old.occurrence_id.clone(), "same-key".into()))
-                    } else if old.occurrence.text == row.text
-                        && old
-                            .comparison_key
-                            .as_ref()
-                            .is_none_or(|key| !new_keys.contains(key))
-                    {
-                        Some((old.occurrence_id.clone(), "same-text".into()))
-                    } else {
-                        None
-                    }
-                })
+            let identity = row.matching_identity();
+            let mut candidates: std::collections::BTreeMap<String, String> = identity
+                .and_then(|identity| base_by_identity.get(&identity))
+                .into_iter()
+                .flatten()
+                .map(|old| (old.occurrence_id.clone(), "same-key".into()))
                 .collect();
+            let family = identity.map(|(namespace, policy, _)| (namespace, policy));
+            for old in base_by_family_text
+                .get(&(family, row.text.as_str()))
+                .into_iter()
+                .flatten()
+            {
+                if old.comparison_key.as_ref().is_none_or(|key| !new_keys.contains(key)) {
+                    candidates
+                        .entry(old.occurrence_id.clone())
+                        .or_insert_with(|| "same-text".into());
+                }
+            }
             let choice = choices.get(&row.ordinal).copied();
             if let Some(choice) = choice {
                 candidates
@@ -1901,7 +2050,7 @@ impl AdoptionHandler for SourceAdoptionHandler {
                 return Err(corrupt());
             }
             for f in &bundle.files {
-                let (path,role,bytes,digest):(String,String,Vec<u8>,String)=tx.query_row("SELECT logical_path,role,CASE WHEN length(bytes)<=?3 THEN bytes END,digest FROM source_files WHERE set_id=?1 AND artifact_id=?2",params![bundle.set_id.to_string(),f.artifact_id.to_string(),tsumugi_plugin_sdk::MAX_EXCHANGE_BYTES as i64],|r|Ok((r.get(0)?,r.get(1)?,r.get(2)?,r.get(3)?)))?;
+                let (path,role,bytes,digest):(String,String,Vec<u8>,String)=tx.query_row("SELECT logical_path,role,CASE WHEN length(bytes)<=?3 THEN bytes END,digest FROM source_files WHERE set_id=?1 AND artifact_id=?2",params![bundle.set_id.to_string(),f.artifact_id.to_string(),tsumugi_plugin_sdk::MAX_MATERIAL_BYTES as i64],|r|Ok((r.get(0)?,r.get(1)?,r.get(2)?,r.get(3)?)))?;
                 if path != f.logical_path
                     || role != f.role
                     || bytes != f.bytes()?.as_ref()
@@ -1957,12 +2106,9 @@ impl AdoptionHandler for SourceAdoptionHandler {
                     output.identity_policy
                 ],
             )?;
+            let groups = unit_occurrences(&output.occurrences);
             for sdk_unit in &output.exchange.units {
-                let group: Vec<_> = output
-                    .occurrences
-                    .iter()
-                    .filter(|row| row.operation_unit_id == sdk_unit.id)
-                    .collect();
+                let group = groups.get(sdk_unit.id.as_str()).ok_or_else(corrupt)?;
                 let first = *group.first().ok_or_else(corrupt)?;
                 let unit = ExecutionId::new();
                 let revision = ExecutionId::new();

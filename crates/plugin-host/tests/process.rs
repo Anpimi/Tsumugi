@@ -395,7 +395,7 @@ fn actual_process_channel_and_heartbeat_keep_exact_utf8_and_empty_environment() 
         let InvocationOutcome::Succeeded { output } = &result.result().outcome else {
             panic!()
         };
-        assert_eq!(output.utf8, "answer:\u{feff}你好 👩🏽‍💻\r\n");
+        assert_eq!(output.utf8.as_ref(), "answer:\u{feff}你好 👩🏽‍💻\r\n");
         assert_eq!(
             s.invoke(&r, || false, || true).await.unwrap_err(),
             HostError::RequestMismatch
@@ -428,7 +428,7 @@ fn actual_result_frame_budget_does_not_replace_the_declared_raw_output_limit() {
                 let InvocationOutcome::Succeeded { output } = &received.result().outcome else {
                     panic!("Expected successful result");
                 };
-                assert_eq!(output.utf8, format!("answer:{text}"));
+                assert_eq!(output.utf8.as_ref(), format!("answer:{text}"));
                 assert!(output.utf8.len() <= 65536);
                 let encoded = ProcessFrame::new(ProcessBody::Result(received.result().clone()))
                     .encode()
@@ -458,7 +458,7 @@ fn original_result_frame_bytes_include_json_whitespace_in_the_invocation_budget(
                 let InvocationOutcome::Succeeded { output } = &received.result().outcome else {
                     panic!("Expected successful result");
                 };
-                assert_eq!(output.utf8, "answer:small");
+                assert_eq!(output.utf8.as_ref(), "answer:small");
                 assert!(session.is_accepting());
             } else {
                 assert_eq!(received.unwrap_err(), HostError::OutputLimit);

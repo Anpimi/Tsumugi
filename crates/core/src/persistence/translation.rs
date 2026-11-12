@@ -206,6 +206,52 @@ pub struct TranslationPreview {
     pub rows: Vec<TranslationPreviewRow>,
 }
 
+// One bounded derived read view, valid only for the exact held database
+// snapshot. Any local write, external commit or reopened connection invalidates
+// it; adoption always rechecks its mutation boundary independently.
+struct TranslationPreviewMemo {
+    stamp: super::ledger::SourceReadStamp,
+    summary: TranslationPreview,
+    rows: std::sync::Arc<[TranslationPreviewRow]>,
+}
+fn translation_preview_cache() -> &'static std::sync::Mutex<Option<TranslationPreviewMemo>> {
+    static CACHE: std::sync::OnceLock<std::sync::Mutex<Option<TranslationPreviewMemo>>> = std::sync::OnceLock::new();
+    CACHE.get_or_init(|| std::sync::Mutex::new(None))
+}
+fn translation_preview_page(
+    mut page: TranslationPreview,
+    rows: &[TranslationPreviewRow],
+    after: u32,
+    limit: u32,
+    expected_basis: Option<&str>,
+) -> Result<TranslationPreview, ExecutionError> {
+    if after > page.total {
+        return Err(error(ErrorCode::InvalidInput, "translation-page"));
+    }
+    if after != 0 && expected_basis != Some(page.basis.as_str())
+        || expected_basis.is_some_and(|value| value != page.basis)
+    {
+        return Err(error(ErrorCode::DependencyConflict, "stale-preview"));
+    }
+    for row in rows.iter().skip(after as usize).take(limit as usize) {
+        page.rows.push(row.clone());
+        if codec::encode(&page, crate::content::MAX_CONTENT_PAGE_BYTES).is_err() {
+            page.rows.pop();
+            break;
+        }
+    }
+    let next = after + page.rows.len() as u32;
+    if next < page.total {
+        page.next_ordinal = Some(next);
+    }
+    if page.rows.is_empty() && next < page.total
+        || codec::encode(&page, crate::content::MAX_CONTENT_PAGE_BYTES).is_err()
+    {
+        return Err(error(ErrorCode::LimitExceeded, "translation-page"));
+    }
+    Ok(page)
+}
+
 #[cfg_attr(feature = "wire-schema", derive(schemars::JsonSchema))]
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
@@ -429,6 +475,37 @@ pub(super) fn initialize(connection: &Connection) -> rusqlite::Result<()> {
     candidates::initialize(connection)
 }
 
+/// Keep the immutable projection shared when adopting individual entries.
+/// Materialize only the entry being read instead of copying the whole import.
+enum TranslationEntries {
+    Projection(std::sync::Arc<crate::content::TranslationProjection>),
+    #[cfg(any(test, feature = "execution-test-host", feature = "legacy-desktop-domain"))]
+    Legacy { entries: Vec<crate::content::TranslationEntry>, native_values: Vec<String> },
+}
+impl TranslationEntries {
+    fn len(&self) -> usize {
+        match self {
+            Self::Projection(projection) => projection.entries.len(),
+            #[cfg(any(test, feature = "execution-test-host", feature = "legacy-desktop-domain"))]
+            Self::Legacy { entries, .. } => entries.len(),
+        }
+    }
+    fn entry(&self, ordinal: u32) -> crate::content::TranslationEntry {
+        match self {
+            Self::Projection(projection) => projection.entry(ordinal),
+            #[cfg(any(test, feature = "execution-test-host", feature = "legacy-desktop-domain"))]
+            Self::Legacy { entries, .. } => entries[ordinal as usize].clone(),
+        }
+    }
+    fn native_value(&self, ordinal: u32) -> &str {
+        match self {
+            Self::Projection(projection) => projection.entries[ordinal as usize].native_value(),
+            #[cfg(any(test, feature = "execution-test-host", feature = "legacy-desktop-domain"))]
+            Self::Legacy { native_values, .. } => &native_values[ordinal as usize],
+        }
+    }
+}
+
 /// The shared preview/adoption view of a checked plugin projection. The former
 /// built-in importer is available only as an explicit test baseline.
 struct TranslationImportView {
@@ -439,10 +516,9 @@ struct TranslationImportView {
     declared_locale: String,
     manifest_digest: String,
     files: Vec<crate::content::TranslationImportFile>,
-    entries: Vec<crate::content::TranslationEntry>,
+    entries: TranslationEntries,
     namespace: Option<String>,
     policy: tsumugi_plugin_sdk::ContractRef,
-    native_values: Vec<String>,
 }
 impl TranslationImportView {
     fn from_input(input: &FixedInput) -> Result<Self, ExecutionError> {
@@ -456,19 +532,9 @@ impl TranslationImportView {
                 declared_locale: projection.declared_locale.clone(),
                 manifest_digest: input.digest().into(),
                 files: projection.files(),
-                entries: projection
-                    .entries
-                    .iter()
-                    .enumerate()
-                    .map(|(ordinal, _)| projection.entry(ordinal as u32))
-                    .collect(),
                 namespace: Some(projection.native_scope.namespace.clone()),
                 policy: projection.native_scope.policy.clone(),
-                native_values: projection
-                    .entries
-                    .iter()
-                    .map(|entry| entry.native_value().to_owned())
-                    .collect(),
+                entries: TranslationEntries::Projection(projection),
             });
         }
         #[cfg(any(test, feature = "execution-test-host", feature = "legacy-desktop-domain"))]
@@ -503,10 +569,9 @@ impl TranslationImportView {
             declared_locale: bundle.declared_locale,
             manifest_digest: bundle.manifest_digest,
             files: vec![crate::content::TranslationImportFile::from(&bundle.file)],
-            entries,
+            entries: TranslationEntries::Legacy { entries, native_values },
             namespace: None,
             policy: crate::content::contract_ref("smapi-native-key"),
-            native_values,
         })
     }
 
@@ -790,6 +855,19 @@ fn optional_id(raw: Option<String>) -> Result<Option<ExecutionId>, ExecutionErro
 
 fn request_digest<T: Serialize>(request: &T) -> Result<String, ExecutionError> {
     Ok(codec::digest(&codec::encode(request, MAX_INPUT_BYTES)?))
+}
+
+fn preview_evidence_digests(
+    current: ExecutionId,
+    results: &[(ExecutionId, String)],
+    selections: &[(u32, Option<ExecutionId>, String)],
+) -> Result<(String, String), ExecutionError> {
+    // One row contributes a result UUID and digest, plus an ordinal, optional
+    // selection UUID and adoption state. The mutation request limit is smaller.
+    const MAX_EVIDENCE_BYTES: usize = crate::execution::MAX_ITEMS * 192 + 256;
+    let result_digest = codec::digest_encoded(&results, MAX_EVIDENCE_BYTES)?;
+    let basis = codec::digest_encoded(&(current, results, selections), MAX_EVIDENCE_BYTES)?;
+    Ok((result_digest, basis))
 }
 
 fn source_basis(
@@ -1109,7 +1187,7 @@ impl AdoptionHandler for TranslationAdoptionHandler {
                     .as_ref()
                     .is_some_and(|namespace| *namespace != identity.namespace)
                 || identity.policy != bundle.policy
-                || identity.value != bundle.native_values[entry.ordinal as usize]
+                || identity.value != bundle.entries.native_value(entry.ordinal)
             {
                 return Err(error(ErrorCode::DependencyConflict, "translation-match"));
             }
@@ -1283,7 +1361,17 @@ impl ProjectStore {
         let connection = self
             .connection()
             .map_err(|_| error(ErrorCode::StorageFailed, "translation-read"))?;
-        let input = super::ledger::load_input(connection, attempt)?;
+        super::review::read_snapshot(connection, |connection| {
+        let stamp = super::ledger::source_read_stamp(connection)?;
+        let cached = translation_preview_cache().lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .as_ref()
+            .filter(|memo| stamp.as_ref() == Some(&memo.stamp) && memo.summary.attempt_id == attempt)
+            .map(|memo| (memo.summary.clone(), memo.rows.clone()));
+        if let Some((summary, rows)) = cached {
+            return translation_preview_page(summary, &rows, after, limit, expected_basis);
+        }
+        let input = super::ledger::load_input_cached(connection, attempt)?;
         let bundle = TranslationImportView::from_input(&input)?;
         super::ledger::check_translation_projection(connection, &input, None)?;
         check_target(
@@ -1373,7 +1461,7 @@ impl ProjectStore {
             }
             crate::content::validate_translation_output(&input, &result)?;
             let ordinal: Option<u32> = crate::content::from_value(&item.payload)?;
-            let entry = ordinal.map(|n| entries[n as usize].clone());
+            let entry = ordinal.map(|n| entries.entry(n));
             let expected = TranslationOutput {
                 version: bundle.version,
                 bundle_id: bundle.bundle_id,
@@ -1392,14 +1480,14 @@ impl ProjectStore {
             if actual != expected {
                 return Err(error(ErrorCode::CorruptLedger, "translation-result"));
             }
-            result_evidence.push((result_id.to_string(), result.digest().to_owned()));
+            result_evidence.push((result_id, result.digest().to_owned()));
             let Some(entry) = expected.entry else {
                 continue;
             };
             let key = (
                 match_namespace.clone(),
                 bundle.policy.clone(),
-                bundle.native_values[entry.ordinal as usize].clone(),
+                bundle.entries.native_value(entry.ordinal).to_owned(),
             );
             let candidates = matches.get(&key);
             let only = candidates.and_then(|rows| (rows.len() == 1).then(|| &rows[0]));
@@ -1422,7 +1510,7 @@ impl ProjectStore {
                 };
             selection_evidence.push((
                 entry.ordinal,
-                selection.as_ref().map(|s| s.event_id.to_string()),
+                selection.as_ref().map(|s| s.event_id),
                 persisted.3.clone(),
             ));
             let status = if persisted.3 == "committed" {
@@ -1453,14 +1541,14 @@ impl ProjectStore {
             });
         }
         rows.sort_by_key(|row| row.entry.ordinal);
-        let result_digest = request_digest(&result_evidence)?;
-        let basis = request_digest(&(current, &result_evidence, &selection_evidence))?;
+        let (result_digest, basis) =
+            preview_evidence_digests(current, &result_evidence, &selection_evidence)?;
         if after != 0 && expected_basis != Some(basis.as_str())
             || expected_basis.is_some_and(|value| value != basis)
         {
             return Err(error(ErrorCode::DependencyConflict, "stale-preview"));
         }
-        let mut page = TranslationPreview {
+        let page = TranslationPreview {
             attempt_id: attempt,
             bundle_id: bundle.bundle_id,
             fixed_source_snapshot_id: bundle.source_snapshot_id,
@@ -1501,23 +1589,15 @@ impl ProjectStore {
             next_ordinal: None,
             rows: Vec::new(),
         };
-        for row in rows.into_iter().skip(after as usize).take(limit as usize) {
-            page.rows.push(row);
-            if codec::encode(&page, crate::content::MAX_CONTENT_PAGE_BYTES).is_err() {
-                page.rows.pop();
-                break;
-            }
+        let rows: std::sync::Arc<[TranslationPreviewRow]> = rows.into();
+        if let Some(stamp) = stamp {
+            *translation_preview_cache().lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner) = Some(TranslationPreviewMemo {
+                    stamp, summary: page.clone(), rows: rows.clone(),
+                });
         }
-        let next = after + page.rows.len() as u32;
-        if next < page.total {
-            page.next_ordinal = Some(next);
-        }
-        if page.rows.is_empty() && next < page.total
-            || codec::encode(&page, crate::content::MAX_CONTENT_PAGE_BYTES).is_err()
-        {
-            return Err(error(ErrorCode::LimitExceeded, "translation-page"));
-        }
-        Ok(page)
+        translation_preview_page(page, &rows, after, limit, expected_basis)
+        })
     }
 
     /// Exact saved identity for a bounded user action, with the same complete
@@ -2277,6 +2357,23 @@ mod tests {
         sync::Arc,
         time::{Duration, Instant},
     };
+
+    #[test]
+    fn preview_evidence_digests_cover_every_supported_result_and_selection() {
+        let snapshot = ExecutionId::new();
+        let count = crate::execution::MAX_ITEMS;
+        let results = vec![(ExecutionId::new(), "a".repeat(64)); count];
+        let event = ExecutionId::new();
+        let mut selections: Vec<_> = (0..count as u32)
+            .map(|ordinal| (ordinal, Some(event), "unapplied".to_owned()))
+            .collect();
+        let (result_digest, basis) = preview_evidence_digests(snapshot, &results, &selections).unwrap();
+        selections.last_mut().unwrap().1 = None;
+        let (changed_result_digest, changed_basis) =
+            preview_evidence_digests(snapshot, &results, &selections).unwrap();
+        assert_eq!(changed_result_digest, result_digest);
+        assert_ne!(changed_basis, basis);
+    }
 
     pub(super) fn project_with_source() -> (
         tempfile::TempDir,

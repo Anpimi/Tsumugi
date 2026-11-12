@@ -158,7 +158,7 @@ The current workspace targets **`0.3.0-alpha.1`**. The published `0.2.0-alpha.1`
 
 ### Changed
 
-- **Breaking**: Opening projects and restoring backups require SQLite schema 76. Keep older projects and backups intact, and import the original source files into a new project. The app refuses older backups before creating a restore folder.
+- **Breaking**: Opening projects and restoring backups require SQLite schema 77. Keep older projects and backups intact, and import the original source files into a new project. The app refuses older backups before creating a restore folder.
 
 - Saving and reading plugin releases reuse validated build and source data within each operation. Preparing source and artifact checks captures each new checker input once. Reopening projects and reading saved releases verify the original checker input against its reconstructed bytes without decoding a temporary copy. Export verifies the saved files against the preview and registers the pending delivery in one transaction. Saved releases still verify the exact original source, artifacts, and independent check.
 - Source, translation, and artifact checks reuse an already decoded result when its verified input matches exactly. Reading a result from storage still checks the original bytes and digest.
@@ -169,8 +169,9 @@ The current workspace targets **`0.3.0-alpha.1`**. The published `0.2.0-alpha.1`
 
 - Experimental SDK `0.1.0-alpha.7` adds a bounded, read-only capture summary with per-material counts, groups, format properties and source references. The summary describes only the declared captured projection and cannot enter source-revision semantics or authorize execution.
 - Experimental SDK `0.1.0-alpha.6` avoids decoding the complete binary material again for each field, native label and context reference during one validation. Every range, material digest and subsequent validation still uses the exact captured bytes; capacity and process deadlines are unchanged.
-- Binary source imports and builds now distinguish decoded material from JSON/base64 framing. Experimental SDK `0.1.0-alpha.5` allows 4 MiB encoded source/artifact sets, 8 MiB content and 16 MiB compound invocations while retaining the 2 MiB decoded-material ceiling. Schema 76 preserves saved bytes, digests, row identities, human work and execution evidence. Larger plugin frames use the existing input chunks and explicit frozen budgets; ordinary operation defaults stay unchanged. Use a matching Host and independently pinned SDK consumer.
-- Experimental SDK `0.1.0-alpha.4` reserves one snapshot metadata block alongside identity and context blocks for all 2,000 content items (4,001 blocks total). The independent encoded exchange limit, item count and Process3 contracts are unchanged; use a matching SDK consumer and Host snapshot.
+- **Breaking**: Experimental SDK `0.1.0-alpha.9` uses Process 4 with bounded 64 KiB transport chunks; rebuild native plugins and use the matching JavaScript Host. Material and field limits are independent: up to 100,000 fields, 128 MiB per file and 256 MiB per material set, with larger encoded source, check and build budgets. Large captures avoid repeated whole-message serialization and quadratic field scans; complete original bytes and independent checks remain required. Capacity ceilings do not establish arbitrary Mod or game compatibility.
+
+- Review and release eligibility use the current source's larger field scope. Paired translation previews can summarize results and selections beyond the ordinary request size.
 
 - Artifact-capable source, build and mandatory review bindings can declare a format-process permission with a safe relative program path. Historical text-only bindings retain capture-only permissions; network, project-service and staged-output permissions remain outside these domain bindings. Process approval and execution stay with the existing Host and application boundaries.
 
@@ -233,7 +234,7 @@ The current workspace targets **`0.3.0-alpha.1`**. The published `0.2.0-alpha.1`
 - Publish each local draft write's result together with its saved or failed status.
 - Confirm and next keeps advancing through the fixed queue when an unfocused row leaves the viewport during the save.
 - Keep the native Edit menu in place and suspend workspace commands as a group when they are temporarily unavailable during paste or translation confirmation.
-- Complete macOS builds accept the pinned WebVTT and SMAPI packages when their SDK remains supported by Process3.
+- Complete macOS builds bundle the pinned WebVTT and SMAPI `0.1.0-alpha.2` packages for Process 4.
 - Enable the native reference commands when the project reference tools are ready. The native workspace menu also follows input composition and open dialogs.
 - Update the affected buttons and menu during paste without refreshing the entry table for the temporary interaction lock.
 - Avoid flashing a progress banner during quick macOS clipboard reads. Escape cancels a pending paste, and slower reads also show a Cancel button.

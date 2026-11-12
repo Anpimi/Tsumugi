@@ -1,6 +1,6 @@
 # JavaScript Component Host (`@tsumugi/javascript-host`)
 
-`@tsumugi/javascript-host` is the Node.js worker bootstrap that runs inside child processes spawned by [`tsumugi-plugin-host`](../../crates/plugin-host/README.md). It implements the worker side of [process protocol 3](../../crates/plugin-sdk/docs/process.md)—handling component activation, capability handler registration, invocation framing, project service calls, cooperative cancellation, and disposal through the [`ComponentAPI` facade](../../crates/plugin-sdk/javascript/component.d.ts).
+`@tsumugi/javascript-host` is the Node.js worker bootstrap that runs inside child processes spawned by [`tsumugi-plugin-host`](../../crates/plugin-host/README.md). It implements the worker side of [process protocol 4](../../crates/plugin-sdk/docs/process.md)—handling component activation, capability handler registration, invocation framing, project service calls, cooperative cancellation, and disposal through the [`ComponentAPI` facade](../../crates/plugin-sdk/javascript/component.d.ts).
 
 ## Component Authoring Interface
 

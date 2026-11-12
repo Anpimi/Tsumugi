@@ -129,7 +129,7 @@ pub(in crate::persistence) struct SourceContextReader {
     source_attempt_id: ExecutionId,
     source_result_id: ExecutionId,
     source_result_digest: String,
-    output: crate::content::SourceOutput,
+    output: std::sync::Arc<crate::content::SourceOutput>,
     rows: Vec<crate::content::ContentRow>,
 }
 

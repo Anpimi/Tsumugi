@@ -640,15 +640,40 @@ fn source_impact_reads_one_work_set_for_two_thousand_units() {
             assert_eq!(impact.rows.len(), 50);
             assert_eq!(impact.summary.preserved, 0);
             assert_eq!(impact.summary.reassess, 0);
+            let qualifications = statements.iter().filter(|sql| sql.starts_with(
+                "SELECT project_id,set_id,attempt_id,result_id,source_language,identity_policy FROM source_snapshots WHERE snapshot_id="
+            )).count();
+            assert_eq!(qualifications, if stage == "initial" { 1 } else { 2 },
+                "the current and predecessor captures must each be read once");
+            assert_eq!(statements.iter().filter(|sql| sql.contains(
+                "SELECT o.unit_id,o.snapshot_id,o.revision_id,o.native_key,r.text,"
+            )).count(), 1,
+                "the complete work set must use one batched target read");
+            // A cold qualification checks the read stamp at most five times
+            // (capture, mapping, bundle, and their memo updates); the page
+            // summary checks it once more. These metadata probes are constant
+            // per source snapshot, not per unit, page row or stored chunk.
+            let stamp_reads = [
+                "SELECT count(*) FROM main.sqlite_schema",
+                "SELECT tsumugi_connection_identity()",
+                "PRAGMA main.data_version",
+                "PRAGMA main.schema_version",
+            ].map(|probe| statements.iter().filter(|sql| sql.trim() == probe).count());
+            assert!(stamp_reads.iter().all(|count| *count == stamp_reads[0]),
+                "incomplete read-stamp probe groups: {stamp_reads:?}");
+            assert!(stamp_reads[0] <= 5 * qualifications + 1,
+                "read-stamp probes multiplied: {stamp_reads:?}");
+            let data_statements = statements.len() - stamp_reads.iter().sum::<usize>();
             assert!(
-                statements.len() < 500,
-                "whole-scope/page reads multiplied: {}",
-                statements.len()
+                data_statements < 500,
+                "whole-scope/page reads multiplied: {data_statements} data statements, {} total",
+                statements.len(),
             );
             println!(
-                "source_impact data={} page=50 stage={stage} round={round} statements={} payload_bytes={} elapsed_us={}",
+                "source_impact data={} page=50 stage={stage} round={round} statements={} data_statements={data_statements} stamp_groups={} payload_bytes={} elapsed_us={}",
                 source.len(),
                 statements.len(),
+                stamp_reads[0],
                 serde_json::to_vec(&impact).unwrap().len(),
                 elapsed.as_micros()
             );
@@ -830,7 +855,7 @@ fn maintenance_reads_only_window_targets_while_preserving_original_impact_reason
     assert!(
         !statements
             .iter()
-            .any(|sql| sql.contains("GROUP BY o.unit_id ORDER BY MIN(o.ordinal) LIMIT 10001")),
+            .any(|sql| sql.contains("GROUP BY o.unit_id ORDER BY MIN(o.ordinal) LIMIT")),
         "maintenance must not build the complete project unit set"
     );
     let selection = statements

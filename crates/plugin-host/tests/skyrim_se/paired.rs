@@ -197,10 +197,21 @@ fn translation_action(
         .iter()
         .find(|unit| unit.item_ids == [row.item_id])
         .unwrap();
+    translation_action_for_unit(store, input, snapshot, row, decision, unit.unit_id)
+}
+
+fn translation_action_for_unit(
+    store: &mut ProjectStore,
+    input: &FixedInput,
+    snapshot: ExecutionId,
+    row: &TranslationPreviewRow,
+    decision: TranslationSelectionDecision,
+    unit: ExecutionId,
+) -> AdoptionAction {
     store
         .prepare_adoption(
             input.envelope().attempt_id,
-            unit.unit_id,
+            unit,
             vec![row.result_id],
             json!(TranslationAdoptionConfirmation {
                 result_digest: row.result_digest.clone(),
@@ -738,4 +749,225 @@ fn skyrim_paired_core_keeps_multifile_candidates_and_manual_selection_on_reopen(
     );
     reopened.close().unwrap();
     assert_eq!(std::fs::read_dir(&stage).unwrap().count(), 0);
+}
+
+#[test]
+#[ignore = "requires an inspected paired Skyrim SE package and explicit --capacity-large fixtures"]
+fn skyrim_large_paired_projection_preserves_selection_scope_across_source_updates() {
+    use std::{collections::BTreeMap, time::Instant};
+    use tsumugi_core::content::{LineageChoice, LineageDecision, SourceChangeKind};
+
+    const FIELDS: u32 = 50_000;
+    const CHANGED: usize = 32;
+    let root = tempfile::tempdir().unwrap();
+    let image = installed(root.path());
+    let environment = super::runtime();
+    let source = image.source_import("source-profile").unwrap();
+    let translations = image.translation_import("translation-profile").unwrap();
+    assert!(translations.declaration.is_paired());
+    let stage = root.path().join("workers");
+    std::fs::create_dir(&stage).unwrap();
+    let proxy = |id: &str| {
+        Arc::new(
+            RunnerProxy::new(
+                image.clone(), id, environment.clone(), &stage, HostLimits::default(),
+            ).unwrap(),
+        )
+    };
+    let extractor = proxy(&source.declaration.extractor);
+    let source_checker = proxy(&source.declaration.checker);
+    let producer = proxy(&translations.declaration.extractor);
+    let checker = proxy(&translations.declaration.checker);
+    let path = root.path().join("project");
+    let mut store = ProjectStore::create(
+        &path,
+        ProjectMetadata::create("Large paired Skyrim translations", "en-US", ["zh-CN"]).unwrap(),
+    ).unwrap();
+    let project = ExecutionId::parse(&store.metadata().unwrap().project_id().to_string()).unwrap();
+    let mut runtime = ExecutionRuntime::new(&store).unwrap();
+    for runner in [&extractor, &source_checker, &producer, &checker] {
+        runtime.register(runner.clone()).unwrap();
+    }
+    runtime.register_read_only(Arc::new(TranslationProjectionRunner)).unwrap();
+
+    let started = Instant::now();
+    let captured = fixture("capacity-large-source", false, false);
+    assert!(captured.artifacts[0].validated_bytes().unwrap().len() >= 64 * 1024 * 1024);
+    let source_input = fixed_capture(&store, &source, &extractor, &source_checker, &captured);
+    let AdoptedSource { snapshot, preview_total, .. } = adopt_source(&mut store, &mut runtime, &source_input);
+    assert_eq!(preview_total, FIELDS);
+    drop(source_input);
+    drop(captured);
+    eprintln!("large paired S1 source adopted: {FIELDS} fields in {:?}", started.elapsed());
+
+    let translated = fixture("capacity-large-translated", false, false).artifacts;
+    let translated_bytes = translated[0].validated_bytes().unwrap().len();
+    assert!(translated_bytes >= 64 * 1024 * 1024);
+    let input = pair_input(
+        &store, &translations, &producer, &checker, "skyrim-se:record-field", translated,
+    );
+    let started = Instant::now();
+    let (projected, proposal) = checked_projection(&mut store, &mut runtime, &input);
+    assert_eq!(proposal.entries.len(), FIELDS as usize);
+    assert_eq!(proposal.order.len(), FIELDS as usize);
+    assert_eq!(projected.envelope().items.len(), FIELDS as usize);
+    assert!(proposal.entries.iter().all(|entry| entry.text.starts_with("Translated ")));
+    drop(proposal);
+    drop(input);
+    eprintln!("large paired extraction, independent check and {FIELDS} Core projections completed in {:?}", started.elapsed());
+
+    let units: BTreeMap<_, _> = projected.envelope().units.iter().map(|unit| {
+        assert_eq!(unit.item_ids.len(), 1);
+        (unit.item_ids[0], unit.unit_id)
+    }).collect();
+    assert_eq!(units.len(), FIELDS as usize);
+    let attempt = projected.envelope().attempt_id;
+    let mut preview = store.translation_preview(attempt, 0, 100, None).unwrap();
+    assert_eq!((preview.total, preview.unique, preview.unmatched, preview.ambiguous), (FIELDS, FIELDS, 0, 0));
+    assert_eq!(preview.files.as_ref().unwrap().len(), 1);
+    assert_eq!(preview.files.as_ref().unwrap()[0].byte_length as usize, translated_bytes);
+    let basis = preview.basis.clone();
+    let last = store.translation_preview(attempt, FIELDS - 1, 1, Some(&basis)).unwrap();
+    assert_eq!(last.rows[0].entry.ordinal, FIELDS - 1);
+    assert_eq!(last.rows[0].status, TranslationMatch::Unique);
+    assert!(last.next_ordinal.is_none());
+
+    // Every entry was projected through the runtime. Adoption deliberately
+    // exercises the complete changed scope plus stable and pending boundaries;
+    // it is not a claim that 50,000 individual adoption transactions ran.
+    let mut affected = BTreeMap::new();
+    let mut stable = None;
+    let mut pending = None;
+    loop {
+        for row in &preview.rows {
+            assert_eq!(row.status, TranslationMatch::Unique);
+            let book: usize = row.source_text.as_ref().unwrap()
+                .strip_prefix("Chapter ").unwrap().split_whitespace().next().unwrap().parse().unwrap();
+            if book < 16 {
+                assert!(affected.insert(row.unit_id.unwrap(), row.clone()).is_none());
+            } else if book == 16 && stable.is_none() {
+                stable = Some(row.clone());
+            } else if book == 17 && pending.is_none() {
+                pending = Some(row.clone());
+            }
+        }
+        if affected.len() == CHANGED && stable.is_some() && pending.is_some() {
+            break;
+        }
+        let next = preview.next_ordinal.expect("the declared capacity adoption scope is missing");
+        preview = store.translation_preview(attempt, next, 100, Some(&basis)).unwrap();
+    }
+    let stable = stable.unwrap();
+    let pending = pending.unwrap();
+    let mut selected = BTreeMap::new();
+    for row in affected.values().chain(std::iter::once(&stable)) {
+        let action = translation_action_for_unit(
+            &mut store, &projected, snapshot, row, TranslationSelectionDecision::SelectIfEmpty,
+            units[&row.item_id],
+        );
+        store.adopt_execution(&action, &TranslationAdoptionHandler).unwrap();
+        let target = store.review_target(project, row.unit_id.unwrap(), "zh-CN").unwrap();
+        assert_eq!(target.translation_text.as_deref(), Some(row.entry.text.as_str()));
+        assert_eq!(target.source_revision_id, row.source_revision_id.unwrap());
+        assert!(target.current_check.is_none() && target.current_decision.is_none());
+        selected.insert(target.unit_id, target);
+    }
+    assert_eq!(selected.len(), CHANGED + 1);
+    let pending_action = translation_action_for_unit(
+        &mut store, &projected, snapshot, &pending, TranslationSelectionDecision::SelectIfEmpty,
+        units[&pending.item_id],
+    );
+    let prepared = store.capture_execution_adoption(&pending_action).unwrap()
+        .prepare(&TranslationAdoptionHandler).unwrap();
+
+    let updated = fixture("capacity-large-updated", false, false);
+    let input = fixed_capture(&store, &source, &extractor, &source_checker, &updated);
+    let result = checked_source_result(&mut store, &mut runtime, &input);
+    let mut comparison = store.source_comparison_filtered(
+        input.envelope().attempt_id, result.envelope().result_id, None, "Updated", 0, 100,
+    ).unwrap();
+    assert_eq!(comparison.previous_snapshot_id, snapshot);
+    assert_eq!(comparison.total, FIELDS);
+    assert_eq!(comparison.filtered_total, CHANGED as u32);
+    assert_eq!(comparison.counts.changed, CHANGED as u32);
+    assert_eq!(comparison.counts.unchanged + comparison.counts.moved, FIELDS - CHANGED as u32);
+    assert_eq!((comparison.counts.added, comparison.counts.removed, comparison.counts.rename_candidate, comparison.counts.ambiguous), (0, 0, 0, 0));
+    assert_eq!(comparison.mapping_review_required, CHANGED as u32);
+    let mut confirmation = comparison.confirmation.clone();
+    confirmation.actor = Some("Synthetic maintainer".into());
+    loop {
+        for change in &comparison.rows {
+            assert_eq!(change.kind, SourceChangeKind::Changed);
+            let old = change.old.as_ref().unwrap();
+            assert!(affected.contains_key(&old.unit_id.unwrap()));
+            confirmation.lineage.push(LineageChoice {
+                new_ordinal: change.new.as_ref().unwrap().ordinal,
+                old_occurrence_id: old.occurrence_id.unwrap(),
+                decision: LineageDecision::Continue,
+                reason: "The synthetic update oracle preserves this native BOOK field".into(),
+            });
+        }
+        let Some(next) = comparison.next_ordinal else { break; };
+        comparison = store.source_comparison_filtered(
+            input.envelope().attempt_id, result.envelope().result_id, None, "Updated", next, 100,
+        ).unwrap();
+    }
+    assert_eq!(confirmation.lineage.len(), CHANGED);
+    assert_eq!(store.content_scope().unwrap().current_snapshot, Some(snapshot));
+    let action = store.prepare_adoption(
+        input.envelope().attempt_id, input.envelope().units[0].unit_id,
+        vec![result.envelope().result_id], json!(confirmation),
+    ).unwrap();
+    store.adopt_execution(&action, &SourceAdoptionHandler).unwrap();
+    let next_snapshot = store.content_scope().unwrap().current_snapshot.unwrap();
+    assert_ne!(next_snapshot, snapshot);
+
+    assert_eq!(store.commit_execution_adoption(prepared).unwrap_err().code, ErrorCode::DependencyConflict);
+    assert!(store.adoption_receipt(pending_action.action_id).unwrap().is_none());
+    assert!(store.review_target(project, pending.unit_id.unwrap(), "zh-CN").unwrap().selection_id.is_none());
+    let mut retained = BTreeMap::new();
+    for (unit, before) in &selected {
+        let current = store.review_target(project, *unit, "zh-CN").unwrap();
+        assert_eq!(current.source_snapshot_id, next_snapshot);
+        assert_eq!((current.selection_id, current.revision_id), (before.selection_id, before.revision_id));
+        assert_eq!(current.translation_text, before.translation_text);
+        if affected.contains_key(unit) {
+            assert_ne!(current.source_revision_id, before.source_revision_id);
+            assert!(current.source_text.starts_with("Updated "));
+            let saved = store.translation_revision(project, *unit, "zh-CN", before.revision_id.unwrap()).unwrap();
+            assert_eq!(saved.source_snapshot_id, snapshot);
+            assert_eq!(saved.source_revision_id, before.source_revision_id);
+            let error = store.save_translation_revision(&SaveTranslationRevision {
+                project_id: project, action_id: ExecutionId::new(), unit_id: *unit,
+                locale: "zh-CN".into(), source_revision_id: before.source_revision_id,
+                expected_selection_id: before.selection_id,
+                text: before.translation_text.clone().unwrap(), reuse_origin: None,
+            }).unwrap_err();
+            assert_eq!((error.code, error.stage.as_str()), (ErrorCode::DependencyConflict, "translation-source"));
+        } else {
+            assert_eq!(current.source_revision_id, before.source_revision_id);
+            assert_eq!(current.source_text, before.source_text);
+        }
+        assert!(current.current_check.is_none() && current.current_decision.is_none());
+        retained.insert(*unit, current);
+    }
+    let stale = store.translation_preview(attempt, 0, 100, None).unwrap();
+    assert_eq!((stale.total, stale.source_changed, stale.applied), (FIELDS, FIELDS, CHANGED as u32 + 1));
+    let pending_page = store.translation_preview(attempt, pending.entry.ordinal, 1, Some(&stale.basis)).unwrap();
+    assert_eq!(pending_page.rows[0].status, TranslationMatch::SourceChanged);
+    assert!(pending_page.rows[0].current_selection.is_none());
+
+    runtime.begin_quiesce(&mut store).unwrap();
+    runtime.finish_quiesce(&mut store).unwrap();
+    drop(runtime);
+    store.close().unwrap();
+    let reopened = ProjectStore::open(&path).unwrap();
+    assert_eq!(reopened.content_scope().unwrap().current_snapshot, Some(next_snapshot));
+    for (unit, expected) in retained {
+        assert_eq!(reopened.review_target(project, unit, "zh-CN").unwrap(), expected);
+    }
+    assert!(reopened.adoption_receipt(pending_action.action_id).unwrap().is_none());
+    reopened.close().unwrap();
+    assert_eq!(std::fs::read_dir(&stage).unwrap().count(), 0);
+    eprintln!("large paired Core boundary: {FIELDS} checked projections, 33 selected imports, 32 stale source writes and one pending adoption rejected");
 }

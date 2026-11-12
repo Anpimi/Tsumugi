@@ -135,7 +135,7 @@ impl ReviewCheckInput {
                 }
             }
         }
-        encoded_limit(self, MAX_INVOCATION_PAYLOAD_BYTES, "reviewCheckInput")
+        encoded_limit(self, MAX_MATERIAL_INVOCATION_BYTES, "reviewCheckInput")
     }
 }
 
@@ -261,7 +261,7 @@ impl ReviewBinding {
 }
 
 pub fn parse_review_check_input(bytes: &[u8]) -> Result<ReviewCheckInput, ContractError> {
-    if bytes.len() > MAX_INVOCATION_PAYLOAD_BYTES {
+    if bytes.len() > MAX_MATERIAL_INVOCATION_BYTES {
         return Err(ContractError::at(
             ContractErrorCode::LimitExceeded,
             "reviewCheckInput",

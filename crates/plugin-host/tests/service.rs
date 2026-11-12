@@ -694,7 +694,7 @@ mod javascript {
                     panic!("outer invocation failed")
                 };
                 assert_eq!(
-                    output.utf8,
+                    output.utf8.as_ref(),
                     "provider-a:service:你好 👩🏽‍💻|provider-b:service:你好 👩🏽‍💻:original:你好 👩🏽‍💻"
                 );
                 let seen = broker.seen.lock().unwrap();
@@ -741,7 +741,7 @@ mod javascript {
             let InvocationOutcome::Succeeded { output } = &received.result().outcome else {
                 panic!("optional integration failed")
             };
-            assert_eq!(output.utf8, "optional-none:original:你好 👩🏽‍💻");
+            assert_eq!(output.utf8.as_ref(), "optional-none:original:你好 👩🏽‍💻");
             assert!(optional.close().await.direct_child_reaped);
             assert_eq!(std::fs::read_dir(dir.path()).unwrap().count(), 0);
         });

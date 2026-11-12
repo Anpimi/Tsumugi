@@ -72,7 +72,7 @@ impl<'de> Deserialize<'de> for CapturedFile {
                 role: value.role,
                 byte_length: value.byte_length,
                 sha256: value.sha256,
-                data: sdk::CapturedArtifactData::Base64(value.base64),
+                data: sdk::CapturedArtifactData::Base64(value.base64.into()),
             },
         })
     }

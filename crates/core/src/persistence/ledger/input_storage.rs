@@ -11,12 +11,12 @@ use rusqlite::{
 };
 use serde::{Deserialize, Serialize};
 
-pub(super) const CHUNK_BYTES: usize = 16 * 1024;
-pub(super) const MAX_STORED_INPUT_BYTES: usize = 144 * 1024;
+pub(super) const CHUNK_BYTES: usize = 64 * 1024;
+pub(super) const MAX_STORED_INPUT_BYTES: usize = 1280 * 1024;
 const MAX_CHUNKS: usize = MAX_FIXED_INPUT_BYTES.div_ceil(CHUNK_BYTES);
 pub(super) const TABLE: &str = "CREATE TABLE execution_input_chunks (
     digest TEXT PRIMARY KEY NOT NULL CHECK(length(digest)=64),
-    bytes BLOB NOT NULL CHECK(typeof(bytes)='blob' AND length(bytes) BETWEEN 1 AND 16384))";
+    bytes BLOB NOT NULL CHECK(typeof(bytes)='blob' AND length(bytes) BETWEEN 1 AND 65536))";
 
 #[derive(Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]

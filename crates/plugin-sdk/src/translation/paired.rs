@@ -2,10 +2,10 @@
 //! it is neither a project read capability nor a path the worker may reopen.
 use super::*;
 
-/// Each side retains the original 2 MiB decoded-material ceiling. The extra
-/// space is JSON/base64 framing, not permission to capture larger files.
-pub const MAX_PAIRED_TRANSLATION_INPUT_BYTES: usize = 6 * 1024 * 1024;
-pub const MAX_PAIRED_TRANSLATION_RESULT_BYTES: usize = 8 * 1024 * 1024;
+/// Each side has its own decoded-material budget; these bound the combined
+/// JSON input and the translated content proposal independently.
+pub const MAX_PAIRED_TRANSLATION_INPUT_BYTES: usize = 2 * MAX_SOURCE_EXTRACTION_INPUT_BYTES;
+pub const MAX_PAIRED_TRANSLATION_RESULT_BYTES: usize = MAX_CONTENT_EXCHANGE_BYTES;
 
 pub fn paired_translation_extraction_input_contract() -> ContractRef {
     ContractRef {
@@ -187,7 +187,7 @@ pub fn parse_paired_translation_extraction_check_input(
 ) -> Result<TranslationExtractionCheckInput, ContractError> {
     let value: TranslationExtractionCheckInput = parse(
         bytes,
-        MAX_INVOCATION_PAYLOAD_BYTES,
+        MAX_MATERIAL_INVOCATION_BYTES,
         "pairedTranslationCheck",
     )?;
     value.validate()?;

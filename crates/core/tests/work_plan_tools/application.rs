@@ -117,7 +117,7 @@ fn application_tool_roster_is_required_exact_and_read_only() {
             operating_system: sdk::RuntimeOperatingSystem::Macos,
             architecture: sdk::RuntimeArchitecture::Aarch64,
         },
-        sdk_version: "0.1.0-alpha.1".into(),
+        sdk_version: sdk::SDK_VERSION.into(),
         process_protocol: sdk::PROCESS_PROTOCOL,
         profile: sdk::NativeHostProfile::NativeApplicationHostV1,
         host_version: "0.2.0-alpha.1".into(),

@@ -363,12 +363,12 @@ impl ProjectStore {
                 .prepare(
                     "SELECT o.unit_id,MIN(o.ordinal) FROM source_effective_occurrences o
                  JOIN source_units u ON u.unit_id=o.unit_id
-                 WHERE o.snapshot_id=?1 AND u.project_id=?2 GROUP BY o.unit_id ORDER BY MIN(o.ordinal),o.unit_id LIMIT 10001",
+                 WHERE o.snapshot_id=?1 AND u.project_id=?2 GROUP BY o.unit_id ORDER BY MIN(o.ordinal),o.unit_id LIMIT ?3",
                 )
                 .map_err(sql)?;
             statement
                 .query_map(
-                    params![snapshot_id.to_string(), project_id.to_string()],
+                    params![snapshot_id.to_string(), project_id.to_string(), (MAX_SCOPE + 1) as i64],
                     |row| Ok((row.get::<_, String>(0)?, row.get::<_, u32>(1)?)),
                 )
                 .map_err(sql)?
@@ -387,12 +387,12 @@ impl ProjectStore {
                AND s.sequence=(SELECT MAX(t.sequence) FROM translation_selections t
                                WHERE t.unit_id=o.unit_id AND t.locale=?2)
              LEFT JOIN translation_revisions tr ON tr.revision_id=s.revision_id
-             WHERE o.snapshot_id=?1 ORDER BY o.ordinal,o.unit_id LIMIT 10001",
+             WHERE o.snapshot_id=?1 ORDER BY o.ordinal,o.unit_id LIMIT ?4",
                 )
                 .map_err(sql)?;
             let rows = statement
                 .query_map(
-                    params![snapshot_id.to_string(), locale, project_id.to_string()],
+                    params![snapshot_id.to_string(), locale, project_id.to_string(), (MAX_SCOPE + 1) as i64],
                     |row| {
                         Ok((
                             row.get::<_, String>(0)?,

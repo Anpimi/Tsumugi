@@ -304,7 +304,7 @@ fn maximum_complete_translation_transport_preserves_sdk_bytes_and_fixed_budgets(
         else {
             panic!("original proposal required")
         };
-        assert_eq!(output.utf8, original);
+        assert_eq!(output.utf8.as_ref(), original);
         let mut substituted = result.envelope().clone();
         substituted.output = Some(serde_json::json!([output.schema, "0".repeat(64)]));
         assert!(

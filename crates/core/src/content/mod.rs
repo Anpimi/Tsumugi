@@ -116,6 +116,7 @@ pub const MAX_SOURCE_BYTES: usize = 128 * 1024;
 /// Complete serialized captured source material retained by the project store.
 /// Execution inputs and combined semantic-check inputs have separate budgets.
 pub const MAX_CAPTURED_SOURCE_INPUT_BYTES: usize = sdk::MAX_SOURCE_EXTRACTION_INPUT_BYTES;
+// Legacy text profiles keep their capture budget; plugin content uses the SDK limit.
 pub const MAX_OCCURRENCES: usize = 2000;
 pub const MAX_SOURCE_RESULT_BYTES: usize = MAX_RESULT_BYTES;
 pub const MAX_CONTENT_PAGE_BYTES: usize = 256 * 1024;
@@ -143,7 +144,7 @@ pub(crate) fn value<T: Serialize>(v: &T) -> Result<serde_json::Value, ExecutionE
 pub(crate) fn from_value<T: serde::de::DeserializeOwned>(
     v: &serde_json::Value,
 ) -> Result<T, ExecutionError> {
-    serde_json::from_value(v.clone()).map_err(|_| invalid("invalid-structure"))
+    T::deserialize(v).map_err(|_| invalid("invalid-structure"))
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -268,7 +269,6 @@ impl SourceBundle {
     pub fn validate(&self) -> Result<(), ExecutionError> {
         let source = self.source_input();
         source.validate().map_err(source_contract_error)?;
-        let _ = codec::encode(&source, MAX_CAPTURED_SOURCE_INPUT_BYTES)?;
         for file in &self.files {
             if file.bytes()?.len() != file.byte_length as usize {
                 return Err(invalid("invalid-structure"));
@@ -338,6 +338,10 @@ impl SourceBundle {
         );
         let mut envelope = InputEnvelope::new(project, OPERATION, capability, version, vec![item])?;
         envelope.settings = value(&settings)?;
+        envelope.limits.timeout_ms = plugin.as_ref().map_or(
+            envelope.limits.timeout_ms,
+            |binding| binding.capability.declaration.limits.timeout_ms.min(300_000),
+        );
         envelope.plugin = plugin;
         envelope.limits.max_result_bytes = if envelope.plugin.is_some() {
             MAX_PLUGIN_RESULT_BYTES
@@ -1043,21 +1047,17 @@ pub struct SourceChangeCounts {
     pub removed: u32,
 }
 impl SourceChangeCounts {
-    pub(crate) fn from_changes(rows: &[SourceChange]) -> Self {
-        let mut counts = Self::default();
-        for row in rows {
-            let count = match row.kind {
-                SourceChangeKind::Unchanged => &mut counts.unchanged,
-                SourceChangeKind::Moved => &mut counts.moved,
-                SourceChangeKind::Changed => &mut counts.changed,
-                SourceChangeKind::Added => &mut counts.added,
-                SourceChangeKind::RenameCandidate => &mut counts.rename_candidate,
-                SourceChangeKind::Ambiguous => &mut counts.ambiguous,
-                SourceChangeKind::Removed => &mut counts.removed,
-            };
-            *count += 1;
-        }
-        counts
+    pub(crate) fn record(&mut self, kind: SourceChangeKind) {
+        let count = match kind {
+            SourceChangeKind::Unchanged => &mut self.unchanged,
+            SourceChangeKind::Moved => &mut self.moved,
+            SourceChangeKind::Changed => &mut self.changed,
+            SourceChangeKind::Added => &mut self.added,
+            SourceChangeKind::RenameCandidate => &mut self.rename_candidate,
+            SourceChangeKind::Ambiguous => &mut self.ambiguous,
+            SourceChangeKind::Removed => &mut self.removed,
+        };
+        *count += 1;
     }
 
     /// Original correspondence questions, before any local draft choices.

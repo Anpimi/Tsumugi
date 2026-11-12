@@ -437,7 +437,7 @@ fn actual_process_selection_provenance_validation_and_explicit_adoption() {
         panic!("actual process output required")
     };
     assert_eq!(
-        output.utf8,
+        output.utf8.as_ref(),
         "{\r\n  \"text\":\"Updated sample\", \"itemIndex\":0\r\n}"
     );
     let mut forged = result.envelope().clone();
@@ -897,7 +897,7 @@ fn failed_unknown_and_crashed_processes_keep_distinct_nonpassing_evidence() {
                 | sdk::InvocationOutcome::Unknown { error } => error,
                 _ => panic!("nonpassing SDK evidence"),
             };
-            assert_eq!(error.utf8, "{\r\n\"reason\":\"synthetic\"\r\n}");
+            assert_eq!(error.utf8.as_ref(), "{\r\n\"reason\":\"synthetic\"\r\n}");
             if mode == "unknown" {
                 let query = runtime
                     .outcome_query(

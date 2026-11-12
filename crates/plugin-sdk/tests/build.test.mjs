@@ -14,6 +14,8 @@ assert.ok(binary && isAbsolute(binary), 'Set TSUMUGI_PLUGIN_CONTRACT to the buil
 const fixture = name => JSON.parse(readFileSync(new URL(`fixtures/${name}`, import.meta.url), 'utf8'));
 const digest = text => createHash('sha256').update(text, 'utf8').digest('hex');
 const declaration = fixture('build.declaration.json');
+const maxTotalBytes = JSON.parse(readFileSync(new URL('../schemas/build-input.schema.json', import.meta.url), 'utf8'))
+  .$defs.BuildOutputLimits.properties.maxTotalBytes.maximum;
 function input(kind = 'webvtt') {
   const source = fixture(`${kind}.content.json`).body.data;
   source.profile = structuredClone(declaration.profile);
@@ -45,10 +47,13 @@ test('build data preserves complete source evidence and decided Unicode through 
   }
 });
 test('build structural receivers reject unknown nested fields and invalid numeric bounds', () => {
+  const boundary = input(); boundary.outputLimits.maxTotalBytes = maxTotalBytes;
+  assert.equal(validateInput(boundary), true);
+  assert.deepEqual(receive('build-input', boundary), boundary);
   for (const mutate of [
     value => { value.outputLimits.maxArtifacts = 0; },
     value => { value.outputLimits.maxArtifacts = 1.5; },
-    value => { value.outputLimits.maxTotalBytes = 2097153; },
+    value => { value.outputLimits.maxTotalBytes = maxTotalBytes + 1; },
     value => { value.targets[0].projectStore = true; },
     value => { delete value.configuration; },
     value => { delete value.outputPaths; },

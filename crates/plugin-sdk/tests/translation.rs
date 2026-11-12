@@ -184,22 +184,46 @@ fn translation_limits_are_complete_byte_and_entry_limits() {
         out.order.push(row.id.clone());
         out.entries.push(row);
     }
-    out.validate().unwrap();
+    // The shared item count is larger than the legacy single-file encoding
+    // budget. The paired receiver can accept the complete maximum-count set.
+    let error = out.validate().unwrap_err();
+    assert_eq!(error.code, ContractErrorCode::LimitExceeded);
+    assert_eq!(error.field, "translationExchange");
+    let bytes = serde_json::to_vec(&out).unwrap();
+    assert!(bytes.len() > MAX_EXCHANGE_BYTES && bytes.len() < MAX_PAIRED_TRANSLATION_RESULT_BYTES);
+    assert_eq!(parse_paired_translation_exchange(&bytes).unwrap().entries.len(), MAX_CONTENT_ITEMS);
+    drop(bytes);
     let mut extra = entry;
     extra.id = "extra".into();
     out.order.push(extra.id.clone());
     out.entries.push(extra);
-    assert!(out.validate().is_err());
+    let error = out.validate().unwrap_err();
+    assert_eq!(error.code, ContractErrorCode::LimitExceeded);
+    assert_eq!(error.field, "translation.entries");
     assert!(parse_translation_extraction_input(&vec![b' '; MAX_EXCHANGE_BYTES + 1]).is_err());
     assert!(
         parse_translation_extraction_check_input(&vec![b' '; MAX_INVOCATION_PAYLOAD_BYTES + 1])
             .is_err()
     );
-    let mut too_large = input();
-    too_large.artifacts[0].as_text_mut().unwrap().utf8 = "x".repeat(MAX_EXCHANGE_BYTES);
-    too_large.artifacts[0].as_text_mut().unwrap().sha256 =
-        payload_digest(&too_large.artifacts[0].as_text().unwrap().utf8);
-    assert!(too_large.validate().is_err()); // Exact bytes plus mandatory metadata.
+    let mut bounded = input();
+    bounded.artifacts[0].as_text_mut().unwrap().utf8.clear();
+    let metadata = serde_json::to_vec(&bounded).unwrap().len();
+    bounded.artifacts[0].as_text_mut().unwrap().utf8 = "x".repeat(MAX_EXCHANGE_BYTES - metadata);
+    bounded.artifacts[0].as_text_mut().unwrap().sha256 =
+        payload_digest(&bounded.artifacts[0].as_text().unwrap().utf8);
+    let bytes = serde_json::to_vec(&bounded).unwrap();
+    assert_eq!(bytes.len(), MAX_EXCHANGE_BYTES);
+    bounded.validate().unwrap();
+    assert_eq!(parse_translation_extraction_input(&bytes).unwrap(), bounded);
+    bounded.artifacts[0].as_text_mut().unwrap().utf8.push('x');
+    bounded.artifacts[0].as_text_mut().unwrap().sha256 =
+        payload_digest(&bounded.artifacts[0].as_text().unwrap().utf8);
+    let bytes = serde_json::to_vec(&bounded).unwrap();
+    assert_eq!(bytes.len(), MAX_EXCHANGE_BYTES + 1);
+    let error = bounded.validate().unwrap_err();
+    assert_eq!(error.code, ContractErrorCode::LimitExceeded);
+    assert_eq!(error.field, "translationExtractionInput");
+    assert_eq!(parse_translation_extraction_input(&bytes).unwrap_err(), error);
 }
 #[test]
 fn translation_requires_complete_independent_nonwaivable_plugin_coverage() {

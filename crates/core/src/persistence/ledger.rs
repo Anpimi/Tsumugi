@@ -4,6 +4,7 @@ use rusqlite::{Connection, OptionalExtension, TransactionBehavior, params};
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 mod activity;
+mod frame_read_guard;
 mod input_storage;
 pub use activity::{TaskActivity, TaskActivityPhase, TaskActivityRow};
 pub(crate) mod provider;
@@ -11,7 +12,7 @@ pub use provider::{ProviderBudget, ReportedTokenTotal};
 
 const EXECUTION_RESULTS_TABLE: &str = "CREATE TABLE \"execution_results\" (
         result_id TEXT PRIMARY KEY NOT NULL, attempt_id TEXT NOT NULL, item_id TEXT NOT NULL, dispatch_token TEXT NOT NULL,
-        bytes BLOB NOT NULL CHECK(length(bytes) BETWEEN 1 AND 33554432), digest TEXT NOT NULL CHECK(length(digest) = 64),
+        bytes BLOB NOT NULL CHECK(length(bytes) BETWEEN 1 AND 805306368), digest TEXT NOT NULL CHECK(length(digest) = 64),
         FOREIGN KEY(attempt_id,item_id,dispatch_token) REFERENCES execution_items(attempt_id,item_id,dispatch_token))";
 
 pub(super) const TABLES: &[(&str, &str)] = &[
@@ -22,7 +23,7 @@ pub(super) const TABLES: &[(&str, &str)] = &[
     ("execution_attempts", "CREATE TABLE execution_attempts (
         attempt_id TEXT PRIMARY KEY NOT NULL, task_id TEXT NOT NULL, project_id TEXT NOT NULL,
         previous_attempt_id TEXT REFERENCES execution_attempts(attempt_id),
-        input BLOB NOT NULL CHECK(typeof(input)='blob' AND length(input) BETWEEN 1 AND 147456), digest TEXT NOT NULL CHECK(length(digest) = 64),
+        input BLOB NOT NULL CHECK(typeof(input)='blob' AND length(input) BETWEEN 1 AND 1310720), digest TEXT NOT NULL CHECK(length(digest) = 64),
         cancellation_revision INTEGER NOT NULL CHECK(cancellation_revision >= 0),
         sequence INTEGER NOT NULL UNIQUE CHECK(sequence > 0),
         FOREIGN KEY(task_id, project_id) REFERENCES execution_tasks(task_id, project_id))"),
@@ -706,7 +707,23 @@ pub(super) fn load_input(
 }
 
 pub(super) fn register_input_reader(connection: &Connection) -> rusqlite::Result<()> {
-    input_storage::register(connection)
+    input_storage::register(connection)?;
+    let identity = ExecutionId::new().to_string();
+    frame_read_guard::register(connection, &identity)?;
+    connection.create_scalar_function(
+        "tsumugi_connection_identity", 0,
+        rusqlite::functions::FunctionFlags::SQLITE_UTF8
+            | rusqlite::functions::FunctionFlags::SQLITE_DETERMINISTIC
+            | rusqlite::functions::FunctionFlags::SQLITE_DIRECTONLY,
+        move |_| Ok(identity.clone()),
+    )?;
+    connection.create_scalar_function(
+        "tsumugi_lower", 1,
+        rusqlite::functions::FunctionFlags::SQLITE_UTF8
+            | rusqlite::functions::FunctionFlags::SQLITE_DETERMINISTIC
+            | rusqlite::functions::FunctionFlags::SQLITE_INNOCUOUS,
+        |context| Ok(context.get::<String>(0)?.to_lowercase()),
+    )
 }
 
 #[cfg(test)]
@@ -816,41 +833,44 @@ pub(super) fn load_input_cached(
     connection: &Connection,
     attempt: ExecutionId,
 ) -> Result<FixedInput, ExecutionError> {
+    if connection.is_autocommit() {
+        return super::review::read_snapshot(connection, |connection| load_input_cached(connection, attempt));
+    }
+    use frame_read_guard::{FrameReadGuard, ReadObservation};
     use std::sync::{Mutex, OnceLock};
-    // Reuse decoding, never the database's assertion of immutability. Each hit
-    // compares the complete stored bytes and row association with the already
-    // verified capture. A changed blob with an unchanged digest is still corrupt.
-    static CACHE: OnceLock<Mutex<Option<(ExecutionId, String, FixedInput)>>> = OnceLock::new();
+    static CACHE: OnceLock<Mutex<Option<(ExecutionId, String, FixedInput, Option<FrameReadGuard>)>>> = OnceLock::new();
     let cache = CACHE.get_or_init(|| Mutex::new(None));
-    let stored = read_stored_input(connection, attempt)?;
-    let bytes = input_storage::reconstructed_bytes(stored.metadata, stored.bytes)?;
-    let cached = cache
-        .lock()
-        .unwrap_or_else(std::sync::PoisonError::into_inner)
-        .as_ref()
-        .filter(|(id, hash, _)| *id == attempt && hash == &stored.digest)
-        .map(|(_, _, input)| input.clone());
-    let input = if let Some(input) = cached {
-        if bytes != input.bytes() {
-            return Err(error(ErrorCode::CorruptLedger, "input-bytes"));
-        }
-        input
+    let cached = cache.lock().unwrap_or_else(std::sync::PoisonError::into_inner)
+        .as_ref().filter(|(id, _, _, _)| *id == attempt)
+        .map(|(_, digest, input, guard)| (digest.clone(), input.clone(), guard.clone()));
+    let current = match &cached {
+        Some((_, _, Some(guard))) => guard.current(connection)?,
+        _ => false,
+    };
+    let input = if current {
+        cached.as_ref().unwrap().1.clone()
     } else {
-        let input = FixedInput::restore(&bytes, &stored.digest)?;
-        *cache
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner) =
-            Some((attempt, stored.digest.clone(), input.clone()));
+        let observed = ReadObservation::begin(connection)?;
+        let stored = read_stored_input(connection, attempt)?;
+        let bytes = input_storage::reconstructed_bytes(stored.metadata, stored.bytes)?;
+        let input = if let Some((_, input, _)) = cached.filter(|(digest, _, _)| digest == &stored.digest) {
+            if bytes != input.bytes() { return Err(error(ErrorCode::CorruptLedger, "input-bytes")); }
+            input
+        } else { FixedInput::restore(&bytes, &stored.digest)? };
+        check_input_association(&input, attempt, &stored.task, &stored.project, stored.previous.as_deref())?;
+        let guard = observed.map(|observed| observed.finish(connection, &[&input], &[])).transpose()?.flatten();
+        *cache.lock().unwrap_or_else(std::sync::PoisonError::into_inner) =
+            Some((attempt, stored.digest, input.clone(), guard));
         input
     };
-    check_input_association(
-        &input,
-        attempt,
-        &stored.task,
-        &stored.project,
-        stored.previous.as_deref(),
-    )?;
+    // Decision/currentness reads are never cached with the immutable frame.
     super::resources::verify_input_fact_decisions(connection, &input)?;
+    if connection.transaction_state(Some(rusqlite::MAIN_DB)).map_err(sql_error)? == rusqlite::TransactionState::Read {
+        // Runtime reads this input before opening its dispatch writer. Prime
+        // only immutable projection qualification here; writes still check
+        // current items, grants, cancellation and validation links below.
+        check_translation_projection(connection, &input, None)?;
+    }
     Ok(input)
 }
 /// A reused result remains bound to its original fixed input and permission.
@@ -1437,37 +1457,157 @@ pub(super) fn artifact_check_proof_in(
     }))
 }
 
-fn source_validation_cache() -> &'static std::sync::Mutex<Option<PreparedSourceValidation>> {
+#[derive(Clone, PartialEq, Eq)]
+pub(super) struct SourceReadStamp {
+    connection: String,
+    data_version: i64,
+    schema_version: i64,
+    total_changes: u64,
+}
+
+pub(super) fn source_read_stamp(connection: &Connection) -> Result<Option<SourceReadStamp>, ExecutionError> {
+    if connection.is_autocommit() {
+        return Ok(None);
+    }
+    // Pin the database before observing its version. A write transaction may
+    // roll back without decrementing total_changes, so it cannot qualify reuse.
+    connection.query_row("SELECT count(*) FROM main.sqlite_schema", [], |_| Ok(()))
+        .map_err(sql_error)?;
+    if connection.transaction_state(Some(rusqlite::MAIN_DB)).map_err(sql_error)?
+        != rusqlite::TransactionState::Read
+    {
+        return Ok(None);
+    }
+    Ok(Some(SourceReadStamp {
+        connection: connection.query_row("SELECT tsumugi_connection_identity()", [], |r| r.get(0)).map_err(sql_error)?,
+        data_version: connection.query_row("PRAGMA main.data_version", [], |r| r.get(0)).map_err(sql_error)?,
+        schema_version: connection.query_row("PRAGMA main.schema_version", [], |r| r.get(0)).map_err(sql_error)?,
+        total_changes: connection.total_changes(),
+    }))
+}
+
+struct SourceReadValidation {
+    stamp: SourceReadStamp,
+    bundle: bool,
+    snapshot: Option<(ExecutionId, bool, u64)>,
+    summary: Option<Option<tsumugi_plugin_sdk::SourceCaptureSummary>>,
+}
+struct SourceValidationMemo {
+    source: ResultValidationCapture,
+    projected: std::sync::Arc<crate::content::SourceOutput>,
+    prepared: Option<PreparedSourceValidation>,
+    read: Option<SourceReadValidation>,
+}
+fn source_validation_cache() -> &'static std::sync::Mutex<Option<SourceValidationMemo>> {
     use std::sync::{Mutex, OnceLock};
-    static CACHE: OnceLock<Mutex<Option<PreparedSourceValidation>>> = OnceLock::new();
+    static CACHE: OnceLock<Mutex<Option<SourceValidationMemo>>> = OnceLock::new();
     CACHE.get_or_init(|| Mutex::new(None))
 }
 
 pub(super) fn remember_source_validation(prepared: PreparedSourceValidation) {
     *source_validation_cache()
         .lock()
-        .unwrap_or_else(std::sync::PoisonError::into_inner) = Some(prepared);
+        .unwrap_or_else(std::sync::PoisonError::into_inner) = Some(SourceValidationMemo {
+            source: prepared.capture.source.clone(), projected: prepared.capture.projected.clone(),
+            prepared: Some(prepared), read: None,
+        });
+}
+
+/// Only immutable capture/mapping checks share this memo. Callers still read
+/// current content clocks and execution authority inside their own transaction.
+pub(super) fn source_read_validation(
+    connection: &Connection,
+    result: ExecutionId,
+) -> Result<Option<(bool, Option<(ExecutionId, bool, u64)>)>, ExecutionError> {
+    let Some(stamp) = source_read_stamp(connection)? else { return Ok(None); };
+    Ok(source_validation_cache().lock().unwrap_or_else(std::sync::PoisonError::into_inner)
+        .as_ref().filter(|memo| memo.source.result.envelope().result_id == result)
+        .and_then(|memo| memo.read.as_ref())
+        .filter(|read| read.stamp == stamp)
+        .map(|read| (read.bundle, read.snapshot)))
+}
+
+pub(super) fn remember_source_read_validation(
+    connection: &Connection,
+    result: ExecutionId,
+    snapshot: Option<(ExecutionId, bool, u64)>,
+) -> Result<(), ExecutionError> {
+    let Some(stamp) = source_read_stamp(connection)? else { return Ok(()); };
+    let mut cache = source_validation_cache().lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+    if let Some(memo) = cache.as_mut().filter(|memo| memo.source.result.envelope().result_id == result) {
+        if let Some(read) = memo.read.as_mut().filter(|read| read.stamp == stamp) {
+            read.bundle = true;
+            if snapshot.is_some() { read.snapshot = snapshot; }
+        }
+    }
+    Ok(())
+}
+
+pub(super) fn source_capture_summary(
+    connection: &Connection,
+    result: ExecutionId,
+    output: &crate::content::SourceOutput,
+) -> Result<Option<tsumugi_plugin_sdk::SourceCaptureSummary>, ExecutionError> {
+    let stamp = source_read_stamp(connection)?;
+    let cached = source_validation_cache().lock().unwrap_or_else(std::sync::PoisonError::into_inner)
+        .as_ref().filter(|memo| memo.source.result.envelope().result_id == result)
+        .and_then(|memo| memo.read.as_ref()).filter(|read| Some(&read.stamp) == stamp.as_ref())
+        .and_then(|read| read.summary.clone());
+    if let Some(summary) = cached { return Ok(summary); }
+    let summary = output.capture_summary()?;
+    let mut cache = source_validation_cache().lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+    if let Some(read) = cache.as_mut()
+        .filter(|memo| memo.source.result.envelope().result_id == result)
+        .and_then(|memo| memo.read.as_mut()).filter(|read| Some(&read.stamp) == stamp.as_ref())
+    {
+        read.summary = Some(summary.clone());
+    }
+    Ok(summary)
 }
 
 /// Reuse the existing single-proof qualification, never a claim that stored
-/// frames or their provenance are immutable. Snapshot mappings remain the
-/// caller's responsibility and are not part of this memo.
+/// frames or their provenance are immutable. A read token covers only the exact
+/// connection snapshot; content separately qualifies its bundle and mappings.
 pub(super) fn load_qualified_source(
     connection: &Connection,
     attempt: ExecutionId,
     result: ExecutionId,
-) -> Result<(FixedInput, FixedResult, crate::content::SourceOutput), ExecutionError> {
+) -> Result<(FixedInput, FixedResult, std::sync::Arc<crate::content::SourceOutput>), ExecutionError> {
+    load_source_projection(connection, attempt, result, true)
+}
+
+/// Structural preview does not confer semantic approval. Both variants share
+/// one immutable capture, and qualification still requires the original checker.
+pub(super) fn load_source_projection(
+    connection: &Connection,
+    attempt: ExecutionId,
+    result: ExecutionId,
+    require_semantic: bool,
+) -> Result<(FixedInput, FixedResult, std::sync::Arc<crate::content::SourceOutput>), ExecutionError> {
+    let stamp = source_read_stamp(connection)?;
+    let verified = source_validation_cache().lock().unwrap_or_else(std::sync::PoisonError::into_inner)
+        .as_ref().filter(|memo| {
+            let source = &memo.source;
+            source.input.envelope().attempt_id == attempt
+                && source.result.envelope().result_id == result
+                && (!require_semantic || source.input.envelope().plugin.is_none()
+                    || memo.prepared.as_ref().is_some_and(|prepared| prepared.proof.valid))
+                && memo.read.as_ref().is_some_and(|read| Some(&read.stamp) == stamp.as_ref())
+        }).map(|memo| (memo.source.clone(), memo.projected.clone()));
+    if let Some((source, projected)) = verified {
+        return Ok((source.input, source.result, projected));
+    }
     let cached = source_validation_cache()
         .lock()
         .unwrap_or_else(std::sync::PoisonError::into_inner)
         .as_ref()
-        .filter(|prepared| {
-            let source = &prepared.capture.source;
+        .filter(|memo| {
+            let source = &memo.source;
             source.input.envelope().attempt_id == attempt
                 && source.result.envelope().attempt_id == attempt
                 && source.result.envelope().result_id == result
         })
-        .map(|prepared| prepared.capture.source.clone());
+        .map(|memo| memo.source.clone());
     let (input, result) = if let Some(source) = cached {
         // Recheck before using the capture even if another reader evicts the
         // single memo before validate_source_link performs its own lookup.
@@ -1481,17 +1621,31 @@ pub(super) fn load_qualified_source(
         let result = load_result(connection, &input, result)?;
         (input, result)
     };
-    let output = if input.envelope().plugin.is_some() {
+    let (output, prepared) = if require_semantic && input.envelope().plugin.is_some() {
         // Persisted snapshots require the original mandatory semantic proof.
         // Its restored projection belongs to exactly these rechecked frames.
-        validate_source_link(connection, &input, &result, true)?
-            .capture
-            .projected
-            .as_ref()
-            .clone()
+        let prepared = validate_source_link(connection, &input, &result, true)?;
+        (prepared.capture.projected.clone(), Some(prepared))
     } else {
-        crate::content::validate_output(&input, &result)?
+        (std::sync::Arc::new(crate::content::validate_output(&input, &result)?), None)
     };
+    if let Some(stamp) = stamp {
+        let mut cache = source_validation_cache().lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+        // A proposed capture is the second side of a comparison. Keep the
+        // adopted side's qualified proof warm across pages without retaining
+        // both complete captures in the cache.
+        let keeps_adopted_proof = !require_semantic && cache.as_ref().is_some_and(|memo| {
+            memo.prepared.is_some()
+                && memo.read.as_ref().is_some_and(|read| read.stamp == stamp)
+        });
+        if !keeps_adopted_proof {
+            *cache = Some(SourceValidationMemo {
+                source: ResultValidationCapture { input: input.clone(), result: result.clone() },
+                projected: output.clone(), prepared,
+                read: Some(SourceReadValidation { stamp, bundle: false, snapshot: None, summary: None }),
+            });
+        }
+    }
     Ok((input, result, output))
 }
 
@@ -1513,6 +1667,7 @@ pub(super) fn validate_source_link(
         .lock()
         .unwrap_or_else(std::sync::PoisonError::into_inner)
         .as_ref()
+        .and_then(|memo| memo.prepared.as_ref())
         .filter(|prepared| {
             prepared.capture.source.result.envelope().result_id == result.envelope().result_id
                 && prepared.check_result.envelope().result_id.to_string() == checker_id
@@ -1668,26 +1823,36 @@ pub(super) fn check_translation_projection(
     if !crate::content::is_translation_projection(input) {
         return Ok(());
     }
+    if connection.is_autocommit() {
+        return super::review::read_snapshot(connection, |connection| check_translation_projection(connection, input, authority));
+    }
+    use frame_read_guard::{FrameReadGuard, ReadObservation};
     let projection = crate::content::TranslationProjection::from_input(input)?;
     let origin = &projection.origin;
     use std::sync::{Mutex, OnceLock};
     type Frames = (FixedInput, FixedResult, FixedInput, FixedResult);
-    // Bounded memoization of pure qualification. All four persisted byte frames
-    // and row associations are compared on every reuse; no permission, current
-    // result, link or cancellation state is cached.
-    static CACHE: OnceLock<Mutex<Option<(String, Frames)>>> = OnceLock::new();
+    // Pure qualification is reused only while all of its verified storage
+    // dependencies remain unchanged. Mutable authority is checked on every call.
+    static CACHE: OnceLock<Mutex<Option<(String, Frames, Option<FrameReadGuard>)>>> = OnceLock::new();
     let cache = CACHE.get_or_init(|| Mutex::new(None));
     let cached = cache
         .lock()
         .unwrap_or_else(std::sync::PoisonError::into_inner)
         .as_ref()
-        .filter(|(digest, _)| digest == input.digest())
-        .map(|(_, frames)| frames.clone());
-    let (producer, result, checker, checked) = if let Some(frames) = cached {
-        check_stored_input(connection, &frames.0)?;
-        check_stored_result(connection, &frames.1)?;
-        check_stored_input(connection, &frames.2)?;
-        check_stored_result(connection, &frames.3)?;
+        .filter(|(digest, _, _)| digest == input.digest())
+        .map(|(_, frames, guard)| (frames.clone(), guard.clone()));
+    let current = match &cached {
+        Some((_, Some(guard))) => guard.current(connection)?,
+        _ => false,
+    };
+    let observed = if current { None } else { ReadObservation::begin(connection)? };
+    let (producer, result, checker, checked) = if let Some((frames, _)) = cached {
+        if !current {
+            check_stored_input(connection, &frames.0)?;
+            check_stored_result(connection, &frames.1)?;
+            check_stored_input(connection, &frames.2)?;
+            check_stored_result(connection, &frames.3)?;
+        }
         frames
     } else {
         let producer = load_input(connection, origin.producer_attempt)?;
@@ -1730,13 +1895,14 @@ pub(super) fn check_translation_projection(
                 "translation-projection-proof",
             ));
         }
-        let frames = (producer, result, checker, checked);
-        *cache
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner) =
-            Some((input.digest().into(), frames.clone()));
-        frames
+        (producer, result, checker, checked)
     };
+    if !current {
+        let guard = observed.map(|observed| observed.finish(connection,
+            &[&producer, &checker], &[&result, &checked])).transpose()?.flatten();
+        *cache.lock().unwrap_or_else(std::sync::PoisonError::into_inner) = Some((input.digest().into(),
+            (producer.clone(), result.clone(), checker.clone(), checked.clone()), guard));
+    }
     if let Some(authority) = authority {
         for (input, result) in [(&producer, &result), (&checker, &checked)] {
             require_current_result(connection, input, result)?;

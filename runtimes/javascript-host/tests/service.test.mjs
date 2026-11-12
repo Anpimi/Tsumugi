@@ -293,7 +293,7 @@ test('service activation rejects duplicate selections and invalid semantic descr
     const session = new ComponentSession(entry, async () => { assert.fail('Invalid activation emitted a frame'); }, () => {}, () => {});
     // Structurally valid cases reach the semantic owner; generation=0 is also
     // rejected by the Rust-generated receiver before activation.
-    assert.throws(() => session.receive(decodeFrame(encodeFrame(frame({ kind: 'activate', data: selected })).subarray(4))), undefined, corruption);
+    assert.throws(() => session.receive(decodeFrame(encodeFrame(frame({ kind: 'activate', data: selected })).subarray(4, -4))), undefined, corruption);
   }
 });
 

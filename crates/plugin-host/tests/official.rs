@@ -328,7 +328,7 @@ async fn assert_build_and_check(
         let mut captured = original.clone();
         if !from.is_empty() {
             let output = captured.output.artifacts[0].as_text_mut().unwrap();
-            output.utf8 = output.utf8.replacen(from, to, 1);
+            output.utf8 = output.utf8.replacen(from, to, 1).into();
             assert_ne!(output.utf8, expected);
             output.sha256 = payload_digest(&output.utf8);
         }

@@ -129,7 +129,7 @@ impl Default for HostLimits {
             max_invocations: 128,
             // Cold startup of a freshly materialized runtime is part of this bound.
             handshake_timeout_ms: 10000,
-            invocation_timeout_ms: 10000,
+            invocation_timeout_ms: 300000,
             stop_timeout_ms: 500,
             cleanup_timeout_ms: 500,
         }
@@ -144,9 +144,10 @@ impl HostLimits {
             || self.max_stderr_bytes > 64 * 1024
             || self.max_invocations == 0
             || self.max_invocations > 128
+            || self.invocation_timeout_ms == 0
+            || self.invocation_timeout_ms > 300000
             || [
                 self.handshake_timeout_ms,
-                self.invocation_timeout_ms,
                 self.stop_timeout_ms,
                 self.cleanup_timeout_ms,
             ]
@@ -289,6 +290,179 @@ impl Drop for Pipes {
     }
 }
 
+enum ProcessEvent {
+    Frame(ProcessFrame, usize),
+    Fault(HostError),
+}
+struct ProcessPipes {
+    sender: Option<mpsc::Sender<ProcessBody>>,
+    receiver: mpsc::Receiver<ProcessEvent>,
+    tasks: Vec<JoinHandle<()>>,
+}
+impl Drop for ProcessPipes {
+    fn drop(&mut self) {
+        self.sender.take();
+        self.receiver.close();
+        for task in self.tasks.drain(..) {
+            task.abort();
+        }
+    }
+}
+
+/// Bounded bridges keep JSON parsing/serialization off the async runtime while
+/// pipe IO remains cancellable. Dropping either end releases a blocked bridge.
+struct ChunkReader {
+    receiver: mpsc::Receiver<Vec<u8>>,
+    current: std::io::Cursor<Vec<u8>>,
+}
+impl std::io::Read for ChunkReader {
+    fn read(&mut self, output: &mut [u8]) -> std::io::Result<usize> {
+        if output.is_empty() {
+            return Ok(0);
+        }
+        loop {
+            let count = std::io::Read::read(&mut self.current, output)?;
+            if count != 0 {
+                return Ok(count);
+            }
+            match self.receiver.blocking_recv() {
+                Some(bytes) => self.current = std::io::Cursor::new(bytes),
+                None => return Ok(0),
+            }
+        }
+    }
+}
+struct ChunkWriter(mpsc::Sender<Vec<u8>>);
+impl std::io::Write for ChunkWriter {
+    fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
+        if !bytes.is_empty() {
+            self.0
+                .blocking_send(bytes.to_vec())
+                .map_err(|_| std::io::ErrorKind::BrokenPipe)?;
+        }
+        Ok(bytes.len())
+    }
+    fn flush(&mut self) -> std::io::Result<()> {
+        Ok(())
+    }
+}
+
+fn attach_process_pipes(child: &mut OwnedChild, limits: &HostLimits) -> HostResult<ProcessPipes> {
+    let mut stdin = child.stdin.take().ok_or(HostError::ChannelFailed)?;
+    let mut stdout = child.stdout.take().ok_or(HostError::ChannelFailed)?;
+    let mut stderr = child.stderr.take().ok_or(HostError::ChannelFailed)?;
+    let (sender, mut messages) = mpsc::channel::<ProcessBody>(1);
+    let (events, receiver) = mpsc::channel(4);
+    let (encoded, mut writes) = mpsc::channel::<Vec<u8>>(2);
+    let (input, reads) = mpsc::channel::<Vec<u8>>(2);
+    let message_limit = limits.max_frame_bytes;
+    let session_limit = limits.max_session_output_bytes;
+    let e = events.clone();
+    let serializer = tokio::task::spawn_blocking(move || {
+        let mut writer = ChunkWriter(encoded);
+        let mut total = 0;
+        while let Some(body) = messages.blocking_recv() {
+            if let Err(error) = write_process_frame(
+                &mut writer,
+                &ProcessFrame::new(body),
+                &mut total,
+                message_limit,
+                session_limit,
+            ) {
+                let _ = e.blocking_send(ProcessEvent::Fault(process_io_error(error)));
+                break;
+            }
+        }
+    });
+    let e = events.clone();
+    let writer = tokio::spawn(async move {
+        while let Some(bytes) = writes.recv().await {
+            if stdin.write_all(&bytes).await.is_err() || stdin.flush().await.is_err() {
+                let _ = e.send(ProcessEvent::Fault(HostError::ChannelFailed)).await;
+                break;
+            }
+        }
+    });
+    let e = events.clone();
+    let reader = tokio::spawn(async move {
+        loop {
+            let mut bytes = vec![0; MAX_PROCESS_CHUNK_BYTES];
+            match stdout.read(&mut bytes).await {
+                Ok(0) => break,
+                Ok(count) => {
+                    bytes.truncate(count);
+                    if input.send(bytes).await.is_err() {
+                        break;
+                    }
+                }
+                Err(_) => {
+                    let _ = e.send(ProcessEvent::Fault(HostError::Crashed)).await;
+                    break;
+                }
+            }
+        }
+    });
+    let e = events.clone();
+    let parser = tokio::task::spawn_blocking(move || {
+        let mut reader = ChunkReader {
+            receiver: reads,
+            current: std::io::Cursor::new(Vec::new()),
+        };
+        let mut total = 0;
+        loop {
+            let event =
+                match read_process_frame(&mut reader, &mut total, message_limit, session_limit) {
+                    Ok((frame, bytes)) => ProcessEvent::Frame(frame, bytes),
+                    Err(error) => {
+                        let _ = e.blocking_send(ProcessEvent::Fault(process_io_error(error)));
+                        break;
+                    }
+                };
+            if e.blocking_send(event).is_err() {
+                break;
+            }
+        }
+    });
+    let stderr_limit = limits.max_stderr_bytes;
+    let diagnostic = tokio::spawn(async move {
+        let mut bytes = [0; 1024];
+        let mut total = 0usize;
+        loop {
+            match stderr.read(&mut bytes).await {
+                Ok(0) => break,
+                Ok(count) => {
+                    total += count;
+                    if total > stderr_limit {
+                        let _ = events
+                            .send(ProcessEvent::Fault(HostError::OutputLimit))
+                            .await;
+                        break;
+                    }
+                }
+                Err(_) => {
+                    let _ = events
+                        .send(ProcessEvent::Fault(HostError::ChannelFailed))
+                        .await;
+                    break;
+                }
+            }
+        }
+    });
+    Ok(ProcessPipes {
+        sender: Some(sender),
+        receiver,
+        tasks: vec![serializer, writer, reader, parser, diagnostic],
+    })
+}
+fn process_io_error(error: std::io::Error) -> HostError {
+    match error.kind() {
+        std::io::ErrorKind::FileTooLarge => HostError::OutputLimit,
+        std::io::ErrorKind::InvalidData => HostError::InvalidFrame,
+        std::io::ErrorKind::UnexpectedEof => HostError::Crashed,
+        _ => HostError::ChannelFailed,
+    }
+}
+
 /// One serialized capability roster on an owned component instance. Multiple
 /// instances have distinct staged directories, process groups and identities.
 /// Direction/state errors permanently revoke a channel; no hidden retry.
@@ -297,7 +471,7 @@ pub struct ProcessSession {
     pid: u32,
     directory: Option<StagedDirectory>,
     environment_digest: Option<String>,
-    pipes: Pipes,
+    pipes: ProcessPipes,
     activation: ProcessActivation,
     component_scope: ComponentScope,
     authority: Arc<dyn Fn() -> bool + Send + Sync>,
@@ -555,7 +729,8 @@ impl ProcessSession {
                 pending.rollback(options.limits.cleanup_timeout_ms).await;
                 return Err(HostError::SpawnFailed);
             };
-            let pipes = match attach_pipes(pending.child.as_mut().unwrap(), &options.limits) {
+            let pipes = match attach_process_pipes(pending.child.as_mut().unwrap(), &options.limits)
+            {
                 Ok(pipes) => pipes,
                 Err(error) => {
                     pending.rollback(options.limits.cleanup_timeout_ms).await;
@@ -713,10 +888,7 @@ impl ProcessSession {
         self.environment_digest.as_deref()
     }
     pub fn is_accepting(&self) -> bool {
-        self.accepting
-            && self.services_current()
-            && !self.pipes.overflow.load(Ordering::Acquire)
-            && self.pipes.receiver.is_empty()
+        self.accepting && self.services_current() && self.pipes.receiver.is_empty()
     }
     /// Records actual direct-child cleanup independently of the invocation's
     /// cancellation/error. No receipt asserts rollback of external effects.
@@ -742,17 +914,14 @@ impl ProcessSession {
         })
     }
     fn send(&self, body: ProcessBody) -> HostResult<()> {
-        let bytes = ProcessFrame::new(body)
-            .encode()
-            .map_err(|_| HostError::InvalidContract)?;
-        if bytes.len() > self.options.limits.max_frame_bytes {
-            return Err(HostError::OutputLimit);
-        }
         self.pipes
             .sender
-            .try_send(bytes)
+            .as_ref()
+            .ok_or(HostError::Closed)?
+            .try_send(body)
             .map_err(|_| HostError::ChannelFailed)
     }
+
     async fn receive(
         &mut self,
         timeout_ms: u32,
@@ -779,9 +948,6 @@ impl ProcessSession {
             if !authorized() || !self.services_current() {
                 return Err(HostError::AuthorityRevoked);
             }
-            if self.pipes.overflow.load(Ordering::Acquire) {
-                return Err(HostError::OutputLimit);
-            }
             if Instant::now() >= deadline {
                 return Err(HostError::Timeout);
             }
@@ -789,15 +955,13 @@ impl ProcessSession {
                 event=self.pipes.receiver.recv() => {
                     if cancelled() { return Err(HostError::Cancelled); }
                     if !authorized() || !self.services_current() { return Err(HostError::AuthorityRevoked); }
-                    if self.pipes.overflow.load(Ordering::Acquire) { return Err(HostError::OutputLimit); }
                     if Instant::now() >= deadline { return Err(HostError::Timeout); }
                     return match event {
                         // Preserve the original encoded size: parsing and then
                         // re-encoding would discard whitespace/escape overhead.
-                        Some(Event::Frame(bytes)) if bytes.len() > frame_limit=>Err(HostError::OutputLimit),
-                        Some(Event::Frame(bytes))=>parse_process_frame(&bytes)
-                            .map(|frame| (frame, bytes.len())).map_err(|_| HostError::InvalidFrame),
-                        Some(Event::Fault(error))=>Err(error),
+                        Some(ProcessEvent::Frame(_, bytes)) if bytes > frame_limit=>Err(HostError::OutputLimit),
+                        Some(ProcessEvent::Frame(frame, bytes))=>Ok((frame, bytes)),
+                        Some(ProcessEvent::Fault(error))=>Err(error),
                         None=>Err(HostError::ChannelFailed),
                     };
                 }
@@ -897,15 +1061,12 @@ impl ProcessSession {
         let mut call = broker.call(caller, binding.clone(), service_request.clone());
         let response = loop {
             check_live()?;
-            if self.pipes.overflow.load(Ordering::Acquire) {
-                return Err(HostError::OutputLimit);
-            }
             tokio::select! {
                 response = &mut call => break response?,
                 event = self.pipes.receiver.recv() => {
                     return Err(match event {
-                        Some(Event::Fault(error)) => error,
-                        Some(Event::Frame(_)) => HostError::UnexpectedFrame,
+                        Some(ProcessEvent::Fault(error)) => error,
+                        Some(ProcessEvent::Frame(..)) => HostError::UnexpectedFrame,
                         None => HostError::ChannelFailed,
                     });
                 }
@@ -913,9 +1074,6 @@ impl ProcessSession {
             }
         };
         check_live()?;
-        if self.pipes.overflow.load(Ordering::Acquire) {
-            return Err(HostError::OutputLimit);
-        }
         if self.pipes.receiver.try_recv().is_ok() {
             return Err(HostError::UnexpectedFrame);
         }
@@ -931,10 +1089,14 @@ impl ProcessSession {
             outcome: response.outcome,
         };
         let body = ProcessBody::ServiceResponse(response);
-        let encoded_size = ProcessFrame::new(body.clone())
-            .encode()
-            .map_err(|_| HostError::InvalidContract)?
-            .len();
+        let encoded_size = write_process_frame(
+            &mut std::io::sink(),
+            &ProcessFrame::new(body.clone()),
+            &mut 0,
+            self.options.limits.max_frame_bytes,
+            MAX_PROCESS_SESSION_BYTES,
+        )
+        .map_err(|_| HostError::InvalidContract)?;
         self.service_output_bytes = self
             .service_output_bytes
             .checked_add(encoded_size)
@@ -973,7 +1135,7 @@ impl ProcessSession {
             return Err(HostError::RequestMismatch);
         }
         // Do not admit an unsolicited or late frame into the next dispatch.
-        if self.pipes.receiver.try_recv().is_ok() || self.pipes.overflow.load(Ordering::Acquire) {
+        if self.pipes.receiver.try_recv().is_ok() {
             self.terminate().await;
             return Err(HostError::UnexpectedFrame);
         }
@@ -1030,16 +1192,11 @@ impl ProcessSession {
                 .ok_or(HostError::RequestMismatch)?
                 .capability;
             check_result_payload(&result, capability.limits.max_output_bytes)?;
-            let bytes = serde_json::to_vec(&ExchangeDocument {
-                protocol_version: EXCHANGE_PROTOCOL,
-                body: ExchangeBody::Result(result.clone()),
-            })
-            .map_err(|_| HostError::InvalidFrame)?;
             let actual = self
                 .activation
                 .provider(&request.provider.contribution_id)
                 .map_err(|_| HostError::RequestMismatch)?;
-            receive_invocation_result(&bytes, request, &actual)
+            validate_invocation_result(&result, request, &actual)
                 .map_err(|_| HostError::ResultMismatch)?;
             if !self.result_ids.insert(result.result_id.clone()) {
                 return Err(HostError::ResultMismatch);
@@ -1164,6 +1321,8 @@ impl ProcessSession {
         kill_owned_child(&mut self.child);
     }
     fn abort_pipes(&mut self) {
+        self.pipes.sender.take();
+        self.pipes.receiver.close();
         for task in self.pipes.tasks.drain(..) {
             task.abort();
         }
@@ -1397,7 +1556,10 @@ mod budget_tests {
     fn process_and_aggregate_limits_have_independent_finite_bounds() {
         let limits = HostLimits::default();
         assert_eq!(limits.max_frame_bytes, MAX_PROCESS_FRAME_BYTES);
-        assert_eq!(limits.max_session_output_bytes, tsumugi_plugin_sdk::MAX_PROCESS_SESSION_BYTES);
+        assert_eq!(
+            limits.max_session_output_bytes,
+            tsumugi_plugin_sdk::MAX_PROCESS_SESSION_BYTES
+        );
         limits.validate().unwrap();
         let narrower = HostLimits {
             max_frame_bytes: 16 * 1024,
@@ -1416,6 +1578,43 @@ mod budget_tests {
             HostLimits {
                 max_session_output_bytes: tsumugi_plugin_sdk::MAX_PROCESS_SESSION_BYTES + 1,
                 ..limits.clone()
+            },
+        ] {
+            assert!(matches!(invalid.validate(), Err(HostError::InvalidLimits)));
+        }
+    }
+
+    #[test]
+    fn invocation_budget_is_independent_of_short_lifecycle_deadlines() {
+        let limits = HostLimits::default();
+        assert_eq!(limits.invocation_timeout_ms, 300000);
+        limits.validate().unwrap();
+        HostLimits {
+            invocation_timeout_ms: 30000,
+            ..limits.clone()
+        }
+        .validate()
+        .unwrap();
+        for invalid in [
+            HostLimits {
+                invocation_timeout_ms: 300001,
+                ..limits.clone()
+            },
+            HostLimits {
+                invocation_timeout_ms: 0,
+                ..limits.clone()
+            },
+            HostLimits {
+                handshake_timeout_ms: 10001,
+                ..limits.clone()
+            },
+            HostLimits {
+                stop_timeout_ms: 10001,
+                ..limits.clone()
+            },
+            HostLimits {
+                cleanup_timeout_ms: 10001,
+                ..limits
             },
         ] {
             assert!(matches!(invalid.validate(), Err(HostError::InvalidLimits)));

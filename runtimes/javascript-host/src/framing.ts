@@ -75,3 +75,96 @@ export class JsonFrameDecoder<T> {
     if (this.body || this.prefixOffset) throw new Error('Truncated frame');
   }
 }
+
+/** Process v4: bounded chunks, then a zero-length message terminator. */
+export class ChunkedJsonFrameDecoder<T> {
+  constructor(private readonly decode: (bytes: Uint8Array) => T, private readonly chunkLimit: number,
+    private readonly messageLimit: number, private readonly sessionLimit: number) {}
+  private prefix = Buffer.alloc(4);
+  private prefixOffset = 0;
+  private body: Buffer | undefined;
+  private bodyOffset = 0;
+  private pieces: Buffer[] = [];
+  private messageBytes = 0;
+  private total = 0;
+  push(chunk: Buffer, receive: (frame: T) => void): void {
+    this.total += chunk.length;
+    if (this.total > this.sessionLimit) throw new Error('Session input limit');
+    let offset = 0;
+    while (offset < chunk.length) {
+      if (!this.body) {
+        const count = Math.min(4 - this.prefixOffset, chunk.length - offset);
+        chunk.copy(this.prefix, this.prefixOffset, offset, offset + count);
+        offset += count;
+        this.prefixOffset += count;
+        if (this.prefixOffset < 4) continue;
+        const size = this.prefix.readUInt32BE();
+        this.prefixOffset = 0;
+        if (size === 0) {
+          if (!this.messageBytes) throw new Error('Empty message');
+          const bytes = Buffer.concat(this.pieces, this.messageBytes);
+          this.pieces = [];
+          this.messageBytes = 0;
+          receive(this.decode(bytes));
+          continue;
+        }
+        if (size > this.chunkLimit || this.messageBytes + size > this.messageLimit) throw new Error('Frame limit');
+        this.body = Buffer.allocUnsafe(size);
+        this.bodyOffset = 0;
+        this.messageBytes += size;
+      }
+      const count = Math.min(this.body.length - this.bodyOffset, chunk.length - offset);
+      chunk.copy(this.body, this.bodyOffset, offset, offset + count);
+      offset += count;
+      this.bodyOffset += count;
+      if (this.bodyOffset === this.body.length) {
+        this.pieces.push(this.body);
+        this.body = undefined;
+      }
+    }
+  }
+  finish(): void {
+    if (this.body || this.prefixOffset || this.messageBytes) throw new Error('Truncated frame');
+  }
+}
+
+/** Serialize large string values in slices; never stringify the entire frame. */
+export function* jsonPieces(value: unknown, depth = 0): Generator<Buffer> {
+  if (depth > 64) throw new Error('JSON nesting limit');
+  if (typeof value === 'string') {
+    scalarString(value);
+    yield Buffer.from('"');
+    for (let offset = 0; offset < value.length;) {
+      let end = Math.min(offset + 8192, value.length);
+      const last = value.charCodeAt(end - 1);
+      if (end < value.length && last >= 0xd800 && last <= 0xdbff) end--;
+      yield Buffer.from(JSON.stringify(value.slice(offset, end)).slice(1, -1));
+      offset = end;
+    }
+    yield Buffer.from('"');
+  } else if (value === null || typeof value === 'boolean') {
+    yield Buffer.from(String(value));
+  } else if (typeof value === 'number') {
+    if (!Number.isSafeInteger(value) || value < 0) throw new Error('Invalid wire integer');
+    yield Buffer.from(String(value));
+  } else if (Array.isArray(value)) {
+    yield Buffer.from('[');
+    for (let i = 0; i < value.length; i++) {
+      if (i) yield Buffer.from(',');
+      yield* jsonPieces(value[i], depth + 1);
+    }
+    yield Buffer.from(']');
+  } else if (value && typeof value === 'object') {
+    yield Buffer.from('{');
+    let first = true;
+    for (const [key, child] of Object.entries(value)) {
+      if (child === undefined) continue;
+      if (!first) yield Buffer.from(',');
+      first = false;
+      yield* jsonPieces(key, depth + 1);
+      yield Buffer.from(':');
+      yield* jsonPieces(child, depth + 1);
+    }
+    yield Buffer.from('}');
+  } else throw new Error('Invalid JSON value');
+}

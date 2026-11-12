@@ -99,18 +99,10 @@ pub(in crate::persistence) fn adopted_comparison_for_units(
                         .iter()
                         .map(|row| row.occurrence.clone())
                         .collect::<Vec<_>>();
-                    let changes = compare_rows(old, &current);
-                    if changes.iter().any(|change| {
-                        !matches!(
-                            change.kind,
-                            SourceChangeKind::Unchanged | SourceChangeKind::Moved
-                        )
-                    }) {
+                    let changes = visit_comparison(old, &current, |_, _, _, _| {});
+                    if changes.changed + changes.added + changes.rename_candidate + changes.ambiguous + changes.removed > 0 {
                         SourceChangeKind::Changed
-                    } else if changes
-                        .iter()
-                        .any(|change| change.kind == SourceChangeKind::Moved)
-                    {
+                    } else if changes.moved > 0 {
                         SourceChangeKind::Moved
                     } else {
                         SourceChangeKind::Unchanged
@@ -221,49 +213,51 @@ impl ProjectStore {
         let connection = self
             .connection()
             .map_err(|_| failure(ErrorCode::StorageFailed, "source-read"))?;
-        let current = scope(connection)?.current_snapshot;
-        let mut statement = connection
-            .prepare("SELECT snapshot_id FROM source_snapshots")
-            .map_err(sql_error)?;
-        let mut entries = Vec::new();
-        for raw in statement
-            .query_map([], |r| r.get::<_, String>(0))
-            .map_err(sql_error)?
-        {
-            let snapshot = id(raw.map_err(sql_error)?)?;
-            let (revision, (input, result, output, rows)) =
-                snapshot_rows(connection, snapshot, true)?;
-            let action: String = connection
-                .query_row(
-                    "SELECT action_id FROM adoption_receipts WHERE attempt_id=?1",
-                    [input.envelope().attempt_id.to_string()],
-                    |r| r.get(0),
-                )
+        super::super::review::read_snapshot(connection, |connection| {
+            let current = scope(connection)?.current_snapshot;
+            let mut statement = connection
+                .prepare("SELECT snapshot_id FROM source_snapshots")
                 .map_err(sql_error)?;
-            entries.push(SourceHistoryEntry {
-                snapshot_id: snapshot,
-                revision,
-                current: current == Some(snapshot),
-                total: rows.len() as u32,
-                action_id: id(action)?,
-                result_digest: result.digest().into(),
-                coverage: output.coverage,
-            });
-        }
-        entries.sort_by_key(|entry| std::cmp::Reverse(entry.revision));
-        let total = entries.len() as u32;
-        if offset > total {
-            return Err(failure(ErrorCode::InvalidInput, "page"));
-        }
-        let next_offset = (offset + limit < total).then_some(offset + limit);
-        Ok(SourceHistory {
-            snapshots: entries
-                .into_iter()
-                .skip(offset as usize)
-                .take(limit as usize)
-                .collect(),
-            total,
-            next_offset,
+            let mut entries = Vec::new();
+            for raw in statement
+                .query_map([], |r| r.get::<_, String>(0))
+                .map_err(sql_error)?
+            {
+                let snapshot = id(raw.map_err(sql_error)?)?;
+                let (revision, (input, result, output)) =
+                    snapshot_qualification(connection, snapshot, true)?;
+                let action: String = connection
+                    .query_row(
+                        "SELECT action_id FROM adoption_receipts WHERE attempt_id=?1",
+                        [input.envelope().attempt_id.to_string()],
+                        |r| r.get(0),
+                    )
+                    .map_err(sql_error)?;
+                entries.push(SourceHistoryEntry {
+                    snapshot_id: snapshot,
+                    revision,
+                    current: current == Some(snapshot),
+                    total: output.occurrences.len() as u32,
+                    action_id: id(action)?,
+                    result_digest: result.digest().into(),
+                    coverage: output.coverage.clone(),
+                });
+            }
+            entries.sort_by_key(|entry| std::cmp::Reverse(entry.revision));
+            let total = entries.len() as u32;
+            if offset > total {
+                return Err(failure(ErrorCode::InvalidInput, "page"));
+            }
+            let next_offset = (offset + limit < total).then_some(offset + limit);
+            Ok(SourceHistory {
+                snapshots: entries
+                    .into_iter()
+                    .skip(offset as usize)
+                    .take(limit as usize)
+                    .collect(),
+                total,
+                next_offset,
+            })
         })
     }
 
@@ -274,32 +268,18 @@ impl ProjectStore {
         after: u32,
         limit: u32,
     ) -> Result<ContentPage, ExecutionError> {
-        if query.len() > 256 {
+        if query.len() > 256 || limit == 0 || limit > 100 {
             return Err(failure(ErrorCode::InvalidInput, "page"));
         }
         let connection = self
             .connection()
             .map_err(|_| failure(ErrorCode::StorageFailed, "source-read"))?;
-        let (_, (input, result, output, rows)) = snapshot_rows(connection, snapshot, true)?;
-        let query = query.to_lowercase();
-        let rows = rows
-            .into_iter()
-            .filter(|row| {
-                row.occurrence.key.to_lowercase().contains(&query)
-                    || row.occurrence.text.to_lowercase().contains(&query)
-            })
-            .collect();
-        page(
-            Some(snapshot),
-            &input,
-            &result,
-            output,
-            scope(connection)?,
-            rows,
-            None,
-            after,
-            limit,
-        )
+        super::super::review::read_snapshot(connection, |connection| {
+            let (_, (input, result, output)) = snapshot_qualification(connection, snapshot, true)?;
+            let (total, rows) = read_snapshot_rows(connection, snapshot, &output, query, after, limit)?;
+            page(connection, Some(snapshot), &input, &result, &output, scope(connection)?, total,
+                rows, None, after, limit)
+        })
     }
 
     pub fn source_lineage_evidence(
@@ -310,11 +290,12 @@ impl ProjectStore {
         let connection = self
             .connection()
             .map_err(|_| failure(ErrorCode::StorageFailed, "source-read"))?;
-        let (_, (_, _, _, rows)) = snapshot_rows(connection, snapshot, true)?;
-        let current = rows
-            .get(ordinal as usize)
-            .ok_or_else(|| failure(ErrorCode::InvalidInput, "page"))?;
-        lineage_evidence_in(connection, current, &mut BTreeMap::new())
+        super::super::review::read_snapshot(connection, |connection| {
+            let (_, (_, _, output)) = snapshot_qualification(connection, snapshot, true)?;
+            let (_, rows) = read_snapshot_rows(connection, snapshot, &output, "", ordinal, 1)?;
+            let current = rows.first().ok_or_else(|| failure(ErrorCode::InvalidInput, "page"))?;
+            lineage_evidence_in(connection, current, &mut BTreeMap::new())
+        })
     }
 
     /// An estimate only. Adoption changes source facts, never writes a derived work queue.
@@ -553,7 +534,7 @@ impl ProjectStore {
             }
             targets.insert(target.unit_id, target);
         }
-        let unresolved = unresolved_occurrences_in(connection, snapshot, MAX_OCCURRENCES + 1)?;
+        let unresolved = unresolved_occurrences_in(connection, snapshot, tsumugi_plugin_sdk::MAX_CONTENT_ITEMS + 1)?;
         for (_, unit) in unresolved {
             if targets.contains_key(&unit) {
                 let reasons = work.entry(unit).or_default();

@@ -151,7 +151,7 @@ impl TranslationCheckPayload {
 }
 pub(crate) fn expand_translation_check_payload(value: &Value) -> Result<Value, ExecutionError> {
     let captured: TranslationCheckPayload =
-        serde_json::from_value(value.clone()).map_err(|_| invalid())?;
+        TranslationCheckPayload::deserialize(value).map_err(|_| invalid())?;
     serde_json::to_value(captured.expand()?).map_err(|_| invalid())
 }
 /// Restore the full SDK checker payload from its single-material ledger capture.
@@ -165,9 +165,9 @@ pub fn translation_check_payload(
         return Err(invalid());
     }
     let captured: TranslationCheckPayload =
-        serde_json::from_value(input.envelope().items[0].payload.clone()).map_err(|_| invalid())?;
+        TranslationCheckPayload::deserialize(&input.envelope().items[0].payload).map_err(|_| invalid())?;
     let limit = if captured.input.paired_source.is_some() {
-        sdk::MAX_INVOCATION_PAYLOAD_BYTES + 128 * 1024
+        sdk::MAX_MATERIAL_INVOCATION_BYTES + 128 * 1024
     } else {
         crate::content::MAX_TRANSLATION_INPUT_BYTES
     };
@@ -274,14 +274,11 @@ impl TranslationValidationCapture {
         )?;
         envelope.settings = serde_json::to_value(basis).map_err(|_| invalid())?;
         envelope.limits.max_result_bytes = crate::content::MAX_TRANSLATION_RESULT_BYTES as u32;
-        envelope.limits.timeout_ms = envelope
-            .limits
-            .timeout_ms
-            .min(binding.capability.declaration.limits.timeout_ms);
+        envelope.limits.timeout_ms = binding.capability.declaration.limits.timeout_ms.min(300_000);
         envelope.plugin = Some(binding);
         let check_input = FixedInput::capture(envelope)?;
         let limit = if paired {
-            sdk::MAX_INVOCATION_PAYLOAD_BYTES + 128 * 1024
+            sdk::MAX_MATERIAL_INVOCATION_BYTES + 128 * 1024
         } else {
             crate::content::MAX_TRANSLATION_INPUT_BYTES
         };

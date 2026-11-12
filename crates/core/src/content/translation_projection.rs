@@ -7,7 +7,7 @@ pub const TRANSLATION_PROJECTION_CAPABILITY: &str = "core.translation-project";
 const VERSION: &str = "1";
 pub(crate) const MAX_PAIRED_PROJECTION_INPUT_BYTES: usize =
     sdk::MAX_PAIRED_TRANSLATION_RESULT_BYTES + crate::execution::MAX_INPUT_BYTES;
-pub(crate) const MAX_PAIRED_PROJECTION_ATTEMPT_BYTES: usize = 16 * 1024 * 1024;
+pub(crate) const MAX_PAIRED_PROJECTION_ATTEMPT_BYTES: usize = MAX_PLUGIN_RESULT_BYTES;
 
 /// Only this explicitly versioned, non-plugin projection has larger budgets.
 pub(crate) fn is_paired_projection(envelope: &InputEnvelope) -> bool {
@@ -169,7 +169,7 @@ impl TranslationProjection {
             .is_some();
         if proposal.artifacts.is_empty()
             || (!paired && proposal.artifacts.len() != 1)
-            || proposal.entries.len() > MAX_OCCURRENCES
+            || proposal.entries.len() > if paired { sdk::MAX_CONTENT_ITEMS } else { MAX_OCCURRENCES }
             || artifact_ids.is_some_and(|ids| ids.len() != proposal.artifacts.len())
         {
             return Err(invalid());
@@ -403,7 +403,7 @@ impl TranslationProjection {
                         .iter()
                         .map(|file| file.byte_length as u64)
                         .sum::<u64>()
-                        > sdk::MAX_EXCHANGE_BYTES as u64
+                        > sdk::MAX_MATERIAL_SET_BYTES as u64
                     || files.iter().any(|file| {
                         !ids.insert(file.artifact_id)
                             || !paths.insert(&file.logical_path)
@@ -435,7 +435,7 @@ impl TranslationProjection {
             }
             _ => return Err(invalid()),
         }
-        if projection.entries.len() > MAX_OCCURRENCES
+        if projection.entries.len() > if projection.version == 2 { sdk::MAX_CONTENT_ITEMS } else { MAX_OCCURRENCES }
             || envelope.items.len() != projection.entries.len().max(1)
             || Locale::parse(&projection.target_locale)
                 .map_err(|_| invalid())?
@@ -444,6 +444,9 @@ impl TranslationProjection {
         {
             return Err(invalid());
         }
+        let singleton_items: std::collections::BTreeSet<_> = envelope.units.iter()
+            .filter_map(|unit| match unit.item_ids.as_slice() { [item] => Some(*item), _ => None })
+            .collect();
         let mut ordinals = std::collections::BTreeSet::new();
         for item in &envelope.items {
             let ordinal: Option<u32> = from_value(&item.payload)?;
@@ -468,10 +471,7 @@ impl TranslationProjection {
                         || projection.bundle_id.to_string(),
                         |n| format!("{}:{n}", projection.bundle_id),
                     )
-                || !envelope
-                    .units
-                    .iter()
-                    .any(|unit| unit.item_ids == [item.item_id])
+                || !singleton_items.contains(&item.item_id)
             {
                 return Err(invalid());
             }
@@ -745,10 +745,17 @@ mod tests {
         let mut over = input.envelope().clone();
         over.limits.max_attempt_result_bytes = MAX_PAIRED_PROJECTION_ATTEMPT_BYTES as u32 + 1;
         assert!(FixedInput::capture(over).is_err());
-        let mut over = projection.clone();
-        over.entries.push(over.entries[0].clone());
-        over.entry_files.as_mut().unwrap().push((1, Some(0)));
-        assert!(over.fixed_input(project()).is_err());
+        // Core's queue and projection enforce their own item limit in addition
+        // to the SDK proposal limit. Keep this count boundary's text minimal.
+        let mut maximum = paired_fixture(sdk::MAX_CONTENT_ITEMS);
+        let maximum_input = maximum.fixed_input(project()).unwrap();
+        assert_eq!(maximum_input.envelope().items.len(), sdk::MAX_CONTENT_ITEMS);
+        assert_eq!(maximum_input.envelope().units.len(), sdk::MAX_CONTENT_ITEMS);
+        assert_eq!(TranslationProjection::from_input(&maximum_input).unwrap().entries.len(), sdk::MAX_CONTENT_ITEMS);
+        drop(maximum_input);
+        maximum.entries.push(maximum.entries[0].clone());
+        maximum.entry_files.as_mut().unwrap().push((1, Some(0)));
+        assert_eq!(maximum.fixed_input(project()).unwrap_err().code, ErrorCode::LimitExceeded);
     }
 
     #[test]

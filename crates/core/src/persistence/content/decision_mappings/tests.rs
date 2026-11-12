@@ -297,7 +297,7 @@ pub(in crate::persistence) fn plugin_fixture_with_result_limit(result_limit: u32
     envelope.task_id = ExecutionId::new();
     envelope.attempt_id = ExecutionId::new();
     let input = FixedInput::capture(envelope).unwrap();
-    let mut proposal = output.exchange;
+    let mut proposal = output.exchange.clone();
     let renamed = proposal.units.iter_mut().find(|unit| unit.text == "Case-sensitive").unwrap();
     let native = renamed.occurrences[0].native_identity.as_mut().unwrap();
     native.value = "RenamedCase".into();

@@ -1,25 +1,25 @@
 # Local Process Protocol
 
-Process protocol **3** defines the length-prefixed JSON message framing used over stdio pipes between the Rust Host (`tsumugi-plugin-host`) and plugin worker processes (JavaScript components or native Rust workers). Its version (`3`) is independent of the manifest protocol (`1`), content exchange protocol (`1`), and SDK crate version (`0.1.0-alpha.1`).
+Process protocol **4** defines the chunked JSON message transport over stdio between the Rust Host and JavaScript or native Rust workers. Its version is independent of the manifest and exchange protocols (both `1`). Older process transports are rejected; rebuild native workers and use a matching JavaScript Host.
 
 ## Wire Framing and Byte Limits
 
-Every frame consists of a 4-byte unsigned **big-endian** byte length followed by a non-empty UTF-8 JSON body of at most `MAX_PROCESS_FRAME_BYTES` (96 MiB + 64 KiB).
+A message consists of consecutive chunks. Each chunk has a four-byte unsigned big-endian length followed by that many bytes, at most 64 KiB. A zero-length chunk terminates the complete message. Messages cannot interleave, and the complete JSON must validate before dispatch. Partial headers, partial chunks, a missing terminator, malformed or duplicate JSON fields, and unsupported protocol versions fail the channel.
 
-- `MAX_INVOCATION_PAYLOAD_BYTES` is 16 MiB of raw UTF-8 payload data. Because JSON string escaping can expand arbitrary UTF-8 bytes up to 6x (`\u00XX`), the 96 MiB + 64 KiB frame ceiling accommodates worst-case escaping plus 64 KiB of envelope metadata.
-- A plugin channel has a separate 128 MiB aggregate encoded-frame budget in each direction, including framing. Hosts may choose a smaller valid budget. This does not change the independent application member channel.
-- Individual domain contracts enforce their own tighter payload limits (for example, 4 MiB for source extraction, 8 MiB for content exchange, and 16 MiB for combined check inputs).
-- A capability's `maxInputBytes` and `maxOutputBytes` bound raw `EncodedPayload` UTF-8 bytes, while `InvocationRequest.maxResultBytes` bounds the complete encoded `result` frame.
-- `stdout` carries only protocol frames; `stderr` is reserved for diagnostic output and is bounded separately by the Host.
+- `MAX_PROCESS_FRAME_BYTES` bounds the complete JSON message at `u32::MAX` bytes; it is independent of the 64 KiB transport chunk. An invocation's `maxResultBytes` can impose a smaller complete-result limit.
+- `MAX_PROCESS_SESSION_BYTES` bounds all transmitted bytes in either direction at 8 GiB, including chunk headers and terminators. Host policy may be smaller. The separate application member protocol retains its own budgets.
+- Ordinary service payloads retain 16 MiB. Material-backed source/check/build/review calls allow up to 1 GiB before envelope escaping; encoded source/artifact sets and content have their own 384 MiB and 512 MiB ceilings. All applicable limits must hold independently.
+- Capability `maxInputBytes` and `maxOutputBytes` bound the raw `EncodedPayload` UTF-8 bytes. Rust payload clones share immutable strings; material digests and independent domain checks still apply.
+- Writers serialize into bounded chunks with backpressure. Rust readers parse from bounded streams. JavaScript readers assemble the bounded complete message before their strict JSON parser.
+- Invocation deadlines start before transmission and cover sending, execution and receiving. Host invocation policy permits up to 300 seconds and is intersected with the capability and Core deadline. Handshake, stop and cleanup retain independent smaller limits. Cancellation and authority revocation close the owned channel.
+- `stdout` carries only messages; `stderr` has a separate diagnostic budget.
 
-Each JSON message has the shape `{ "protocolVersion": 3, "body": { "kind": "<kind>", "data": ... } }`:
+Each JSON message has the shape `{ "protocolVersion": 4, "body": { "kind": "<kind>", "data": ... } }`:
 
-| Direction | Frame `kind` values |
+| Direction | Message `kind` values |
 | --- | --- |
 | Host → Worker | `activate`, `invoke`, `service-response`, `cancel`, `close`, `ping` |
 | Worker → Host | `ready`, `result`, `service-request`, `cancelled`, `closed`, `pong` |
-
-The Rust codec rejects partial headers or bodies, malformed JSON, unknown or duplicate JSON fields, and unsupported protocol versions (protocol 1 and 2 frames are not accepted).
 
 ## Component Activation and Multi-Capability Rosters
 

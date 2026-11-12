@@ -108,8 +108,7 @@ pub(in crate::persistence) fn pending_in(
         {
             continue;
         }
-        let changes = compare_rows(&old_rows, &output.occurrences);
-        let counts = SourceChangeCounts::from_changes(&changes);
+        let counts = visit_comparison(&old_rows, &output.occurrences, |_, _, _, _| {});
         if counts.mapping_review_required() == 0 {
             continue;
         }

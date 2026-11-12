@@ -6,13 +6,19 @@ Exchange protocol `1` defines the wire envelopes and semantic invariants for pas
 
 | Envelope / Collection | Limit |
 | --- | --- |
-| Complete encoded `content` frame | 8 MiB (including JSON escaping and envelope framing) |
+| Complete encoded `content` frame | 512 MiB (including JSON escaping and envelope framing) |
 | Other `ExchangeDocument` frames | 2 MiB |
-| Combined invocation inputs | 16 MiB |
-| Captured source material / build artifacts | 2 MiB decoded bytes each |
-| Encoded `SourceExtractionInput` / `ArtifactSet` | 4 MiB each |
-| Content units, occurrences, order entries, relations | 2,000 items each |
-| Domain extension blocks (`DomainBlock`) | 4,001 items (two per content item plus one snapshot block) |
+| Standalone typed `CheckResult[]` (`parse_check_results`) | 32 MiB |
+| Material-backed compound invocation payload | 1 GiB; narrower contract and capability limits also apply |
+| Ordinary service / advisory text-review payload | 16 MiB |
+| One captured source file / build artifact | 128 MiB decoded bytes |
+| One complete source / build artifact set | 256 MiB decoded bytes |
+| Encoded `SourceExtractionInput` / `ArtifactSet` | 384 MiB each |
+| Content units, occurrences, order entries, relations | 100,000 items each |
+| Domain extension blocks (`DomainBlock`) | 200,001 items (two per content item plus one snapshot block) |
+| Decoded unit or translation text | 16 KiB per value |
+
+These limits are independent ceilings, not a promise that every maximum fits together. Package declarations and the Host/application may impose smaller limits. Typed check results have their own 32 MiB allowance so complete target coverage for large selections does not inherit the small-report ceiling. This does not enlarge other 2 MiB metadata envelopes, advisory text-review reports or legacy single-file translation input/proposal contracts.
 
 ## Three-Layer `ContentExchange` Model
 
@@ -33,7 +39,9 @@ Exchange protocol `1` defines the wire envelopes and semantic invariants for pas
 
 `CapturedArtifact` is a closed union. Both representations carry `id`, `logicalPath`, `role` and `sha256`. Text carries `utf8`; binary carries `base64`, using canonical padded RFC 4648 base64. Digests describe original bytes. Mixed representations, null values, unknown properties, malformed base64 and digest mismatches are rejected. Empty files are valid.
 
-Decoded-byte and complete encoded-payload limits apply independently. Base64 expands the wire payload, so binary material can reach the encoded ceiling before the raw-byte ceiling. Application capture limits remain separate. This bounded inline contract does not introduce filesystem references, streaming or a larger-message exception.
+Decoded-byte and complete encoded-payload limits apply independently. Base64 expands the wire payload, so binary material can reach the encoded ceiling before the raw-byte ceiling. Application capture limits remain separate. Artifacts remain inline JSON/base64 values; they are not filesystem references or independently addressable chunks. Rust binary data and `EncodedPayload.utf8` use shared immutable strings so cloning a captured value does not copy its entire encoded material.
+
+[Process4](process.md) transfers each complete JSON message in length-prefixed chunks of at most 64 KiB, followed by a zero-length terminator. The complete-message ceiling is `u32::MAX` bytes and the session allowance is 8 GiB per pipe direction; contract and declaration limits remain smaller where specified. Rust transports serialize and parse through bounded streams without an additional complete encoded-message buffer. Chunking does not remove the full logical payload, material validation or byte budgets, and JavaScript receivers still assemble the complete JSON message before parsing it. Process3 framing is incompatible; workers and Hosts must use matching Process4 implementations.
 
 `SourceRange::byte_range` returns half-open positions in the captured original bytes. Binary accepts only `raw-byte` and validates ordering and bounds; offsets never refer to the base64 string. Text rejects `raw-byte` and performs exact Unicode conversion. Source occurrences, native display evidence, imported translations and context facts share this coordinate owner.
 

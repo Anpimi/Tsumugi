@@ -8,9 +8,9 @@ pub const MAX_TRANSLATION_RESULT_BYTES: usize = 2 * 1024 * 1024;
 // Preserve legacy budgets. Only the explicitly paired SDK family can carry
 // both source captures and the larger, independently bounded proposal frame.
 pub const MAX_PAIRED_TRANSLATION_FIXED_INPUT_BYTES: usize =
-    sdk::MAX_PAIRED_TRANSLATION_INPUT_BYTES + 128 * 1024;
+    MAX_FIXED_INPUT_BYTES;
 pub const MAX_PAIRED_TRANSLATION_FIXED_RESULT_BYTES: usize =
-    sdk::MAX_PAIRED_TRANSLATION_RESULT_BYTES * 2 + 128 * 1024;
+    MAX_PLUGIN_RESULT_BYTES;
 
 fn invalid(stage: &str) -> ExecutionError {
     ExecutionError::new(ErrorCode::InvalidInput, stage)
@@ -90,10 +90,7 @@ impl PluginTranslationSettings {
         if paired {
             envelope.limits.max_attempt_result_bytes = envelope.limits.max_result_bytes;
         }
-        envelope.limits.timeout_ms = envelope
-            .limits
-            .timeout_ms
-            .min(producer.capability.declaration.limits.timeout_ms);
+        envelope.limits.timeout_ms = producer.capability.declaration.limits.timeout_ms.min(300_000);
         envelope.plugin = Some(producer);
         let fixed = FixedInput::capture(envelope)?;
         plugin_translation_input(&fixed)?;

@@ -110,7 +110,7 @@ impl InvocationContext {
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 pub struct EncodedPayload {
     pub schema: ContractRef,
-    pub utf8: String,
+    pub utf8: std::sync::Arc<str>,
     pub sha256: String,
 }
 impl EncodedPayload {
@@ -118,7 +118,7 @@ impl EncodedPayload {
         let payload = Self {
             schema,
             sha256: payload_digest(&utf8),
-            utf8,
+            utf8: utf8.into(),
         };
         payload.validate()?;
         Ok(payload)
@@ -126,7 +126,7 @@ impl EncodedPayload {
     pub(crate) fn validate(&self) -> Result<(), ContractError> {
         reference(&self.schema, "payload.schema")?;
         digest(&self.sha256, "payload.sha256")?;
-        if self.utf8.len() > MAX_INVOCATION_PAYLOAD_BYTES {
+        if self.utf8.len() > MAX_MATERIAL_INVOCATION_BYTES {
             return Err(ContractError::at(
                 ContractErrorCode::LimitExceeded,
                 "payload",
@@ -322,6 +322,20 @@ pub fn receive_invocation_result(
             "result.kind",
         ));
     };
+    validate_invocation_result(result, request, actual_channel)?;
+    Ok(received)
+}
+
+/// Validate an already decoded result against the original request and actual
+/// channel. The transport owner independently enforces its encoded byte budget.
+pub fn validate_invocation_result(
+    result: &InvocationResult,
+    request: &InvocationRequest,
+    actual_channel: &ProviderBinding,
+) -> Result<(), ContractError> {
+    request.validate()?;
+    actual_channel.validate()?;
+    result.validate()?;
     if result.context != request.context
         || result.provider != request.provider
         || result.provider != *actual_channel
@@ -345,5 +359,5 @@ pub fn receive_invocation_result(
             "result.payload.schema",
         ));
     }
-    Ok(received)
+    Ok(())
 }

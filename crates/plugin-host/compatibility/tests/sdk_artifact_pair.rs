@@ -27,8 +27,8 @@ fn installed(root: &std::path::Path, prefix: &str) -> (PackageImage, serde_json:
 }
 
 #[tokio::test]
-#[ignore = "requires reviewed real Process2 and Process3 Rust packages from separate SDK archives"]
-async fn actual_sdk_archives_reject_legacy_worker_despite_matching_declarations() {
+#[ignore = "requires reviewed real Process3 alpha.8 and Process4 current Rust packages from separate SDK archives"]
+async fn process4_host_rejects_process3_worker_and_runs_current_sdk_package() {
     let legacy_root = OwnedTemporary::new();
     let current_root = OwnedTemporary::new();
     let staging = OwnedTemporary::new();
@@ -36,7 +36,14 @@ async fn actual_sdk_archives_reject_legacy_worker_despite_matching_declarations(
     let (current, new_sdk) = installed(current_root.path(), "TSUMUGI_TEST_NATIVE");
     assert_eq!(old_sdk["package"], "tsumugi-plugin-sdk");
     assert_eq!(old_sdk["package"], new_sdk["package"]);
-    assert_eq!(old_sdk["version"], new_sdk["version"]);
+    assert_eq!(old_sdk["version"], "0.1.0-alpha.8");
+    assert_eq!(new_sdk["version"], sdk::SDK_VERSION);
+    assert!(!sdk::supports_process_sdk(
+        old_sdk["version"].as_str().unwrap()
+    ));
+    assert!(sdk::supports_process_sdk(
+        new_sdk["version"].as_str().unwrap()
+    ));
     for field in ["sourceCommit", "archive", "sha256"] {
         assert!(
             old_sdk[field]
@@ -52,25 +59,26 @@ async fn actual_sdk_archives_reject_legacy_worker_despite_matching_declarations(
     }
     assert_ne!(legacy.package_digest(), current.package_digest());
     assert_eq!(
-        serde_json::to_value(legacy.manifest().manifest()).unwrap(),
-        serde_json::to_value(current.manifest().manifest()).unwrap(),
+        legacy.manifest().manifest().plugin.id,
+        current.manifest().manifest().plugin.id
     );
-    // Hold every declared domain Resource fixed, not only the manifest's IDs.
-    for contribution in &current.manifest().manifest().contributions {
-        if let sdk::ContributionKind::Resource { schema, .. } = &contribution.contribution {
-            assert_eq!(
-                legacy.resource_bytes(&contribution.id, schema).unwrap(),
-                current.resource_bytes(&contribution.id, schema).unwrap(),
-            );
-        }
-    }
     let binding = current.source_import("source-profile").unwrap();
-    assert_eq!(
-        legacy.source_import("source-profile").unwrap().declaration,
-        binding.declaration
-    );
+    let old_binding = legacy.source_import("source-profile").unwrap();
+    // A matching domain contract does not imply wire/runtime compatibility.
+    // Package versions, limits and captured resource bytes keep their own pins.
+    assert_eq!(old_binding.declaration.profile, binding.declaration.profile);
+    for (old, new) in [
+        (&old_binding.extractor, &binding.extractor),
+        (&old_binding.checker, &binding.checker),
+    ] {
+        assert_eq!(old.declaration.contract, new.declaration.contract);
+        assert_eq!(old.declaration.input_schema, new.declaration.input_schema);
+        assert_eq!(old.declaration.output_schema, new.declaration.output_schema);
+        assert_eq!(old.declaration.error_schema, new.declaration.error_schema);
+    }
     let descriptor = CapturedNativeRuntime::inspect_current().unwrap();
-    assert_eq!(descriptor.process_protocol, 3);
+    assert_eq!(descriptor.process_protocol, 4);
+    assert_eq!(descriptor.sdk_version, sdk::SDK_VERSION);
     println!(
         "sdk_archive_pair={}",
         json!({"legacy":old_sdk,"current":new_sdk,
@@ -123,13 +131,16 @@ async fn actual_sdk_archives_reject_legacy_worker_despite_matching_declarations(
         profile: binding.declaration.profile.clone(),
         source_set_id: "synthetic-source".into(),
         source_language: "en-US".into(),
-        artifacts: vec![sdk::CapturedTextArtifact {
-            id: "original-json".into(),
-            logical_path: "source.json".into(),
-            role: "source".into(),
-            sha256: sdk::payload_digest(text),
-            utf8: text.into(),
-        }],
+        artifacts: vec![
+            sdk::CapturedTextArtifact {
+                id: "original-json".into(),
+                logical_path: "source.json".into(),
+                role: "source".into(),
+                sha256: sdk::payload_digest(text),
+                utf8: text.into(),
+            }
+            .into(),
+        ],
     };
     let received = official::invoke_received(
         &mut session,

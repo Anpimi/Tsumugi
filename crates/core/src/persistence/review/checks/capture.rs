@@ -250,7 +250,7 @@ impl ReviewMaterial {
         Ok(Self {
             project_id,
             binding,
-            source: source.exchange,
+            source: source.exchange.clone(),
             source_digest,
             mappings,
             units,

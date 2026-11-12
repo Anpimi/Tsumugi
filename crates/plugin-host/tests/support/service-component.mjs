@@ -3,10 +3,14 @@ import { createHash } from 'node:crypto';
 const mode = await readFile(new URL('./behavior.txt', import.meta.url), 'utf8');
 const digest = text => createHash('sha256').update(text, 'utf8').digest('hex');
 function emit(kind, data) {
-  const bytes = Buffer.from(JSON.stringify({ protocolVersion: 3, body: { kind, data } }));
-  const length = Buffer.alloc(4);
-  length.writeUInt32BE(bytes.length);
-  process.stdout.write(Buffer.concat([length, bytes]));
+  const bytes = Buffer.from(JSON.stringify({ protocolVersion: 4, body: { kind, data } }));
+  for (let offset = 0; offset < bytes.length; offset += 65536) {
+    const chunk = bytes.subarray(offset, offset + 65536);
+    const length = Buffer.alloc(4);
+    length.writeUInt32BE(chunk.length);
+    process.stdout.write(Buffer.concat([length, chunk]));
+  }
+  process.stdout.write(Buffer.alloc(4));
 }
 export default {
   async activate(api) {

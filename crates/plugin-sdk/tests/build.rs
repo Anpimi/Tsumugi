@@ -330,14 +330,16 @@ fn build_receivers_are_strict_bounded_and_validate_configuration_digests() {
         "\"targetLanguage\":\"ja-JP\",\"targetLanguage\":\"en-US\"",
     );
     assert!(parse_build_input(duplicate.as_bytes()).is_err());
-    assert!(parse_build_input(&vec![b' '; MAX_INVOCATION_PAYLOAD_BYTES + 1]).is_err());
+    let mut padded = serde_json::to_vec(&input).unwrap();
+    padded.resize(MAX_INVOCATION_PAYLOAD_BYTES + 1, b' ');
+    assert_eq!(parse_build_input(&padded).unwrap(), input);
     let mut input = input;
     input.configuration.push(
         EncodedPayload::capture(build_input_contract(), "{ \"setting\": true }\r\n".into())
             .unwrap(),
     );
     input.validate().unwrap();
-    input.configuration[0].utf8.push('X');
+    input.configuration[0].utf8 = format!("{}X", input.configuration[0].utf8).into();
     assert!(input.validate().is_err());
     let mut d = declaration();
     d.artifact_rules.clear();
@@ -399,7 +401,7 @@ fn build_limits_errors_and_multirule_basis_remain_bounded() {
         },
         BuildOutputLimits {
             max_artifacts: 1,
-            max_total_bytes: MAX_EXCHANGE_BYTES as u32 + 1,
+            max_total_bytes: MAX_MATERIAL_SET_BYTES as u32 + 1,
         },
     ] {
         assert!(limits.validate().is_err());
@@ -498,7 +500,7 @@ fn declared_configuration_captures_explicit_values_without_inferring_a_locale() 
         selections[0].selections
     );
     assert_eq!(
-        captured[0].utf8,
+        captured[0].utf8.as_ref(),
         r#"{"selections":[{"id":"loading-language","value":"french"}]}"#
     );
     assert_eq!(captured[0].sha256, payload_digest(&captured[0].utf8));
@@ -538,7 +540,7 @@ fn configuration_refuses_missing_duplicate_unknown_and_changed_choices() {
         assert!(declaration.validate_configuration(&[changed]).is_err());
     }
     let mut changed = captured.clone();
-    changed[0].utf8.push(' ');
+    changed[0].utf8 = format!("{} ", changed[0].utf8).into();
     assert!(declaration.validate_configuration(&changed).is_err());
     let mut changed = captured;
     changed[0].schema.behavior_version += 1;

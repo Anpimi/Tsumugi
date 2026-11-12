@@ -57,5 +57,5 @@ cargo build -p tsumugi-plugin-sdk --example native-worker --features native-work
 ## Wire and Stream Constraints
 
 - **Stdio Separation**: `stdout` is used exclusively for length-prefixed protocol frames; any diagnostic logging must go to `stderr` (which the Host captures and bounds separately).
-- **Frame & Aggregate Budgets**: The codec enforces both the capability's declared `maxInputBytes` / `maxOutputBytes` and the request's `maxResultBytes`, with a 128 MiB aggregate frame budget in each direction. Partial frames, unknown or duplicate JSON fields, duplicate dispatch IDs, and unexpected frame directions terminate the session.
+- **Frame & Aggregate Budgets**: The codec enforces both the capability's declared `maxInputBytes` / `maxOutputBytes` and the request's `maxResultBytes`, with an 8 GiB aggregate transport budget in each direction and 64 KiB chunks. Partial frames, unknown or duplicate JSON fields, duplicate dispatch IDs, and unexpected frame directions terminate the session.
 - **Environment Descriptor**: When launching a native worker, the Host records a [`NativeHostEnvironmentDescriptor`](environment.md#native-application-host-profile) (`native-application-host-v1`) alongside the plugin package's `PackageImage` digest.

@@ -155,10 +155,7 @@ impl ArtifactValidationCapture {
         )?;
         envelope.settings = serde_json::to_value(basis).map_err(|_| invalid())?;
         envelope.limits.max_result_bytes = MAX_RESULT_BYTES as u32;
-        envelope.limits.timeout_ms = envelope
-            .limits
-            .timeout_ms
-            .min(selected.capability.declaration.limits.timeout_ms);
+        envelope.limits.timeout_ms = selected.capability.declaration.limits.timeout_ms.min(300_000);
         envelope.plugin = Some(selected);
         Ok((envelope, checks, payload.output))
     }

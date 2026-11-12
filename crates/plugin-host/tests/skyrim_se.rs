@@ -998,6 +998,17 @@ fn skyrim_normal_core_keeps_binary_source_review_release_and_reopen_evidence() {
 #[test]
 #[ignore = "requires an inspected prebuilt Skyrim SE package and capacity fixtures"]
 fn skyrim_normal_core_adopts_maximum_escaped_capture_and_reopens_every_field() {
+    run_capacity_case("capacity-238-escaped", 238, Some(1977864), Some(8192));
+}
+
+#[test]
+#[ignore = "requires an inspected prebuilt Skyrim SE package and 64 MiB / 50,000 field fixtures"]
+fn skyrim_normal_core_handles_large_plugin_capture_build_and_reopen() {
+    run_capacity_case("capacity-large-source", 25_000, None, None);
+}
+
+fn run_capacity_case(directory: &str, records: usize, exact_raw_bytes: Option<usize>, text_bytes: Option<usize>) {
+    let fields = 2 * records;
     let root = tempfile::tempdir().unwrap();
     let image = installed(root.path());
     let environment = runtime();
@@ -1043,12 +1054,16 @@ fn skyrim_normal_core_adopts_maximum_escaped_capture_and_reopens_every_field() {
     ] {
         runtime.register(proxy.clone()).unwrap();
     }
-    let captured = fixture("capacity-238-escaped", false, false);
+    let captured = fixture(directory, false, false);
     let original = captured.artifacts[0]
         .validated_bytes()
         .unwrap()
         .into_owned();
-    assert_eq!(original.len(), 1977864);
+    if let Some(expected) = exact_raw_bytes {
+        assert_eq!(original.len(), expected);
+    } else {
+        assert!(original.len() >= 64 * 1024 * 1024);
+    }
     let input = fixed_source(
         &store,
         &source_binding,
@@ -1079,17 +1094,17 @@ fn skyrim_normal_core_adopts_maximum_escaped_capture_and_reopens_every_field() {
         panic!("expected captured domain content")
     };
     let expected = sdk::parse_content_exchange(output.utf8.as_bytes()).unwrap();
-    assert_eq!(expected.units.len(), 476);
-    assert_eq!(preview_total, 476);
+    assert_eq!(expected.units.len(), fields);
+    assert_eq!(preview_total as usize, fields);
     let summary = capture_summary(&expected);
     assert_eq!(preview_summary, summary);
     assert_eq!(
         summary.materials[0].counts,
         sdk::SourceCaptureCounts {
-            items: 238,
-            items_with_fields: 238,
-            declared_fields: 476,
-            non_empty_fields: 476,
+            items: records as u32,
+            items_with_fields: records as u32,
+            declared_fields: fields as u32,
+            non_empty_fields: fields as u32,
         }
     );
     assert_eq!(summary.materials[0].source.range.end as usize, original.len());
@@ -1108,15 +1123,22 @@ fn skyrim_normal_core_adopts_maximum_escaped_capture_and_reopens_every_field() {
             .iter()
             .map(|group| group.counts.declared_fields)
             .sum::<u32>(),
-        476
+        fields as u32
     );
-    let saved_result = extracted.bytes().to_vec();
-    let read_rows = |store: &ProjectStore| {
+    let saved_result = extracted.clone();
+    let expected_occurrences: std::collections::BTreeMap<_, _> = expected.units.iter()
+        .flat_map(|unit| unit.occurrences.iter().map(move |occurrence| (&occurrence.id, (unit, occurrence))))
+        .collect();
+    let read_rows = |store: &ProjectStore, phase: &str| {
+        let page_started = std::time::Instant::now();
+        let mut page_times = Vec::new();
         let mut rows = Vec::new();
         let mut after = 0;
         loop {
+            let tick = std::time::Instant::now();
             let page = store.source_content(snapshot, after, 100).unwrap();
-            assert_eq!(page.total, 476);
+            page_times.push(tick.elapsed().as_secs_f64() * 1000.0);
+            assert_eq!(page.total as usize, fields);
             assert_capture_page(&page, &summary);
             rows.extend(page.rows);
             match page.next_ordinal {
@@ -1127,22 +1149,16 @@ fn skyrim_normal_core_adopts_maximum_escaped_capture_and_reopens_every_field() {
                 None => break,
             }
         }
-        assert_eq!(rows.len(), 476);
+        assert_eq!(rows.len(), fields);
+        let first_ms = page_times[0];
+        page_times.sort_by(f64::total_cmp);
+        eprintln!("capacity_pages={}", json!({"phase": phase, "rows": rows.len(), "pages": page_times.len(),
+            "totalSeconds": page_started.elapsed().as_secs_f64(), "firstPageMs": first_ms,
+            "medianPageMs": page_times[page_times.len()/2],
+            "p95PageMs": page_times[(page_times.len()*95).div_ceil(100).saturating_sub(1)],
+            "maxPageMs": page_times.last().unwrap()}));
         for (row, occurrence_id) in rows.iter().zip(&expected.order) {
-            let unit = expected
-                .units
-                .iter()
-                .find(|unit| {
-                    unit.occurrences
-                        .iter()
-                        .any(|occurrence| &occurrence.id == occurrence_id)
-                })
-                .unwrap();
-            let occurrence = unit
-                .occurrences
-                .iter()
-                .find(|occurrence| &occurrence.id == occurrence_id)
-                .unwrap();
+            let (unit, occurrence) = expected_occurrences.get(occurrence_id).unwrap();
             assert_eq!(row.occurrence.operation_unit_id, unit.id);
             assert_eq!(row.occurrence.text, unit.text);
             assert_eq!(row.occurrence.native_identity, occurrence.native_identity);
@@ -1151,13 +1167,13 @@ fn skyrim_normal_core_adopts_maximum_escaped_capture_and_reopens_every_field() {
         rows
     };
     // An explicit all-source stage exercises the full build/record boundary
-    // without inventing 476 translation approvals or changing user selections.
+    // without inventing translation approvals or changing user selections.
     let project = ExecutionId::parse(&store.metadata().unwrap().project_id().to_string()).unwrap();
     let scopes = std::collections::BTreeMap::from([("zh-CN".into(), vec![])]);
     let eligibility = store.review_eligibility_for_build(project, &["zh-CN".into()], &scopes, &Cancellation::default()).unwrap();
     assert!(eligibility.ready);
     assert!(!store.review_eligibility(project, &["zh-CN".into()]).unwrap().ready);
-    assert_eq!(eligibility.locales[0].retained_source_units, 476);
+    assert_eq!(eligibility.locales[0].retained_source_units as usize, fields);
     let build_environment = ReleaseBuildEnvironment::new(
         build_binding.clone(),
         builder.execution_binding(Some(build_binding.declaration.profile.clone())).unwrap(),
@@ -1179,15 +1195,12 @@ fn skyrim_normal_core_adopts_maximum_escaped_capture_and_reopens_every_field() {
     let release = ExecutionId::parse(&receipt.changes[0].id).unwrap();
     let release_view = store.release_view(release).unwrap();
     assert!(!store.review_eligibility(project, &["zh-CN".into()]).unwrap().ready);
-    assert_eq!(release_view.exceptions.iter().filter(|exception| exception.kind == tsumugi_core::ReleaseExceptionKind::SourceRetained).count(), 476);
+    assert_eq!(release_view.exceptions.iter().filter(|exception| exception.kind == tsumugi_core::ReleaseExceptionKind::SourceRetained).count(), fields);
     let staged_bytes = store.release_artifact_by_path(release, "zh-CN", "FormatProbe.esp").unwrap().1;
-    let rows = read_rows(&store);
-    assert_eq!(
-        rows.iter()
-            .filter(|row| row.occurrence.text.len() == 8192)
-            .count(),
-        238
-    );
+    let rows = read_rows(&store, "saved");
+    if let Some(text_bytes) = text_bytes {
+        assert_eq!(rows.iter().filter(|row| row.occurrence.text.len() == text_bytes).count(), records);
+    }
     assert_eq!(
         store
             .source_bundle(snapshot)
@@ -1207,10 +1220,12 @@ fn skyrim_normal_core_adopts_maximum_escaped_capture_and_reopens_every_field() {
     runtime.finish_quiesce(&mut store).unwrap();
     drop(runtime);
     store.close().unwrap();
+    let reopen_started = std::time::Instant::now();
     let reopened = ProjectStore::open(&path).unwrap();
+    eprintln!("capacity_reopen_seconds={}", reopen_started.elapsed().as_secs_f64());
     assert_eq!(reopened.release_view(release).unwrap(), release_view);
     assert_eq!(reopened.release_artifact_by_path(release, "zh-CN", "FormatProbe.esp").unwrap().1, staged_bytes);
-    assert_eq!(read_rows(&reopened), rows);
+    assert_eq!(read_rows(&reopened, "reopened"), rows);
     assert_eq!(
         reopened
             .source_bundle(snapshot)
@@ -1227,7 +1242,7 @@ fn skyrim_normal_core_adopts_maximum_escaped_capture_and_reopens_every_field() {
             .execution_result(input.envelope().attempt_id, extracted.envelope().result_id)
             .unwrap()
             .bytes(),
-        saved_result
+        saved_result.bytes()
     );
     if let Some(destination) = std::env::var_os("TSUMUGI_TEST_SKYRIM_BACKUP") {
         let destination = PathBuf::from(destination);

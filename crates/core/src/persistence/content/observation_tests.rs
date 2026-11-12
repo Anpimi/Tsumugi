@@ -1,6 +1,120 @@
 use super::*;
 use std::{sync::{Arc, atomic::Ordering}, time::{Duration, Instant}};
 
+#[test]
+fn comparison_counts_shared_identity_candidates_without_materializing_every_edge() {
+    let fixture = super::decision_mappings::tests::plugin_fixture();
+    let snapshot = fixture.store.content_scope().unwrap().current_snapshot.unwrap();
+    let template = fixture.store.source_content(snapshot, 0, 1).unwrap().rows.remove(0);
+    let old: Vec<_> = (0..2048).map(|ordinal| {
+        let mut row = template.clone();
+        row.occurrence_id = Some(ExecutionId::new());
+        row.occurrence.ordinal = ordinal;
+        row.occurrence.operation_occurrence_id = format!("shared-{ordinal}");
+        row
+    }).collect();
+    let new: Vec<_> = old.iter().map(|row| row.occurrence.clone()).collect();
+    let mut visited = 0;
+    let counts = visit_comparison(&old, &new, |_, prior, next, candidates| {
+        assert_eq!(candidates.len(), old.len());
+        assert_eq!(prior.unwrap().occurrence.ordinal, 0);
+        assert_eq!(next.unwrap().ordinal, visited);
+        visited += 1;
+    });
+    assert_eq!(visited, 2048);
+    assert_eq!(counts.unchanged, 1);
+    assert_eq!(counts.moved, 2047);
+    assert_eq!(counts.mapping_review_required(), 0);
+}
+
+#[test]
+fn source_pages_recheck_off_page_mappings_after_local_and_external_writes() {
+    for external in [false, true] {
+        let fixture = super::decision_mappings::tests::plugin_fixture();
+        let snapshot = fixture.store.content_scope().unwrap().current_snapshot.unwrap();
+        let first = fixture.store.source_content(snapshot, 0, 1).unwrap();
+        assert_eq!(first.total, 3);
+        assert_eq!(first.next_ordinal, Some(1));
+        assert_eq!(fixture.store.source_content(snapshot, 1, 1).unwrap().rows[0].occurrence.ordinal, 1);
+        let writer = external.then(|| Connection::open(fixture.store.directory().join("project.sqlite3")).unwrap());
+        let connection = writer.as_ref().unwrap_or_else(|| fixture.store.connection().unwrap());
+        connection.execute("UPDATE source_occurrences SET native_key='Altered outside the requested page' WHERE snapshot_id=?1 AND ordinal=2",
+            [snapshot.to_string()]).unwrap();
+        assert_eq!(fixture.store.source_content(snapshot, 0, 1).unwrap_err().code, ErrorCode::CorruptLedger);
+        assert_eq!(fixture.store.source_history_content(snapshot, "Original A", 0, 1).unwrap_err().code, ErrorCode::CorruptLedger);
+    }
+}
+
+#[test]
+fn source_preview_rechecks_checker_frames_after_local_and_external_writes() {
+    for external in [false, true] {
+        let fixture = super::decision_mappings::tests::plugin_fixture();
+        let attempt = fixture.input.envelope().attempt_id;
+        let first = fixture.store.source_preview(attempt, fixture.result, 0, 1).unwrap();
+        assert_eq!(first.total, 3);
+        assert_eq!(fixture.store.source_preview(attempt, fixture.result, 1, 1).unwrap().rows[0].occurrence.ordinal, 1);
+        let writer = external.then(|| Connection::open(fixture.store.directory().join("project.sqlite3")).unwrap());
+        let connection = writer.as_ref().unwrap_or_else(|| fixture.store.connection().unwrap());
+        connection.execute("UPDATE execution_results SET digest=?2 WHERE result_id=(SELECT checker_result_id FROM plugin_validation_links WHERE producer_result_id=?1)",
+            params![fixture.result.to_string(), "0".repeat(64)]).unwrap();
+        assert_eq!(fixture.store.source_preview(attempt, fixture.result, 0, 1).unwrap_err().code, ErrorCode::CorruptLedger);
+    }
+}
+
+#[test]
+fn cached_structural_preview_does_not_qualify_a_source_without_its_checker() {
+    let fixture = super::decision_mappings::tests::plugin_fixture();
+    let attempt = fixture.input.envelope().attempt_id;
+    let connection = fixture.store.connection().unwrap();
+    connection.execute("DELETE FROM plugin_validation_links WHERE producer_result_id=?1", [fixture.result.to_string()]).unwrap();
+    connection.execute("UPDATE execution_items SET validation='pending' WHERE attempt_id=?1", [attempt.to_string()]).unwrap();
+    let first = fixture.store.source_preview(attempt, fixture.result, 0, 1).unwrap();
+    let second = fixture.store.source_preview(attempt, fixture.result, 1, 1).unwrap();
+    assert_eq!((first.total, second.total), (3, 3));
+    assert_eq!(second.rows[0].occurrence.ordinal, 1);
+    assert!(super::super::review::read_snapshot(connection, |connection| {
+        load_qualified_source(connection, attempt, fixture.result)
+    }).is_err(), "a shared structural projection cannot replace a mandatory semantic proof");
+    assert_eq!(fixture.store.source_preview(attempt, fixture.result, 0, 1).unwrap(), first);
+    connection.execute("UPDATE source_files SET digest=?1", ["0".repeat(64)]).unwrap();
+    assert!(fixture.store.source_preview(attempt, fixture.result, 0, 1).is_err());
+}
+
+#[test]
+fn source_page_qualification_from_a_write_transaction_does_not_survive_rollback() {
+    let fixture = super::decision_mappings::tests::plugin_fixture();
+    let snapshot = fixture.store.content_scope().unwrap().current_snapshot.unwrap();
+    let original = fixture.store.source_content(snapshot, 2, 1).unwrap().rows[0].occurrence.key.clone();
+    let connection = fixture.store.connection().unwrap();
+    connection.execute("UPDATE source_occurrences SET native_key='Committed damage' WHERE snapshot_id=?1 AND ordinal=2",
+        [snapshot.to_string()]).unwrap();
+    connection.execute_batch("BEGIN").unwrap();
+    connection.execute("UPDATE source_occurrences SET native_key=?2 WHERE snapshot_id=?1 AND ordinal=2",
+        params![snapshot.to_string(), original]).unwrap();
+    assert_eq!(fixture.store.source_content(snapshot, 0, 1).unwrap().total, 3);
+    let changes = connection.total_changes();
+    connection.execute_batch("ROLLBACK").unwrap();
+    assert_eq!(connection.total_changes(), changes, "SQLite's write counter does not reverse on rollback");
+    assert_eq!(fixture.store.source_content(snapshot, 0, 1).unwrap_err().code, ErrorCode::CorruptLedger);
+}
+
+#[test]
+fn source_page_qualification_is_bound_to_the_open_connection_instance() {
+    let fixture = super::decision_mappings::tests::plugin_fixture();
+    let path = fixture.store.directory().to_path_buf();
+    let snapshot = fixture.store.content_scope().unwrap().current_snapshot.unwrap();
+    fixture.store.close().unwrap();
+    let reopened = ProjectStore::open(&path).unwrap();
+    assert_eq!(reopened.connection().unwrap().total_changes(), 0);
+    assert_eq!(reopened.source_content(snapshot, 0, 1).unwrap().total, 3);
+    reopened.close().unwrap();
+    let writer = Connection::open(path.join("project.sqlite3")).unwrap();
+    writer.execute("UPDATE source_occurrences SET native_key='Damage between opens' WHERE snapshot_id=?1 AND ordinal=2",
+        [snapshot.to_string()]).unwrap();
+    drop(writer);
+    assert!(ProjectStore::open(&path).is_err());
+}
+
 fn finish(store: &mut ProjectStore, input: &FixedInput) -> ExecutionId {
     let mut runtime = ExecutionRuntime::new(store).unwrap();
     runtime.register_read_only(Arc::new(SourceRunner)).unwrap();
