@@ -70,11 +70,11 @@ fn component_input_round_trips_empty_and_exact_unicode_query_payloads() {
     assert_eq!(parsed, selected);
     assert_eq!(parsed.generation, generation());
     assert_eq!(
-        parsed.prepared_tools[0].input.utf8,
+        parsed.prepared_tools[0].input.utf8.as_ref(),
         "Find the name 東京 in this passage: 雨のあとに虹が出た。"
     );
     assert_eq!(
-        parsed.prepared_tools[1].input.utf8,
+        parsed.prepared_tools[1].input.utf8.as_ref(),
         "csv\n名前,場所\n葵,札幌\n"
     );
 }

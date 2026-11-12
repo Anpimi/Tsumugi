@@ -24,12 +24,12 @@ Both families emit results compatible with Core's `FixedCheckSet` coverage evalu
 
 `ReviewCheckInput` provides the checker with:
 
-- The complete original `ContentExchange` (up to 2 MiB encoded).
+- The complete original `ContentExchange` (up to 512 MiB encoded, with separate 128 MiB/file and 256 MiB/set decoded-material limits).
 - An explicit `targetLanguage` wire label.
-- A non-empty `selections` list (up to 2,000 items) mapping each selected source unit ID and source revision ID to its current translation (`null` when untranslated, or a UTF-8 string up to 16 KiB—including `""` when an empty string was explicitly selected).
+- A non-empty `selections` list (up to 100,000 items) mapping each selected source unit ID and source revision ID to its current translation (`null` when untranslated, or a UTF-8 string up to 16 KiB—including `""` when an empty string was explicitly selected).
 - The mandatory domain check `requirements` assigned to a single provider and covering the exact selected unit subset.
 
-The complete `ReviewCheckInput` frame is bounded to 4 MiB encoded (including JSON escaping).
+The complete `ReviewCheckInput` is bounded to 1 GiB encoded, including JSON escaping. Its typed `CheckResult[]` response has a separate 32 MiB allowance for complete target coverage across large selections. These allowances do not enlarge advisory text-review or service payloads, and `TextReviewCheckReport` remains bounded to 2 MiB. The package declaration and captured Host/Core limits still apply, and [Process4](process.md) chunking does not turn a complete domain check into independent partial checks.
 
 ### Declaration Resource (`ReviewDeclaration`)
 
@@ -95,12 +95,12 @@ Advisory text checks operate on source and translation strings independently of 
 
 ### Input and Report Validation (`TextReviewCheckInput` & `TextReviewCheckReport`)
 
-`TextReviewCheckInput` (up to 4 MiB encoded) carries `profile`, `sourceLanguage`, `targetLanguage`, resource pins, `selections` (up to 2,000 items, each with `unitId`, `sourceRevisionId`, `sourceText`, and nullable `translationText` up to 16 KiB), and the explicitly selected `requirements` (1 to 32 rules from a single provider). The same `missing-translation` N/A rule applies when `requiresTranslation: true` and all translations in the selection are `null`.
+`TextReviewCheckInput` retains the ordinary 16 MiB encoded ceiling. It carries `profile`, `sourceLanguage`, `targetLanguage`, resource pins, `selections` (up to 100,000 items, each with `unitId`, `sourceRevisionId`, `sourceText`, and nullable `translationText` up to 16 KiB), and the explicitly selected `requirements` (1 to 32 rules from a single provider). The byte ceiling can be reached well before the item ceiling; the 1 GiB material-backed allowance does not apply. The same `missing-translation` N/A rule applies when `requiresTranslation: true` and all translations in the selection are `null`.
 
 `TextReviewCheckReport` (up to 2 MiB encoded) contains:
 
 - `results`: exactly one `CheckResult` per selected requirement, matching the original `CheckKey`, provider, input/scope digests, and full target unit coverage.
-- `diagnostics`: up to 2,000 structured annotations, each referencing a completed finding in `results` by `(key, code, target)`. A diagnostic may attach:
+- `diagnostics`: up to 100,000 structured annotations within the complete 2 MiB report ceiling, each referencing a completed finding in `results` by `(key, code, target)`. A diagnostic may attach:
   - `location`: `{ field: "source" | "translation", range: TextRange }` using `utf8-byte`, `utf16`, or `grapheme` coordinates. `validate_against` checks every range against the original string in `TextReviewCheckInput` via `convert_text_range` (rejecting out-of-bounds offsets, split code points/surrogates, or locations pointing to `null` translations).
   - `detail` (up to 4 KiB) and `suggestion` (up to 16 KiB).
   - `resourceEntry`: `{ contributionId, entryId }` referencing one of the pinned supporting resources.

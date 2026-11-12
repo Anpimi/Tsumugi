@@ -335,7 +335,7 @@ fn full_content_capacity_keeps_identity_and_context_blocks_with_independent_limi
     source.order.clear();
     source.domain_blocks.clear();
     source.relations.clear();
-    for index in 0..2000 {
+    for index in 0..MAX_CONTENT_ITEMS {
         let mut unit = template.clone();
         unit.id = format!("unit-{index}");
         unit.source_revision_id = format!("revision-{index}");
@@ -373,8 +373,8 @@ fn full_content_capacity_keeps_identity_and_context_blocks_with_independent_limi
         source.order.push(unit.occurrences[0].id.clone());
         source.units.push(unit);
     }
-    assert_eq!(source.units.len(), 2000);
-    assert_eq!(source.domain_blocks.len(), 4000);
+    assert_eq!(source.units.len(), MAX_CONTENT_ITEMS);
+    assert_eq!(source.domain_blocks.len(), 2 * MAX_CONTENT_ITEMS);
     source.domain_blocks.push(DomainBlock {
         target: ContentTarget::Snapshot,
         schema: ContractRef {
@@ -385,9 +385,9 @@ fn full_content_capacity_keeps_identity_and_context_blocks_with_independent_limi
         handling: ExtensionHandling::Preserve,
         payload_utf8: "{}".into(),
     });
-    assert_eq!(source.domain_blocks.len(), 4001);
+    assert_eq!(source.domain_blocks.len(), MAX_CONTENT_DOMAIN_BLOCKS);
     source.validate().unwrap();
-    assert!(serde_json::to_vec(&source).unwrap().len() < 2 * 1024 * 1024);
+    assert!(serde_json::to_vec(&source).unwrap().len() < MAX_CONTENT_EXCHANGE_BYTES);
 
     source.domain_blocks.push(source.domain_blocks[0].clone());
     let error = source.validate().unwrap_err();
@@ -411,21 +411,23 @@ fn full_content_capacity_keeps_identity_and_context_blocks_with_independent_limi
     })
     .unwrap();
     assert!(frame.len() > 2 * 1024 * 1024);
-    assert!(frame.len() < 4 * 1024 * 1024);
+    assert!(frame.len() < MAX_CONTENT_EXCHANGE_BYTES);
     parse_exchange(&frame).unwrap();
-    for index in [2, 4, 6] {
-        source.domain_blocks[index].payload_utf8 = "x".repeat(MAX_EXCHANGE_BYTES);
-    }
-    assert_eq!(
-        source.validate().unwrap_err().code,
-        ContractErrorCode::LimitExceeded
-    );
+    source.domain_blocks[0].payload_utf8.push('x');
+    let error = source.validate().unwrap_err();
+    assert_eq!(error.code, ContractErrorCode::InvalidDeclaration);
+    assert_eq!(error.field, "content.domainBlocks");
+    // The independent aggregate encoded boundary is exercised by the review
+    // source boundary test, without building another 512 MiB fixture here.
 }
 
 #[test]
-fn larger_content_frames_do_not_expand_material_or_non_content_budgets() {
+fn larger_content_frames_keep_independent_material_and_non_content_budgets() {
     assert_eq!(MAX_EXCHANGE_BYTES, 2 * 1024 * 1024);
-    assert_eq!(MAX_CONTENT_EXCHANGE_BYTES, 8 * 1024 * 1024);
+    assert_eq!(MAX_CONTENT_EXCHANGE_BYTES, 512 * 1024 * 1024);
+    assert_eq!(MAX_MATERIAL_BYTES, 128 * 1024 * 1024);
+    assert_eq!(MAX_MATERIAL_SET_BYTES, 256 * 1024 * 1024);
+    assert_eq!(MAX_MATERIAL_INVOCATION_BYTES, 1024 * 1024 * 1024);
     assert_eq!(MAX_INVOCATION_PAYLOAD_BYTES, 16 * 1024 * 1024);
     let mut request = include_bytes!("fixtures/invocation.request.json").to_vec();
     parse_exchange(&request).unwrap();

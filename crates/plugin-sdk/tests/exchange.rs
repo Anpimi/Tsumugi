@@ -403,7 +403,7 @@ fn strict_envelopes_preserve_unknown_payload_bytes_but_reject_bad_frames_and_lim
     assert!(parse_exchange(&vec![b' '; MAX_EXCHANGE_BYTES + 1]).is_err());
     let opaque = "{\"future\": 1, \"future\": 2}\r\n";
     let payload = EncodedPayload::capture(contract("example.opaque"), opaque.into()).unwrap();
-    assert_eq!(payload.utf8, opaque); // opaque bytes do not claim a valid domain JSON schema.
+    assert_eq!(payload.utf8.as_ref(), opaque); // opaque bytes do not claim a valid domain JSON schema.
 }
 
 #[test]

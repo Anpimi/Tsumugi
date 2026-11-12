@@ -147,21 +147,16 @@ fn read_frame(
     reader: &mut impl Read,
     total: &mut usize,
 ) -> Result<ProcessFrame, NativeWorkerError> {
-    let mut header = [0u8; 4];
-    reader.read_exact(&mut header)?;
-    let length = u32::from_be_bytes(header) as usize;
-    if length == 0 || length > MAX_PROCESS_FRAME_BYTES {
-        return Err(NativeWorkerError::OutputLimit);
+    read_process_frame(reader, total, MAX_PROCESS_FRAME_BYTES, MAX_STREAM_BYTES)
+        .map(|(frame, _)| frame)
+        .map_err(transport_error)
+}
+fn transport_error(error: io::Error) -> NativeWorkerError {
+    if error.kind() == io::ErrorKind::FileTooLarge {
+        NativeWorkerError::OutputLimit
+    } else {
+        error.into()
     }
-    *total = total
-        .checked_add(length + 4)
-        .ok_or(NativeWorkerError::OutputLimit)?;
-    if *total > MAX_STREAM_BYTES {
-        return Err(NativeWorkerError::OutputLimit);
-    }
-    let mut bytes = vec![0; length];
-    reader.read_exact(&mut bytes)?;
-    Ok(parse_process_frame(&bytes)?)
 }
 fn emit(
     writer: &mut impl Write,
@@ -169,21 +164,17 @@ fn emit(
     total: &mut usize,
     result_limit: Option<u32>,
 ) -> Result<(), NativeWorkerError> {
-    let bytes = ProcessFrame::new(body).encode()?;
-    if result_limit.is_some_and(|limit| bytes.len() > limit as usize) {
-        return Err(NativeWorkerError::OutputLimit);
-    }
-    *total = total
-        .checked_add(bytes.len() + 4)
-        .ok_or(NativeWorkerError::OutputLimit)?;
-    if *total > MAX_STREAM_BYTES {
-        return Err(NativeWorkerError::OutputLimit);
-    }
-    writer.write_all(&(bytes.len() as u32).to_be_bytes())?;
-    writer.write_all(&bytes)?;
-    writer.flush()?;
-    Ok(())
+    write_process_frame(
+        writer,
+        &ProcessFrame::new(body),
+        total,
+        result_limit.map_or(MAX_PROCESS_FRAME_BYTES, |limit| limit as usize),
+        MAX_STREAM_BYTES,
+    )
+    .map(|_| ())
+    .map_err(transport_error)
 }
+
 fn component_loop(
     mut component: impl NativeComponent,
     jobs: Receiver<Job>,

@@ -8,8 +8,8 @@ use serde::{Deserialize, Serialize};
 
 use crate::{
     CapturedArtifact, CheckImplementation, CheckRequirement, CheckResult, ContentExchange,
-    ContractError, ContractErrorCode, ContractRef, MAX_CONTENT_EXCHANGE_BYTES, MAX_EXCHANGE_BYTES,
-    MAX_INVOCATION_PAYLOAD_BYTES, MAX_SOURCE_EXTRACTION_INPUT_BYTES,
+    ContractError, ContractErrorCode, ContractRef, MAX_CONTENT_EXCHANGE_BYTES,
+    MAX_MATERIAL_INVOCATION_BYTES, MAX_SOURCE_EXTRACTION_INPUT_BYTES,
     checks::validate_check_results,
     content::validate_source_material,
     validation::{count, encoded_limit, opaque_id, reference, unique},
@@ -201,7 +201,7 @@ impl SourceExtractionCheckInput {
         }
         encoded_limit(
             self,
-            MAX_INVOCATION_PAYLOAD_BYTES,
+            MAX_MATERIAL_INVOCATION_BYTES,
             "sourceExtractionCheckInput",
         )
     }
@@ -223,7 +223,7 @@ pub fn parse_content_exchange(bytes: &[u8]) -> Result<ContentExchange, ContractE
 pub fn parse_source_extraction_check_input(
     bytes: &[u8],
 ) -> Result<SourceExtractionCheckInput, ContractError> {
-    if bytes.len() > MAX_INVOCATION_PAYLOAD_BYTES {
+    if bytes.len() > MAX_MATERIAL_INVOCATION_BYTES {
         return Err(ContractError::at(
             ContractErrorCode::LimitExceeded,
             "sourceExtractionCheckInput",
@@ -240,7 +240,7 @@ pub fn parse_source_extraction_check_input(
 }
 
 pub fn parse_check_results(bytes: &[u8]) -> Result<Vec<CheckResult>, ContractError> {
-    if bytes.len() > MAX_EXCHANGE_BYTES {
+    if bytes.len() > crate::MAX_CHECK_RESULTS_BYTES {
         return Err(ContractError::at(
             ContractErrorCode::LimitExceeded,
             "checks.results",

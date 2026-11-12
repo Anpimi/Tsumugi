@@ -163,7 +163,13 @@ impl ContentExchange {
                 "content.domainBlocks",
             ));
         }
-        unique(self.units.iter().map(|u| &u.id), "content.units.id")?;
+        let units: BTreeSet<_> = self.units.iter().map(|unit| &unit.id).collect();
+        if units.len() != self.units.len() {
+            return Err(ContractError::at(
+                ContractErrorCode::DuplicateIdentity,
+                "content.units.id",
+            ));
+        }
         let mut occurrences = BTreeSet::new();
         for unit in &self.units {
             opaque_id(&unit.id, "content.units.id")?;
@@ -239,7 +245,7 @@ impl ContentExchange {
             }
             let exists = match &block.target {
                 ContentTarget::Snapshot => true,
-                ContentTarget::Unit { id } => self.units.iter().any(|u| u.id == *id),
+                ContentTarget::Unit { id } => units.contains(id),
                 ContentTarget::Occurrence { id } => occurrences.contains(id),
             };
             if !exists {
@@ -375,7 +381,7 @@ pub(crate) fn validate_source_material(
     for artifact in artifacts {
         let bytes = artifact.validated_bytes()?;
         total_bytes = total_bytes.saturating_add(bytes.len());
-        if total_bytes > MAX_EXCHANGE_BYTES {
+        if total_bytes > MAX_MATERIAL_SET_BYTES {
             return Err(ContractError::at(
                 ContractErrorCode::LimitExceeded,
                 "content.artifacts",

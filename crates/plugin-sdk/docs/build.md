@@ -42,9 +42,13 @@ Size limits enforced by the receivers:
 | Path depth | 16 segments |
 | Decided unit text | 16 KiB per unit |
 | Distinct configuration schemas | 32 |
-| Original `ContentExchange` | 8 MiB encoded (also bounded by the enclosing invocation) |
-| `ArtifactSet` output | 4 MiB encoded; 2 MiB decoded bytes (or a smaller raw-byte ceiling set in `BuildInput`) |
-| `BuildInput` / `ArtifactCheckInput` | 16 MiB encoded each |
+| Source units / build targets | 100,000 each; exact one-to-one unit/revision coverage |
+| Original `ContentExchange` | 512 MiB encoded (also bounded by the enclosing invocation) |
+| One decoded output artifact | 128 MiB |
+| `ArtifactSet` output | 384 MiB encoded; 256 MiB decoded total (or a smaller raw-byte ceiling set in `BuildInput`) |
+| `BuildInput` / `ArtifactCheckInput` | 1 GiB encoded each |
+
+The complete request must satisfy every applicable limit; source, target texts and output cannot all independently consume the enclosing maximum. [Process4 chunking](exchange.md#captured-artifacts-and-source-coordinates) bounds physical transfers without changing the inline artifact representation or the checker's obligation to inspect the complete output. Package declarations, Host policy and Core capture budgets can be stricter.
 
 ## Artifact Verification (`ArtifactCheckInput`) and Resource Binding
 

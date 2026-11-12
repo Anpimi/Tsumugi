@@ -158,6 +158,8 @@ The current workspace targets **`0.3.0-alpha.1`**. The published `0.2.0-alpha.1`
 
 ### Changed
 
+- **Breaking**: Experimental SDK `0.1.0-alpha.9` uses Process 4 with bounded 64 KiB transport chunks; rebuild native plugins and use the matching JavaScript Host. Material and field limits are independent: up to 100,000 fields, 128 MiB per file and 256 MiB per material set, with larger encoded source, check and build budgets. Large captures avoid repeated whole-message serialization and quadratic field scans; complete original bytes and independent checks remain required. Capacity ceilings do not establish arbitrary Mod or game compatibility.
+
 - **Breaking**: Opening projects and restoring backups require SQLite schema 76. Keep older projects and backups intact, and import the original source files into a new project. The app refuses older backups before creating a restore folder.
 
 - Saving and reading plugin releases reuse validated build and source data within each operation. Preparing source and artifact checks captures each new checker input once. Reopening projects and reading saved releases verify the original checker input against its reconstructed bytes without decoding a temporary copy. Export verifies the saved files against the preview and registers the pending delivery in one transaction. Saved releases still verify the exact original source, artifacts, and independent check.

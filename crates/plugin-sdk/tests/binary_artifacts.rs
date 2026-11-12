@@ -146,11 +146,13 @@ fn source_ranges_stay_bound_to_each_material_and_recheck_later_validation_calls(
 #[test]
 fn maximum_raw_binary_survives_source_content_checker_and_artifact_receivers() {
     let mut input = source();
-    input.artifacts = vec![binary(&vec![0xff; MAX_EXCHANGE_BYTES])];
+    input.artifacts = vec![binary(&vec![0xff; MAX_MATERIAL_BYTES])];
     let proposal = content(&input);
     validate_source_extraction(&input, &proposal).unwrap();
-    let mut encoded = serde_json::to_vec(&input).unwrap();
-    assert!(encoded.len() > MAX_EXCHANGE_BYTES);
+    // Reuse one serialization buffer across the large receivers.
+    let mut encoded = Vec::with_capacity(MAX_SOURCE_EXTRACTION_INPUT_BYTES + 1);
+    serde_json::to_writer(&mut encoded, &input).unwrap();
+    assert!(encoded.len() > MAX_INVOCATION_PAYLOAD_BYTES);
     encoded.resize(MAX_SOURCE_EXTRACTION_INPUT_BYTES, b' ');
     assert_eq!(parse_source_extraction_input(&encoded).unwrap(), input);
     encoded.push(b' ');
@@ -158,10 +160,9 @@ fn maximum_raw_binary_survives_source_content_checker_and_artifact_receivers() {
         parse_source_extraction_input(&encoded).unwrap_err().code,
         ContractErrorCode::LimitExceeded
     );
-    assert_eq!(
-        parse_content_exchange(&serde_json::to_vec(&proposal).unwrap()).unwrap(),
-        proposal
-    );
+    encoded.clear();
+    serde_json::to_writer(&mut encoded, &proposal).unwrap();
+    assert_eq!(parse_content_exchange(&encoded).unwrap(), proposal);
 
     let document = parse_exchange(include_bytes!("fixtures/checks.set.json")).unwrap();
     let ExchangeBody::CheckSet(set) = &document.document().body else {
@@ -179,8 +180,10 @@ fn maximum_raw_binary_survives_source_content_checker_and_artifact_receivers() {
         proposal,
         requirements: vec![requirement],
     };
-    let encoded = serde_json::to_vec(&check).unwrap();
-    assert!(encoded.len() > MAX_SOURCE_EXTRACTION_INPUT_BYTES);
+    encoded.clear();
+    serde_json::to_writer(&mut encoded, &check).unwrap();
+    assert!(encoded.len() > 2 * MAX_MATERIAL_BYTES);
+    assert!(encoded.len() < MAX_MATERIAL_INVOCATION_BYTES);
     assert_eq!(
         parse_source_extraction_check_input(&encoded).unwrap(),
         check
@@ -192,8 +195,9 @@ fn maximum_raw_binary_survives_source_content_checker_and_artifact_receivers() {
         target_language: "zh-CN".into(),
         artifacts: input.artifacts,
     };
-    let mut encoded = serde_json::to_vec(&output).unwrap();
-    assert!(encoded.len() > MAX_EXCHANGE_BYTES);
+    encoded.clear();
+    serde_json::to_writer(&mut encoded, &output).unwrap();
+    assert!(encoded.len() > MAX_INVOCATION_PAYLOAD_BYTES);
     encoded.resize(MAX_ARTIFACT_SET_BYTES, b' ');
     assert_eq!(parse_artifact_set(&encoded).unwrap(), output);
     encoded.push(b' ');
@@ -201,15 +205,25 @@ fn maximum_raw_binary_survives_source_content_checker_and_artifact_receivers() {
         parse_artifact_set(&encoded).unwrap_err().code,
         ContractErrorCode::LimitExceeded
     );
-    assert!(
-        CapturedArtifact::from_bytes(
-            "id".into(),
-            "over.bin".into(),
-            "source".into(),
-            &vec![0xff; MAX_EXCHANGE_BYTES + 1]
-        )
-        .is_err()
-    );
+    drop(encoded);
+
+    // Share the immutable binary allocation while checking the actual decoded
+    // aggregate limit, independently of the per-file and encoded ceilings.
+    let mut aggregate = source();
+    aggregate.artifacts = output.artifacts;
+    let mut second = aggregate.artifacts[0].clone();
+    let CapturedArtifact::Binary(value) = &mut second else { panic!() };
+    value.id = "second-artifact".into();
+    value.logical_path = "Second.esp".into();
+    aggregate.artifacts.push(second);
+    assert_eq!(2 * MAX_MATERIAL_BYTES, MAX_MATERIAL_SET_BYTES);
+    aggregate.validate().unwrap();
+    aggregate.artifacts.push(CapturedArtifact::from_bytes(
+        "extra-artifact".into(), "Extra.bin".into(), "source".into(), &[0],
+    ).unwrap());
+    let error = aggregate.validate().unwrap_err();
+    assert_eq!(error.code, ContractErrorCode::LimitExceeded);
+    assert_eq!(error.field, "content.artifacts");
 }
 
 #[test]
@@ -397,28 +411,26 @@ fn binary_input_is_bounded_before_decoding_or_emitting_a_capture() {
             "id".into(),
             "file.bin".into(),
             "source".into(),
-            &vec![0; MAX_EXCHANGE_BYTES + 1]
+            &vec![0; MAX_MATERIAL_BYTES + 1]
         )
         .is_err()
     );
-    let mut value = serde_json::to_value(binary(&[])).unwrap();
-    value["base64"] = json!("A".repeat(MAX_EXCHANGE_BYTES.div_ceil(3) * 4 + 4));
-    assert_eq!(
-        serde_json::from_value::<CapturedArtifact>(value)
-            .unwrap()
-            .bytes()
-            .unwrap_err()
-            .code,
-        ContractErrorCode::LimitExceeded
-    );
+    let mut artifact = binary(&[]);
+    let CapturedArtifact::Binary(value) = &mut artifact else { panic!() };
+    value.base64 = "A".repeat(MAX_MATERIAL_BYTES.div_ceil(3) * 4 + 4).into();
+    let error = artifact.bytes().unwrap_err();
+    assert_eq!(error.code, ContractErrorCode::LimitExceeded);
+    assert_eq!(error.field, "content.artifacts.base64");
+    drop(artifact);
     let mut source = source();
-    let text = "\"".repeat(MAX_EXCHANGE_BYTES);
+    let text = "\0".repeat(MAX_SOURCE_EXTRACTION_INPUT_BYTES / 6);
+    assert!(text.len() < MAX_MATERIAL_BYTES);
     source.artifacts[0] = CapturedTextArtifact {
         id: "source-artifact".into(), logical_path: "escaped.txt".into(), role: "source".into(),
         sha256: artifact_bytes_digest(text.as_bytes()), utf8: text,
     }.into();
-    // Raw bytes fit, but quotes double during JSON encoding and its metadata
-    // pushes the complete source input past the independent four MiB ceiling.
+    // Each NUL needs six JSON bytes. Raw bytes fit, but metadata pushes the
+    // complete source input past its independent encoded ceiling.
     assert_eq!(
         source.validate().unwrap_err().code,
         ContractErrorCode::LimitExceeded

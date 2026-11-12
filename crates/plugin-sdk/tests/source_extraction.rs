@@ -86,9 +86,7 @@ fn source_material_rejects_invalid_capture_metadata_and_bounds() {
             7 => input.artifacts[0].as_text_mut().unwrap().role = "invalid role".into(),
             8 => input.artifacts[0].as_text_mut().unwrap().sha256 = "0".repeat(64),
             9 => {
-                input.artifacts[0].as_text_mut().unwrap().utf8 = "x".repeat(MAX_EXCHANGE_BYTES + 1);
-                input.artifacts[0].as_text_mut().unwrap().sha256 =
-                    payload_digest(&input.artifacts[0].as_text().unwrap().utf8);
+                input.artifacts[0].as_text_mut().unwrap().utf8 = "x".repeat(MAX_MATERIAL_BYTES + 1);
             }
             10 => {
                 input.artifacts = (0..=MAX_CONTENT_ITEMS)
@@ -110,7 +108,11 @@ fn source_material_rejects_invalid_capture_metadata_and_bounds() {
                 input.artifacts.push(second); // duplicate logical path
             }
         }
-        assert!(input.validate().is_err(), "case {case}");
+        let error = input.validate().unwrap_err();
+        if case == 9 || case == 10 {
+            assert_eq!(error.code, ContractErrorCode::LimitExceeded, "case {case}");
+            assert_eq!(error.field, "content.artifacts", "size precedes digest/identity checks");
+        }
     }
 }
 
@@ -131,12 +133,8 @@ fn strict_source_receivers_reject_unknown_duplicate_and_invalid_utf8_fields() {
     );
     assert!(parse_source_extraction_input(duplicate.as_bytes()).is_err());
     assert!(parse_source_extraction_input(b"{\xff}").is_err());
-    assert_eq!(
-        parse_source_extraction_input(&vec![b' '; MAX_SOURCE_EXTRACTION_INPUT_BYTES + 1])
-            .unwrap_err()
-            .code,
-        ContractErrorCode::LimitExceeded
-    );
+    // Material parser ceilings and their schema-error ordering share one
+    // allocation in validation::tests::material_parser_boundaries_precede_schema_decoding.
 }
 
 #[test]
@@ -436,13 +434,9 @@ fn combined_check_budget_is_distinct_from_each_captured_content_budget() {
     encoded.resize(MAX_INVOCATION_PAYLOAD_BYTES, b' ');
     assert_eq!(parse_source_extraction_check_input(&encoded).unwrap(), request);
     encoded.push(b' ');
-    assert_eq!(parse_source_extraction_check_input(&encoded).unwrap_err().code, ContractErrorCode::LimitExceeded);
-    assert_eq!(
-        parse_source_extraction_check_input(&vec![b' '; MAX_INVOCATION_PAYLOAD_BYTES + 1])
-            .unwrap_err()
-            .code,
-        ContractErrorCode::LimitExceeded
-    );
+    assert_eq!(encoded.len(), MAX_INVOCATION_PAYLOAD_BYTES + 1);
+    assert!(encoded.len() < MAX_MATERIAL_INVOCATION_BYTES);
+    assert_eq!(parse_source_extraction_check_input(&encoded).unwrap(), request);
 }
 
 #[cfg(feature = "schema")]

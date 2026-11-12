@@ -20,11 +20,10 @@ fn native() -> NativeHostEnvironmentDescriptor {
 fn native_digest_matches_an_independently_calculated_vector() {
     // Python hashlib over the documented tag, u64 big-endian JSON length and
     // explicitly ordered JSON, independently of SDK serialization/hash code.
-    let mut original = native();
-    original.sdk_version = "0.1.0-alpha.2".into();
+    let original = native();
     assert_eq!(
         original.digest().unwrap(),
-        "f47c1ed385f33000aae0d5a001e2faa4c3b002387e8ae6103da6c598a5640156"
+        "47483aad1242913d8afc4d514c51cce4b89ccf6573c58afcf16a86e809e31ce1"
     );
     let execution = ExecutionEnvironmentDescriptor::from(original.clone());
     let bytes = serde_json::to_vec(&original).unwrap();
@@ -68,45 +67,27 @@ fn native_identity_platform_and_application_version_are_fixed_choices() {
 }
 
 #[test]
-fn historical_native_descriptor_does_not_become_the_current_host() {
-    let mut old = native();
-    old.sdk_version = "0.1.0-alpha.1".into();
-    let bytes = serde_json::to_vec(&old).unwrap();
-    let decoded: NativeHostEnvironmentDescriptor = serde_json::from_slice(&bytes).unwrap();
-    decoded.validate().unwrap();
-    assert_eq!(serde_json::to_vec(&decoded).unwrap(), bytes);
-    assert_ne!(decoded.digest().unwrap(), native().digest().unwrap());
-    for version in ["0.1.0-alpha.0", "0.1.0-alpha.99", "0.1.0"] {
-        old.sdk_version = version.into();
-        assert!(old.validate().is_err());
+fn native_descriptors_reject_older_sdks_and_process_three() {
+    for version in (0..=8).map(|alpha| format!("0.1.0-alpha.{alpha}"))
+        .chain(["0.1.0-alpha.99".into(), "0.1.0".into()])
+    {
+        for process_protocol in [3, PROCESS_PROTOCOL] {
+            let mut old = native();
+            old.sdk_version = version.clone();
+            old.process_protocol = process_protocol;
+            let bytes = serde_json::to_vec(&old).unwrap();
+            let decoded: NativeHostEnvironmentDescriptor = serde_json::from_slice(&bytes).unwrap();
+            assert_eq!(serde_json::to_vec(&decoded).unwrap(), bytes);
+            assert_eq!(decoded.validate().unwrap_err().code, ContractErrorCode::UnsupportedProtocol);
+            assert_eq!(decoded.digest().unwrap_err().code, ContractErrorCode::UnsupportedProtocol);
+            assert_eq!(ExecutionEnvironmentDescriptor::from(decoded).digest().unwrap_err().code,
+                ContractErrorCode::UnsupportedProtocol);
+        }
     }
-}
-
-#[test]
-fn alpha3_native_descriptor_remains_exact_and_distinct_from_current_host() {
-    let mut old = native();
-    old.sdk_version = "0.1.0-alpha.3".into();
-    let bytes = serde_json::to_vec(&old).unwrap();
-    let decoded: NativeHostEnvironmentDescriptor = serde_json::from_slice(&bytes).unwrap();
-    decoded.validate().unwrap();
-    assert_eq!(serde_json::to_vec(&decoded).unwrap(), bytes);
-    assert_ne!(decoded.digest().unwrap(), native().digest().unwrap());
-}
-
-#[test]
-fn alpha2_native_descriptor_remains_exact_and_distinct_from_current_host() {
-    let mut old = native();
-    old.sdk_version = "0.1.0-alpha.2".into();
-    let bytes = serde_json::to_vec(&old).unwrap();
-    let decoded: NativeHostEnvironmentDescriptor = serde_json::from_slice(&bytes).unwrap();
-    decoded.validate().unwrap();
-    assert_eq!(serde_json::to_vec(&decoded).unwrap(), bytes);
-    assert_eq!(
-        decoded.digest().unwrap(),
-        "f47c1ed385f33000aae0d5a001e2faa4c3b002387e8ae6103da6c598a5640156"
-    );
-    assert_ne!(decoded.digest().unwrap(), native().digest().unwrap());
-    native().validate().unwrap();
+    let mut old_transport = native();
+    old_transport.process_protocol = 3;
+    assert_eq!(old_transport.validate().unwrap_err().code, ContractErrorCode::UnsupportedProtocol);
+    assert!(old_transport.digest().is_err());
 }
 
 #[test]
@@ -197,12 +178,11 @@ fn linux_complete_executable_hash_uses_standard_sha256_and_refuses_empty_bytes()
 }
 
 #[test]
-fn alpha6_native_descriptor_keeps_its_exact_identity_after_the_sdk_advance() {
-    let mut old = native();
-    old.sdk_version = "0.1.0-alpha.6".into();
-    let bytes = serde_json::to_vec(&old).unwrap();
-    let decoded: NativeHostEnvironmentDescriptor = serde_json::from_slice(&bytes).unwrap();
-    decoded.validate().unwrap();
-    assert_eq!(serde_json::to_vec(&decoded).unwrap(), bytes);
-    assert_ne!(decoded.digest().unwrap(), native().digest().unwrap());
+fn native_descriptors_refuse_the_retired_identity_field() {
+    let mut old = serde_json::to_value(native()).unwrap();
+    let fields = old.as_object_mut().unwrap();
+    let executable = fields.remove("executable").unwrap();
+    fields.insert("identity".into(), executable);
+    assert!(serde_json::from_value::<NativeHostEnvironmentDescriptor>(old.clone()).is_err());
+    assert!(serde_json::from_value::<ExecutionEnvironmentDescriptor>(old).is_err());
 }

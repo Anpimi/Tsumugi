@@ -447,11 +447,17 @@ fn v5_optional_groups_still_require_one_captured_material_and_closed_byte_limits
             .len(),
         1
     );
-    for bytes in [0, MAX_EXCHANGE_BYTES as u32 + 1] {
+    for bytes in [0, MAX_MATERIAL_SET_BYTES as u32 + 1] {
         let mut invalid = value.clone();
         invalid.max_total_bytes = Some(bytes);
         assert!(invalid.validate().is_err());
     }
+    value.max_total_bytes = Some(MAX_MATERIAL_SET_BYTES as u32);
+    value.file_sets.as_mut().unwrap()[0].max_bytes = MAX_MATERIAL_BYTES as u32;
+    value.validate().unwrap();
+    let mut oversized_file = value.clone();
+    oversized_file.file_sets.as_mut().unwrap()[0].max_bytes += 1;
+    assert_eq!(oversized_file.validate().unwrap_err().field, "sourceImport.fileSets");
     let mut invalid = value.clone();
     invalid.file_sets = None;
     assert!(invalid.validate().is_err());

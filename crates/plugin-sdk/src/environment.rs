@@ -18,20 +18,10 @@ pub const MAX_RUNTIME_ARTIFACT_BYTES: usize = 256 * 1024 * 1024;
 
 pub const NATIVE_HOST_ENVIRONMENT_PROTOCOL: u32 = 1;
 
-/// Whether the SDK version uses the supported Process-3 transport.
+/// Whether the SDK version uses the current Process-4 transport.
 /// Package and runtime identities still require independent verification.
 pub fn supports_process_sdk(version: &str) -> bool {
     version == crate::SDK_VERSION
-        || matches!(
-            version,
-            "0.1.0-alpha.1"
-                | "0.1.0-alpha.2"
-                | "0.1.0-alpha.3"
-                | "0.1.0-alpha.4"
-                | "0.1.0-alpha.5"
-                | "0.1.0-alpha.6"
-                | "0.1.0-alpha.7"
-        )
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]

@@ -91,7 +91,7 @@ fn service_context_preserves_outer_digest_and_checks_independent_payload_bytes()
         ContractErrorCode::ResultMismatch
     );
     let mut corrupt = request;
-    corrupt.input.utf8.push(' ');
+    corrupt.input.utf8 = format!("{} ", corrupt.input.utf8).into();
     assert_eq!(
         corrupt.validate().unwrap_err().code,
         ContractErrorCode::ResultMismatch
@@ -235,7 +235,7 @@ fn service_response_preserves_all_outcomes_and_rejects_forged_correlation_schema
                 };
                 match change {
                     4 => output.schema = binding().error_schema,
-                    5 => output.utf8.push(' '),
+                    5 => output.utf8 = format!("{} ", output.utf8).into(),
                     _ => {
                         *output = EncodedPayload::capture(
                             binding().output_schema,
@@ -277,13 +277,15 @@ fn service_frames_reject_duplicate_members_unknown_fields_and_unbounded_payloads
     let mut extra: serde_json::Value = serde_json::from_str(&text).unwrap();
     extra["body"]["data"]["providerId"] = "forged-provider".into();
     assert!(parse_process_frame(&serde_json::to_vec(&extra).unwrap()).is_err());
-    assert_eq!(
-        EncodedPayload::capture(
-            binding().input_schema,
-            "x".repeat(MAX_INVOCATION_PAYLOAD_BYTES + 1)
-        )
-        .unwrap_err()
-        .code,
-        ContractErrorCode::LimitExceeded
-    );
+    let mut binding = binding();
+    binding.limits.max_input_bytes = MAX_INVOCATION_PAYLOAD_BYTES as u32;
+    let mut request = request();
+    let utf8 = "x".repeat(MAX_INVOCATION_PAYLOAD_BYTES + 1);
+    request.input = EncodedPayload::capture(binding.input_schema.clone(), utf8[..MAX_INVOCATION_PAYLOAD_BYTES].into()).unwrap();
+    request.validate_against(&binding, &invocation().context).unwrap();
+    request.input = EncodedPayload::capture(binding.input_schema.clone(), utf8).unwrap();
+    request.validate().unwrap(); // Generic material payloads retain a separate ceiling.
+    let error = request.validate_against(&binding, &invocation().context).unwrap_err();
+    assert_eq!(error.code, ContractErrorCode::LimitExceeded);
+    assert_eq!(error.field, "service.input");
 }

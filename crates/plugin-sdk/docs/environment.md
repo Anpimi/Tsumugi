@@ -1,13 +1,13 @@
 # Runtime Environment Descriptors
 
-`ExecutionEnvironmentDescriptor` describes the verified runtime environment used to execute a plugin component under environment protocol `1` and process protocol `3`. It supports two distinct profiles:
+`ExecutionEnvironmentDescriptor` describes the verified runtime environment used to execute a plugin component under environment protocol `1` and process protocol `4`. It supports two distinct profiles:
 
 - `node-system-libraries-v1` (`RuntimeEnvironmentDescriptor`) for JavaScript components running on an approved Node.js distribution and JavaScript Host tree.
 - `native-application-host-v1` (`NativeHostEnvironmentDescriptor`) for native Rust components launched directly by the application Host.
 
 Parsers reject unknown profiles, unknown or duplicate JSON fields, missing fields, and unsupported protocol or SDK versions.
 
-SDK `0.1.0-alpha.3` reads the exact environment descriptors of `0.1.0-alpha.1` and `0.1.0-alpha.2` with the same process protocol 3, preserving their original version and digest. Other SDK versions and process protocols remain unsupported. Reading a historical descriptor does not authorize execution: captured Node trees still require independent approval and digest checks, and native dispatch still requires the actual current Host identity. Contract payload versions are checked separately; an old text-only binding cannot receive binary artifacts.
+SDK `0.1.0-alpha.9` supports only its exact SDK version and process protocol `4`. Descriptors naming earlier SDK versions or process protocol `3` are rejected; they cannot be validated or hashed as supported execution environments. Rebuild plugins and runtime distributions with the matching SDK and Process 4 Host. Captured Node trees still require independent approval and digest checks, and native dispatch still requires the actual current Host identity. The retired native `identity` field is rejected; the current profile requires `executable`. Contract payload versions are checked separately; an old text-only binding cannot receive binary artifacts.
 
 ## Node Runtime Profile (`node-system-libraries-v1`)
 
@@ -15,7 +15,7 @@ SDK `0.1.0-alpha.3` reads the exact environment descriptors of `0.1.0-alpha.1` a
 
 - `platform.operatingSystem`: `macos`, `linux`, or `windows`.
 - `platform.architecture`: `aarch64` or `x86_64`.
-- `protocolVersion` (`1`), exact `sdkVersion`, and `processProtocol` (`3`).
+- `protocolVersion` (`1`), exact `sdkVersion`, and `processProtocol` (`4`).
 - `profile`: `"node-system-libraries-v1"` and SemVer `toolVersion`.
 - `tool` and `host`: each containing a full `treeDigest` and logical relative `entrypoint` (such as `bin/node` and `dist/main.js`).
 
@@ -49,7 +49,7 @@ Consumers always parse and validate incoming JSON before computing the canonical
 
 For native worker components, `NativeHostEnvironmentDescriptor` records the identity of the parent Host executable rather than Node and JavaScript Host trees. It supports `macos` and `linux` (`windows` is rejected for this profile) and contains:
 
-- `protocolVersion` (`1`), `platform` (`operatingSystem`, `architecture`), exact `sdkVersion`, and `processProtocol` (`3`).
+- `protocolVersion` (`1`), `platform` (`operatingSystem`, `architecture`), exact `sdkVersion`, and `processProtocol` (`4`).
 - `profile`: `"native-application-host-v1"` and SemVer `hostVersion`.
 - `executable`: a tagged `{ kind, value }` pair observed from the running Host process:
   - `darwin-code-directory-hash-v1` (macOS): the process's 20-byte Mach-O CodeDirectory hash as 40 lowercase hex characters.

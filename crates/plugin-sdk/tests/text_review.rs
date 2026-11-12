@@ -460,11 +460,15 @@ fn text_review_limits_count_escaped_encoding_and_actual_capability_limits() {
         ContractErrorCode::LimitExceeded
     );
     let mut limited = binding();
-    limited.checker.declaration.limits.max_input_bytes = 1;
-    assert!(limited.validate_input(&input()).is_err());
+    limited.checker.declaration.limits.max_input_bytes = serde_json::to_vec(&input()).unwrap().len() as u32;
+    limited.validate_input(&input()).unwrap();
+    limited.checker.declaration.limits.max_input_bytes -= 1;
+    assert_eq!(limited.validate_input(&input()).unwrap_err().code, ContractErrorCode::LimitExceeded);
     let mut limited = binding();
-    limited.checker.declaration.limits.max_output_bytes = 1;
-    assert!(limited.validate_report(&input(), &report()).is_err());
+    limited.checker.declaration.limits.max_output_bytes = serde_json::to_vec(&report()).unwrap().len() as u32;
+    limited.validate_report(&input(), &report()).unwrap();
+    limited.checker.declaration.limits.max_output_bytes -= 1;
+    assert_eq!(limited.validate_report(&input(), &report()).unwrap_err().code, ContractErrorCode::LimitExceeded);
     let mut large = report();
     let template = large.diagnostics[0].clone();
     large.diagnostics = (0..100)

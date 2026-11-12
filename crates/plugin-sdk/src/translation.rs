@@ -284,7 +284,7 @@ impl TranslationExtractionCheckInput {
                 ));
             }
         }
-        encoded_limit(self, MAX_INVOCATION_PAYLOAD_BYTES, "translationCheck")
+        encoded_limit(self, if self.input.paired_source.is_some() { MAX_MATERIAL_INVOCATION_BYTES } else { MAX_INVOCATION_PAYLOAD_BYTES }, "translationCheck")
     }
 }
 

@@ -155,8 +155,8 @@ fn component_roster_is_nonempty_bounded_unique_and_validates_every_member() {
 }
 
 #[test]
-fn process_three_requires_instance_and_roster_without_a_singleton_wire_fallback() {
-    assert_eq!(PROCESS_PROTOCOL, 3);
+fn process_four_requires_instance_and_roster_without_a_singleton_wire_fallback() {
+    assert_eq!(PROCESS_PROTOCOL, 4);
     assert_eq!(MANIFEST_PROTOCOL, 1);
     assert_eq!(EXCHANGE_PROTOCOL, 1);
     let original = activation();
@@ -194,7 +194,7 @@ fn process_three_requires_instance_and_roster_without_a_singleton_wire_fallback(
             body
         );
         let mut old = frame;
-        old.protocol_version = 2;
+        old.protocol_version = 3;
         assert_eq!(
             old.validate().unwrap_err().code,
             ContractErrorCode::UnsupportedProtocol
@@ -203,7 +203,8 @@ fn process_three_requires_instance_and_roster_without_a_singleton_wire_fallback(
 }
 
 #[test]
-fn maximum_opaque_payload_and_bounded_metadata_fit_the_separate_frame_budget() {
+fn large_opaque_payloads_preserve_escape_and_metadata_accounting() {
+    const PAYLOAD_BYTES: usize = 256 * 1024;
     let original = parse_exchange(include_bytes!("fixtures/invocation.request.json")).unwrap();
     let ExchangeBody::Request(mut request) = original.document().body.clone() else {
         panic!("expected request fixture")
@@ -241,17 +242,14 @@ fn maximum_opaque_payload_and_bounded_metadata_fit_the_separate_frame_budget() {
     request.profile = Some(request.capability.clone());
     // Opaque payload schemas may permit control characters. Every byte here
     // uses the longest JSON escape; the SDK does not interpret that schema.
-    request.input = EncodedPayload::capture(
-        request.capability.clone(),
-        "\u{1}".repeat(MAX_INVOCATION_PAYLOAD_BYTES),
-    )
-    .unwrap();
+    request.input =
+        EncodedPayload::capture(request.capability.clone(), "\u{1}".repeat(PAYLOAD_BYTES)).unwrap();
     request.context.input_digest = request.input.sha256.clone();
     request.max_result_bytes = MAX_PROCESS_FRAME_BYTES as u32;
     let invoke = ProcessFrame::new(ProcessBody::Invoke(request.clone()))
         .encode()
         .unwrap();
-    assert!(invoke.len() > 6 * MAX_INVOCATION_PAYLOAD_BYTES);
+    assert!(invoke.len() > 6 * PAYLOAD_BYTES);
     assert!(invoke.len() <= MAX_PROCESS_FRAME_BYTES);
     parse_process_frame(&invoke).unwrap();
     drop(invoke);
@@ -262,7 +260,7 @@ fn maximum_opaque_payload_and_bounded_metadata_fit_the_separate_frame_budget() {
             } else {
                 request.error_schema.clone()
             },
-            "\u{1}".repeat(MAX_INVOCATION_PAYLOAD_BYTES),
+            "\u{1}".repeat(PAYLOAD_BYTES),
         )
         .unwrap();
         let outcome = match kind {
@@ -281,7 +279,7 @@ fn maximum_opaque_payload_and_bounded_metadata_fit_the_separate_frame_budget() {
         let frame = ProcessFrame::new(ProcessBody::Result(result.clone()))
             .encode()
             .unwrap();
-        assert!(frame.len() > 6 * MAX_INVOCATION_PAYLOAD_BYTES);
+        assert!(frame.len() > 6 * PAYLOAD_BYTES);
         assert!(frame.len() <= MAX_PROCESS_FRAME_BYTES);
         parse_process_frame(&frame).unwrap();
         let document = serde_json::to_vec(&ExchangeDocument {
@@ -299,14 +297,20 @@ fn maximum_opaque_payload_and_bounded_metadata_fit_the_separate_frame_budget() {
             ContractErrorCode::LimitExceeded
         );
     }
+    // A message budget is independent of raw payload admission. Exercise its
+    // boundary with a small policy instead of allocating a multi-GiB maximum.
+    let frame = ProcessFrame::new(ProcessBody::Invoke(request));
     assert_eq!(
-        EncodedPayload::capture(
-            request.output_schema,
-            "x".repeat(MAX_INVOCATION_PAYLOAD_BYTES + 1)
+        write_process_frame(
+            &mut std::io::sink(),
+            &frame,
+            &mut 0,
+            6 * PAYLOAD_BYTES,
+            MAX_PROCESS_SESSION_BYTES
         )
         .unwrap_err()
-        .code,
-        ContractErrorCode::LimitExceeded
+        .kind(),
+        std::io::ErrorKind::FileTooLarge
     );
 }
 #[test]
@@ -334,13 +338,13 @@ fn framed_protocol_validates_exact_version_direction_data_and_duplicate_fields()
     for bytes in [
         br#"{"protocolVersion":1,"body":{"kind":"ping","data":{"nonce":"nonce-a"}}}"#.as_slice(),
         br#"{"protocolVersion":2,"body":{"kind":"ping","data":{"nonce":"nonce-a"}}}"#,
-        br#"{"protocolVersion":3,"protocolVersion":3,"body":{"kind":"ping","data":{"nonce":"nonce-a"}}}"#,
-        br#"{"protocolVersion":3,"body":{"kind":"ping","data":{"nonce":"nonce-a","unknown":true}}}"#,
-        br#"{"protocolVersion":3,"body":{"kind":"ping","data":{"nonce":""}}}"#,
+        br#"{"protocolVersion":4,"protocolVersion":4,"body":{"kind":"ping","data":{"nonce":"nonce-a"}}}"#,
+        br#"{"protocolVersion":4,"body":{"kind":"ping","data":{"nonce":"nonce-a","unknown":true}}}"#,
+        br#"{"protocolVersion":4,"body":{"kind":"ping","data":{"nonce":""}}}"#,
     ] {
         assert!(parse_process_frame(bytes).is_err());
     }
-    assert!(parse_process_frame(&vec![b'x'; MAX_PROCESS_FRAME_BYTES + 1]).is_err());
+    assert!(parse_process_frame(&[]).is_err());
 }
 #[test]
 fn logical_package_paths_reject_traversal_and_nonportable_separators() {

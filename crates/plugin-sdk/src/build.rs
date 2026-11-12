@@ -69,14 +69,14 @@ fn artifact_count_schema(_: &mut schemars::generate::SchemaGenerator) -> schemar
 }
 #[cfg(feature = "schema")]
 fn artifact_bytes_schema(_: &mut schemars::generate::SchemaGenerator) -> schemars::Schema {
-    schemars::json_schema!({"type":"integer", "minimum":1, "maximum":MAX_EXCHANGE_BYTES})
+    schemars::json_schema!({"type":"integer", "minimum":1, "maximum":MAX_MATERIAL_SET_BYTES})
 }
 impl BuildOutputLimits {
     pub fn validate(&self) -> Result<(), ContractError> {
         if self.max_artifacts == 0
             || self.max_artifacts as usize > MAX_BUILD_ARTIFACTS
             || self.max_total_bytes == 0
-            || self.max_total_bytes as usize > MAX_EXCHANGE_BYTES
+            || self.max_total_bytes as usize > MAX_MATERIAL_SET_BYTES
         {
             return Err(invalid("build.outputLimits"));
         }
@@ -152,7 +152,7 @@ impl BuildInput {
         for configuration in &self.configuration {
             configuration.validate()?;
         }
-        encoded_limit(self, MAX_INVOCATION_PAYLOAD_BYTES, "buildInput")
+        encoded_limit(self, MAX_MATERIAL_INVOCATION_BYTES, "buildInput")
     }
 }
 
@@ -308,7 +308,7 @@ impl ArtifactCheckInput {
             provider = Some(selected);
             basis = Some((&requirement.input_digest, &requirement.scope_digest));
         }
-        encoded_limit(self, MAX_INVOCATION_PAYLOAD_BYTES, "artifactCheckInput")
+        encoded_limit(self, MAX_MATERIAL_INVOCATION_BYTES, "artifactCheckInput")
     }
 }
 
@@ -582,7 +582,7 @@ receiver!(
     parse_build_input,
     build_input_schema,
     BuildInput,
-    MAX_INVOCATION_PAYLOAD_BYTES
+    MAX_MATERIAL_INVOCATION_BYTES
 );
 receiver!(
     parse_artifact_set,
@@ -594,7 +594,7 @@ receiver!(
     parse_artifact_check_input,
     artifact_check_input_schema,
     ArtifactCheckInput,
-    MAX_INVOCATION_PAYLOAD_BYTES
+    MAX_MATERIAL_INVOCATION_BYTES
 );
 pub fn parse_build_declaration(bytes: &[u8]) -> Result<BuildDeclaration, ContractError> {
     parse_build_declaration_for_contract(bytes, &build_declaration_contract())

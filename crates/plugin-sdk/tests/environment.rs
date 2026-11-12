@@ -46,13 +46,12 @@ fn artifact() -> BTreeMap<String, RuntimeArtifactFile> {
 
 #[test]
 fn descriptor_digest_matches_the_independent_profile_vector() {
-    let mut original = descriptor();
-    original.sdk_version = "0.1.0-alpha.2".into();
+    let original = descriptor();
     // Independently calculated from the documented domain tag, length and JSON
     // field order, rather than from this implementation's returned bytes.
     assert_eq!(
         original.digest().unwrap(),
-        "bd8d7caa03ba7c6470328af6045bec20a3d31310ad0b50d0820212a4864797b1"
+        "d3e42c5c7480cdd7ce8bbc14a2b9cfeb6cc488007a51eed9f8574b697e7f1d8e"
     );
     let mut fields: Vec<_> = serde_json::to_value(&original)
         .unwrap()
@@ -78,8 +77,7 @@ fn descriptor_digest_matches_the_independent_profile_vector() {
 
 #[test]
 fn node_execution_environment_keeps_its_exact_profile_bytes_and_digest() {
-    let mut node = descriptor();
-    node.sdk_version = "0.1.0-alpha.2".into();
+    let node = descriptor();
     let wrapped = ExecutionEnvironmentDescriptor::from(node.clone());
     assert_eq!(
         serde_json::to_vec(&wrapped).unwrap(),
@@ -87,7 +85,7 @@ fn node_execution_environment_keeps_its_exact_profile_bytes_and_digest() {
     );
     assert_eq!(
         wrapped.digest().unwrap(),
-        "bd8d7caa03ba7c6470328af6045bec20a3d31310ad0b50d0820212a4864797b1"
+        "d3e42c5c7480cdd7ce8bbc14a2b9cfeb6cc488007a51eed9f8574b697e7f1d8e"
     );
     assert_eq!(
         serde_json::from_slice::<ExecutionEnvironmentDescriptor>(
@@ -101,7 +99,6 @@ fn node_execution_environment_keeps_its_exact_profile_bytes_and_digest() {
 #[test]
 fn windows_descriptor_has_an_independent_vector_without_native_execution_support() {
     let mut windows = descriptor();
-    windows.sdk_version = "0.1.0-alpha.2".into();
     windows.platform.operating_system = RuntimeOperatingSystem::Windows;
     windows.platform.architecture = RuntimeArchitecture::X86_64;
     windows.tool.entrypoint = "node.exe".into();
@@ -109,7 +106,7 @@ fn windows_descriptor_has_an_independent_vector_without_native_execution_support
     // JSON using Python hashlib, not this SDK's serializer or digest function.
     assert_eq!(
         windows.digest().unwrap(),
-        "86efb1a9ac358cc33ec970feef6ef6289f47d447429aef167730ac30d2bfea8b"
+        "4082696f8994af98b333daca64d97ce427e59334e98d6ef0257e9d7181d6fd1e"
     );
     let bytes = serde_json::to_vec(&windows).unwrap();
     let decoded: RuntimeEnvironmentDescriptor = serde_json::from_slice(&bytes).unwrap();
@@ -172,71 +169,30 @@ fn unsupported_protocols_and_invalid_bindings_cannot_be_hashed() {
 }
 
 #[test]
-fn supported_pre_binary_descriptor_keeps_its_original_identity() {
-    let mut old = descriptor();
-    old.sdk_version = "0.1.0-alpha.1".into();
-    let bytes = serde_json::to_vec(&old).unwrap();
-    let read: RuntimeEnvironmentDescriptor = serde_json::from_slice(&bytes).unwrap();
-    read.validate().unwrap();
-    assert_eq!(serde_json::to_vec(&read).unwrap(), bytes);
-    assert_eq!(
-        read.digest().unwrap(),
-        "fb82574603deea27d971fc878cf63fd8563e2c05d98b7ffc7ba29fe362759396"
-    );
-    assert_ne!(read.digest().unwrap(), descriptor().digest().unwrap());
-    for version in ["0.1.0-alpha.0", "0.1.0-alpha.99", "0.1.0"] {
-        old.sdk_version = version.into();
-        assert!(old.validate().is_err());
-    }
-}
-
-#[test]
-fn alpha2_node_descriptor_remains_exact_and_distinct_from_current() {
-    let mut old = descriptor();
-    old.sdk_version = "0.1.0-alpha.2".into();
-    let bytes = serde_json::to_vec(&old).unwrap();
-    let decoded: RuntimeEnvironmentDescriptor = serde_json::from_slice(&bytes).unwrap();
-    decoded.validate().unwrap();
-    assert_eq!(serde_json::to_vec(&decoded).unwrap(), bytes);
-    assert_eq!(
-        decoded.digest().unwrap(),
-        "bd8d7caa03ba7c6470328af6045bec20a3d31310ad0b50d0820212a4864797b1"
-    );
-    assert_ne!(decoded.digest().unwrap(), descriptor().digest().unwrap());
+fn only_current_sdk_and_process_descriptors_can_be_validated_or_hashed() {
+    assert!(supports_process_sdk(SDK_VERSION));
     descriptor().validate().unwrap();
-}
-
-#[test]
-fn alpha3_descriptor_remains_exact_without_becoming_the_current_host() {
-    let mut old = descriptor();
-    old.sdk_version = "0.1.0-alpha.3".into();
-    let bytes = serde_json::to_vec(&old).unwrap();
-    let decoded: RuntimeEnvironmentDescriptor = serde_json::from_slice(&bytes).unwrap();
-    decoded.validate().unwrap();
-    assert_eq!(serde_json::to_vec(&decoded).unwrap(), bytes);
-    assert_ne!(decoded.digest().unwrap(), descriptor().digest().unwrap());
-}
-
-#[test]
-fn alpha4_descriptor_remains_exact_without_becoming_the_current_host() {
-    let mut old = descriptor();
-    old.sdk_version = "0.1.0-alpha.4".into();
-    let bytes = serde_json::to_vec(&old).unwrap();
-    let decoded: RuntimeEnvironmentDescriptor = serde_json::from_slice(&bytes).unwrap();
-    decoded.validate().unwrap();
-    assert_eq!(serde_json::to_vec(&decoded).unwrap(), bytes);
-    assert_ne!(decoded.digest().unwrap(), descriptor().digest().unwrap());
-}
-
-#[test]
-fn alpha5_descriptor_remains_exact_without_becoming_the_current_host() {
-    let mut old = descriptor();
-    old.sdk_version = "0.1.0-alpha.5".into();
-    let bytes = serde_json::to_vec(&old).unwrap();
-    let decoded: RuntimeEnvironmentDescriptor = serde_json::from_slice(&bytes).unwrap();
-    decoded.validate().unwrap();
-    assert_eq!(serde_json::to_vec(&decoded).unwrap(), bytes);
-    assert_ne!(decoded.digest().unwrap(), descriptor().digest().unwrap());
+    for version in (0..=8).map(|alpha| format!("0.1.0-alpha.{alpha}"))
+        .chain(["0.1.0-alpha.99".into(), "0.1.0".into()])
+    {
+        assert!(!supports_process_sdk(&version));
+        for process_protocol in [3, PROCESS_PROTOCOL] {
+            let mut old = descriptor();
+            old.sdk_version = version.clone();
+            old.process_protocol = process_protocol;
+            let bytes = serde_json::to_vec(&old).unwrap();
+            let decoded: RuntimeEnvironmentDescriptor = serde_json::from_slice(&bytes).unwrap();
+            assert_eq!(serde_json::to_vec(&decoded).unwrap(), bytes);
+            assert_eq!(decoded.validate().unwrap_err().code, ContractErrorCode::UnsupportedProtocol);
+            assert_eq!(decoded.digest().unwrap_err().code, ContractErrorCode::UnsupportedProtocol);
+            assert_eq!(ExecutionEnvironmentDescriptor::from(decoded).digest().unwrap_err().code,
+                ContractErrorCode::UnsupportedProtocol);
+        }
+    }
+    let mut old_transport = descriptor();
+    old_transport.process_protocol = 3;
+    assert_eq!(old_transport.validate().unwrap_err().code, ContractErrorCode::UnsupportedProtocol);
+    assert!(old_transport.digest().is_err());
 }
 
 #[test]
@@ -322,17 +278,4 @@ fn artifact_digest_rejects_unbounded_or_invalid_input() {
         },
     )]);
     assert!(runtime_artifact_digest(&oversized).is_err());
-}
-
-#[test]
-fn recent_descriptors_keep_their_exact_identity_after_the_sdk_advance() {
-    for version in ["0.1.0-alpha.6", "0.1.0-alpha.7"] {
-        let mut old = descriptor();
-        old.sdk_version = version.into();
-        let bytes = serde_json::to_vec(&old).unwrap();
-        let decoded: RuntimeEnvironmentDescriptor = serde_json::from_slice(&bytes).unwrap();
-        decoded.validate().unwrap();
-        assert_eq!(serde_json::to_vec(&decoded).unwrap(), bytes);
-        assert_ne!(decoded.digest().unwrap(), descriptor().digest().unwrap());
-    }
 }

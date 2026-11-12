@@ -95,7 +95,7 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
         }
         if args.len() == 2 && args[0] == format!("check-{kind}-schema").as_str() {
             let actual: serde_json::Value =
-                serde_json::from_slice(&read(&args[1], MAX_INVOCATION_PAYLOAD_BYTES)?)?;
+                serde_json::from_slice(&read(&args[1], MAX_MATERIAL_INVOCATION_BYTES)?)?;
             if actual != serde_json::to_value(schema())? {
                 return Err("generated schema differs from SDK source".into());
             }
@@ -129,7 +129,7 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
         }
         if args[0] == "validate-paired-translation-extraction-check-input" {
             return print(&parse_paired_translation_extraction_check_input(&bytes(
-                MAX_INVOCATION_PAYLOAD_BYTES,
+                MAX_MATERIAL_INVOCATION_BYTES,
             )?)?);
         }
         if args[0] == "validate-paired-translation-import-declaration" {
@@ -164,7 +164,7 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
         }
         if args[0] == "validate-text-review-input" {
             return print(&parse_text_review_input(&bytes(
-                MAX_INVOCATION_PAYLOAD_BYTES,
+                MAX_MATERIAL_INVOCATION_BYTES,
             )?)?);
         }
         if args[0] == "validate-text-review-report" {
@@ -177,7 +177,7 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
         }
         if args[0] == "validate-review-check-input" {
             return print(&parse_review_check_input(&bytes(
-                MAX_INVOCATION_PAYLOAD_BYTES,
+                MAX_MATERIAL_INVOCATION_BYTES,
             )?)?);
         }
         if args[0] == "validate-review-declaration" {
@@ -191,7 +191,7 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
             )?)?);
         }
         if args[0] == "validate-build-input" {
-            return print(&parse_build_input(&bytes(MAX_INVOCATION_PAYLOAD_BYTES)?)?);
+            return print(&parse_build_input(&bytes(MAX_MATERIAL_INVOCATION_BYTES)?)?);
         }
         if args[0] == "validate-translation-extraction-input" {
             return print(&parse_translation_extraction_input(&bytes(
@@ -203,7 +203,7 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
         }
         if args[0] == "validate-translation-extraction-check-input" {
             return print(&parse_translation_extraction_check_input(&bytes(
-                MAX_INVOCATION_PAYLOAD_BYTES,
+                MAX_MATERIAL_INVOCATION_BYTES,
             )?)?);
         }
         if args[0] == "validate-translation-import-declaration" {
@@ -216,7 +216,7 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
         }
         if args[0] == "validate-artifact-check-input" {
             return print(&parse_artifact_check_input(&bytes(
-                MAX_INVOCATION_PAYLOAD_BYTES,
+                MAX_MATERIAL_INVOCATION_BYTES,
             )?)?);
         }
         if args[0] == "validate-build-declaration" {
@@ -330,11 +330,11 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
     if args.len() == 2 && args[0] == "validate-source-extraction-check-input" {
         return print(&parse_source_extraction_check_input(&read(
             &args[1],
-            MAX_INVOCATION_PAYLOAD_BYTES,
+            MAX_MATERIAL_INVOCATION_BYTES,
         )?)?);
     }
     if args.len() == 2 && args[0] == "validate-check-results" {
-        return print(&parse_check_results(&read(&args[1], MAX_EXCHANGE_BYTES)?)?);
+        return print(&parse_check_results(&read(&args[1], MAX_CHECK_RESULTS_BYTES)?)?);
     }
     if args.len() == 3 && args[0] == "match-translation-extraction" {
         let input = parse_translation_extraction_input(&read(&args[1], MAX_EXCHANGE_BYTES)?)?;
@@ -355,7 +355,7 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
         return print(&proposal);
     }
     if args.len() == 3 && args[0] == "match-text-review-report" {
-        let input = parse_text_review_input(&read(&args[1], MAX_INVOCATION_PAYLOAD_BYTES)?)?;
+        let input = parse_text_review_input(&read(&args[1], MAX_MATERIAL_INVOCATION_BYTES)?)?;
         let report = parse_text_review_report(&read(&args[2], MAX_EXCHANGE_BYTES)?)?;
         report.validate_against(&input)?;
         return print(&report);

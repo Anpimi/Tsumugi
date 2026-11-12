@@ -116,7 +116,7 @@ pub(crate) fn explicit_total_bytes<'de, D: serde::Deserializer<'de>>(
 }
 #[cfg(feature = "schema")]
 fn total_bytes_schema(_: &mut schemars::SchemaGenerator) -> schemars::Schema {
-    schemars::json_schema!({"type":"integer", "minimum":1, "maximum":MAX_EXCHANGE_BYTES})
+    schemars::json_schema!({"type":"integer", "minimum":1, "maximum":MAX_MATERIAL_SET_BYTES})
 }
 
 /// Fixed materials and explicitly chosen file sets share one captured input.
@@ -186,7 +186,7 @@ fn validate_materials(
             return Err(invalid("sourceImport.materials.logicalPath"));
         }
         paths.push(folded);
-        if material.max_bytes == 0 || material.max_bytes as usize > limit {
+        if material.max_bytes == 0 || material.max_bytes as usize > limit.min(MAX_MATERIAL_BYTES) {
             return Err(invalid("sourceImport.materials.maxBytes"));
         }
         total += material.max_bytes as usize;
@@ -226,7 +226,7 @@ impl MaterialCapture<'_> {
         }
         if self
             .max_total_bytes
-            .is_some_and(|bytes| bytes == 0 || bytes as usize > MAX_EXCHANGE_BYTES)
+            .is_some_and(|bytes| bytes == 0 || bytes as usize > MAX_MATERIAL_SET_BYTES)
             || (self.max_total_bytes.is_some() && self.file_sets.is_none())
         {
             return Err(invalid("sourceImport.maxTotalBytes"));
@@ -252,7 +252,7 @@ impl MaterialCapture<'_> {
                     || set.max_files as usize > MAX_SOURCE_IMPORT_MATERIALS
                     || set.min_files > set.max_files
                     || set.max_bytes == 0
-                    || set.max_bytes as usize > limit
+                    || set.max_bytes as usize > limit.min(MAX_MATERIAL_BYTES)
                     || set.extensions.is_empty()
                     || set.extensions.len() > 16
                 {

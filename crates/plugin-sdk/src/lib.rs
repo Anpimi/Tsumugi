@@ -88,20 +88,30 @@ fn positive_u16_schema(_: &mut schemars::generate::SchemaGenerator) -> schemars:
 /// The current experimental content/invocation/check wire protocol.
 pub const EXCHANGE_PROTOCOL: u32 = 1;
 pub const MAX_EXCHANGE_BYTES: usize = 2 * 1024 * 1024;
+/// Complete check coverage can name every field in a large material capture.
+pub const MAX_CHECK_RESULTS_BYTES: usize = 32 * 1024 * 1024;
+/// Decoded bytes of one captured file, independently of metadata and JSON.
+pub const MAX_MATERIAL_BYTES: usize = 128 * 1024 * 1024;
+/// Combined decoded material in one source or build artifact set.
+pub const MAX_MATERIAL_SET_BYTES: usize = 256 * 1024 * 1024;
 /// JSON/base64 framing has an independent ceiling from decoded material.
-pub const MAX_SOURCE_EXTRACTION_INPUT_BYTES: usize = 4 * 1024 * 1024;
-pub const MAX_ARTIFACT_SET_BYTES: usize = 4 * 1024 * 1024;
+pub const MAX_SOURCE_EXTRACTION_INPUT_BYTES: usize = 384 * 1024 * 1024;
+pub const MAX_ARTIFACT_SET_BYTES: usize = 384 * 1024 * 1024;
 /// Content can carry separate identity and context extensions for every item.
 /// Captured material, artifacts and non-content frames retain their own limits.
-pub const MAX_CONTENT_EXCHANGE_BYTES: usize = 8 * 1024 * 1024;
-/// Combined invocation data may contain both captured material and a proposal.
+pub const MAX_CONTENT_EXCHANGE_BYTES: usize = 512 * 1024 * 1024;
+/// Ordinary service and text-only invocation payloads.
 pub const MAX_INVOCATION_PAYLOAD_BYTES: usize = 16 * 1024 * 1024;
-/// Any UTF-8 payload byte can expand to six JSON bytes. Metadata is separately
-/// bounded by the typed context/provider/contracts and fits the reserved 64 KiB.
-pub const MAX_PROCESS_FRAME_BYTES: usize = 6 * MAX_INVOCATION_PAYLOAD_BYTES + 64 * 1024;
-/// Aggregate encoded frames in either direction of one plugin channel.
-pub const MAX_PROCESS_SESSION_BYTES: usize = 128 * 1024 * 1024;
-pub const MAX_CONTENT_ITEMS: usize = 2000;
+/// Complete material-backed calls may combine capture, proposal and output bytes.
+pub const MAX_MATERIAL_INVOCATION_BYTES: usize = 1024 * 1024 * 1024;
+/// Complete JSON message allowance, independent of transport chunk size.
+/// Result allowances retain their u32 representation.
+pub const MAX_PROCESS_FRAME_BYTES: usize = u32::MAX as usize;
+/// Every physical process transfer is bounded independently of its message.
+pub const MAX_PROCESS_CHUNK_BYTES: usize = 64 * 1024;
+/// Aggregate encoded chunks in either direction of one plugin channel.
+pub const MAX_PROCESS_SESSION_BYTES: usize = 8 * 1024 * 1024 * 1024;
+pub const MAX_CONTENT_ITEMS: usize = 100_000;
 /// Separate identity and context extensions can accompany each content item.
 /// One additional block carries snapshot-wide metadata. The complete exchange
 /// still has its independent encoded-byte ceiling.
@@ -109,7 +119,7 @@ pub const MAX_CONTENT_DOMAIN_BLOCKS: usize = 2 * MAX_CONTENT_ITEMS + 1;
 pub const MAX_TEXT_BYTES: usize = 16 * 1024;
 
 /// Length-prefixed local process messages, independent of content protocols.
-pub const PROCESS_PROTOCOL: u32 = 3;
+pub const PROCESS_PROTOCOL: u32 = 4;
 
 /// Validate a logical package file path before a host materializes captured bytes.
 /// This does not open a path or prove filesystem containment.
@@ -146,8 +156,10 @@ pub fn process_profile() -> serde_json::Value {
     serde_json::json!({
         "protocolVersion": PROCESS_PROTOCOL,
         "maxFrameBytes": MAX_PROCESS_FRAME_BYTES,
+        "maxChunkBytes": MAX_PROCESS_CHUNK_BYTES,
         "maxSessionBytes": MAX_PROCESS_SESSION_BYTES,
-        "maxInvocationPayloadBytes": MAX_INVOCATION_PAYLOAD_BYTES,
+        "maxInvocationPayloadBytes": MAX_MATERIAL_INVOCATION_BYTES,
+        "maxServicePayloadBytes": MAX_INVOCATION_PAYLOAD_BYTES,
         "maxCapabilities": MAX_PROCESS_CAPABILITIES,
         "maxServiceBindings": MAX_SERVICE_BINDINGS,
         "maxServiceCalls": MAX_SERVICE_CALLS,

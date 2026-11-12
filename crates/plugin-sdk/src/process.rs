@@ -4,6 +4,8 @@ use crate::{
 };
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeSet;
+mod transport;
+pub use transport::{read_process_frame, write_process_frame};
 
 /// Maximum frozen callable membership of one component process. The complete
 /// encoded activation still has the independent process-frame byte ceiling.
@@ -169,9 +171,9 @@ pub enum ProcessBody {
     Pong { nonce: String },
 }
 
-/// Wire representation: a four-byte big-endian length followed by exactly that
-/// many JSON bytes. Stdout is reserved for frames; stderr is a separate bounded
-/// diagnostic stream. Hosts must also enforce direction, state and deadlines.
+/// A JSON message carried by bounded length-prefixed chunks and a zero-length
+/// terminator. Stdout is reserved for this stream; stderr remains separately
+/// bounded. Hosts also enforce direction, state, authority and deadlines.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
