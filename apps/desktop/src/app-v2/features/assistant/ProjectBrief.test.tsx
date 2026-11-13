@@ -47,7 +47,7 @@ function decisionPage(total: number | null = 2): DecisionPage {
     total, knownCount: 2, items: [], next: null, coverage: [], deliveryActivity: [], executionActivity: [], localActions: null };
 }
 function setup(overrides: Partial<ProjectBriefProps> = {}) {
-  const props: ProjectBriefProps = { project, visible: true, disabled: false, briefEligible: true, previousPosition: position,
+  const props: ProjectBriefProps = { project, visible: true, disabled: false, briefEligible: true, progressReady: true, previousPosition: position,
     decisions: { page: decisionPage(), loading: false, error: null }, onContinue: vi.fn(), onEntries: vi.fn(), onImport: vi.fn(), onDecisions: vi.fn(), ...overrides };
   const content = (value: ProjectBriefProps) => <I18nextProvider i18n={language}><SessionReadProvider reads={reads} context={executionContext(project)} bridge={false}>
     <ProjectBrief {...value}/></SessionReadProvider></I18nextProvider>;
@@ -72,6 +72,15 @@ it.each(["en-US", "zh-CN"])("reads deterministic counts and opens only explicit 
   expect(h.props.onDecisions).toHaveBeenCalledOnce();
   expect(screen.getAllByText(locale === "en-US" ? "Entries blocking delivery: 1" : "阻塞交付的条目：1")).toHaveLength(2);
   expect(new Set(invoke.mock.calls.map(([command]) => command))).toEqual(new Set(["read_content_scope", "read_review_eligibility"]));
+  expect(invoke.mock.calls.filter(([command]) => command === "read_review_eligibility")).toHaveLength(1);
+});
+
+it("waits for the work surface before reading review eligibility", async () => {
+  const h = setup({ progressReady: false });
+  await waitFor(() => expect(invoke.mock.calls.some(([command]) => command === "read_content_scope")).toBe(true));
+  expect(invoke.mock.calls.some(([command]) => command === "read_review_eligibility")).toBe(false);
+  h.update({ progressReady: true });
+  await waitFor(() => expect(screen.getAllByText("Selected translations: 6 / 8")).toHaveLength(2));
   expect(invoke.mock.calls.filter(([command]) => command === "read_review_eligibility")).toHaveLength(1);
 });
 

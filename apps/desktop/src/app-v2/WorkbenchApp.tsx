@@ -1178,6 +1178,7 @@ function WorkspaceShell() {
     }
     return <Suspense fallback={null}><ProjectBrief project={session.project} visible={(view?.dock ?? "agent") === "agent" && (!narrow || drawer)}
       briefEligible={eligible} previousPosition={previousProject?.position} disabled={!allowed()}
+      progressReady={!!view && !waitingForEntries && !waitingForDelivery}
       decisions={{ page: decisionFeed.first.data, loading: decisionFeed.firstLoading, error: decisionFeed.first.error }}
       onContinue={position => void openBriefEntries(position.locale, "all", position.unitId).catch(() => setCommandFailed(true))}
       onEntries={(locale, preset) => void openBriefEntries(locale, preset).catch(() => setCommandFailed(true))}

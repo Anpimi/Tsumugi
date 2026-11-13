@@ -16,6 +16,7 @@ export interface ProjectBriefProps {
   visible: boolean;
   disabled: boolean;
   briefEligible: boolean;
+  progressReady: boolean;
   previousPosition?: RecentWorkspacePosition | null;
   decisions: { page: DecisionPage | undefined; loading: boolean; error: unknown | null };
   onContinue: (position: RecentWorkspacePosition) => void;
@@ -25,7 +26,7 @@ export interface ProjectBriefProps {
 }
 
 /** Counts are observations of existing read owners, never execution or review authority. */
-export default function ProjectBrief({ project, visible, disabled, briefEligible, previousPosition, decisions,
+export default function ProjectBrief({ project, visible, disabled, briefEligible, progressReady, previousPosition, decisions,
   onContinue, onEntries, onImport, onDecisions }: ProjectBriefProps) {
   const { t, i18n } = useTranslation(undefined, { keyPrefix: "projectBrief" }), reads = useSessionReads();
   const context = executionContext(project), locales = project.metadata.targetLocales;
@@ -34,7 +35,7 @@ export default function ProjectBrief({ project, visible, disabled, briefEligible
   const source = useSessionQuery({ ...sourceReads.scope(context), enabled: active });
   const snapshot = !source.error && !source.isFetching ? source.data?.currentSnapshot : undefined;
   const progress = useSessionQuery({ key: ["project-brief-progress", locales, source.data?.revision, snapshot],
-    scopes: ["source", "translation", "review", "resources"], enabled: active && !!snapshot && locales.length > 0,
+    scopes: ["source", "translation", "review", "resources"], enabled: active && progressReady && !!snapshot && locales.length > 0,
     // One canonical observation supplies all counts without creating retained
     // segment scopes that could evict the user's fixed editing queue.
     read: () => reviewCommands.eligibility({ ...context, locales: [...locales] }) });
@@ -52,7 +53,7 @@ export default function ProjectBrief({ project, visible, disabled, briefEligible
       : page.total === null ? t("decisionsPartial", { count: page.knownCount }) : t("decisions", { count: page.total });
   return <section className={styles.brief} aria-label={t("title")}>
     <h3>{t("title")}</h3><p className={styles.help}>{t("help")}</p>
-    {source.isFetching || snapshot && progress.isFetching ? <LoadingState label={t("loading")}/> : null}
+    {source.isFetching || snapshot && (!progressReady || progress.isFetching) ? <LoadingState label={t("loading")}/> : null}
     {empty ? <p>{t("empty")}</p> : <>
       {!locales.length ? <p>{t("noLanguages")}</p> : <ul className={styles.languages}>{locales.map(locale => {
         const value = report?.locales.find(item => item.locale === locale), name = languageName(locale, i18n.resolvedLanguage ?? i18n.language);

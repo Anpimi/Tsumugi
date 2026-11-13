@@ -335,7 +335,7 @@ it("keeps the original editing queue when the adjacent project brief refreshes a
       selectedUnits: h.ports.save.mock.calls.filter(([saved]) => saved.locale === locale).length, blockingUnits: units.length, blockerCount: units.length })) };
   });
   render(<SessionReadProvider context={context} reads={h.reads} bridge={false}>
-    <ProjectBrief project={project} visible briefEligible disabled={false} decisions={{ page: undefined, loading: false, error: null }}
+    <ProjectBrief project={project} visible briefEligible progressReady disabled={false} decisions={{ page: undefined, loading: false, error: null }}
       onContinue={vi.fn()} onEntries={vi.fn()} onImport={vi.fn()} onDecisions={vi.fn()}/>
   </SessionReadProvider>);
   await screen.findAllByText("Selected translations: 0 / 4");

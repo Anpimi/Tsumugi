@@ -191,7 +191,7 @@ The current workspace targets **`0.3.0-alpha.1`**. The published `0.2.0-alpha.1`
 
 ### Fixed
 
-- Reduce historical decoding when opening projects with large plugin imports or builds. Load saved delivery history before starting the background decision count.
+- Reduce historical decoding when opening projects with large plugin imports or builds. Load the entries or delivery history before reading the project brief's review counts. Delivery history also takes priority over the background decision count.
 
 - Reopen a cleanly closed project faster in the same desktop process by checking its exact database bytes before reusing the completed history validation.
 

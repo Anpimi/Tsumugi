@@ -1087,6 +1087,7 @@ impl<'a> OpenResultReader<'a> {
     }
 
     pub(super) fn load(&mut self, result: ExecutionId) -> Result<FixedResult, ExecutionError> {
+        let previous = self.verified.take();
         // Reused results retain their original input and permission owner. Do
         // not reuse qualification under the retry attempt's different input.
         if self
@@ -1096,19 +1097,14 @@ impl<'a> OpenResultReader<'a> {
             .iter()
             .any(|reference| reference.result_id == result)
         {
-            self.verified = None;
             return load_result(self.connection, self.input, result);
         }
-        if let Some(verified) = self.verified.as_ref()
-            .filter(|fixed| fixed.envelope().result_id == result)
-        {
-            if !self.connection.is_autocommit() {
-                return Ok(verified.clone());
-            }
-            return load_result_with_verified(self.connection, self.input, result, Some(verified));
-        }
-        self.verified = None;
-        let fixed = load_result(self.connection, self.input, result)?;
+        let previous = previous.filter(|fixed| fixed.envelope().result_id == result);
+        let fixed = match previous {
+            Some(verified) if self.connection.transaction_state(Some(rusqlite::MAIN_DB))
+                .map_err(sql_error)? == rusqlite::TransactionState::Read => verified,
+            previous => load_result_with_verified(self.connection, self.input, result, previous.as_ref())?,
+        };
         self.verified = Some(fixed.clone());
         Ok(fixed)
     }

@@ -142,7 +142,7 @@ fn original_unknowns_survive_live_jobs_while_only_exact_pending_exports_are_prog
 }
 
 #[test]
-fn project_seek_crosses_releases_and_locale_filters_keep_the_complete_original_language_set() {
+fn project_observation_spans_releases_and_locale_filters_keep_the_complete_original_language_set() {
     let (_directory, mut store, project, first_release) = fixture();
     let second_release = another_release(&mut store, project, &["zh-CN", "fr-FR"]);
     let one = pending(&mut store, first_release, "one-locale");
@@ -165,12 +165,14 @@ fn project_seek_crosses_releases_and_locale_filters_keep_the_complete_original_l
         ErrorCode::Unauthorized);
     let c = store.connection().unwrap();
     review::read_snapshot(c, |c| {
-        let first = super::super::super::release::project_delivery_observations_in(c, project, None, 1)?;
-        assert_eq!(first.rows.len(), 1);
-        let second = super::super::super::release::project_delivery_observations_in(c, project, first.next, 1)?;
-        assert_eq!(second.rows.len(), 1);
-        assert!(second.next.is_none());
-        assert_ne!(first.rows[0].release_id, second.rows[0].release_id);
+        let prefix = super::super::super::release::project_delivery_observations_in(&store, c, project, 1)?;
+        assert_eq!(prefix.rows.len(), 1);
+        assert!(!prefix.complete);
+        let all = super::super::super::release::project_delivery_observations_in(&store, c, project, 2)?;
+        assert_eq!(all.rows.len(), 2);
+        assert!(all.complete);
+        assert_eq!(prefix.rows[0].delivery_id, all.rows[0].delivery_id);
+        assert_ne!(all.rows[0].release_id, all.rows[1].release_id);
         Ok(())
     }).unwrap();
     let first = page(&store, project, None, &[]);
