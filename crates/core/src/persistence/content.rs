@@ -307,10 +307,18 @@ pub(super) fn validate_input_bundle(
     input: &FixedInput,
 ) -> Result<ExecutionId, ExecutionError> {
     let bundle = SourceBundle::from_input(input)?;
+    validate_bundle_in(connection, &bundle)?;
+    Ok(bundle.set_id)
+}
+
+pub(super) fn validate_bundle_in(
+    connection: &Connection,
+    bundle: &SourceBundle,
+) -> Result<(), ExecutionError> {
     if bundle.source_input() != read_bundle(connection, bundle.set_id)? {
         return Err(corrupt());
     }
-    Ok(bundle.set_id)
+    Ok(())
 }
 
 fn validate_in(
@@ -592,7 +600,7 @@ fn check_source_bundle(
     super::ledger::remember_source_read_validation(connection, result.envelope().result_id, None)
 }
 
-fn snapshot_qualification(
+pub(super) fn snapshot_qualification(
     connection: &Connection,
     snapshot: ExecutionId,
     has_lineage: bool,

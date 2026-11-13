@@ -75,7 +75,8 @@ impl SourceValidationCapture {
         source: ResultValidationCapture,
         attempt: Option<ExecutionId>,
     ) -> Result<Self, ExecutionError> {
-        let (mut envelope, projected, checks) = Self::reconstruct(&source)?;
+        let (bundle, settings) = crate::content::SourceBundle::from_input_with_settings(&source.input)?;
+        let (mut envelope, projected, checks) = Self::reconstruct(&source, &bundle, &settings)?;
         envelope.attempt_id = attempt.unwrap_or(envelope.attempt_id);
         let check_input = FixedInput::capture(envelope)?;
         Ok(Self { source, check_input, projected, checks })
@@ -83,16 +84,19 @@ impl SourceValidationCapture {
 
     fn reconstruct(
         source: &ResultValidationCapture,
+        bundle: &crate::content::SourceBundle,
+        settings: &crate::content::SourceSettings,
     ) -> Result<(InputEnvelope, Arc<crate::content::SourceOutput>, sdk::FixedCheckSet), ExecutionError> {
-        let projected = Arc::new(crate::content::validate_output(
+        let projected = Arc::new(crate::content::validate_output_for_bundle(
             &source.input,
             &source.result,
+            bundle,
+            settings.revision_policy.clone(),
         )?);
-        let settings = crate::content::SourceSettings::from_input(&source.input)?;
         if source.input.envelope().plugin.is_none() {
             return Err(invalid());
         }
-        let binding = settings.checker.ok_or_else(invalid)?;
+        let binding = settings.checker.as_ref().ok_or_else(invalid)?;
         if settings.semantic_rules.is_empty() {
             return Err(invalid());
         }
@@ -114,10 +118,10 @@ impl SourceValidationCapture {
         });
         let domain: Vec<_> = settings
             .semantic_rules
-            .into_iter()
+            .iter()
             .map(|rule| {
                 requirement(sdk::CheckKey {
-                    rule,
+                    rule: rule.clone(),
                     implementation: sdk::CheckImplementation::Plugin {
                         provider: binding.capability.provider.clone(),
                     },
@@ -127,7 +131,7 @@ impl SourceValidationCapture {
         let checks = sdk::capture_required_checks(reference(POLICY), vec![core], domain.clone())
             .map_err(|_| invalid())?;
         let payload = sdk::SourceExtractionCheckInput {
-            source: crate::content::SourceBundle::from_input(&source.input)?.source_input(),
+            source: bundle.source_input(),
             proposal: projected.exchange.clone(),
             requirements: domain,
         };
@@ -164,7 +168,7 @@ impl SourceValidationCapture {
         envelope.settings = serde_json::to_value(basis).map_err(|_| invalid())?;
         envelope.limits.max_result_bytes = MAX_RESULT_BYTES as u32;
         envelope.limits.timeout_ms = binding.capability.declaration.limits.timeout_ms.min(300_000);
-        envelope.plugin = Some(binding);
+        envelope.plugin = Some(binding.clone());
         Ok((envelope, projected, checks))
     }
     pub fn check_input(&self) -> &FixedInput {
@@ -176,7 +180,21 @@ impl SourceValidationCapture {
         source: ResultValidationCapture,
         check_input: FixedInput,
     ) -> Result<Self, ExecutionError> {
-        let (envelope, projected, checks) = Self::reconstruct(&source)?;
+        Self::restore_with_source(source, check_input, None)
+    }
+
+    pub(crate) fn restore_with_source(
+        source: ResultValidationCapture,
+        check_input: FixedInput,
+        verified_source: Option<(&crate::content::SourceBundle, &crate::content::SourceSettings)>,
+    ) -> Result<Self, ExecutionError> {
+        let (envelope, projected, checks) = match verified_source {
+            Some((bundle, settings)) => Self::reconstruct(&source, bundle, settings)?,
+            None => {
+                let (bundle, settings) = crate::content::SourceBundle::from_input_with_settings(&source.input)?;
+                Self::reconstruct(&source, &bundle, &settings)?
+            }
+        };
         validation::restore_reconstructed_check_input(envelope, &check_input)?;
         Ok(Self { source, check_input, projected, checks })
     }

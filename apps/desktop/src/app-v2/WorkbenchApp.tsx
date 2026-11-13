@@ -741,9 +741,11 @@ function WorkspaceShell() {
   const [deliveryReadSettled, setDeliveryReadSettled] = useState(false);
   const settleDeliveryRead = useCallback(() => setDeliveryReadSettled(true), []);
   const waitingForDelivery = view?.kind === "delivery" && !importVisible && !deliveryReadSettled && !deliveryLoadFailed;
+  const importInFocus = sourceOpen || importVisible;
   const decisionFeed = useDecisionFeed(session.reads, strategyActivity ? [drafts, conversations, resourceActivity, sourceActivity, strategyActivity] : [drafts, conversations, resourceActivity, sourceActivity], view?.kind === "decisions" ? view.decisionCursor : null,
-    { visible: view?.kind === "decisions" && !importVisible, enabled: !disabled,
-      backgroundReady: !!view && !waitingForEntries && !waitingForDelivery && draftIndexSettled && conversationsSettled && ownerJournalsSettled && !draftState.mutationReserved });
+    { visible: view?.kind === "decisions" && !importInFocus, enabled: !disabled,
+      backgroundReady: !!view && !importInFocus && !waitingForEntries && !waitingForDelivery
+        && draftIndexSettled && conversationsSettled && ownerJournalsSettled && !draftState.mutationReserved });
   const decisionBadgeId = useId();
   const lastDecisionView = useRef<string | null>(null);
   useEffect(() => { if (view?.kind === "decisions") lastDecisionView.current = view.id; }, [view?.kind, view?.id]);

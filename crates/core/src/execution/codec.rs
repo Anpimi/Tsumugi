@@ -16,8 +16,17 @@ pub(crate) fn digest(bytes: &[u8]) -> String {
     digest_hex(compute_digest(&SHA256, bytes))
 }
 
+const HEX: &[u8; 16] = b"0123456789abcdef";
+
+pub(crate) fn matches_digest(bytes: &[u8], expected: &str) -> bool {
+    let actual = compute_digest(&SHA256, bytes);
+    expected.len() == 64
+        && actual.as_ref().iter().zip(expected.as_bytes().chunks_exact(2)).all(|(&byte, hex)| {
+            hex == [HEX[usize::from(byte >> 4)], HEX[usize::from(byte & 0xf)]]
+        })
+}
+
 pub(crate) fn digest_hex(digest: Digest) -> String {
-    const HEX: &[u8; 16] = b"0123456789abcdef";
     let bytes = digest.as_ref();
     let mut encoded = String::with_capacity(bytes.len() * 2);
     for &byte in bytes {

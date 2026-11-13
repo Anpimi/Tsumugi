@@ -108,16 +108,57 @@ pub(super) fn reconstructed_bytes(
     stored: Option<Vec<u8>>,
     bytes: Option<Vec<u8>>,
 ) -> Result<Vec<u8>, ExecutionError> {
-    let stored = stored.ok_or_else(|| error(ErrorCode::CorruptLedger, "input-storage"))?;
-    let manifest: StoredInput = codec::decode(&stored, MAX_STORED_INPUT_BYTES)
+    let stored = stored.as_deref().ok_or_else(|| error(ErrorCode::CorruptLedger, "input-storage"))?;
+    let manifest = read_manifest(stored)?;
+    let bytes = bytes.ok_or_else(|| error(ErrorCode::CorruptLedger, "input-chunks"))?;
+    if bytes.len() != manifest.raw_bytes {
+        return Err(error(ErrorCode::CorruptLedger, "input-storage"));
+    }
+    Ok(bytes)
+}
+
+fn read_manifest(stored: &[u8]) -> Result<StoredInput, ExecutionError> {
+    let manifest: StoredInput = codec::decode(stored, MAX_STORED_INPUT_BYTES)
         .map_err(|_| error(ErrorCode::CorruptLedger, "input-storage"))?;
     manifest.validate()?;
     if codec::encode(&manifest, MAX_STORED_INPUT_BYTES)? != stored {
         return Err(error(ErrorCode::CorruptLedger, "input-storage"));
     }
-    let bytes = bytes.ok_or_else(|| error(ErrorCode::CorruptLedger, "input-chunks"))?;
-    if bytes.len() != manifest.raw_bytes {
-        return Err(error(ErrorCode::CorruptLedger, "input-storage"));
+    Ok(manifest)
+}
+
+/// Assemble one exact frame directly from bounded SQLite row slices. The
+/// parent read pins the attempt manifest and its chunks to the same snapshot.
+pub(super) fn read_frame(
+    connection: &Connection,
+    stored: &[u8],
+) -> Result<Vec<u8>, ExecutionError> {
+    let manifest = read_manifest(stored)?;
+    let mut statement = connection.prepare_cached(&format!(
+        "SELECT part.key, CASE WHEN typeof(c.bytes)='blob' AND length(c.bytes) BETWEEN 1 AND {CHUNK_BYTES} THEN c.bytes END
+         FROM json_each(CAST(?1 AS TEXT),'$.chunks') part
+         LEFT JOIN execution_input_chunks c ON c.digest=part.value"
+    )).map_err(sql_error)?;
+    let mut rows = statement.query([stored]).map_err(sql_error)?;
+    let invalid = || error(ErrorCode::CorruptLedger, "input-chunk");
+    let mut bytes = vec![0; manifest.raw_bytes];
+    let mut count = 0;
+    while let Some(row) = rows.next().map_err(sql_error)? {
+        let index = usize::try_from(row.get::<_, i64>(0).map_err(sql_error)?)
+            .map_err(|_| invalid())?;
+        let digest = manifest.chunks.get(index).ok_or_else(invalid)?;
+        let start = index * CHUNK_BYTES;
+        let end = (start + CHUNK_BYTES).min(manifest.raw_bytes);
+        let chunk = row.get_ref(1).map_err(sql_error)?.as_blob().map_err(|_| invalid())?;
+        if chunk.len() != end - start || !codec::matches_digest(chunk, digest) {
+            return Err(invalid());
+        }
+        bytes[start..end].copy_from_slice(chunk);
+        count += 1;
+    }
+    // Each array index has at most one joined row because digest is the PK.
+    if count != manifest.chunks.len() {
+        return Err(invalid());
     }
     Ok(bytes)
 }
@@ -171,7 +212,7 @@ impl Aggregate<Pieces, Option<Vec<u8>>> for InputChunks {
             || bytes.is_empty()
             || bytes.len() > CHUNK_BYTES
             || bytes.len() > MAX_FIXED_INPUT_BYTES.saturating_sub(state.bytes)
-            || codec::digest(bytes) != digest
+            || !codec::matches_digest(bytes, digest)
         {
             state.valid = false;
             return Ok(());
@@ -216,19 +257,30 @@ impl Aggregate<Pieces, Option<Vec<u8>>> for InputChunks {
     }
 }
 
-pub(super) fn validate_chunks(connection: &Connection) -> Result<(), ExecutionError> {
+pub(super) fn validate_chunks(connection: &Connection, unreferenced_only: bool) -> Result<(), ExecutionError> {
+    // An open snapshot has already validated every manifest and its referenced
+    // chunks. The index can exclude those digests without rereading their BLOBs.
+    let (prefix, scan) = if unreferenced_only {
+        ("WITH referenced(digest) AS MATERIALIZED (
+             SELECT DISTINCT part.value FROM execution_attempts a, json_each(CAST(a.input AS TEXT),'$.chunks') part
+         )",
+         "execution_input_chunks c INDEXED BY sqlite_autoindex_execution_input_chunks_1
+          WHERE NOT EXISTS (SELECT 1 FROM referenced r WHERE r.digest=c.digest)")
+    } else {
+        ("", "execution_input_chunks c")
+    };
     let mut statement = connection.prepare(&format!(
-        "SELECT digest,CASE WHEN typeof(bytes)='blob' AND length(bytes) BETWEEN 1 AND {CHUNK_BYTES} THEN bytes END FROM execution_input_chunks"
+        "{prefix}
+         SELECT c.digest,CASE WHEN typeof(c.bytes)='blob' AND length(c.bytes) BETWEEN 1 AND {CHUNK_BYTES} THEN c.bytes END
+         FROM {scan}"
     )).map_err(sql_error)?;
-    let rows = statement
-        .query_map([], |row| {
-            Ok((row.get::<_, String>(0)?, row.get::<_, Option<Vec<u8>>>(1)?))
-        })
-        .map_err(sql_error)?;
-    for row in rows {
-        let (digest, bytes) = row.map_err(sql_error)?;
-        let bytes = bytes.ok_or_else(|| error(ErrorCode::CorruptLedger, "input-chunk"))?;
-        if codec::digest(&bytes) != digest {
+    let mut rows = statement.query([]).map_err(sql_error)?;
+    while let Some(row) = rows.next().map_err(sql_error)? {
+        let digest = row.get_ref(0).map_err(sql_error)?.as_str()
+            .map_err(|_| error(ErrorCode::CorruptLedger, "input-chunk"))?;
+        let bytes = row.get_ref(1).map_err(sql_error)?.as_blob()
+            .map_err(|_| error(ErrorCode::CorruptLedger, "input-chunk"))?;
+        if !codec::matches_digest(bytes, digest) {
             return Err(error(ErrorCode::CorruptLedger, "input-chunk"));
         }
     }

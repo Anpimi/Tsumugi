@@ -11,13 +11,25 @@ fn correction_receipt_precedes_unknown_session_and_preserves_b_approval_without_
     let old=store.source_content(s1,0,10).unwrap().rows[0].clone();
     adopt_source(&mut store,br#"{"hello":"Changed {{name}}","plain":"Plain"}"#);
     let s2=store.content_scope().unwrap().current_snapshot.unwrap();
-    let b_unit=store.source_content(s2,0,10).unwrap().rows[0].unit_id.unwrap();
+    let b_row=store.source_content(s2,0,10).unwrap().rows.remove(0);
+    let b_unit=b_row.unit_id.unwrap();
     translate(&mut store,project,b_unit,"zh-CN","B {{name}}");
     let b=approve(&mut store,project,b_unit,"zh-CN");
     check(&mut store,project,b_unit,"zh-CN");
     let request=CorrectSourceLineage {project_id:project,action_id:ExecutionId::new(),basis:store.source_lineage_correction_basis(project,s2,0).unwrap(),
         old_occurrence_id:old.occurrence_id.unwrap(),decision:SourceLineageCorrectionDecision::Continue,actor:"Maintainer".into(),reason:"Explicit identity correction".into()};
     let receipt=store.correct_source_lineage(&request).unwrap();
+    let c = store.connection().unwrap();
+    let local = &b_row.occurrence.operation_unit_id;
+    for (revision, expected_unit) in [(Revision::new(0).unwrap(), b_unit), (receipt.mapping_revision, units[0])] {
+        let mut bindings = BTreeMap::new();
+        visit_snapshot_bindings_at(c, s2, revision, |local, binding| {
+            bindings.insert(local, binding);
+            Ok(())
+        }).unwrap();
+        assert_eq!(bindings.len(), 2);
+        assert_eq!(bindings[local].0, expected_unit);
+    }
     assert!(receipt.preserved_work.iter().any(|w|w.unit_id==b_unit&&w.review_action_ids.contains(&b.action_id)));
     assert!(receipt.preserved_work.iter().any(|w|w.unit_id==units[0]&&w.review_action_ids.contains(&a.action_id)));
     let current=store.review_target(project,units[0],"zh-CN").unwrap();

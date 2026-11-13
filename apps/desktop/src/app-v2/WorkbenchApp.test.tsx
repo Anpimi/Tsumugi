@@ -437,12 +437,12 @@ it("opens work plans from the enabled activity item and retains the runs view ac
     fireEvent.click(current());
   }
   await openActivity(i18n.t("workbenchV2.runs"));
-  expect(await screen.findByRole("heading", { name: "工作计划" })).toBeVisible();
+  expect(await screen.findByRole("heading", { name: "工作计划" }, { timeout: 5000 })).toBeVisible();
   expect(screen.getByRole("tab", { name: "工作计划" })).toHaveAttribute("aria-selected", "true");
   await openActivity(i18n.t("workbenchV2.entries"));
   await screen.findByText("Actual source from the read port");
   await openActivity(i18n.t("workbenchV2.runs"));
-  expect(await screen.findByRole("heading", { name: "工作计划" })).toBeVisible();
+  expect(await screen.findByRole("heading", { name: "工作计划" }, { timeout: 5000 })).toBeVisible();
   expect(screen.getAllByRole("button", { name: i18n.t("workbenchV2.closeView", { name: i18n.t("workbenchV2.runs") }) })).toHaveLength(1);
 }, 15000);
 
@@ -790,6 +790,28 @@ it("lets the first entries and startup journals settle before starting the passi
   } finally {
     vi.useRealTimers();
   }
+});
+
+it("keeps the passive decision count off the source import queue until its panel closes", async () => {
+  let releaseSource!: () => void;
+  ownerLoad.source = new Promise<void>(resolve => { releaseSource = resolve; });
+  const readDecisions = vi.spyOn(decisionCommands, "page").mockRejectedValue(new Error("No decision fixture"));
+  await openImportWorkspace();
+  await screen.findByText(page.rows[0].content.sourcePreview);
+  fireEvent.click(screen.getByRole("button", { name: i18n.t("workbenchV2.commandPlaceholder") }));
+  const palette = await screen.findByRole("dialog", { name: i18n.t("workbenchV2.commands") });
+  fireEvent.click(within(palette).getByRole("option", { name: i18n.t("sourceMaintenance.title") }));
+  await screen.findByText(i18n.t("sourceMaintenance.recoveryLoading"));
+  await act(async () => { ownerLoad.source = null; releaseSource(); });
+  const sheet = await screen.findByRole("dialog", { name: i18n.t("sourceMaintenance.title") }, { timeout: 5000 });
+  await waitForSourceAndKnowledgeJournals();
+  vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+  try {
+    await act(async () => { await vi.advanceTimersByTimeAsync(500); });
+    expect(readDecisions).not.toHaveBeenCalled();
+  } finally { vi.useRealTimers(); }
+  fireEvent.click(within(sheet).getByRole("button", { name: i18n.t("sourceMaintenance.close") }));
+  await waitFor(() => expect(readDecisions).toHaveBeenCalledOnce());
 });
 
 it("waits for the new session's journals and still reads decisions when opened explicitly", async () => {

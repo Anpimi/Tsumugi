@@ -357,6 +357,10 @@ impl SourceBundle {
         Ok(input)
     }
     pub fn from_input(input: &FixedInput) -> Result<Self, ExecutionError> {
+        Self::from_input_with_settings(input).map(|(bundle, _)| bundle)
+    }
+
+    pub(crate) fn from_input_with_settings(input: &FixedInput) -> Result<(Self, SourceSettings), ExecutionError> {
         let e = input.envelope();
         #[cfg(not(any(
             test,
@@ -376,7 +380,7 @@ impl SourceBundle {
         }
         let source: sdk::SourceExtractionInput = from_value(&e.items[0].payload)?;
         source.validate().map_err(source_contract_error)?;
-        let settings = SourceSettings::from_input(input)?;
+        let settings = SourceSettings::for_source(input, &source)?;
         let (plugin_id, plugin_version) = if let Some(binding) = &e.plugin {
             binding.validate_project_or_attempt()?;
             source_binding_supports_binary(binding, &source)?;
@@ -447,7 +451,7 @@ impl SourceBundle {
         if e.plugin.is_none() {
             bundle.validate_builtin_capture()?;
         }
-        Ok(bundle)
+        Ok((bundle, settings))
     }
 }
 
@@ -538,11 +542,6 @@ pub struct SourceSettings {
 }
 impl SourceSettings {
     pub fn from_input(input: &FixedInput) -> Result<Self, ExecutionError> {
-        let settings: Self = from_value(&input.envelope().settings)?;
-        settings
-            .revision_policy
-            .validate()
-            .map_err(source_contract_error)?;
         let source: sdk::SourceExtractionInput = from_value(
             &input
                 .envelope()
@@ -551,6 +550,12 @@ impl SourceSettings {
                 .ok_or_else(|| invalid("source-input"))?
                 .payload,
         )?;
+        Self::for_source(input, &source)
+    }
+
+    fn for_source(input: &FixedInput, source: &sdk::SourceExtractionInput) -> Result<Self, ExecutionError> {
+        let settings: Self = from_value(&input.envelope().settings)?;
+        settings.revision_policy.validate().map_err(source_contract_error)?;
         if settings.revision_policy.profile != source.profile {
             return Err(invalid("source-policy"));
         }
@@ -560,7 +565,7 @@ impl SourceSettings {
                 .plugin
                 .as_ref()
                 .ok_or_else(|| invalid("source-review-producer"))?;
-            review.validate(&source, producer)?;
+            review.validate(source, producer)?;
         } else {
             #[cfg(not(test))]
             if input.envelope().plugin.is_some() {
@@ -578,7 +583,7 @@ impl SourceSettings {
             let declaration = &checker.capability.declaration;
             let mut expected_input = sdk::source_extraction_check_input_contract();
             if let Some(producer) = &input.envelope().plugin {
-                if !source_binding_supports_binary(producer, &source)? {
+                if !source_binding_supports_binary(producer, source)? {
                     expected_input.schema_version = 1;
                 }
             }
@@ -728,7 +733,16 @@ pub fn validate_output(
     input: &FixedInput,
     result: &FixedResult,
 ) -> Result<SourceOutput, ExecutionError> {
-    let bundle = SourceBundle::from_input(input)?;
+    let (bundle, settings) = SourceBundle::from_input_with_settings(input)?;
+    validate_output_for_bundle(input, result, &bundle, settings.revision_policy)
+}
+
+pub(crate) fn validate_output_for_bundle(
+    input: &FixedInput,
+    result: &FixedResult,
+    bundle: &SourceBundle,
+    policy: sdk::SourceRevisionPolicy,
+) -> Result<SourceOutput, ExecutionError> {
     if input.envelope().plugin.is_some() != result.envelope().plugin.is_some() {
         return Err(invalid("source-result-plugin"));
     }
@@ -769,11 +783,7 @@ pub fn validate_output(
         )))]
         return Err(invalid("source-result-plugin"));
     };
-    let output = project_source_output(
-        &bundle,
-        exchange,
-        SourceSettings::from_input(input)?.revision_policy,
-    )?;
+    let output = project_source_output(bundle, exchange, policy)?;
     #[cfg(any(
         test,
         feature = "execution-test-host",

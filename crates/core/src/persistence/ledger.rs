@@ -97,7 +97,7 @@ pub(super) fn validate(connection: &Connection) -> Result<(), ExecutionError> {
                 |result| load_result(connection, input, result),
                 |result| validate_plugin_link(connection, input, result, true).map(|_| ()),
             )?;
-            results.validate_links(links, |_, _, _| {})
+            results.validate_links(links, None, |_, _, _| {})
         },
     )
 }
@@ -162,11 +162,15 @@ pub(super) fn validate_for_open<'a>(
                 |result| require_open_valid_plugin_link(connection, result.envelope().result_id),
             )?;
             super::plugin_execution::validate_associated_input(connection, input, results)?;
-            if input.envelope().operation == crate::content::OPERATION {
-                let set = super::content::validate_input_bundle(connection, input)?;
-                proofs.source_sets.insert(set);
-            }
-            results.validate_links(links, |result, link, valid| {
+            let source = if input.envelope().operation == crate::content::OPERATION {
+                let (bundle, settings) = crate::content::SourceBundle::from_input_with_settings(input)?;
+                super::content::validate_bundle_in(connection, &bundle)?;
+                proofs.source_sets.insert(bundle.set_id);
+                Some((bundle, settings))
+            } else {
+                None
+            };
+            results.validate_links(links, source.as_ref(), |result, link, valid| {
                 proofs.links.insert(result, (link, valid));
             })?;
             validate_associations(connection, input, results, &proofs)
@@ -273,7 +277,9 @@ fn validate_schema(
     {
         return Err(error(ErrorCode::CorruptLedger, "foreign-keys"));
     }
-    input_storage::validate_chunks(connection)?;
+    if !opening {
+        input_storage::validate_chunks(connection, false)?;
+    }
     let project = super::read_metadata_from(connection)
         .map_err(|_| error(ErrorCode::CorruptLedger, "project"))?;
     // Index only link identities. The producer scan can then use its exact
@@ -338,6 +344,11 @@ fn validate_schema(
     drop(checker);
     if !links_by_attempt.is_empty() {
         return Err(error(ErrorCode::CorruptLedger, "semantic-validation-link"));
+    }
+    if opening {
+        // Every referenced chunk has already been checked while restoring its
+        // attempt under the same open snapshot.
+        input_storage::validate_chunks(connection, true)?;
     }
     super::mcp::validate_action_links(connection)?;
     let mut actions = connection
@@ -722,7 +733,9 @@ pub(super) fn load_input(
     connection: &Connection,
     attempt: ExecutionId,
 ) -> Result<FixedInput, ExecutionError> {
-    let input = read_stored_input(connection, attempt)?.restore(attempt)?;
+    let stored = read_stored_input(connection, attempt)?;
+    let input = FixedInput::restore_owned(stored.bytes, &stored.digest)?;
+    check_input_association(&input, attempt, &stored.task, &stored.project, stored.previous.as_deref())?;
     super::resources::verify_input_fact_decisions(connection, &input)?;
     Ok(input)
 }
@@ -812,20 +825,34 @@ pub(super) fn input_columns_sql() -> String {
     )
 }
 
+struct StoredInputFrame {
+    bytes: Vec<u8>,
+    digest: String,
+    task: String,
+    project: String,
+    previous: Option<String>,
+}
+
 fn read_stored_input(
     connection: &Connection,
     attempt: ExecutionId,
-) -> Result<StoredInputRow, ExecutionError> {
-    connection
-        .query_row(
-            &format!(
-                "SELECT {} FROM execution_attempts a WHERE a.attempt_id=?1",
-                input_columns_sql()
-            ),
-            [attempt.to_string()],
-            |r| StoredInputRow::from_row(r, 0),
-        )
-        .map_err(sql_error)
+) -> Result<StoredInputFrame, ExecutionError> {
+    let mut statement = connection.prepare_cached(&format!(
+        "SELECT {},a.digest,a.task_id,a.project_id,a.previous_attempt_id
+         FROM execution_attempts a WHERE a.attempt_id=?1",
+        input_storage::metadata_sql(),
+    )).map_err(sql_error)?;
+    let mut rows = statement.query([attempt.to_string()]).map_err(sql_error)?;
+    let row = rows.next().map_err(sql_error)?.ok_or_else(|| sql_error(rusqlite::Error::QueryReturnedNoRows))?;
+    let manifest = row.get_ref(0).map_err(sql_error)?.as_blob().map_err(|_| error(ErrorCode::CorruptLedger, "input-storage"))?;
+    let bytes = input_storage::read_frame(connection, manifest)?;
+    Ok(StoredInputFrame {
+        bytes,
+        digest: row.get(1).map_err(sql_error)?,
+        task: row.get(2).map_err(sql_error)?,
+        project: row.get(3).map_err(sql_error)?,
+        previous: row.get(4).map_err(sql_error)?,
+    })
 }
 
 fn check_input_association(
@@ -873,7 +900,7 @@ pub(super) fn load_input_cached(
     } else {
         let observed = ReadObservation::begin(connection)?;
         let stored = read_stored_input(connection, attempt)?;
-        let bytes = input_storage::reconstructed_bytes(stored.metadata, stored.bytes)?;
+        let bytes = stored.bytes;
         let input = if let Some((_, input, _)) = cached.filter(|(digest, _, _)| digest == &stored.digest) {
             if bytes != input.bytes() { return Err(error(ErrorCode::CorruptLedger, "input-bytes")); }
             input
@@ -1027,9 +1054,10 @@ impl OpenBuildArtifact {
     }
 }
 
-struct OpenArtifactValidation<'a> {
+struct OpenLinkValidation<'a> {
     checker: &'a mut OpenCheckerFrames,
     build: &'a mut Option<OpenBuildEvidence>,
+    source: Option<&'a (crate::content::SourceBundle, crate::content::SourceSettings)>,
 }
 
 /// One strictly received result for the exact input in the current open snapshot.
@@ -1065,13 +1093,15 @@ impl<'a> OpenResultReader<'a> {
     fn validate_links(
         &mut self,
         links: Vec<(ExecutionId, bool)>,
+        source: Option<&(crate::content::SourceBundle, crate::content::SourceSettings)>,
         mut checked: impl FnMut(ExecutionId, CheckedPluginLink, bool),
     ) -> Result<(), ExecutionError> {
         for (id, valid) in links {
             let result = self.load(id)?;
-            let open = self.checker.as_deref_mut().map(|checker| OpenArtifactValidation {
+            let open = self.checker.as_deref_mut().map(|checker| OpenLinkValidation {
                 checker,
                 build: &mut self.build,
+                source,
             });
             let link = validate_plugin_link_with_open_evidence(
                 self.connection,
@@ -1198,8 +1228,7 @@ pub(super) fn visit_result_pairs(
 // digest again, while avoiding repeated SDK decoding/structural qualification.
 fn check_stored_input(connection: &Connection, input: &FixedInput) -> Result<(), ExecutionError> {
     let stored = read_stored_input(connection, input.envelope().attempt_id)?;
-    let bytes = input_storage::reconstructed_bytes(stored.metadata, stored.bytes)?;
-    if stored.digest != input.digest() || bytes != input.bytes() {
+    if stored.digest != input.digest() || stored.bytes != input.bytes() {
         return Err(error(ErrorCode::CorruptLedger, "input-bytes"));
     }
     check_input_association(
@@ -1728,6 +1757,16 @@ pub(super) fn validate_source_link(
     result: &FixedResult,
     expected_valid: bool,
 ) -> Result<PreparedSourceValidation, ExecutionError> {
+    validate_source_link_with_bundle(connection, input, result, expected_valid, None)
+}
+
+fn validate_source_link_with_bundle(
+    connection: &Connection,
+    input: &FixedInput,
+    result: &FixedResult,
+    expected_valid: bool,
+    source: Option<&(crate::content::SourceBundle, crate::content::SourceSettings)>,
+) -> Result<PreparedSourceValidation, ExecutionError> {
     // Memoize only pure immutable source qualification, bounded to one proof.
     // Each reuse checks all four original frames and row associations, plus
     // the current proof link. Execution grants/currentness are never cached.
@@ -1770,12 +1809,13 @@ pub(super) fn validate_source_link(
         return Ok(prepared);
     }
     let (check_input, check_result) = load_check_frames(connection, &checker_id)?;
-    let prepared = SourceValidationCapture::restore(
+    let prepared = SourceValidationCapture::restore_with_source(
         ResultValidationCapture {
             input: input.clone(),
             result: result.clone(),
         },
         check_input,
+        source.map(|(bundle, settings)| (bundle, settings)),
     )?
     .prepare(check_result)?;
     if saved_valid != expected_valid || prepared.proof.valid != saved_valid {
@@ -1799,14 +1839,15 @@ fn validate_plugin_link_with_open_evidence(
     input: &FixedInput,
     result: &FixedResult,
     expected_valid: bool,
-    mut open: Option<OpenArtifactValidation<'_>>,
+    mut open: Option<OpenLinkValidation<'_>>,
     live_artifact_authority: Option<&crate::execution::plugin_authority::PluginAuthority>,
 ) -> Result<CheckedPluginLink, ExecutionError> {
     let original = result_input(connection, input, result.envelope().result_id)?;
     let same_attempt = std::ptr::eq(input, original.as_ref());
     let input = original.as_ref();
     if input.envelope().operation == crate::content::OPERATION {
-        let proof = validate_source_link(connection, input, result, expected_valid)?;
+        let source = open.as_ref().filter(|_| same_attempt).and_then(|open| open.source);
+        let proof = validate_source_link_with_bundle(connection, input, result, expected_valid, source)?;
         if let Some(open) = open {
             open.checker.remember(&proof.capture.check_input, &proof.check_result);
             if same_attempt && let Some(stamp) = read_snapshot_stamp(connection)? {

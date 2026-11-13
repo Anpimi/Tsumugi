@@ -263,6 +263,12 @@ impl ReleasePlan {
         &self,
         connection: &Connection,
     ) -> Result<(), ExecutionError> {
+        super::super::review::read_snapshot(connection, |connection| {
+            self.validate_source_reference_in(connection)
+        })
+    }
+
+    fn validate_source_reference_in(&self, connection: &Connection) -> Result<(), ExecutionError> {
         let invalid = || failure(ErrorCode::CorruptLedger, "release-source-reference");
         let associated: (String, String, String) = connection
             .query_row(
@@ -280,8 +286,8 @@ impl ReleasePlan {
         {
             return Err(invalid());
         }
-        let (_, (input, result, output, rows)) =
-            super::super::content::snapshot_rows(connection, self.source_snapshot_id, true)?;
+        let (_, (input, result, output)) =
+            super::super::content::snapshot_qualification(connection, self.source_snapshot_id, true)?;
         if input.envelope().project_id != self.project_id
             || input.digest() != self.source_input_digest
             || result.digest() != self.source_result_digest
@@ -299,19 +305,17 @@ impl ReleasePlan {
             return Err(invalid());
         }
         let mut mapping = BTreeMap::new();
-        for row in rows {
-            let binding = super::super::content::lineage_corrections::binding_at(
-                connection,
-                row.occurrence_id.ok_or_else(invalid)?,
-                version,
-            )?;
-            if mapping
-                .insert(row.occurrence.operation_unit_id, binding)
-                .is_some_and(|previous| previous != binding)
-            {
-                return Err(invalid());
-            }
-        }
+        super::super::content::lineage_corrections::visit_snapshot_bindings_at(
+            connection,
+            self.source_snapshot_id,
+            version,
+            |local, binding| {
+                if mapping.insert(local, binding).is_some_and(|previous| previous != binding) {
+                    return Err(invalid());
+                }
+                Ok(())
+            },
+        )?;
         for locale in &self.locales {
             for target in &locale.targets {
                 if mapping.get(&target.local_unit_id)

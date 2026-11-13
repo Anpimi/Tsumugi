@@ -479,6 +479,34 @@ fn damaged_chunks_or_references_fail_all_read_paths_and_idempotent_enqueue_witho
 }
 
 #[test]
+fn complete_open_checks_chunks_without_attempt_references() {
+    let temp = tempfile::tempdir().unwrap();
+    let path = temp.path().join("project");
+    let store = store(&path);
+    let c = store.execution_connection().unwrap();
+    let bytes = b"unreferenced chunk";
+    let digest = codec::digest(bytes);
+    c.execute(
+        "INSERT INTO execution_input_chunks VALUES (?1,?2)",
+        params![digest, bytes],
+    )
+    .unwrap();
+    store.close().unwrap();
+
+    let store = ProjectStore::open(&path).unwrap();
+    let updated = store.execution_connection().unwrap().execute(
+        "UPDATE execution_input_chunks SET bytes=?2 WHERE digest=?1",
+        params![digest, b"damaged"],
+    ).unwrap();
+    assert_eq!(updated, 1);
+    store.close().unwrap();
+    assert_eq!(
+        ProjectStore::open(&path).unwrap_err().code(),
+        PersistenceErrorCode::CorruptProject,
+    );
+}
+
+#[test]
 fn enqueue_failure_rolls_back_chunks_attempt_and_items_in_the_original_transaction() {
     let _schema = TestSchema::enable();
     let temp = tempfile::tempdir().unwrap();

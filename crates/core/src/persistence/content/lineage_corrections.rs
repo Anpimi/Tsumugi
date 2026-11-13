@@ -119,6 +119,34 @@ pub(in crate::persistence) fn binding_at(c: &Connection, occurrence: ExecutionId
     Ok((id(unit)?,id(source)?))
 }
 
+pub(in crate::persistence) fn visit_snapshot_bindings_at(
+    c: &Connection,
+    snapshot: ExecutionId,
+    revision: Revision,
+    mut visit: impl FnMut(String, (ExecutionId, ExecutionId)) -> Result<(), ExecutionError>,
+) -> Result<(), ExecutionError> {
+    // Read the frozen bindings directly: release validation does not need
+    // the original text or the projection of every occurrence again.
+    let mut statement = c.prepare(
+        "WITH corrections AS (
+             SELECT b.occurrence_id,b.unit_id,b.revision_id,
+                 ROW_NUMBER() OVER (PARTITION BY b.occurrence_id ORDER BY a.mapping_revision DESC) AS rank
+             FROM source_lineage_corrections a JOIN source_lineage_correction_bindings b ON b.action_id=a.action_id
+             WHERE a.snapshot_id=?1 AND a.mapping_revision<=?2
+         )
+         SELECT o.local_unit_id,COALESCE(b.unit_id,o.unit_id),COALESCE(b.revision_id,o.revision_id)
+         FROM source_occurrences o LEFT JOIN corrections b ON b.occurrence_id=o.occurrence_id AND b.rank=1
+         WHERE o.snapshot_id=?1",
+    ).map_err(sql_error)?;
+    let mut rows = statement.query(params![snapshot.to_string(), revision.get() as i64]).map_err(sql_error)?;
+    while let Some(row) = rows.next().map_err(sql_error)? {
+        let unit = row.get(1).map_err(sql_error)?;
+        let source = row.get(2).map_err(sql_error)?;
+        visit(row.get(0).map_err(sql_error)?, (id(unit)?, id(source)?))?;
+    }
+    Ok(())
+}
+
 pub(in crate::persistence) fn unresolved_origin(c:&Connection,occurrence:ExecutionId,version:Revision)->Result<Option<Vec<SourceLineageOrigin>>,ExecutionError>{
     OriginRead::new(c)?.unresolved_origin(occurrence, version)
 }
