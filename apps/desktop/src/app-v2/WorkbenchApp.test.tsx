@@ -1505,11 +1505,7 @@ describe("real-port workspace assembly", () => {
     });
     vi.spyOn(reviewCommands, "editorSnapshot").mockRejectedValue(new Error("Details not part of this drawer fixture"));
     try {
-      controller = new ProjectLifecycle({ open: vi.fn().mockResolvedValue(opened) });
-      render(<WorkbenchApp controller={controller} native />);
-      fireEvent.click(screen.getByRole("button", { name: i18n.t("startup.openExisting") }));
-      fireEvent.change(screen.getByRole("textbox", { name: i18n.t("workbenchV2.projectFolder") }), { target: { value: opened.locator } });
-      fireEvent.click(screen.getByRole("button", { name: i18n.t("workbenchV2.openProject") }));
+      await openImportWorkspace(opened);
       const edit = await screen.findByRole("button", { name: i18n.t("workbenchV2.entryEdit", { key: firstNativeKey }) });
       await waitFor(() => expect(edit).toBeEnabled()); fireEvent.click(edit);
       const input = await screen.findByRole("textbox", { name: i18n.t("workbenchV2.editorLabel", { key: firstNativeKey }) });
