@@ -119,7 +119,7 @@ pub(in crate::persistence) fn project_observations_in(
         if matches!(value.state, DeliveryState::Pending | DeliveryState::Unknown)
             && verified.insert(release)
         {
-            store.read_release(release, |_, _| Ok(()), |_| Ok(()))?;
+            store.read_release(release, true, |_, _| Ok(()), |_| Ok(()))?;
         }
         rows.push(value);
     }

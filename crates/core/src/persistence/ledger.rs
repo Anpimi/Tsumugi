@@ -1549,7 +1549,7 @@ fn pin_snapshot(connection: &Connection) -> Result<(), ExecutionError> {
         .map_err(sql_error)
 }
 
-fn snapshot_stamp(connection: &Connection) -> Result<ReadSnapshotStamp, ExecutionError> {
+pub(super) fn snapshot_stamp(connection: &Connection) -> Result<ReadSnapshotStamp, ExecutionError> {
     Ok(ReadSnapshotStamp {
         connection: connection.query_row("SELECT tsumugi_connection_identity()", [], |r| r.get(0)).map_err(sql_error)?,
         data_version: connection.query_row("PRAGMA main.data_version", [], |r| r.get(0)).map_err(sql_error)?,
@@ -4858,7 +4858,9 @@ impl ProjectStore {
         let mutation = prepared
             .mutation
             .ok_or_else(|| error(ErrorCode::CorruptLedger, "receipt"))?;
-        let changes = mutation(&AdoptionTransaction::new(&tx, &store_epoch))?;
+        let adoption = AdoptionTransaction::new(&tx, &store_epoch);
+        let changes = mutation(&adoption)?;
+        let release = adoption.into_release();
         let receipt = AdoptionReceipt {
             project_id: action.project_id,
             attempt_id: action.attempt_id,
@@ -4886,9 +4888,13 @@ impl ProjectStore {
         for result in &current.results {
             tx.execute("UPDATE execution_items SET adoption='committed' WHERE attempt_id=?1 AND item_id=?2",params![action.attempt_id.to_string(),result.envelope().item_id.to_string()]).map_err(sql_error)?;
         }
+        let release = release.and_then(|release| super::release::ReleaseReadCache::after_write(&tx, vec![std::sync::Arc::new(release)]));
         #[cfg(test)]
         crash_hook("before-adoption-commit");
         commit(tx)?;
+        if let Some(release) = release {
+            *self.release_reads.borrow_mut() = release;
+        }
         #[cfg(test)]
         crash_hook("after-adoption-commit");
         Ok(receipt)

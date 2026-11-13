@@ -152,8 +152,29 @@ impl FixedInput {
         dispatch_token: ExecutionId,
         channel: &sdk::ProviderBinding,
     ) -> Result<sdk::InvocationRequest, ExecutionError> {
-        let envelope = self.envelope();
-        let binding = envelope
+        let binding = self.plugin_binding_for_channel(channel)?;
+        let bytes = self.plugin_payload_bytes(item_id)?;
+        let input = sdk::EncodedPayload::capture(
+            binding.capability.declaration.input_schema.clone(),
+            String::from_utf8(bytes)
+                .map_err(|_| ExecutionError::new(ErrorCode::InvalidInput, "plugin-input"))?,
+        ).map_err(contract_error)?;
+        let request = sdk::InvocationRequest {
+            context: self.plugin_context(item_id, dispatch_token, binding, input.sha256.clone())?,
+            provider: channel.clone(),
+            capability: binding.capability.declaration.contract.clone(),
+            profile: binding.profile.clone(),
+            input,
+            output_schema: binding.capability.declaration.output_schema.clone(),
+            error_schema: binding.capability.declaration.error_schema.clone(),
+            max_result_bytes: self.plugin_result_budget(binding)?,
+        };
+        request.validate().map_err(contract_error)?;
+        Ok(request)
+    }
+
+    fn plugin_binding_for_channel(&self, channel: &sdk::ProviderBinding) -> Result<&PluginExecutionBinding, ExecutionError> {
+        let binding = self.envelope()
             .plugin
             .as_ref()
             .ok_or_else(|| ExecutionError::new(ErrorCode::InvalidInput, "plugin-binding"))?;
@@ -172,12 +193,22 @@ impl FixedInput {
                 "plugin-application-instance",
             ));
         }
-        let declaration = &binding.capability.declaration;
+        Ok(binding)
+    }
+
+    fn plugin_payload<T>(
+        &self,
+        item_id: ExecutionId,
+        encode: impl FnOnce(&dyn erased_payload::Payload, usize) -> Result<T, ExecutionError>,
+    ) -> Result<T, ExecutionError> {
+        let envelope = self.envelope();
+        let binding = envelope.plugin.as_ref()
+            .ok_or_else(|| ExecutionError::new(ErrorCode::InvalidInput, "plugin-binding"))?;
         let item = self.item(item_id)?;
-        let limit = declaration.limits.max_input_bytes as usize;
-        let bytes = if envelope.operation == TRANSLATION_CHECK_OPERATION {
+        let limit = binding.capability.declaration.limits.max_input_bytes as usize;
+        if envelope.operation == TRANSLATION_CHECK_OPERATION {
             let payload = translation_validation::expand_translation_check_payload(&item.payload)?;
-            codec::encode(&payload, limit)?
+            encode(&payload, limit)
         } else if envelope.operation == crate::content::BUILD_OPERATION
             && crate::ReleasePlan::is_projected_payload(&item.payload)
         {
@@ -188,16 +219,23 @@ impl FixedInput {
             } else {
                 crate::ReleasePlan::from_input(self)?.plugin_input(locale)?
             };
-            codec::encode(&payload, limit)?
+            encode(&payload, limit)
         } else {
-            codec::encode(&item.payload, limit)?
-        };
-        let input = sdk::EncodedPayload::capture(
-            declaration.input_schema.clone(),
-            String::from_utf8(bytes)
-                .map_err(|_| ExecutionError::new(ErrorCode::InvalidInput, "plugin-input"))?,
-        )
-        .map_err(contract_error)?;
+            encode(&item.payload, limit)
+        }
+    }
+
+    fn plugin_payload_bytes(&self, item_id: ExecutionId) -> Result<Vec<u8>, ExecutionError> {
+        self.plugin_payload(item_id, |payload, limit| payload.encode(limit))
+    }
+
+    fn plugin_payload_digest(&self, item_id: ExecutionId) -> Result<String, ExecutionError> {
+        self.plugin_payload(item_id, |payload, limit| payload.digest(limit.min(sdk::MAX_MATERIAL_INVOCATION_BYTES)))
+    }
+
+    fn plugin_result_budget(&self, binding: &PluginExecutionBinding) -> Result<u32, ExecutionError> {
+        let envelope = self.envelope();
+        let declaration = &binding.capability.declaration;
         let bounded_json_contract = matches!(
             envelope.operation.as_str(),
             crate::content::OPERATION
@@ -271,37 +309,50 @@ impl FixedInput {
                 "plugin-result-budget",
             ));
         }
-        let request = sdk::InvocationRequest {
-            context: sdk::InvocationContext {
-                project_id: envelope.project_id.to_string(),
-                scope_id: binding.scope_id(envelope.project_id, envelope.attempt_id)?,
-                operation_id: envelope.task_id.to_string(),
-                attempt_id: envelope.attempt_id.to_string(),
-                item_id: item_id.to_string(),
-                dispatch_id: dispatch_token.to_string(),
-                input_digest: input.sha256.clone(),
-                scope_digest: codec::digest(&codec::encode(
-                    &(&item.scope, &item.dependencies),
-                    MAX_INPUT_BYTES,
-                )?),
-                environment_digest: binding.environment_digest()?,
-                configuration_digest: codec::digest_encoded(
-                    &envelope.settings,
-                    MAX_FIXED_INPUT_BYTES,
-                )?,
-            },
-            provider: channel.clone(),
-            capability: declaration.contract.clone(),
-            profile: binding.profile.clone(),
-            input,
-            output_schema: declaration.output_schema.clone(),
-            error_schema: declaration.error_schema.clone(),
-            max_result_bytes,
-        };
-        request.validate().map_err(contract_error)?;
-        Ok(request)
+        Ok(max_result_bytes)
+    }
+
+    fn plugin_context(
+        &self,
+        item_id: ExecutionId,
+        dispatch_token: ExecutionId,
+        binding: &PluginExecutionBinding,
+        input_digest: String,
+    ) -> Result<sdk::InvocationContext, ExecutionError> {
+        let envelope = self.envelope();
+        let item = self.item(item_id)?;
+        Ok(sdk::InvocationContext {
+            project_id: envelope.project_id.to_string(),
+            scope_id: binding.scope_id(envelope.project_id, envelope.attempt_id)?,
+            operation_id: envelope.task_id.to_string(),
+            attempt_id: envelope.attempt_id.to_string(),
+            item_id: item_id.to_string(),
+            dispatch_id: dispatch_token.to_string(),
+            input_digest,
+            scope_digest: codec::digest(&codec::encode(&(&item.scope, &item.dependencies), MAX_INPUT_BYTES)?),
+            environment_digest: binding.environment_digest()?,
+            configuration_digest: codec::digest_encoded(&envelope.settings, MAX_FIXED_INPUT_BYTES)?,
+        })
     }
 }
+
+mod erased_payload {
+    use super::*;
+
+    pub(super) trait Payload {
+        fn encode(&self, limit: usize) -> Result<Vec<u8>, ExecutionError>;
+        fn digest(&self, limit: usize) -> Result<String, ExecutionError>;
+    }
+    impl<T: Serialize> Payload for T {
+        fn encode(&self, limit: usize) -> Result<Vec<u8>, ExecutionError> {
+            codec::encode(self, limit)
+        }
+        fn digest(&self, limit: usize) -> Result<String, ExecutionError> {
+            codec::digest_encoded(self, limit)
+        }
+    }
+}
+
 impl PluginResultEvidence {
     pub(crate) fn validate(
         &self,
@@ -309,7 +360,12 @@ impl PluginResultEvidence {
         input: &FixedInput,
         token: ExecutionId,
     ) -> Result<(), ExecutionError> {
-        let request = input.plugin_request(envelope.item_id, token, &self.channel)?;
+        let binding = input.plugin_binding_for_channel(&self.channel)?;
+        let declaration = &binding.capability.declaration;
+        let context = input.plugin_context(
+            envelope.item_id, token, binding, input.plugin_payload_digest(envelope.item_id)?,
+        )?;
+        let max_result_bytes = input.plugin_result_budget(binding)?;
         // The ledger already decoded the typed response. Measure its complete
         // wire envelope without copying it or passing it through the decoder again.
         #[derive(Serialize)]
@@ -327,20 +383,17 @@ impl PluginResultEvidence {
             protocol_version: sdk::EXCHANGE_PROTOCOL,
             body: ResultBody::Result(&self.result),
         };
-        codec::check_encoded_size(&document, request.max_result_bytes as usize)
+        codec::check_encoded_size(&document, max_result_bytes as usize)
             .map_err(|_| ExecutionError::new(ErrorCode::ResultMismatch, "plugin-contract"))?;
-        sdk::validate_invocation_result(&self.result, &request, &self.channel)
-            .map_err(contract_error)?;
+        sdk::validate_invocation_result_binding(
+            &self.result, &context, &self.channel, &declaration.contract, binding.profile.as_ref(),
+            &declaration.output_schema, &declaration.error_schema, &self.channel,
+        ).map_err(contract_error)?;
         let payload = match &self.result.outcome {
             sdk::InvocationOutcome::Succeeded { output } => output,
             sdk::InvocationOutcome::Failed { error }
             | sdk::InvocationOutcome::Unknown { error } => error,
         };
-        let binding = input
-            .envelope()
-            .plugin
-            .as_ref()
-            .ok_or_else(|| ExecutionError::new(ErrorCode::InvalidInput, "plugin-binding"))?;
         // Frame metadata and JSON quoting have their own allowance. The exact
         // captured raw payload limit still applies to success and both errors.
         if payload.utf8.len() > binding.capability.declaration.limits.max_output_bytes as usize {

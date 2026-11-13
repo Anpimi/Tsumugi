@@ -2,7 +2,6 @@ export const deliveryWorkbenchEn = {
   viewRecord: "View build details from {{date}}",
   clearDestination: "Clear export settings", clearDestinationHelp: "Clear the selected folder and overwrite choice. Saved builds and completed exports are kept.",
   leaveChanged: "Your preparation changed while this confirmation was open. Keep it and review the current choices before leaving.", closeConfirmation: "Close confirmation",
-  decisionChanged: "This record changed. Refresh before opening it again.", refreshIssues: "Refresh project issues",
   title: "Delivery", help: "Check saved translations, build and verify files, then choose where to export them.",
   loading: "Reading delivery records…", ownerFailed: "Delivery could not be loaded", retryOwner: "Reload", ownerKept: "Your delivery settings and pending results are kept.", backToDelivery: "Back to delivery",
   readiness: "Readiness", build: "Build", verification: "Verification", export: "Export", history: "History",
@@ -19,14 +18,13 @@ export const deliveryWorkbenchEn = {
   exportSourceCurrent: "This build uses the current saved source.", exportSourceDifferent: "This build uses a different version of the source. Export uses the files saved with this build.",
   files: "Files", folder: "Export folder", chooseFolder: "Choose folder", previewFolder: "Check folder", overwrite: "I allow replacing the existing files shown here.", exportUnknown: "The export may already have written files. Check this same action before trying another export.", reauthorize: "Choose the original folder to check", missingBytes: "The saved files are unavailable. Check this saved build; nothing will be rebuilt automatically.",
   diagnostics: "Technical details", snapshot: "Source snapshot", version: "Build tools", exceptions: "Saved exceptions", noExceptions: "No saved exceptions", deliveries: "Export attempts", noDeliveries: "No export attempts recorded", checkAttempt: "Check this export", refreshExport: "Refresh export attempts", currentOutcome: "Latest export result",
-  otherIssues: "Other project issues", issueCount: "{{count, number}} known decisions in the current project", issuePartial: "Some sources are unavailable. This is not a complete problem count.", issueReadFailed: "Project issues could not be read. Readiness is checked separately.", openDecisions: "Open decisions", openKnowledge: "Open knowledge", openExtensions: "Open extensions", entry: "Open entry", sourceIssue: "Source identity or mapping needs a decision", resourceIssue: "Knowledge changes need review", executionIssue: "A previous action needs checking", outcomeIssue: "An export result needs checking", projectIssue: "Review this project issue", activeDelivery: "A delivery operation is still active. Check its original result.",
+  otherIssues: "Other project issues", openDecisions: "Open decisions", openExtensions: "Open extensions", activeDelivery: "A delivery operation is still active. Check its original result.",
   fixedHelp: "This build uses the saved input shown here. Newer project edits are kept separately.", permissionHelp: "Review the requested access before starting. Preparing a build does not authorize execution.", buildDetails: "Build details", verificationDetails: "Verification details", refreshBuild: "Refresh build results", policy: "Saved readiness evidence", waitingForPermission: "Review and allow this exact operation to continue.",
 };
 export const deliveryWorkbenchZh = {
   viewRecord: "查看 {{date}} 的构建详情",
   clearDestination: "清除导出设置", clearDestinationHelp: "清除已选目录和覆盖选择，保留所有已保存发布和已完成的导出。",
   leaveChanged: "确认期间准备内容已更改。请保留当前内容，核对后再决定是否离开。", closeConfirmation: "关闭确认",
-  decisionChanged: "这条记录变了，请刷新后再打开。", refreshIssues: "刷新项目问题",
   title: "交付", help: "检查已保存译文，构建并验证文件，再选择导出位置。",
   loading: "读取交付记录…", ownerFailed: "交付工作面没有加载成功", retryOwner: "重新加载", ownerKept: "交付设置和待处理结果还在", backToDelivery: "回到交付",
   readiness: "就绪检查", build: "构建", verification: "验证", export: "导出", history: "历史",
@@ -43,6 +41,6 @@ export const deliveryWorkbenchZh = {
   exportSourceCurrent: "此构建使用当前已保存源文。", exportSourceDifferent: "此构建使用的源文版本与当前项目不同。导出将使用此构建已保存的文件。",
   files: "文件", folder: "导出文件夹", chooseFolder: "选择文件夹", previewFolder: "检查文件夹", overwrite: "我允许替换此处显示的已有文件。", exportUnknown: "这次导出可能已经写入文件，请先核对原操作，再决定是否重新导出。", reauthorize: "选择原文件夹进行核对", missingBytes: "已保存文件暂不可用，请核对此构建；不会自动重新构建。",
   diagnostics: "技术详情", snapshot: "源快照", version: "构建工具", exceptions: "已保存例外", noExceptions: "没有已保存例外", deliveries: "导出尝试", noDeliveries: "尚无导出尝试记录", checkAttempt: "核对此次导出", refreshExport: "刷新导出记录", currentOutcome: "最近一次导出结果",
-  otherIssues: "其他项目问题", issueCount: "当前项目有 {{count, number}} 项已知待决定事项", issuePartial: "部分来源暂不可用，这不是完整问题总数。", issueReadFailed: "没能读取项目问题；就绪检查仍会单独核对。", openDecisions: "打开待你决定", openKnowledge: "打开知识", openExtensions: "打开扩展", entry: "打开条目", sourceIssue: "源身份或对应关系需要决定", resourceIssue: "知识变化需要审阅", executionIssue: "此前操作需要核对", outcomeIssue: "导出结果需要核对", projectIssue: "查看此项目问题", activeDelivery: "仍有交付操作正在进行，请核对原操作结果。",
+  otherIssues: "其他项目问题", openDecisions: "打开待你决定", openExtensions: "打开扩展", activeDelivery: "仍有交付操作正在进行，请核对原操作结果。",
   fixedHelp: "此构建使用这里显示的已保存输入，之后的项目修改会分别保留。", permissionHelp: "运行前请核对申请的权限。准备构建不会授予运行许可。", buildDetails: "构建详情", verificationDetails: "验证详情", refreshBuild: "刷新构建结果", policy: "已保存就绪依据", waitingForPermission: "请核对并允许这次准确操作，才能继续。",
 };

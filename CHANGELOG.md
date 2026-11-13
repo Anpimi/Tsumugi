@@ -191,7 +191,7 @@ The current workspace targets **`0.3.0-alpha.1`**. The published `0.2.0-alpha.1`
 
 ### Fixed
 
-- Reduce historical decoding when opening projects with large plugin imports or builds. Load the entries or delivery history before reading the project brief's review counts. Give delivery history and open import panels priority over the background decision count.
+- Reduce historical decoding and avoid rebuilding full plugin requests when opening projects with large plugin imports or builds. After saving a verified build, history reuses the evidence verified by that commit. Recording an export receipt keeps still-valid build history available.
 - Reduce memory copies when opening projects with large saved execution inputs. Reuse validated source materials when checking import history and read saved build bindings without loading every source text again.
 - Reduce historical frame decoding when opening large projects and reuse verified source-check evidence when recording an import check.
 
@@ -237,7 +237,7 @@ The current workspace targets **`0.3.0-alpha.1`**. The published `0.2.0-alpha.1`
 - Segment status filters and pages reuse the source positions already established for the current list, reducing repeated source scans when reviewing large projects.
 - Current review and decision views look up saved QA, approvals, and waivers by the requested entries and their review basis, reducing work as review history grows.
 - Pending candidates, human review, and review findings share the bounded entry list and source positions for one Items needing a decision read, including across target languages.
-- The Items needing a decision count waits for the first entries view, startup drafts for translations, conversations, source and resources, and translation confirmation to settle. Its background reads share one native request at a time, leaving more room for opening and saving. Opening Items needing a decision or Delivery can request the current count immediately.
+- The Items needing a decision count waits for the first entries view, startup drafts for translations, conversations, source and resources, and translation confirmation to settle. Delivery keeps its own readiness and recovery checks available and reads the broader inbox only when you open Items needing a decision.
 - Typing and saving a local draft, including in the recovery panel, updates the editor and its status without refreshing unrelated entry rows when their view stays the same. Changes to other drafts leave the active editor alone. The recovery button updates independently when the first draft becomes available.
 - Keep the active row's unchanged source text out of translation input, paste and draft-write updates.
 - While a paste is waiting for the clipboard, the affected editor actions update independently of the translation field.

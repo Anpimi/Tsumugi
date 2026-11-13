@@ -34,6 +34,7 @@ pub(crate) mod ledger;
 pub mod model_connections;
 mod plugin_execution;
 mod release;
+pub(crate) use release::VerifiedRelease;
 mod project_backup;
 mod reopen;
 pub use reopen::ProjectReopenProof;

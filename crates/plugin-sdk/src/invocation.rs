@@ -334,13 +334,30 @@ pub fn validate_invocation_result(
     actual_channel: &ProviderBinding,
 ) -> Result<(), ContractError> {
     request.validate()?;
+    validate_invocation_result_binding(result, &request.context, &request.provider, &request.capability,
+        request.profile.as_ref(), &request.output_schema, &request.error_schema, actual_channel)
+}
+
+/// Compare a decoded result against an independently validated request binding.
+/// The caller must already have validated the complete request, or established
+/// its exact payload digest, schema, and size from the original fixed input.
+pub fn validate_invocation_result_binding(
+    result: &InvocationResult,
+    context: &InvocationContext,
+    provider: &ProviderBinding,
+    capability: &ContractRef,
+    profile: Option<&ContractRef>,
+    output_schema: &ContractRef,
+    error_schema: &ContractRef,
+    actual_channel: &ProviderBinding,
+) -> Result<(), ContractError> {
     actual_channel.validate()?;
     result.validate()?;
-    if result.context != request.context
-        || result.provider != request.provider
-        || result.provider != *actual_channel
-        || result.capability != request.capability
-        || result.profile != request.profile
+    if &result.context != context
+        || &result.provider != provider
+        || &result.provider != actual_channel
+        || &result.capability != capability
+        || result.profile.as_ref() != profile
     {
         return Err(ContractError::at(
             ContractErrorCode::ResultMismatch,
@@ -348,9 +365,9 @@ pub fn validate_invocation_result(
         ));
     }
     let matches_schema = match &result.outcome {
-        InvocationOutcome::Succeeded { output } => output.schema == request.output_schema,
+        InvocationOutcome::Succeeded { output } => &output.schema == output_schema,
         InvocationOutcome::Failed { error } | InvocationOutcome::Unknown { error } => {
-            error.schema == request.error_schema
+            &error.schema == error_schema
         }
     };
     if !matches_schema {

@@ -69,20 +69,21 @@ pub(super) struct Record {
 }
 
 #[derive(Debug)]
-pub(super) struct VerifiedRelease {
+pub(crate) struct VerifiedRelease {
     pub(super) view: ReleaseView,
     report_paths: BTreeSet<String>,
 }
 
 impl VerifiedRelease {
     pub(super) fn capture(record: &Record) -> Option<Self> {
+        Self::bounded(record.view.clone(), record.report_paths.clone())
+    }
+
+    fn bounded(view: ReleaseView, report_paths: BTreeSet<String>) -> Option<Self> {
         // Bound the retained projection independently of the artifact budget.
         const MAX_VIEW_BYTES: usize = 16 * 1024 * 1024;
-        codec::check_encoded_size(&record.view, MAX_VIEW_BYTES).ok()?;
-        Some(Self {
-            view: record.view.clone(),
-            report_paths: record.report_paths.clone(),
-        })
+        codec::check_encoded_size(&view, MAX_VIEW_BYTES).ok()?;
+        Some(Self { view, report_paths })
     }
 
     /// Only use after confirming the snapshot that qualified this release.
@@ -252,10 +253,10 @@ pub(super) fn prepare(
     let action = action.clone();
     Ok(Box::new(move |transaction| {
         let release_id = ExecutionId::new();
-        transaction.execute(
+        let created_at = transaction.query_row(
             "INSERT INTO release_records
              (release_id,action_id,project_id,attempt_id,manifest,manifest_digest)
-             VALUES (?1,?2,?3,?4,?5,?6)",
+             VALUES (?1,?2,?3,?4,?5,?6) RETURNING created_at",
             params![
                 release_id.to_string(),
                 action.action_id.to_string(),
@@ -264,8 +265,9 @@ pub(super) fn prepare(
                 manifest_bytes,
                 digest
             ],
+            |row| row.get(0),
         )?;
-        for artifact in artifacts {
+        for artifact in &artifacts {
             transaction.execute(
                 "INSERT INTO release_artifacts
                  (release_id,locale,artifact_id,role,file_name,bytes,sha256,validator_version,entry_count)
@@ -274,6 +276,11 @@ pub(super) fn prepare(
                     artifact.role, artifact.summary.file_name, artifact.bytes,
                     artifact.summary.sha256, artifact.validator_version, artifact.summary.entry_count],
             )?;
+        }
+        let report_paths = report_paths(version, &artifacts);
+        let view = release_view(release_id, action.action_id, action.attempt_id, digest, created_at, summary, &artifacts);
+        if let Some(verified) = VerifiedRelease::bounded(view, report_paths) {
+            transaction.remember_release(verified);
         }
         Ok(vec![ChangeReference {
             kind: "release".into(),
@@ -421,7 +428,14 @@ pub(super) fn load(
     if artifacts != expected_artifacts {
         return Err(failure(ErrorCode::CorruptLedger, "release-artifacts"));
     }
-    let view = ReleaseView {
+    let report_paths = report_paths(manifest.version, &artifacts);
+    let view = release_view(release_id, action_id, attempt, digest, created, summary, &artifacts);
+    Ok(Record { view, artifacts, report_paths })
+}
+
+fn release_view(release_id: ExecutionId, action_id: ExecutionId, attempt: ExecutionId,
+    digest: String, created: String, summary: ManifestSummary, artifacts: &[Artifact]) -> ReleaseView {
+    ReleaseView {
         release_id,
         action_id,
         attempt_id: attempt,
@@ -435,8 +449,11 @@ pub(super) fn load(
         exceptions: summary.exceptions,
         artifacts: artifacts.iter().map(|a| a.summary.clone()).collect(),
         created_at: created,
-    };
-    let report_paths = if manifest.version == 3 {
+    }
+}
+
+fn report_paths(version: u32, artifacts: &[Artifact]) -> BTreeSet<String> {
+    if version == 3 {
         artifacts
             .iter()
             .filter(|artifact| {
@@ -447,12 +464,7 @@ pub(super) fn load(
             .collect()
     } else {
         BTreeSet::new()
-    };
-    Ok(Record {
-        view,
-        artifacts,
-        report_paths,
-    })
+    }
 }
 
 fn read_artifacts(

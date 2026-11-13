@@ -192,12 +192,14 @@ pub fn result_channel() -> (ResultSender, Receiver<FixedResult>) {
 pub struct AdoptionTransaction<'a> {
     transaction: &'a rusqlite::Transaction<'a>,
     store_epoch: &'a str,
+    release: std::cell::OnceCell<crate::persistence::VerifiedRelease>,
 }
 impl<'a> AdoptionTransaction<'a> {
     pub(crate) fn new(transaction: &'a rusqlite::Transaction<'a>, store_epoch: &'a str) -> Self {
         Self {
             transaction,
             store_epoch,
+            release: std::cell::OnceCell::new(),
         }
     }
     pub(crate) fn store_epoch(&self) -> &str {
@@ -205,6 +207,12 @@ impl<'a> AdoptionTransaction<'a> {
     }
     pub(crate) fn connection(&self) -> &rusqlite::Connection {
         self.transaction
+    }
+    pub(crate) fn remember_release(&self, release: crate::persistence::VerifiedRelease) {
+        self.release.set(release).expect("one release per adoption");
+    }
+    pub(crate) fn into_release(self) -> Option<crate::persistence::VerifiedRelease> {
+        self.release.into_inner()
     }
     pub fn query_row<
         T,

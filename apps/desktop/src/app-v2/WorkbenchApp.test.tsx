@@ -104,6 +104,7 @@ vi.mock("./features/delivery/DeliveryView", () => ({ default: function DeliveryP
   return <section aria-label={i18n.t("workbenchV2.delivery")}>
     <label>Synthetic delivery path<input value={props.owner.names["zh-CN"] ?? ""} disabled={props.disabled}
       onChange={event => props.owner.setName("zh-CN", event.target.value)}/></label>
+    <button onClick={props.onOpenDecisions}>{i18n.t("deliveryWorkbench.openDecisions")}</button>
   </section>;
 } }));
 vi.mock("./features/import/TranslationImportPanel", () => ({ default: function ImportPresentationProbe(props: TranslationImportPanelProps) {
@@ -811,6 +812,31 @@ it("keeps the passive decision count off the source import queue until its panel
     expect(readDecisions).not.toHaveBeenCalled();
   } finally { vi.useRealTimers(); }
   fireEvent.click(within(sheet).getByRole("button", { name: i18n.t("sourceMaintenance.close") }));
+  await waitFor(() => expect(readDecisions).toHaveBeenCalledOnce());
+});
+
+it("keeps passive decisions off the delivery queue and reads them when opened from Delivery", async () => {
+  const original = vi.mocked(resourceDraftCommands.read).getMockImplementation()!;
+  let releaseResources!: () => void;
+  const resources = new Promise<void>(resolve => { releaseResources = resolve; });
+  vi.mocked(resourceDraftCommands.read).mockImplementation(async request => {
+    await resources;
+    return original(request);
+  });
+  const readDecisions = vi.spyOn(decisionCommands, "page").mockRejectedValue(new Error("No decision fixture"));
+  await openImportWorkspace();
+  const delivery = screen.getByRole("button", { name: i18n.t("workbenchV2.delivery") });
+  await waitFor(() => expect(delivery).toBeEnabled(), { timeout: 5000 });
+  fireEvent.click(delivery);
+  const openDecisions = await screen.findByRole("button", { name: i18n.t("deliveryWorkbench.openDecisions") }, { timeout: 5000 });
+  vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+  try {
+    await act(async () => { releaseResources(); });
+    expect(ownerLoad.knowledgeValue?.journal.hydration).toBe("ready");
+    await act(async () => { await vi.advanceTimersByTimeAsync(500); });
+    expect(readDecisions).not.toHaveBeenCalled();
+  } finally { vi.useRealTimers(); }
+  fireEvent.click(openDecisions);
   await waitFor(() => expect(readDecisions).toHaveBeenCalledOnce());
 });
 

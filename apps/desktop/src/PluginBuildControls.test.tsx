@@ -95,7 +95,7 @@ function DeliveryConsumer() {
   const [gate] = useState(() => { const gate = new InteractionGate(); gate.setVisibleOwner("build-contract"); return gate; });
   useLayoutEffect(() => () => gate.dispose(), [gate]);
   return <Delivery project={project} owner={owner} tasks={tasks} commands={commands} gate={gate} viewId="build-contract" visible disabled={false}
-    onOpenDecisions={() => {}} onOpenKnowledge={() => {}} onOpenExtensions={() => {}}/>;
+    onOpenDecisions={() => {}} onOpenExtensions={() => {}}/>;
 }
 function primary() {
   const header = screen.getByRole("heading", { name: i18n.t("deliveryWorkbench.title"), level: 1 }).closest("header");

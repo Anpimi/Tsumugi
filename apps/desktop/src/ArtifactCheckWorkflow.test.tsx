@@ -43,7 +43,7 @@ function DeliveryConsumer() {
   const [gate] = useState(() => { const gate = new InteractionGate(); gate.setVisibleOwner("workflow-delivery"); return gate; });
   useLayoutEffect(() => () => gate.dispose(), [gate]);
   return <Delivery project={project} owner={value} tasks={tasks} commands={commands} gate={gate} viewId="workflow-delivery" visible disabled={false}
-    onOpenDecisions={() => {}} onOpenKnowledge={() => {}} onOpenExtensions={() => {}}/>;
+    onOpenDecisions={() => {}} onOpenExtensions={() => {}}/>;
 }
 function Harness({ consumer = true }: { consumer?: boolean }) {
   return <><Probe/>{consumer ? <DeliveryConsumer/> : null}</>;

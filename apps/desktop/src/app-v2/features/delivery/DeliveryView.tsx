@@ -1,5 +1,5 @@
 import { Disclosure } from "../../../design-system/Disclosure";
-import { useEffect, useLayoutEffect, useId, useRef, useState, useSyncExternalStore } from "react";
+import { useEffect, useId, useRef, useState, useSyncExternalStore } from "react";
 import { ChevronDown } from "lucide-react";
 import { useTranslation } from "react-i18next";
 import { Button } from "../../../design-system/Button";
@@ -13,7 +13,6 @@ import { executionContext } from "../../../executionCommands";
 import { releaseCommands, type DeliveryView as DeliveryRecord, type ReleaseView } from "../../../releaseCommands";
 import { useSessionQuery, useSessionReads } from "../../../SessionReadProvider";
 import { sourceCommands } from "../../../sourceCommands";
-import type { DecisionItem, DecisionPage } from "../../../decisionCommands";
 import type { ProjectView } from "../../../projectCommands";
 import { WorkbenchCommandsProvider, type WorkbenchCommands } from "../../../workbenchCommands";
 import type { InteractionGate } from "../../workspace/interactionGate";
@@ -31,11 +30,8 @@ export interface DeliveryViewProps {
   disabled: boolean;
   onOpenEntry?: (unitId: string, locale: string) => Promise<boolean>;
   onOpenDecisions: () => void;
-  onOpenKnowledge: () => void;
   onOpenExtensions: () => void;
   onInitialReadSettled?: () => void;
-  inbox?: { page: DecisionPage | undefined; loading: boolean; failure: unknown; current: (basis: string) => boolean; retry: () => void };
-  onOpenDecision?: (item: DecisionItem) => Promise<boolean>;
   target?: { releaseId: string; deliveryId: string; actionId: string } | null;
 }
 type Step = "readiness" | "build" | "verification" | "export" | "history";
@@ -44,8 +40,8 @@ const steps: Step[] = ["readiness", "build", "verification", "export", "history"
 /** A delivery surface over the retained Release owner. Opening a step never
  * starts work; every mutation goes through its original registered command. */
 export function DeliveryView(props: DeliveryViewProps) {
-  const { project, owner, commands, gate, viewId, visible, disabled, inbox, onOpenDecision, target,
-    onOpenEntry, onOpenDecisions, onOpenKnowledge, onOpenExtensions } = props;
+  const { project, owner, commands, gate, viewId, visible, disabled, target,
+    onOpenEntry, onOpenDecisions, onOpenExtensions } = props;
   const { t, i18n } = useTranslation(undefined, { keyPrefix: "deliveryWorkbench" }), { t: global } = useTranslation();
   const reads = useSessionReads(), context = executionContext(project), id = useId();
   const [primaryMode, setPrimaryMode] = useState<"build" | "export">(owner.chosen ? "export" : "build");
@@ -53,10 +49,6 @@ export function DeliveryView(props: DeliveryViewProps) {
   const selectedTarget = useRef<string | null>(null), mounted = useRef(false);
   const exportStep = useRef<HTMLButtonElement>(null);
   const exportSourceNotice = useRef<HTMLDivElement>(null);
-  const decisionFlight = useRef(0), currentView = useRef({ visible, sessionToken: project.sessionToken, viewId });
-  currentView.current = { visible, sessionToken: project.sessionToken, viewId };
-  const [decisionChanged, setDecisionChanged] = useState(false);
-  useLayoutEffect(() => { decisionFlight.current += 1; return () => { decisionFlight.current += 1; }; }, [visible, project.sessionToken, viewId]);
   const interaction = useSyncExternalStore(gate.subscribe, gate.getSnapshot, gate.getSnapshot);
   const inputOwner = `delivery-input-${viewId}`;
   useEffect(() => { mounted.current = true; return () => { mounted.current = false; gate.releaseOwner(inputOwner); }; }, [gate, inputOwner]);
@@ -199,31 +191,10 @@ export function DeliveryView(props: DeliveryViewProps) {
       {deliveriesRead.isPending ? <p role="status">{t("loading")}</p> : deliveries.length === 0 && !deliveriesRead.error ? <p>{t("noDeliveries")}</p> : deliveries.map(outcome)}
     </> : <p>{t("noRelease")}</p>}
   </>;
-  async function openDecision(item: DecisionItem) {
-    if (!canInteract() || !inbox?.page || !inbox.current(inbox.page.basis)) return;
-    if (!onOpenDecision) { if (item.targets.some(value => value.kind === "resource")) onOpenKnowledge(); else onOpenDecisions(); return; }
-    const ticket = ++decisionFlight.current, sessionToken = project.sessionToken;
-    setDecisionChanged(false);
-    let opened = false;
-    try { opened = await onOpenDecision(item); } catch { opened = false; }
-    const view = currentView.current;
-    if (!opened && ticket === decisionFlight.current && mounted.current && !reads.retired && view.visible && view.sessionToken === sessionToken && view.viewId === viewId && gate.getSnapshot().visibleViewId === viewId) setDecisionChanged(true);
-  }
-  const projectIssues = inbox ? <section className={styles.issues} aria-label={t("otherIssues")}>
+  const projectIssues = <section className={styles.issues} aria-label={t("otherIssues")}>
     <h3>{t("otherIssues")}</h3>
-    {decisionChanged ? <Banner tone="warning" role="status"><p>{t("decisionChanged")}</p><Button variant="secondary" disabled={!canInteract()} onClick={() => { if (canInteract()) { setDecisionChanged(false); inbox.retry(); } }}>{t("refreshIssues")}</Button></Banner> : null}
-    {inbox.loading ? <p role="status">{t("loading")}</p> : null}
-    {inbox.failure ? <Banner tone="warning">{t("issueReadFailed")}<Button variant="secondary" disabled={!canInteract()} onClick={() => { if (canInteract()) inbox.retry(); }}>{t("retryOwner")}</Button></Banner> : null}
-    {inbox.page ? <><p>{t("issueCount", { count: inbox.page.knownCount })}</p>{inbox.page.total === null ? <p>{t("issuePartial")}</p> : null}
-      {inbox.page.deliveryActivity.length ? <Banner tone="info">{t("activeDelivery")}</Banner> : null}
-      <ul>{inbox.page.items.map(item => <li key={item.decisionId}>
-        <span>{t(item.source === "source-mapping" ? "sourceIssue" : item.source === "resource-proposal" ? "resourceIssue" : item.source === "delivery-unknown" ? "outcomeIssue" : item.source === "execution-unknown" || item.source === "local-action-recovery" ? "executionIssue" : "projectIssue")}</span>
-        <Button variant="link" disabled={!canInteract() || !(inbox.page !== undefined && inbox.current(inbox.page.basis))} onClick={() => {
-          void openDecision(item);
-        }}>{t(item.targets.some(value => value.kind === "resource") ? "openKnowledge" : "openDecisions")}</Button>
-      </li>)}</ul></> : null}
     <div className={styles.actions}><Button variant="link" disabled={!canInteract()} onClick={() => { if (canInteract()) onOpenDecisions(); }}>{t("openDecisions")}</Button><Button variant="link" disabled={!canInteract()} onClick={() => { if (canInteract()) onOpenExtensions(); }}>{t("openExtensions")}</Button></div>
-  </section> : null;
+  </section>;
 
   function render(parts: BuildWorkbenchParts) {
     const summary: Record<Step, string> = {

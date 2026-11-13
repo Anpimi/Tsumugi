@@ -738,14 +738,19 @@ function WorkspaceShell() {
   const [entriesReadSettled, setEntriesReadSettled] = useState(false);
   const settleEntriesRead = useCallback(() => setEntriesReadSettled(true), []);
   const waitingForEntries = view?.kind === "entries" && !importVisible && !entriesReadSettled;
+  const importInFocus = sourceOpen || importVisible;
+  // Full decision projection shares the desktop session queue. Delivery has
+  // its own readiness and recovery reads; the inbox is reached explicitly.
+  const deliveryInFocus = view?.kind === "delivery";
   const [deliveryReadSettled, setDeliveryReadSettled] = useState(false);
   const settleDeliveryRead = useCallback(() => setDeliveryReadSettled(true), []);
-  const waitingForDelivery = view?.kind === "delivery" && !importVisible && !deliveryReadSettled && !deliveryLoadFailed;
-  const importInFocus = sourceOpen || importVisible;
+  const waitingForDelivery = deliveryInFocus && !importVisible && !deliveryReadSettled && !deliveryLoadFailed;
   const decisionFeed = useDecisionFeed(session.reads, strategyActivity ? [drafts, conversations, resourceActivity, sourceActivity, strategyActivity] : [drafts, conversations, resourceActivity, sourceActivity], view?.kind === "decisions" ? view.decisionCursor : null,
-    { visible: view?.kind === "decisions" && !importInFocus, enabled: !disabled,
-      backgroundReady: !!view && !importInFocus && !waitingForEntries && !waitingForDelivery
+    { visible: view?.kind === "decisions" && !importInFocus, enabled: !disabled && !deliveryInFocus,
+      backgroundReady: !!view && !importInFocus && !waitingForEntries
         && draftIndexSettled && conversationsSettled && ownerJournalsSettled && !draftState.mutationReserved });
+  const decisionSummary = { page: deliveryInFocus ? undefined : decisionFeed.first.data,
+    loading: decisionFeed.firstLoading, error: deliveryInFocus ? null : decisionFeed.first.error };
   const decisionBadgeId = useId();
   const lastDecisionView = useRef<string | null>(null);
   useEffect(() => { if (view?.kind === "decisions") lastDecisionView.current = view.id; }, [view?.kind, view?.id]);
@@ -1160,7 +1165,7 @@ function WorkspaceShell() {
     dispatch("workspace.decisions");
   }
   function decisionTray() {
-    return <InteractionBlocked gate={gate}>{blocked => <DecisionTray page={decisionFeed.first.data} loading={decisionFeed.firstLoading} error={decisionFeed.first.error}
+    return <InteractionBlocked gate={gate}>{blocked => <DecisionTray {...decisionSummary}
       disabled={disabled || !commandsReady || blocked} onOpen={openDecisionsFromTray}/>}</InteractionBlocked>;
   }
   function conversationFallback(content: ReactNode) {
@@ -1181,7 +1186,7 @@ function WorkspaceShell() {
     return <Suspense fallback={null}><ProjectBrief project={session.project} visible={(view?.dock ?? "agent") === "agent" && (!narrow || drawer)}
       briefEligible={eligible} previousPosition={previousProject?.position} disabled={!allowed()}
       progressReady={!!view && !waitingForEntries && !waitingForDelivery}
-      decisions={{ page: decisionFeed.first.data, loading: decisionFeed.firstLoading, error: decisionFeed.first.error }}
+      decisions={decisionSummary}
       onContinue={position => void openBriefEntries(position.locale, "all", position.unitId).catch(() => setCommandFailed(true))}
       onEntries={(locale, preset) => void openBriefEntries(locale, preset).catch(() => setCommandFailed(true))}
       onImport={() => { if (allowed()) openSource(dialogId); }}
@@ -1425,19 +1430,6 @@ function WorkspaceShell() {
     if (accepted) { hideReviewRecovery(); if (narrow) showDock(); }
     return accepted;
   }
-  async function openDeliveryDecision(item: DecisionItem) {
-    const page = decisionFeed.first.data;
-    if (!page || !page.items.includes(item) || !decisionFeed.current(page.basis) || !decisionCurrent()
-      || !gate.canDispatch({ viewId: currentId, source: "button" })) return false;
-    if (["compare-candidate", "review-translation", "review-finding", "inspect-local-request", "clarify-conversation-proposal",
-      "review-knowledge-proposal", "review-resource", "compare-source-mapping", "resolve-source-mapping", "inspect-delivery", "inspect-delivery-outcome"].includes(item.action.kind)
-      || item.action.kind === "answer-team-question" && item.targets.some(target => target.kind === "conversation")) {
-      return await navigateDecision(item, () => decisionFeed.current(page.basis));
-    }
-    const state = store.getState(), existing = [...state.viewOrder].reverse().find(id => state.views[id].kind === "decisions");
-    const target = { locale: item.locale ?? activeLocale, focus: item.decisionId, decisionCursor: null, decisionPrevious: [] };
-    return await (existing ? runtime.navigation.update(existing, target) : runtime.navigation.open({ kind: "decisions", ...target, editing: false, queueActive: false }));
-  }
   function renderCandidate(row: SegmentRow) {
     if (row.content.unitId !== view?.focus || !row.aiCandidateCount || !drafts || !candidateOwners || !commandsReady || !commands) return null;
     return <Suspense fallback={null}><FocusedCandidate project={session.project} unitId={row.content.unitId} locale={activeLocale} drafts={drafts} owners={candidateOwners}
@@ -1677,7 +1669,7 @@ function WorkspaceShell() {
           if (id === "knowledge") { void openKnowledge(event.metaKey || event.ctrlKey).catch(() => setCommandFailed(true)); return; }
           const existing = store.getState().viewOrder.find(key => store.getState().views[key].kind === "entries");
           if (!(event.metaKey || event.ctrlKey) && existing) void runtime.navigation.activate(existing); else dispatch("workspace.new-view");
-        }}>{icon}</IconButton>{id === "decisions" ? <span id={decisionBadgeId} className={styles.activityCount}><DecisionBadge page={decisionFeed.first.data} loading={decisionFeed.firstLoading} error={decisionFeed.first.error}/></span> : null}</div>)}</InteractionBlocked>
+        }}>{icon}</IconButton>{id === "decisions" ? <span id={decisionBadgeId} className={styles.activityCount}><DecisionBadge {...decisionSummary}/></span> : null}</div>)}</InteractionBlocked>
         <div className={styles.activityBottom}><IconButton label={message("extensions")} disabled={disabled || !commandsReady} onClick={() => dispatch("workspace.extensions")}><Command /></IconButton><IconButton label={message("settings")} disabled={disabled || !commandsReady} onClick={() => dispatch("workspace.settings")}><Settings /></IconButton></div>
       </nav>
       <WorkspacePanes view={view} compact={compact} wide={wide} disabled={disabled} dockRef={dock} label={message("agent")}
@@ -1741,10 +1733,9 @@ function WorkspaceShell() {
               : deliveryOwner && executionTasks && commands ? <DeliveryView project={session.project} owner={deliveryOwner} tasks={executionTasks} commands={commands} gate={gate} viewId={view.id}
               visible={!importVisible} disabled={disabled || !commandsReady}
               onInitialReadSettled={deliveryReadSettled ? undefined : settleDeliveryRead}
-              target={view.deliveryTarget} inbox={{ page: decisionFeed.first.data, loading: decisionFeed.firstLoading, failure: decisionFeed.first.error, current: decisionFeed.current, retry: () => { void decisionFeed.refresh(); } }}
-              onOpenDecision={openDeliveryDecision}
+              target={view.deliveryTarget}
               onOpenEntry={async (unitId, locale) => decisionCurrent() && gate.canDispatch({ viewId: currentId, source: "button" }) ? inspectReview(unitId, locale) : false}
-              onOpenDecisions={() => { void openDecisions().catch(() => setCommandFailed(true)); }} onOpenKnowledge={() => { void openKnowledge().catch(() => setCommandFailed(true)); }}
+              onOpenDecisions={() => { void openDecisions().catch(() => setCommandFailed(true)); }}
               onOpenExtensions={() => settings.openExtensions()}/>
               : <LoadingState label={t("deliveryWorkbench.loading")}/>}
           </Suspense></FeatureBoundary> : <EmptyState title={message(view.kind)} description={message("comingLater")} /> : <EmptyState icon={<Layers />} title={message("noViews")} action={<Button disabled={disabled || !commandsReady} onClick={() => dispatch("workspace.new-view")}>{message("openEntries")}</Button>} />}

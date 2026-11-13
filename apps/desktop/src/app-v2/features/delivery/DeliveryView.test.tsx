@@ -13,7 +13,6 @@ import type { DeliveryView as ExportRecord, PluginBuildPrepareRequest } from "..
 import type { ProjectView } from "../../../projectCommands";
 import { InteractionGate } from "../../workspace/interactionGate";
 import { i18n } from "../../../i18n";
-import type { DecisionItem, DecisionPage } from "../../../decisionCommands";
 import type { deliveryWorkbenchEn } from "../../../i18n/deliveryWorkbench";
 import { useSessionReads } from "../../../SessionReadProvider";
 
@@ -31,14 +30,13 @@ let installed: boolean, loseExport: boolean, readAttempts: number, prepared: Plu
 let reads: ReturnType<typeof useSessionReads>;
 let readSourceScope: () => Promise<{ currentSnapshot: string; revision: string }>;
 let readReleases: () => Promise<typeof releases>;
-function Harness({ visible = true, target = null, inbox, onOpenDecision, onInitialReadSettled }: { visible?: boolean; target?: DeliveryViewProps["target"]; project?: ProjectView; inbox?: DeliveryViewProps["inbox"]; onOpenDecision?: DeliveryViewProps["onOpenDecision"]; onInitialReadSettled?: DeliveryViewProps["onInitialReadSettled"] }) {
+function Harness({ visible = true, target = null, onOpenDecisions = () => {} }: { visible?: boolean; target?: DeliveryViewProps["target"]; project?: ProjectView; onOpenDecisions?: () => void }) {
   reads = useSessionReads();
   owner = useReleaseDraftSession();
   const tasks = useExecutionTaskSession(), commands = useWorkbenchCommands();
   registry = commands;
   return <Delivery project={project} owner={owner} tasks={tasks} commands={commands} gate={gate} viewId="delivery-view" visible={visible} disabled={false}
-    onOpenDecisions={() => {}} onOpenKnowledge={() => {}} onOpenExtensions={() => {}} target={target} inbox={inbox} onOpenDecision={onOpenDecision}
-    onInitialReadSettled={onInitialReadSettled}/>;
+    onOpenDecisions={onOpenDecisions} onOpenExtensions={() => {}} target={target}/>;
 }
 function mainAction() {
   const header = screen.getByRole("heading", { name: w("title"), level: 1 }).closest("header");
@@ -98,17 +96,6 @@ beforeEach(async () => {
   });
 });
 afterEach(() => { cleanup(); gate.dispose(); });
-
-it("lets the passive decision read proceed after the initial visible history read settles", async () => {
-  let finishHistory!: (records: typeof releases) => void;
-  readReleases = () => new Promise(resolve => { finishHistory = resolve; });
-  const settled = vi.fn();
-  render(<Harness project={project} onInitialReadSettled={settled}/>);
-  await waitFor(() => expect(finishHistory).toBeDefined());
-  expect(settled).not.toHaveBeenCalled();
-  await act(async () => { finishHistory(releases); });
-  await waitFor(() => expect(settled).toHaveBeenCalledTimes(1));
-});
 
 it.each([
   { locale: "en-US", title: "Delivery", steps: ["Readiness", "Build", "Verification", "Export", "History"], settings: "Build settings" },
@@ -311,25 +298,17 @@ it("guides an unconfigured check into settings, captures exact paths and keeps e
 });
 
 
-it("explains a changed typed issue and explicitly refreshes the shared feed without replacing build settings", async () => {
-  const item: DecisionItem = { decisionId: "delivery-unknown:synthetic", source: "delivery-unknown", state: "awaiting-recheck", locale: "zh-CN", targets: [{ kind: "delivery", releaseId: release.releaseId, deliveryId: id(708) }], targetsComplete: true,
-    basis: "d".repeat(64), sourceActionId: id(703), action: { kind: "inspect-delivery-outcome", releaseId: release.releaseId, deliveryId: id(708), actionId: id(703) },
-    evidence: { kind: "delivery-outcome", state: "unknown", locales: ["zh-CN"], fileCount: 1, unknownFileCount: 1 } };
-  const page: DecisionPage = { projectId: project.metadata.projectId, basis: "e".repeat(64), query: { locale: null, sources: ["delivery-unknown"] }, items: [item], next: null, knownCount: 1, total: 1,
-    coverage: [{ source: "delivery-unknown", knownCount: 1, total: 1, state: "complete", reason: null, errorCode: null }], deliveryActivity: [], executionActivity: [], localActions: null };
-  const retry = vi.fn(), onOpenDecision = vi.fn(async () => false), inbox = { page, loading: false, failure: null, current: () => true, retry };
-  const user = userEvent.setup(); render(<Harness project={project} inbox={inbox} onOpenDecision={onOpenDecision}/>);
+it("opens the decision inbox explicitly from readiness", async () => {
+  const openDecisions = vi.fn();
+  const user = userEvent.setup();
+  render(<Harness project={project} onOpenDecisions={openDecisions}/>);
   const readiness = await screen.findByRole("button", { name: w("readiness") });
-  await waitFor(() => expect(readiness).toBeEnabled()); await user.click(readiness);
+  await waitFor(() => expect(readiness).toBeEnabled());
+  await user.click(readiness);
   const issues = screen.getByRole("region", { name: w("otherIssues") });
-  await user.click(within(issues).getAllByRole("button", { name: w("openDecisions") })[0]);
-  expect(await within(issues).findByText(w("decisionChanged"))).toBeVisible();
-  await user.click(within(issues).getByRole("button", { name: w("refreshIssues") }));
-  expect(retry).toHaveBeenCalledOnce(); expect(onOpenDecision).toHaveBeenCalledExactlyOnceWith(item);
-  expect(owner.current().pending).toBeNull();
-  expect(invoke.mock.calls.some(([command]) => ["export_release", "reconcile_delivery", "read_decision_page"].includes(command))).toBe(false);
+  await user.click(within(issues).getByRole("button", { name: w("openDecisions") }));
+  expect(openDecisions).toHaveBeenCalledOnce();
 });
-
 
 it.each(["en-US", "zh-CN"])("opens the full saved build evidence through History without new tool, folder or execution authority (%s)", async language => {
   await i18n.changeLanguage(language);

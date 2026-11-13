@@ -178,9 +178,22 @@ fn all_artifacts_survive_frozen_edits_delivery_outcomes_and_current_format_move(
         "zh-CN",
         "Edited after freeze",
     );
+    use rusqlite::trace::{TraceEvent, TraceEventCodes};
+    thread_local! { static RELEASE_READS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) }; }
+    let trace = |store: &ProjectStore| store.connection().unwrap().trace_v2(TraceEventCodes::SQLITE_TRACE_STMT, Some(|event| {
+        if let TraceEvent::Stmt(_, sql) = event
+            && sql.starts_with("SELECT action_id,project_id,attempt_id,manifest,manifest_digest,created_at")
+        {
+            RELEASE_READS.with(|count| count.set(count.get() + 1));
+        }
+    }));
     let receipt = store.commit_execution_adoption(prepared).unwrap();
     let release = release_id(&receipt);
-    let view = store.release_view(release).unwrap();
+    trace(&store);
+    let [view]: [ReleaseView; 1] = store.list_releases(input.envelope().project_id).unwrap().try_into().unwrap();
+    assert_eq!(view.release_id, release);
+    assert_eq!(RELEASE_READS.with(|count| count.replace(0)), 0, "the first history read must reuse the committed proof");
+    store.connection().unwrap().trace_v2(TraceEventCodes::empty(), None);
     assert_eq!(view.artifacts.len(), 6);
     assert_eq!(
         view.eligibility_basis,
@@ -267,18 +280,9 @@ fn all_artifacts_survive_frozen_edits_delivery_outcomes_and_current_format_move(
     assert!(store.delivery_by_action(delivery_action).unwrap().is_none());
     expected[0].expected_sha256 = correct_digest;
 
-    use rusqlite::trace::{TraceEvent, TraceEventCodes};
-    thread_local! { static RELEASE_READS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) }; }
-    store.connection().unwrap().trace_v2(TraceEventCodes::SQLITE_TRACE_STMT, Some(|event| {
-        if let TraceEvent::Stmt(_, sql) = event
-            && sql.starts_with("SELECT action_id,project_id,attempt_id,manifest,manifest_digest,created_at")
-        {
-            RELEASE_READS.with(|count| count.set(count.get() + 1));
-        }
-    }));
+    trace(&store);
     let admission = store.begin_delivery_for_export(delivery_action, release, "isolated-destination", false, &expected).unwrap();
     let replay = store.begin_delivery_for_export(delivery_action, release, "isolated-destination", false, &expected).unwrap();
-    store.connection().unwrap().trace_v2(TraceEventCodes::empty(), None);
     // list_releases verified the release after the last write. Admission can
     // read the bytes directly, and replay must continue to return only a receipt.
     assert_eq!(RELEASE_READS.with(|count| count.replace(0)), 0);
@@ -311,6 +315,11 @@ fn all_artifacts_survive_frozen_edits_delivery_outcomes_and_current_format_move(
             .state,
         DeliveryState::Partial
     );
+    let receipts = store.list_deliveries(release).unwrap();
+    assert_eq!(receipts.len(), 1);
+    assert_eq!(receipts[0].state, DeliveryState::Partial);
+    assert_eq!(RELEASE_READS.with(|count| count.replace(0)), 0, "receipt writes must retain unchanged release proof");
+    store.connection().unwrap().trace_v2(TraceEventCodes::empty(), None);
     assert_eq!(
         store
             .begin_delivery(delivery_action, release, "isolated-destination", false)
@@ -394,6 +403,23 @@ fn all_artifacts_survive_frozen_edits_delivery_outcomes_and_current_format_move(
             );
         }
     }
+}
+
+#[test]
+fn a_trigger_that_changes_committed_release_bytes_cannot_seed_a_verified_projection() {
+    let (_directory, mut store, generation, input) = fixture_build(&["zh-CN"]);
+    let result = builder_result(&mut store, &input, input.envelope().items[0].item_id);
+    prove(&mut store, generation, &input, &result);
+    let action = action(&mut store, &input, &[result]);
+    let prepared = store.capture_execution_adoption(&action).unwrap()
+        .prepare(&ReleaseAdoptionHandler).unwrap();
+    store.connection().unwrap().execute_batch(
+        "CREATE TEMP TRIGGER substitute_release AFTER INSERT ON main.release_artifacts
+         BEGIN UPDATE release_artifacts SET bytes=x'66' WHERE release_id=NEW.release_id; END;",
+    ).unwrap();
+    let receipt = store.commit_execution_adoption(prepared).unwrap();
+    let error = store.release_view(release_id(&receipt)).unwrap_err();
+    assert_eq!(error.code, ErrorCode::CorruptLedger);
 }
 
 #[test]
