@@ -139,6 +139,30 @@ pub(crate) fn decode<T: serde::de::DeserializeOwned>(
         .map_err(|_| ExecutionError::new(ErrorCode::InvalidInput, "decoding"))
 }
 
+/// Execution envelopes use strict typed fields and the strict visitors below
+/// at each open JSON field. Their validators also check whole-envelope depth.
+pub(super) fn decode_frame<T: serde::de::DeserializeOwned>(
+    bytes: &[u8],
+    limit: usize,
+) -> Result<T, ExecutionError> {
+    if bytes.len() > limit {
+        return Err(ExecutionError::new(ErrorCode::LimitExceeded, "decoding"));
+    }
+    serde_json::from_slice(bytes)
+        .map_err(|_| ExecutionError::new(ErrorCode::InvalidInput, "decoding"))
+}
+
+pub(super) fn strict_value<'de, D: serde::Deserializer<'de>>(decoder: D) -> Result<Value, D::Error> {
+    StrictValue::<true>(0).deserialize(decoder)
+}
+
+pub(super) fn strict_optional_value<'de, D: serde::Deserializer<'de>>(
+    decoder: D,
+) -> Result<Option<Value>, D::Error> {
+    let value = strict_value(decoder)?;
+    Ok((!value.is_null()).then_some(value))
+}
+
 /// Verify the original syntax, depth, and unique object keys when the ledger
 /// only needs a digest projection. The domain reader will decode the payload.
 pub(crate) fn validate_json(bytes: &[u8], limit: usize) -> Result<(), ExecutionError> {

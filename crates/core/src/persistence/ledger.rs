@@ -1796,16 +1796,7 @@ fn validate_source_link_with_bundle(
         {
             return Err(error(ErrorCode::CorruptLedger, "semantic-validation-proof"));
         }
-        check_stored_input(connection, &source.input)?;
-        check_stored_result(connection, &source.result)?;
-        check_stored_input(connection, &prepared.capture.check_input)?;
-        check_stored_result(connection, &prepared.check_result)?;
-        super::resources::verify_input_fact_decisions(connection, &prepared.capture.check_input)?;
-        super::plugin_execution::validate_result_in(
-            connection,
-            &prepared.capture.check_input,
-            &prepared.check_result,
-        )?;
+        check_cached_source_validation(connection, &prepared)?;
         return Ok(prepared);
     }
     let (check_input, check_result) = load_check_frames(connection, &checker_id)?;
@@ -1823,6 +1814,42 @@ fn validate_source_link_with_bundle(
     }
     remember_source_validation(prepared.clone());
     Ok(prepared)
+}
+
+/// A publication can reuse the same qualified frames after its write commits.
+/// The row bytes, grants and the exact publication are still checked separately.
+pub(super) fn read_cached_source_publication(
+    connection: &Connection,
+    project: ExecutionId,
+    checker_attempt: ExecutionId,
+    checker_result: ExecutionId,
+    producer_result: ExecutionId,
+    valid: bool,
+) -> Result<bool, ExecutionError> {
+    let prepared = source_validation_cache().lock().unwrap_or_else(std::sync::PoisonError::into_inner)
+        .as_ref().and_then(|memo| memo.prepared.as_ref()).filter(|proof| {
+            proof.capture.source.input.envelope().project_id == project
+                && proof.capture.source.result.envelope().result_id == producer_result
+                && proof.capture.check_input.envelope().attempt_id == checker_attempt
+                && proof.check_result.envelope().result_id == checker_result
+        }).cloned();
+    let Some(prepared) = prepared else { return Ok(false); };
+    if prepared.proof.valid != valid {
+        return Err(error(ErrorCode::CorruptLedger, "source-check-publication"));
+    }
+    check_cached_source_validation(connection, &prepared)?;
+    Ok(true)
+}
+
+fn check_cached_source_validation(connection: &Connection, prepared: &PreparedSourceValidation) -> Result<(), ExecutionError> {
+    let source = &prepared.capture.source;
+    for (input, result) in [(&source.input, &source.result), (&prepared.capture.check_input, &prepared.check_result)] {
+        check_stored_input(connection, input)?;
+        check_stored_result(connection, result)?;
+        super::resources::verify_input_fact_decisions(connection, input)?;
+        super::plugin_execution::validate_result_in(connection, input, result)?;
+    }
+    Ok(())
 }
 
 pub(super) fn validate_plugin_link(
@@ -4323,21 +4350,23 @@ impl ProjectStore {
         expected_check: &FixedResult,
         proof: &ValidationProof,
     ) -> Result<(FixedInput, FixedResult, FixedInput, FixedResult), ExecutionError> {
-        let producer_input = load_input_cached(c, captured.input.envelope().attempt_id)?;
-        let producer_result = load_result(c, &producer_input, captured.result.envelope().result_id)?;
-        let check_input = load_input_cached(c, captured_check.envelope().attempt_id)?;
-        let check_result = load_result(c, &check_input, expected_check.envelope().result_id)?;
-        if !proof.matches(&producer_input, &producer_result)
-            || producer_input.digest() != captured.input.digest()
-            || check_input.digest() != captured_check.digest()
-            || check_result.digest() != expected_check.digest()
-        {
+        if !proof.matches(&captured.input, &captured.result) {
             return Err(error(
                 ErrorCode::ResultMismatch,
                 "semantic-validation-preparation",
             ));
         }
-        Ok((producer_input, producer_result, check_input, check_result))
+        // Prepared evidence has already received both typed results. Compare
+        // the original persisted bytes and associations in the write snapshot
+        // before reusing them; do not decode and rebuild both requests again.
+        for (input, result) in [(&captured.input, &captured.result), (captured_check, expected_check)] {
+            result.validate_for_input(input)?;
+            check_stored_input(c, input)?;
+            check_stored_result(c, result)?;
+            super::resources::verify_input_fact_decisions(c, input)?;
+            super::plugin_execution::validate_result_in(c, input, result)?;
+        }
+        Ok((captured.input.clone(), captured.result.clone(), captured_check.clone(), expected_check.clone()))
     }
 
     pub(super) fn publish_semantic_frames_in(

@@ -760,7 +760,13 @@ pub(crate) fn validate_output_for_bundle(
         }
         // Typed Serde sees the original bytes; Value is only an independently
         // checked result projection and cannot conceal duplicate typed fields.
-        sdk::parse_content_exchange(output.utf8.as_bytes()).map_err(source_contract_error)?
+        let bytes = output.utf8.as_bytes();
+        if bytes.len() > sdk::MAX_CONTENT_EXCHANGE_BYTES {
+            return Err(failure(ErrorCode::LimitExceeded, "source-result"));
+        }
+        // project_source_output checks the typed content and its association
+        // with the captured materials together, before projecting any fields.
+        serde_json::from_slice(bytes).map_err(|_| invalid("source-result"))?
     } else {
         #[cfg(any(
             test,

@@ -32,6 +32,9 @@ fn checked_record(
     let result = load_result(c, &input, producer_result)?;
     let check_input = load_input(c, checker_attempt)?;
     let check_result = load_result(c, &check_input, checker_result)?;
+    if check_input.envelope().project_id != input.envelope().project_id {
+        return Err(corrupt());
+    }
     let prepared = SourceValidationCapture::restore(ResultValidationCapture { input, result }, check_input)?
         .prepare(check_result)?;
     if prepared.proof.valid != valid {
@@ -51,22 +54,26 @@ pub(in crate::persistence) fn observe_in(
     if super::super::read_metadata_from(c).map_err(|_| corrupt())?.project_id().to_string() != project.to_string() {
         return Err(failure(ErrorCode::Unauthorized, "source-check-project"));
     }
-    let input = load_input(c, checker_attempt)?;
-    if input.envelope().project_id != project || input.envelope().operation != SOURCE_CHECK_OPERATION {
-        return Err(failure(ErrorCode::ResultMismatch, "source-check-request"));
-    }
-    // Loading the exact frame rejects a result from another attempt even when
-    // the publication has not happened yet.
-    load_result(c, &input, checker_result)?;
     let saved: Option<(String, String, bool)> = c.query_row(
         "SELECT checker_attempt_id,producer_result_id,valid FROM source_validation_history WHERE checker_result_id=?1",
         [checker_result.to_string()], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
     ).optional().map_err(sql_error)?;
-    let Some((attempt, producer, valid)) = saved else { return Ok(None); };
+    let Some((attempt, producer, valid)) = saved else {
+        let input = load_input(c, checker_attempt)?;
+        if input.envelope().project_id != project || input.envelope().operation != SOURCE_CHECK_OPERATION {
+            return Err(failure(ErrorCode::ResultMismatch, "source-check-request"));
+        }
+        // An absent publication must still identify an exact checker result.
+        load_result(c, &input, checker_result)?;
+        return Ok(None);
+    };
     if attempt != checker_attempt.to_string() {
         return Err(failure(ErrorCode::ResultMismatch, "source-check-request"));
     }
-    checked_record(c, checker_attempt, checker_result, id(producer)?, valid)?;
+    let producer = id(producer)?;
+    if !super::super::ledger::read_cached_source_publication(c, project, checker_attempt, checker_result, producer, valid)? {
+        checked_record(c, checker_attempt, checker_result, producer, valid)?;
+    }
     Ok(Some(valid))
 }
 

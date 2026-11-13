@@ -193,6 +193,7 @@ The current workspace targets **`0.3.0-alpha.1`**. The published `0.2.0-alpha.1`
 
 - Reduce historical decoding when opening projects with large plugin imports or builds. Load the entries or delivery history before reading the project brief's review counts. Give delivery history and open import panels priority over the background decision count.
 - Reduce memory copies when opening projects with large saved execution inputs. Reuse validated source materials when checking import history and read saved build bindings without loading every source text again.
+- Reduce historical frame decoding when opening large projects and reuse verified source-check evidence when recording an import check.
 
 - Reopen a cleanly closed project faster in the same desktop process by checking its exact database bytes before reusing the completed history validation.
 

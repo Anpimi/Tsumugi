@@ -145,6 +145,8 @@ it.each(["runtime", "package"] as const)("preserves the captured import and requ
 it("reviews later pages of a first import and applies the complete checked result", async () => {
   const nextOrdinal = 37, total = 52, actionId = id(2190);
   const { attemptId, resultId } = wire.preview;
+  const checkerAttempt = id(2192), checkerResult = id(2193);
+  let recorded = false;
   const rows = Array.from({ length: total }, (_, ordinal) => sourceRowFixture({}, {
     ordinal, key: `source.entry.${ordinal}`, text: `Source text ${ordinal}`, operationOccurrenceId: id(2200 + ordinal),
   }));
@@ -156,7 +158,19 @@ it("reviews later pages of a first import and applies the complete checked resul
   invoke.mockImplementation(async (command, { request }) => {
     if (command === "read_plugin_inventory") return pluginSourceInventory;
     if (command === "read_plugin_package") return pluginSourcePackage;
-    if (command === "read_execution_attempt") return sourceAttemptFixture(attemptId, resultId);
+    if (command === "read_execution_attempt") {
+      if (request.attemptId === checkerAttempt) {
+        return { ...sourceAttemptFixture(checkerAttempt, checkerResult), operation: "source-semantic-check" };
+      }
+      const detail = sourceAttemptFixture(attemptId, resultId);
+      if (!recorded) detail.items[0].status.validation = "pending";
+      return detail;
+    }
+    if (command === "finish_source_check") {
+      expect(request).toEqual({ ...wire.session, attemptId: checkerAttempt, resultId: checkerResult });
+      recorded = true;
+      return null;
+    }
     if (command === "read_source_preview") {
       if (request.after === 0) return first;
       if (request.after === nextOrdinal) return ++readLaterPage === 1 ? otherResult : last;
@@ -173,11 +187,20 @@ it("reviews later pages of a first import and applies the complete checked resul
   installSourceDraftFixture();
   const inputs = sourceDraftStateFixture();
   inputs.source.attempt = attemptId;
+  inputs.source.checkAttempt = checkerAttempt;
   await sourceDraftCommands.write({ sessionToken: project.sessionToken, write: { key: { projectId: project.metadata.projectId },
     expectedRevision: "0", writerId: id(2191), value: sourceDraftValue(inputs, "2") } });
   renderWorkbench(<Harness saved={null}/>, project);
   const user = userEvent.setup(), button = (name: string) => screen.getByRole("button", { name });
-  await user.click(await screen.findByRole("button", { name: i18n.t("sourceMaintenance.preview") }));
+  const sheet = await screen.findByRole("dialog", { name: i18n.t("sourceMaintenance.title") });
+  const finish = await within(sheet).findByRole("button", { name: i18n.t("sourceMaintenance.finishCheck") });
+  await waitFor(() => expect(finish).toBeEnabled());
+  await user.click(finish);
+  const previewButton = await within(sheet).findByRole("button", { name: i18n.t("sourceMaintenance.preview") });
+  await waitFor(() => expect(previewButton).toBeEnabled());
+  expect(recorded).toBe(true);
+  expect(onClose).not.toHaveBeenCalled();
+  await user.click(previewButton);
   expect(await screen.findByText("source.entry.0")).toBeVisible();
   expect(screen.queryByText("source.entry.37")).not.toBeInTheDocument();
   const confirm = screen.getByRole("checkbox", { name: i18n.t("sourceMaintenance.confirmApply", { count: total }) });

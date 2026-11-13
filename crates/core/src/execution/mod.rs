@@ -323,6 +323,7 @@ pub struct Dependency {
 pub struct InputItem {
     pub item_id: ExecutionId,
     pub scope: Scope,
+    #[serde(deserialize_with = "codec::strict_value")]
     pub payload: Value,
     pub dependencies: Vec<Dependency>,
 }
@@ -418,6 +419,7 @@ pub struct InputEnvelope {
     pub operation: String,
     pub capability_id: String,
     pub capability_version: String,
+    #[serde(deserialize_with = "codec::strict_value")]
     pub settings: Value,
     pub limits: ExecutionLimits,
     pub items: Vec<InputItem>,
@@ -650,7 +652,7 @@ impl FixedInput {
                 "input-digest",
             ));
         }
-        let envelope: InputEnvelope = codec::decode(&bytes, MAX_FIXED_INPUT_BYTES)?;
+        let envelope: InputEnvelope = codec::decode_frame(&bytes, MAX_FIXED_INPUT_BYTES)?;
         envelope.validate()?;
         if bytes.len() > Self::byte_limit(&envelope) {
             return Err(ExecutionError::new(ErrorCode::LimitExceeded, "input"));
@@ -1008,6 +1010,7 @@ pub struct ResultEnvelope {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub plugin: Option<PluginResultEvidence>,
     pub outcome: ExecutionState,
+    #[serde(default, deserialize_with = "codec::strict_optional_value")]
     pub output: Option<Value>,
     pub diagnostic: Option<Diagnostic>,
 }
@@ -1105,7 +1108,7 @@ impl FixedResult {
         verified_digest: Option<String>,
     ) -> Result<Self, ExecutionError> {
         let envelope: ResultEnvelope =
-            codec::decode(&bytes, input.envelope().limits.max_result_bytes as usize)?;
+            codec::decode_frame(&bytes, input.envelope().limits.max_result_bytes as usize)?;
         envelope.validate(input, token)?;
         let digest = verified_digest.unwrap_or_else(|| codec::digest(&bytes));
         Ok(Self {

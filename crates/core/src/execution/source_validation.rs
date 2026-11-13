@@ -27,6 +27,13 @@ pub(crate) struct SourceValidationBasis {
     pub(crate) source_result_digest: String,
 }
 
+#[derive(Serialize)]
+struct CheckerPayload<'a> {
+    source: &'a sdk::SourceExtractionInput,
+    proposal: &'a sdk::ContentExchange,
+    requirements: &'a [sdk::CheckRequirement],
+}
+
 /// Created from a store-owned immutable source result. The checker input can be
 /// submitted through the existing runtime only after separate authorization.
 #[derive(Clone)]
@@ -76,7 +83,7 @@ impl SourceValidationCapture {
         attempt: Option<ExecutionId>,
     ) -> Result<Self, ExecutionError> {
         let (bundle, settings) = crate::content::SourceBundle::from_input_with_settings(&source.input)?;
-        let (mut envelope, projected, checks) = Self::reconstruct(&source, &bundle, &settings)?;
+        let (mut envelope, projected, checks) = Self::reconstruct(&source, &bundle, &settings, false)?;
         envelope.attempt_id = attempt.unwrap_or(envelope.attempt_id);
         let check_input = FixedInput::capture(envelope)?;
         Ok(Self { source, check_input, projected, checks })
@@ -86,6 +93,7 @@ impl SourceValidationCapture {
         source: &ResultValidationCapture,
         bundle: &crate::content::SourceBundle,
         settings: &crate::content::SourceSettings,
+        restoring: bool,
     ) -> Result<(InputEnvelope, Arc<crate::content::SourceOutput>, sdk::FixedCheckSet), ExecutionError> {
         let projected = Arc::new(crate::content::validate_output_for_bundle(
             &source.input,
@@ -130,12 +138,25 @@ impl SourceValidationCapture {
             .collect();
         let checks = sdk::capture_required_checks(reference(POLICY), vec![core], domain.clone())
             .map_err(|_| invalid())?;
-        let payload = sdk::SourceExtractionCheckInput {
-            source: bundle.source_input(),
-            proposal: projected.exchange.clone(),
-            requirements: domain,
+        let source_material = bundle.source_input();
+        let scope_id = source_material.source_set_id.clone();
+        let payload = if restoring {
+            // The source and proposal already passed full SDK qualification
+            // together, and the fixed union checked these mandatory rules.
+            // The canonical comparison also bounds the entire Core frame,
+            // whose maximum is smaller than the SDK material payload limit.
+            serde_json::to_value(CheckerPayload {
+                source: &source_material, proposal: &projected.exchange, requirements: &domain,
+            }).map_err(|_| invalid())?
+        } else {
+            let payload = sdk::SourceExtractionCheckInput {
+                source: source_material,
+                proposal: projected.exchange.clone(),
+                requirements: domain,
+            };
+            payload.validate().map_err(|_| invalid())?;
+            serde_json::to_value(payload).map_err(|_| invalid())?
         };
-        payload.validate().map_err(|_| invalid())?;
         let basis = SourceValidationBasis {
             source_attempt_id: source.input.envelope().attempt_id,
             source_result_id: source.result.envelope().result_id,
@@ -145,10 +166,10 @@ impl SourceValidationCapture {
         let item = InputItem::new(
             Scope {
                 kind: "source-check".into(),
-                id: payload.source.source_set_id.clone(),
+                id: scope_id,
                 locale: None,
             },
-            serde_json::to_value(payload).map_err(|_| invalid())?,
+            payload,
             vec![],
         );
         let project = source
@@ -189,10 +210,10 @@ impl SourceValidationCapture {
         verified_source: Option<(&crate::content::SourceBundle, &crate::content::SourceSettings)>,
     ) -> Result<Self, ExecutionError> {
         let (envelope, projected, checks) = match verified_source {
-            Some((bundle, settings)) => Self::reconstruct(&source, bundle, settings)?,
+            Some((bundle, settings)) => Self::reconstruct(&source, bundle, settings, true)?,
             None => {
                 let (bundle, settings) = crate::content::SourceBundle::from_input_with_settings(&source.input)?;
-                Self::reconstruct(&source, &bundle, &settings)?
+                Self::reconstruct(&source, &bundle, &settings, true)?
             }
         };
         validation::restore_reconstructed_check_input(envelope, &check_input)?;

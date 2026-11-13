@@ -299,6 +299,27 @@ fn decoding_rejects_duplicates_unknown_fields_invalid_ids_and_excessive_depth() 
 }
 
 #[test]
+fn typed_frames_reject_duplicate_keys_inside_payloads_and_results() {
+    let fixed = input();
+    let mut envelope = fixed.envelope().clone();
+    envelope.items[0].payload = json!({"unique": "probe"});
+    let fixed = FixedInput::capture(envelope).unwrap();
+    let altered = std::str::from_utf8(fixed.bytes()).unwrap()
+        .replace(r#"{"unique":"probe"}"#, r#"{"unique":0,"\u0075nique":"probe"}"#);
+    assert_ne!(altered.as_bytes(), fixed.bytes());
+    assert!(FixedInput::restore(altered.as_bytes(), &codec::digest(altered.as_bytes())).is_err());
+
+    let token = ExecutionId::new();
+    let mut draft = result(&fixed, fixed.envelope().items[0].item_id, token);
+    draft.output = Some(json!({"unique":"probe"}));
+    let result = FixedResult::capture(draft, &fixed, token).unwrap();
+    let altered = std::str::from_utf8(result.bytes()).unwrap()
+        .replace(r#"{"unique":"probe"}"#, r#"{"unique":0,"\u0075nique":"probe"}"#);
+    assert_ne!(altered.as_bytes(), result.bytes());
+    assert!(FixedResult::restore(altered.as_bytes(), &codec::digest(altered.as_bytes()), &fixed, token).is_err());
+}
+
+#[test]
 fn item_and_unit_coverage_is_exact_and_limits_are_enforced() {
     let fixed = input();
     let mut draft = fixed.envelope().clone();
