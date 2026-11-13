@@ -1158,7 +1158,7 @@ impl FixedResult {
 
     /// Recheck an immutable frame with its original dispatch token. Database
     /// association and authorization remain the caller's concern.
-    fn validate_for_input(&self, input: &FixedInput) -> Result<(), ExecutionError> {
+    pub(crate) fn validate_for_input(&self, input: &FixedInput) -> Result<(), ExecutionError> {
         if self.validated_input_digest.as_ref() == input.digest() {
             return Ok(());
         }
