@@ -9,6 +9,7 @@ pub struct AdoptionCapture {
     pub(crate) results: Vec<FixedResult>,
     pub(crate) digest: String,
     pub(crate) receipt: Option<AdoptionReceipt>,
+    pub(crate) release_proof: Option<crate::persistence::ledger::ReleaseAdoptionProof>,
 }
 
 /// A store-bound preparation; scope, fixed evidence and action cannot be replaced

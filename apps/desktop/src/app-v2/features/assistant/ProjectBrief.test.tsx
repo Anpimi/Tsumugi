@@ -84,6 +84,16 @@ it("waits for the work surface before reading review eligibility", async () => {
   expect(invoke.mock.calls.filter(([command]) => command === "read_review_eligibility")).toHaveLength(1);
 });
 
+it("does not refetch review eligibility on Delivery after a window focus", async () => {
+  const h = setup();
+  await waitFor(() => expect(screen.getAllByText("Selected translations: 6 / 8")).toHaveLength(2));
+  h.update({ observeProgress: false });
+  await act(async () => { reads.invalidate([], false, "focus"); });
+  expect(invoke.mock.calls.filter(([command]) => command === "read_review_eligibility")).toHaveLength(1);
+  h.update({ observeProgress: true });
+  await waitFor(() => expect(invoke.mock.calls.filter(([command]) => command === "read_review_eligibility")).toHaveLength(2));
+});
+
 it("keeps reported languages and partial decisions while an omitted language stays unknown", async () => {
   missingLocale = "fr";
   // The omitted locale can keep the complete assessment not ready even when

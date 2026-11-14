@@ -187,7 +187,10 @@ fn prepare_data(
     let (plan, summary) = if input.envelope().plugin.is_some() {
         let (plan, mut artifact) = match open_build {
             Some(evidence) => (evidence.plan, evidence.artifact),
-            None => (Arc::new(ReleasePlan::from_input(input)?), None),
+            None => (match input.open_build_plan() {
+                Some(plan) => plan.clone(),
+                None => Arc::new(ReleasePlan::from_input(input)?),
+            }, None),
         };
         let summary = plan.release_summary();
         for result in results {

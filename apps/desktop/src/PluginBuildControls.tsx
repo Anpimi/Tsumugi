@@ -38,8 +38,8 @@ function matchesBuildScope(item: AttemptDetail["items"][number], review: PluginB
 }
 
 /** Query owns current projections; the project session owns every captured build action. */
-export function PluginBuildControls({ project, open, disabled, onRecorded, onOpenExtensions, openBlocker, renderWorkbench, canInteract }: {
-  project: ProjectView; open: boolean; disabled: boolean;
+export function PluginBuildControls({ project, open, settingsOpen, disabled, onRecorded, onOpenExtensions, openBlocker, renderWorkbench, canInteract }: {
+  project: ProjectView; open: boolean; settingsOpen: boolean; disabled: boolean;
   onRecorded: (actionId: string) => Promise<void>;
   onOpenExtensions?: () => void;
   renderWorkbench: (parts: BuildWorkbenchParts) => ReactNode;
@@ -296,7 +296,7 @@ export function PluginBuildControls({ project, open, disabled, onRecorded, onOpe
           <input type="checkbox" checked={languages.includes(locale)} disabled={mappingLocked} onChange={event => { if (!mappingLocked && canInteract?.("input") !== false) owner.setLanguage(locale, event.target.checked); }}/>
         </Field>)}
       </fieldset>
-      {languages.map(locale => <ReleaseTranslationScope key={locale} project={project} locale={locale} visible={setupOpen}
+      {languages.map(locale => <ReleaseTranslationScope key={locale} project={project} locale={locale} visible={setupOpen && settingsOpen && !draftLocked}
         selected={owner.translationScopes[locale]} disabled={mappingLocked} canInteract={canInteract}
         onChange={units => owner.setTranslationScope(locale, units)}/>)}
       <p id={pathsHelpId} className={styles.help}>{t("releasePlugin.pathHelp")}</p>

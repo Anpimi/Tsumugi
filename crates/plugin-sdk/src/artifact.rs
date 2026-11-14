@@ -1,6 +1,7 @@
 //! Exact captured bytes and source coordinates. These values identify immutable
 //! evidence; they grant no access to local paths, project storage or execution.
 use std::borrow::Cow;
+use std::io::Read;
 use std::sync::Arc;
 
 use base64::{Engine, engine::general_purpose::STANDARD};
@@ -65,17 +66,49 @@ pub struct CapturedBinaryArtifact {
     pub logical_path: String,
     pub role: String,
     pub sha256: String,
+    #[serde(deserialize_with = "crate::invocation::deserialize_payload_text")]
     pub base64: Arc<str>,
 }
 
 /// Exactly one representation. Text retains its original wire shape; mixed,
 /// null and unknown fields are rejected by the two closed representations.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
 #[serde(untagged)]
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 pub enum CapturedArtifact {
     Text(CapturedTextArtifact),
     Binary(CapturedBinaryArtifact),
+}
+
+impl<'de> Deserialize<'de> for CapturedArtifact {
+    fn deserialize<D: serde::Deserializer<'de>>(decoder: D) -> Result<Self, D::Error> {
+        fn text<'de, D: serde::Deserializer<'de>>(decoder: D) -> Result<Option<String>, D::Error> {
+            String::deserialize(decoder).map(Some)
+        }
+        fn binary<'de, D: serde::Deserializer<'de>>(decoder: D) -> Result<Option<Arc<str>>, D::Error> {
+            crate::invocation::deserialize_payload_text(decoder).map(Some)
+        }
+        // An untagged derive holds a second copy of potentially large material
+        // while selecting the closed shape. Decode each field once.
+        #[derive(Deserialize)]
+        #[serde(rename_all = "camelCase", deny_unknown_fields)]
+        struct Fields {
+            id: String,
+            logical_path: String,
+            role: String,
+            sha256: String,
+            #[serde(default, deserialize_with = "text")]
+            utf8: Option<String>,
+            #[serde(default, deserialize_with = "binary")]
+            base64: Option<Arc<str>>,
+        }
+        let Fields { id, logical_path, role, sha256, utf8, base64 } = Fields::deserialize(decoder)?;
+        match (utf8, base64) {
+            (Some(utf8), None) => Ok(Self::Text(CapturedTextArtifact { id, logical_path, role, sha256, utf8 })),
+            (None, Some(base64)) => Ok(Self::Binary(CapturedBinaryArtifact { id, logical_path, role, sha256, base64 })),
+            _ => Err(serde::de::Error::custom("expected one captured artifact encoding")),
+        }
+    }
 }
 
 /// A captured payload without file identity, for owners that retain their own
@@ -210,12 +243,16 @@ impl CapturedArtifact {
             Self::Binary(value) => decode_binary(&value.base64).map(Cow::Owned),
         }
     }
-    pub fn validated_bytes(&self) -> Result<Cow<'_, [u8]>, ContractError> {
+    fn validate_metadata(&self) -> Result<(), ContractError> {
         use crate::validation::{digest, name, opaque_id, path};
         opaque_id(self.id(), "content.artifacts.id")?;
         path(self.logical_path(), "content.artifacts.logicalPath")?;
         name(self.role(), "content.artifacts.role")?;
-        digest(self.sha256(), "content.artifacts.sha256")?;
+        digest(self.sha256(), "content.artifacts.sha256")
+    }
+
+    pub fn validated_bytes(&self) -> Result<Cow<'_, [u8]>, ContractError> {
+        self.validate_metadata()?;
         let bytes = self.bytes()?;
         if bytes.len() > MAX_MATERIAL_BYTES {
             return Err(ContractError::at(
@@ -231,6 +268,48 @@ impl CapturedArtifact {
         }
         Ok(bytes)
     }
+    /// Qualify material without retaining its decoded body during projection.
+    pub(crate) fn validated_len(&self) -> Result<usize, ContractError> {
+        #[cfg(not(feature = "aws-lc-digest"))]
+        use sha2::Digest;
+        let Self::Binary(binary) = self else { return Ok(self.validated_bytes()?.len()); };
+        self.validate_metadata()?;
+        if binary.base64.len() > MAX_MATERIAL_BYTES.div_ceil(3) * 4 {
+            return Err(ContractError::at(ContractErrorCode::LimitExceeded, "content.artifacts.base64"));
+        }
+        let mut decoder = base64::read::DecoderReader::new(binary.base64.as_bytes(), &STANDARD);
+        #[cfg(feature = "aws-lc-digest")]
+        let mut hash = aws_lc_rs::digest::Context::new(&aws_lc_rs::digest::SHA256);
+        #[cfg(not(feature = "aws-lc-digest"))]
+        let mut hash = Sha256::new();
+        let mut buffer = [0; 32 * 1024];
+        let mut length = 0;
+        loop {
+            let count = decoder.read(&mut buffer).map_err(|_| {
+                ContractError::at(ContractErrorCode::InvalidDeclaration, "content.artifacts.base64")
+            })?;
+            if count == 0 { break; }
+            length += count;
+            if length > MAX_MATERIAL_BYTES {
+                return Err(ContractError::at(ContractErrorCode::LimitExceeded, "content.artifacts"));
+            }
+            hash.update(&buffer[..count]);
+        }
+        #[cfg(feature = "aws-lc-digest")]
+        let actual = {
+            let digest = hash.finish();
+            let mut output = sha2::digest::Output::<Sha256>::default();
+            output.copy_from_slice(digest.as_ref());
+            output
+        };
+        #[cfg(not(feature = "aws-lc-digest"))]
+        let actual = hash.finalize();
+        if format!("{actual:x}") != binary.sha256 {
+            return Err(ContractError::at(ContractErrorCode::ResultMismatch, "content.artifacts.sha256"));
+        }
+        Ok(length)
+    }
+
     pub fn from_bytes(
         id: String,
         logical_path: String,

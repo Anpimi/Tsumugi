@@ -10,7 +10,7 @@ use serde_json::Value;
 use super::{ErrorCode, ExecutionError, MAX_DEPTH};
 
 mod depth;
-pub(crate) use depth::validate_serialized_depth;
+pub(crate) use depth::{validate_serialized_depth, validate_serialized_depth_at};
 
 pub(crate) fn digest(bytes: &[u8]) -> String {
     digest_hex(compute_digest(&SHA256, bytes))

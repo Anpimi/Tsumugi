@@ -742,9 +742,6 @@ function WorkspaceShell() {
   // Full decision projection shares the desktop session queue. Delivery has
   // its own readiness and recovery reads; the inbox is reached explicitly.
   const deliveryInFocus = view?.kind === "delivery";
-  const [deliveryReadSettled, setDeliveryReadSettled] = useState(false);
-  const settleDeliveryRead = useCallback(() => setDeliveryReadSettled(true), []);
-  const waitingForDelivery = deliveryInFocus && !importVisible && !deliveryReadSettled && !deliveryLoadFailed;
   const decisionFeed = useDecisionFeed(session.reads, strategyActivity ? [drafts, conversations, resourceActivity, sourceActivity, strategyActivity] : [drafts, conversations, resourceActivity, sourceActivity], view?.kind === "decisions" ? view.decisionCursor : null,
     { visible: view?.kind === "decisions" && !importInFocus, enabled: !disabled && !deliveryInFocus,
       backgroundReady: !!view && !importInFocus && !waitingForEntries
@@ -1185,7 +1182,7 @@ function WorkspaceShell() {
     }
     return <Suspense fallback={null}><ProjectBrief project={session.project} visible={(view?.dock ?? "agent") === "agent" && (!narrow || drawer)}
       briefEligible={eligible} previousPosition={previousProject?.position} disabled={!allowed()}
-      progressReady={!!view && !waitingForEntries && !waitingForDelivery}
+      observeProgress={!deliveryInFocus} progressReady={!!view && !waitingForEntries}
       decisions={decisionSummary}
       onContinue={position => void openBriefEntries(position.locale, "all", position.unitId).catch(() => setCommandFailed(true))}
       onEntries={(locale, preset) => void openBriefEntries(locale, preset).catch(() => setCommandFailed(true))}
@@ -1728,11 +1725,10 @@ function WorkspaceShell() {
                   onOpenConnections={() => settings.open("connections")} onOpenEntry={async (unitId, locale) => { try { return await inspectCandidate(unitId, locale, null); } catch { setCommandFailed(true); return false; } }}/>
                 : <LoadingState label={message("strategyLoading")}/>}</TabsContent>
             </TabsRoot>
-          </Suspense></FeatureBoundary> : view.kind === "delivery" ? <FeatureBoundary key="delivery-presentation" onFailure={settleDeliveryRead} fallback={<ErrorState title={t("deliveryWorkbench.ownerFailed")}/>}><Suspense fallback={<LoadingState label={t("deliveryWorkbench.loading")}/>}>
+          </Suspense></FeatureBoundary> : view.kind === "delivery" ? <FeatureBoundary key="delivery-presentation" fallback={<ErrorState title={t("deliveryWorkbench.ownerFailed")}/>}><Suspense fallback={<LoadingState label={t("deliveryWorkbench.loading")}/>}>
             {deliveryLoadFailed ? <ErrorState title={t("deliveryWorkbench.ownerFailed")} action={canRetryDelivery ? <Button onClick={retryDelivery}>{t("deliveryWorkbench.retryOwner")}</Button> : undefined}/>
               : deliveryOwner && executionTasks && commands ? <DeliveryView project={session.project} owner={deliveryOwner} tasks={executionTasks} commands={commands} gate={gate} viewId={view.id}
               visible={!importVisible} disabled={disabled || !commandsReady}
-              onInitialReadSettled={deliveryReadSettled ? undefined : settleDeliveryRead}
               target={view.deliveryTarget}
               onOpenEntry={async (unitId, locale) => decisionCurrent() && gate.canDispatch({ viewId: currentId, source: "button" }) ? inspectReview(unitId, locale) : false}
               onOpenDecisions={() => { void openDecisions().catch(() => setCommandFailed(true)); }}

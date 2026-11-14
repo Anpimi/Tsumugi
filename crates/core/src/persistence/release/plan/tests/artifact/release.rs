@@ -735,6 +735,29 @@ fn release_reads_and_reopen_refuse_rehashed_substitution_or_missing_links_withou
 }
 
 #[test]
+fn release_commit_reuses_unchanged_qualification_without_loading_result_frames() {
+    use rusqlite::trace::{TraceEvent, TraceEventCodes};
+    thread_local! { static FRAME_READS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) }; }
+    let (_directory, mut store, generation, input) = fixture_build(&["zh-CN"]);
+    let result = builder_result(&mut store, &input, input.envelope().items[0].item_id);
+    prove(&mut store, generation, &input, &result);
+    let action = action(&mut store, &input, &[result]);
+    let prepared = store.capture_execution_adoption(&action).unwrap()
+        .prepare(&ReleaseAdoptionHandler).unwrap();
+    store.connection().unwrap().trace_v2(TraceEventCodes::SQLITE_TRACE_STMT, Some(|event| {
+        if let TraceEvent::Stmt(_, sql) = event
+            && sql.contains("SELECT rowid,CASE WHEN typeof(bytes)='blob'")
+            && sql.contains("FROM execution_results WHERE result_id=?1 AND attempt_id=?2")
+        {
+            FRAME_READS.with(|count| count.set(count.get() + 1));
+        }
+    }));
+    let receipt = store.commit_execution_adoption(prepared).unwrap();
+    assert_eq!(FRAME_READS.with(|count| count.replace(0)), 0);
+    assert_eq!(store.adoption_receipt(action.action_id).unwrap(), Some(receipt));
+}
+
+#[test]
 fn release_commit_rechecks_frozen_source_references_after_preparation() {
     for result_damage in [false, true] {
         let (_directory, mut store, generation, input) = fixture_build(&["zh-CN"]);

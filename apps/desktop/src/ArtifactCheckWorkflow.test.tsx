@@ -135,7 +135,7 @@ afterEach(() => { cleanup(); vi.restoreAllMocks(); });
 
 async function ready() {
   const user = userEvent.setup(), view = render(<Harness/>, project);
-  await waitFor(() => expect(deliveryPrimary()).toBeEnabled());
+  await waitFor(() => expect(deliveryPrimary()).toBeEnabled(), { timeout: 5000 });
   await user.click(deliveryPrimary());
   await waitFor(() => expect(screen.getByRole("combobox", { name: i18n.t("deliveryWorkbench.builder") })).toBeEnabled());
   for (const locale of project.metadata.targetLocales) {

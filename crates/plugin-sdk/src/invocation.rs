@@ -114,7 +114,7 @@ pub struct EncodedPayload {
     pub utf8: std::sync::Arc<str>,
     pub sha256: String,
 }
-fn deserialize_payload_text<'de, D: serde::Deserializer<'de>>(
+pub(crate) fn deserialize_payload_text<'de, D: serde::Deserializer<'de>>(
     decoder: D,
 ) -> Result<std::sync::Arc<str>, D::Error> {
     struct PayloadText;

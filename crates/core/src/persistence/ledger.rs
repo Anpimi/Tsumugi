@@ -735,7 +735,7 @@ pub(super) fn load_input(
     attempt: ExecutionId,
 ) -> Result<FixedInput, ExecutionError> {
     let stored = read_stored_input(connection, attempt)?;
-    let input = FixedInput::restore_owned(stored.bytes, &stored.digest)?;
+    let input = FixedInput::restore_hashed(stored.bytes, stored.frame_digest, &stored.digest)?;
     check_input_association(&input, attempt, &stored.task, &stored.project, stored.previous.as_deref())?;
     super::resources::verify_input_fact_decisions(connection, &input)?;
     Ok(input)
@@ -828,6 +828,7 @@ pub(super) fn input_columns_sql() -> String {
 
 struct StoredInputFrame {
     bytes: Vec<u8>,
+    frame_digest: String,
     digest: String,
     task: String,
     project: String,
@@ -846,9 +847,10 @@ fn read_stored_input(
     let mut rows = statement.query([attempt.to_string()]).map_err(sql_error)?;
     let row = rows.next().map_err(sql_error)?.ok_or_else(|| sql_error(rusqlite::Error::QueryReturnedNoRows))?;
     let manifest = row.get_ref(0).map_err(sql_error)?.as_blob().map_err(|_| error(ErrorCode::CorruptLedger, "input-storage"))?;
-    let bytes = input_storage::read_frame(connection, manifest)?;
+    let (bytes, frame_digest) = input_storage::read_frame(connection, manifest)?;
     Ok(StoredInputFrame {
         bytes,
+        frame_digest,
         digest: row.get(1).map_err(sql_error)?,
         task: row.get(2).map_err(sql_error)?,
         project: row.get(3).map_err(sql_error)?,
@@ -905,7 +907,7 @@ pub(super) fn load_input_cached(
         let input = if let Some((_, input, _)) = cached.filter(|(digest, _, _)| digest == &stored.digest) {
             if bytes != input.bytes() { return Err(error(ErrorCode::CorruptLedger, "input-bytes")); }
             input
-        } else { FixedInput::restore_owned(bytes, &stored.digest)? };
+        } else { FixedInput::restore_hashed(bytes, stored.frame_digest, &stored.digest)? };
         check_input_association(&input, attempt, &stored.task, &stored.project, stored.previous.as_deref())?;
         let guard = observed.map(|observed| observed.finish(connection, &[&input], &[])).transpose()?.flatten();
         *cache.lock().unwrap_or_else(std::sync::PoisonError::into_inner) =
@@ -1577,6 +1579,7 @@ pub(super) struct ReadSnapshotStamp {
     connection: String,
     data_version: i64,
     schema_version: i64,
+    temp_schema_version: i64,
     total_changes: u64,
 }
 
@@ -1590,6 +1593,7 @@ pub(super) fn snapshot_stamp(connection: &Connection) -> Result<ReadSnapshotStam
         connection: connection.query_row("SELECT tsumugi_connection_identity()", [], |r| r.get(0)).map_err(sql_error)?,
         data_version: connection.query_row("PRAGMA main.data_version", [], |r| r.get(0)).map_err(sql_error)?,
         schema_version: connection.query_row("PRAGMA main.schema_version", [], |r| r.get(0)).map_err(sql_error)?,
+        temp_schema_version: connection.query_row("PRAGMA temp.schema_version", [], |r| r.get(0)).map_err(sql_error)?,
         total_changes: connection.total_changes(),
     })
 }
@@ -1903,7 +1907,7 @@ fn validate_plugin_link_with_open_evidence(
     result: &FixedResult,
     expected_valid: bool,
     mut open: Option<OpenLinkValidation<'_>>,
-    live_artifact_authority: Option<&crate::execution::plugin_authority::PluginAuthority>,
+    live_artifact_authority: Option<(&crate::execution::plugin_authority::PluginAuthority, &mut Vec<PluginPermit>)>,
 ) -> Result<CheckedPluginLink, ExecutionError> {
     let original = result_input(connection, input, result.envelope().result_id)?;
     let same_attempt = std::ptr::eq(input, original.as_ref());
@@ -1972,13 +1976,13 @@ fn validate_plugin_link_with_open_evidence(
     if saved_valid != expected_valid || prepared.proof.valid != saved_valid {
         return Err(error(ErrorCode::CorruptLedger, "semantic-validation-proof"));
     }
-    if let Some(authority) = live_artifact_authority {
-        require_live_checker(
+    if let Some((authority, permits)) = live_artifact_authority {
+        permits.push(require_live_checker(
             connection,
             &prepared.capture.check_input,
             &prepared.check_result,
             authority,
-        )?;
+        )?);
     }
     if let Some((slot, output)) = artifact.filter(|_| saved_valid) {
         *slot = Some(OpenBuildArtifact { result: result.clone(), output });
@@ -4872,8 +4876,15 @@ impl ProjectStore {
         let release_reads = self.release_reads.borrow().clone();
         let mut tx = self.execution_write()?;
         let action = &prepared.capture.action;
-        let current = capture_adoption_in(&tx, action, &authority)?;
-        if let Some(receipt) = current.receipt {
+        let rechecked;
+        let current = match &prepared.capture.release_proof {
+            Some(proof) if proof.current(&tx)? => &prepared.capture,
+            _ => {
+                rechecked = capture_adoption_in(&tx, action, &authority)?;
+                &rechecked
+            }
+        };
+        if let Some(receipt) = current.receipt.clone() {
             return Ok(receipt);
         }
         if current.digest != prepared.capture.digest
@@ -4903,7 +4914,7 @@ impl ProjectStore {
             attempt_id: action.attempt_id,
             action_id: action.action_id,
             unit_id: action.unit_id,
-            request_digest: current.digest,
+            request_digest: current.digest.clone(),
             changes,
         };
         for change in &receipt.changes {
@@ -5052,15 +5063,29 @@ fn require_live_checker(
     input: &FixedInput,
     result: &FixedResult,
     authority: &crate::execution::plugin_authority::PluginAuthority,
-) -> Result<(), ExecutionError> {
+) -> Result<PluginPermit, ExecutionError> {
     require_current_result(connection, input, result)?;
-    let permit = super::plugin_execution::check_input_in(connection, input, authority)?;
-    if permit.as_ref().map(PluginPermit::grant_id)
+    let permit = super::plugin_execution::check_input_in(connection, input, authority)?
+        .ok_or_else(|| error(ErrorCode::Unauthorized, "semantic-check-adoption-grant"))?;
+    if Some(permit.grant_id())
         != result.envelope().plugin.as_ref().map(|e| e.authorization_id)
     {
         return Err(error(ErrorCode::Unauthorized, "semantic-check-adoption-grant"));
     }
-    Ok(())
+    Ok(permit)
+}
+
+#[derive(Debug)]
+pub(crate) struct ReleaseAdoptionProof {
+    snapshot: ReadSnapshotStamp,
+    permits: Vec<PluginPermit>,
+}
+impl ReleaseAdoptionProof {
+    fn current(&self, connection: &Connection) -> Result<bool, ExecutionError> {
+        pin_snapshot(connection)?;
+        Ok(self.snapshot == snapshot_stamp(connection)?
+            && self.permits.iter().all(PluginPermit::is_authorized))
+    }
 }
 
 fn capture_adoption_in(
@@ -5068,7 +5093,7 @@ fn capture_adoption_in(
     action: &AdoptionAction,
     authority: &crate::execution::plugin_authority::PluginAuthority,
 ) -> Result<AdoptionCapture, ExecutionError> {
-    let input = load_input_cached(connection, action.attempt_id)?;
+    let mut input = load_input_cached(connection, action.attempt_id)?;
     check_planning_candidate_action(&input, &action.parameters)?;
     let digest = action.request_digest(&input)?;
     let persisted: (Vec<u8>, String) = connection
@@ -5090,6 +5115,7 @@ fn capture_adoption_in(
                 results: Vec::new(),
                 digest,
                 receipt: Some(receipt),
+                release_proof: None,
             })
         } else {
             Err(error(ErrorCode::CorruptLedger, "receipt"))
@@ -5103,8 +5129,17 @@ fn capture_adoption_in(
     check_translation_projection(connection, &input, Some(authority))?;
     let plugin_build = input.envelope().plugin.is_some()
         && input.envelope().operation == crate::content::BUILD_OPERATION;
+    let release_snapshot = if plugin_build
+        && input.envelope().automation.is_none()
+        && input.envelope().reused_results.is_empty()
+    {
+        read_snapshot_stamp(connection)?
+    } else {
+        None
+    };
     if plugin_build {
-        super::release::ReleasePlan::from_input(&input)?.validate_source_reference(connection)?;
+        input.cache_open_build_plan()?;
+        input.open_build_plan().expect("cached build plan").validate_source_reference(connection)?;
     }
     // Explicit Source adoption publishes completed evidence. It does not start
     // a worker, so process permit expiry or a new store epoch is immaterial.
@@ -5149,7 +5184,8 @@ fn capture_adoption_in(
     if cancel_revision(connection, input.envelope().task_id)? != action.cancellation_revision {
         return Err(error(ErrorCode::Cancelled, "adoption"));
     }
-    let mut checked_build_results = std::collections::BTreeSet::new();
+    let mut checked_build_results = BTreeSet::new();
+    let mut live_checkers = Vec::new();
     let state = if crate::content::is_translation_projection(&input) {
         None
     } else {
@@ -5173,7 +5209,7 @@ fn capture_adoption_in(
                     )
                 } else if plugin_build && action.result_ids.contains(&result.envelope().result_id) {
                     validate_plugin_link_with_open_evidence(
-                        connection, &input, result, true, None, Some(authority),
+                        connection, &input, result, true, None, Some((authority, &mut live_checkers)),
                     )?;
                     checked_build_results.insert(result.envelope().result_id);
                     Ok(())
@@ -5228,12 +5264,20 @@ fn capture_adoption_in(
             }
         }
     }
+    let release_proof = match (release_snapshot, permit) {
+        (Some(snapshot), Some(build_permit)) if checked_build_results.len() == results.len() => {
+            live_checkers.push(build_permit);
+            Some(ReleaseAdoptionProof { snapshot, permits: live_checkers })
+        }
+        _ => None,
+    };
     Ok(AdoptionCapture {
         action: action.clone(),
         input,
         results,
         digest,
         receipt: None,
+        release_proof,
     })
 }
 

@@ -31,7 +31,6 @@ export interface DeliveryViewProps {
   onOpenEntry?: (unitId: string, locale: string) => Promise<boolean>;
   onOpenDecisions: () => void;
   onOpenExtensions: () => void;
-  onInitialReadSettled?: () => void;
   target?: { releaseId: string; deliveryId: string; actionId: string } | null;
 }
 type Step = "readiness" | "build" | "verification" | "export" | "history";
@@ -58,10 +57,6 @@ export function DeliveryView(props: DeliveryViewProps) {
       : gate.getSnapshot().visibleViewId === viewId && gate.getSnapshot().dialogs.length === 0 && gate.getSnapshot().intentOwner === null);
   const delivery = useDeliveryCommands({ project, owner, commands, gate, viewId, visible, disabled, onOpenEntry });
   const { releasesRead, deliveriesRead, commandScope } = delivery;
-  const historySettled = releasesRead.isSuccess || releasesRead.isError;
-  useEffect(() => {
-    if (visible && historySettled) props.onInitialReadSettled?.();
-  }, [visible, historySettled, props.onInitialReadSettled]);
   const { chosen, selection, preview, overwrite, result, pending, busy } = owner;
   const showExportSource = visible && !!chosen && !reads.retired;
   const savedSource = useSessionQuery({ key: ["workbench-source-scope"], scopes: ["source"], enabled: showExportSource,
@@ -245,7 +240,7 @@ export function DeliveryView(props: DeliveryViewProps) {
       </li>)}</ol>
     </section>;
   }
-  return <PluginBuildControls project={project} open={visible} disabled={disabled} canInteract={canInteract} renderWorkbench={render}
+  return <PluginBuildControls project={project} open={visible} settingsOpen={settingsOpen} disabled={disabled} canInteract={canInteract} renderWorkbench={render}
     onRecorded={recorded} onOpenExtensions={() => { if (canInteract()) onOpenExtensions(); }}
     openBlocker={onOpenEntry ? (unitId, locale) => { const payload = delivery.blockerPayload(unitId, locale); if (payload) commands.dispatch("release.open-blocker", commandScope, payload); } : undefined}/>;
 }

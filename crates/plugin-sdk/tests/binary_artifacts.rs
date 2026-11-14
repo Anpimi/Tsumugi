@@ -267,11 +267,17 @@ fn binary_transport_preserves_original_bytes_and_rejects_ambiguous_shapes() {
     }
     let empty = binary(&[]);
     assert!(empty.validated_bytes().unwrap().is_empty());
+    let mut captured = source();
+    captured.artifacts[0] = empty;
+    captured.validate().unwrap();
     for encoded in ["AP+ACg", "AP+ACg===", "AP+ACg==\n", "AP+ACg--", "AB=="] {
         let mut invalid = value.clone();
         invalid["base64"] = json!(encoded);
         let invalid: CapturedArtifact = serde_json::from_value(invalid).unwrap();
         assert!(invalid.validated_bytes().is_err(), "{encoded}");
+        let mut captured = source();
+        captured.artifacts[0] = invalid;
+        assert!(captured.validate().is_err(), "{encoded}");
     }
     let mut corrupt = value;
     corrupt["base64"] = json!("AP+ACw==");

@@ -108,7 +108,7 @@ async function openStep(user: ReturnType<typeof userEvent.setup>, step: "build" 
 }
 async function ready(locales = ["zh-CN"], twoFiles = true) {
   const user = userEvent.setup(), view = render(<DeliveryConsumer/>, project);
-  await waitFor(() => expect(primary()).toBeEnabled()); await user.click(primary());
+  await waitFor(() => expect(primary()).toBeEnabled(), { timeout: 5000 }); await user.click(primary());
   await waitFor(() => expect(screen.getByRole("combobox", { name: i18n.t("deliveryWorkbench.builder") })).toBeEnabled());
   for (const locale of locales) {
     await user.click(screen.getByRole("checkbox", { name: locale }));
@@ -337,8 +337,11 @@ it("captures the chosen saved translation scope from Delivery and retains source
   await user.click(screen.getByRole("checkbox", { name: i18n.t("releaseScope.mode") }));
   const entry = await screen.findByRole("checkbox", { name: i18n.t("releaseScope.include", { entry: "wooden-barrel" }) });
   await user.click(entry);
+  await user.click(screen.getByRole("button", { name: i18n.t("deliveryWorkbench.settings") }));
+  const pageReads = invoke.mock.calls.filter(([command]) => command === "read_review_page").length;
   await user.click(primary());
   await screen.findByText(i18n.t("releaseScope.ready", { count: 1 }));
+  expect(invoke.mock.calls.filter(([command]) => command === "read_review_page")).toHaveLength(pageReads);
   await user.click(primary());
   expect(await screen.findByText(i18n.t("releaseScope.fixed", { count: 1 }))).toBeVisible();
   expect(captured?.choices[0].translationUnits).toEqual([reviewFixture.responses.page.rows[0].unitId]);

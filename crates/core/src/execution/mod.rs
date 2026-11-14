@@ -582,9 +582,16 @@ impl InputEnvelope {
         if reused.len() == items.len() {
             return Err(ExecutionError::new(ErrorCode::InvalidInput, "empty-retry"));
         }
-        codec::validate_serialized_depth(self, || {
-            ExecutionError::new(ErrorCode::InvalidInput, "input")
-        })
+        codec::validate_depth(&self.settings, 1)?;
+        for item in &self.items {
+            codec::validate_depth(&item.payload, 3)?;
+        }
+        if let Some(plugin) = &self.plugin {
+            codec::validate_serialized_depth_at(plugin, 1, || {
+                ExecutionError::new(ErrorCode::InvalidInput, "input")
+            })?;
+        }
+        Ok(())
     }
 }
 
@@ -596,6 +603,7 @@ pub struct FixedInput {
     bytes: Arc<Vec<u8>>,
     digest: String,
     open_build_plan: Option<Arc<crate::ReleasePlan>>,
+    plugin_payload_digests: Arc<std::sync::Mutex<std::collections::BTreeMap<ExecutionId, String>>>,
 }
 impl FixedInput {
     fn byte_limit(envelope: &InputEnvelope) -> usize {
@@ -613,10 +621,6 @@ impl FixedInput {
         })
     }
     fn validate_capture(envelope: &mut InputEnvelope) -> Result<(), ExecutionError> {
-        codec::validate_depth(&envelope.settings, 1)?;
-        for item in &envelope.items {
-            codec::validate_depth(&item.payload, 3)?;
-        }
         envelope.normalize();
         envelope.validate()
     }
@@ -631,6 +635,7 @@ impl FixedInput {
             bytes: Arc::new(bytes),
             digest,
             open_build_plan: None,
+            plugin_payload_digests: Arc::default(),
         })
     }
     pub fn restore(bytes: &[u8], expected_digest: &str) -> Result<Self, ExecutionError> {
@@ -641,11 +646,30 @@ impl FixedInput {
         Self::restore_bytes(bytes.into(), expected_digest)
     }
 
+    pub(crate) fn restore_hashed(
+        bytes: Vec<u8>,
+        digest: String,
+        expected_digest: &str,
+    ) -> Result<Self, ExecutionError> {
+        Self::decode_hashed(bytes.into(), digest, expected_digest)
+    }
+
     fn restore_bytes(bytes: std::borrow::Cow<'_, [u8]>, expected_digest: &str) -> Result<Self, ExecutionError> {
         if bytes.len() > MAX_FIXED_INPUT_BYTES {
             return Err(ExecutionError::new(ErrorCode::LimitExceeded, "input"));
         }
         let digest = codec::digest(&bytes);
+        Self::decode_hashed(bytes, digest, expected_digest)
+    }
+
+    fn decode_hashed(
+        bytes: std::borrow::Cow<'_, [u8]>,
+        digest: String,
+        expected_digest: &str,
+    ) -> Result<Self, ExecutionError> {
+        if bytes.len() > MAX_FIXED_INPUT_BYTES {
+            return Err(ExecutionError::new(ErrorCode::LimitExceeded, "input"));
+        }
         if digest != expected_digest {
             return Err(ExecutionError::new(
                 ErrorCode::CorruptLedger,
@@ -662,6 +686,7 @@ impl FixedInput {
             bytes: Arc::new(bytes.into_owned()),
             digest,
             open_build_plan: None,
+            plugin_payload_digests: Arc::default(),
         })
     }
     pub fn envelope(&self) -> &InputEnvelope {

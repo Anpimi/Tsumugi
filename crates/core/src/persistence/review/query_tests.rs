@@ -658,6 +658,7 @@ fn source_impact_reads_one_work_set_for_two_thousand_units() {
                 "SELECT tsumugi_connection_identity()",
                 "PRAGMA main.data_version",
                 "PRAGMA main.schema_version",
+                "PRAGMA temp.schema_version",
             ].map(|probe| statements.iter().filter(|sql| sql.trim() == probe).count());
             assert!(stamp_reads.iter().all(|count| *count == stamp_reads[0]),
                 "incomplete read-stamp probe groups: {stamp_reads:?}");

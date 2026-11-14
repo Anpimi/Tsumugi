@@ -7,7 +7,15 @@ pub(crate) fn validate_serialized_depth<T: ?Sized + Serialize>(
     value: &T,
     serialization_error: impl FnOnce() -> ExecutionError,
 ) -> Result<(), ExecutionError> {
-    value.serialize(Depth(0)).map_err(|error| match error {
+    validate_serialized_depth_at(value, 0, serialization_error)
+}
+
+pub(crate) fn validate_serialized_depth_at<T: ?Sized + Serialize>(
+    value: &T,
+    depth: usize,
+    serialization_error: impl FnOnce() -> ExecutionError,
+) -> Result<(), ExecutionError> {
+    value.serialize(Depth(depth)).map_err(|error| match error {
         DepthError::TooDeep => ExecutionError::new(ErrorCode::LimitExceeded, "structure"),
         DepthError::Serialization => serialization_error(),
     })

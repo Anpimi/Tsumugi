@@ -837,10 +837,11 @@ pub(crate) fn project_source_output(
     let indexed_occurrences: std::collections::BTreeMap<_, _> = exchange
         .units
         .iter()
-        .flat_map(|unit| {
+        .enumerate()
+        .flat_map(|(index, unit)| {
             unit.occurrences
                 .iter()
-                .map(move |occurrence| (&occurrence.id, (unit, occurrence)))
+                .map(move |occurrence| (&occurrence.id, (index, occurrence)))
         })
         .collect();
     let mut snapshot_blocks = Vec::new();
@@ -856,33 +857,35 @@ pub(crate) fn project_source_output(
                 unit_blocks.entry(id.as_str()).or_default().push(basis)
             }
             sdk::ContentTarget::Occurrence { id } => {
-                let (unit, _) = indexed_occurrences
+                let (unit_index, _) = indexed_occurrences
                     .get(id)
                     .ok_or_else(|| invalid("source-order"))?;
-                unit_blocks.entry(unit.id.as_str()).or_default().push(basis);
+                unit_blocks.entry(exchange.units[*unit_index].id.as_str()).or_default().push(basis);
             }
         }
     }
-    let mut unit_bases = std::collections::BTreeMap::new();
+    let mut unit_bases = Vec::with_capacity(exchange.units.len());
     for unit in &exchange.units {
         let mut blocks = snapshot_blocks.clone();
         blocks.extend(unit_blocks.remove(unit.id.as_str()).unwrap_or_default());
         // Preserve the previous exact multiset and ordering of schema/payload
         // pairs. Operation-local target IDs never enter the revision basis.
         blocks.sort();
-        unit_bases.insert(
-            unit.id.as_str(),
+        unit_bases.push(
             codec::digest(&codec::encode(
                 &(&policy, &unit.text, &unit.protected_fragments, blocks),
                 MAX_SOURCE_RESULT_BYTES,
             )?),
         );
     }
-    let mut occurrences = Vec::new();
+    drop(unit_blocks);
+    drop(snapshot_blocks);
+    let mut occurrences = Vec::with_capacity(exchange.order.len());
     for (ordinal, occurrence_id) in exchange.order.iter().enumerate() {
-        let (unit, occurrence) = indexed_occurrences
+        let (unit_index, occurrence) = indexed_occurrences
             .get(occurrence_id)
             .ok_or_else(|| invalid("source-order"))?;
+        let unit = &exchange.units[*unit_index];
         let artifact = exchange
             .artifacts
             .iter()
@@ -908,7 +911,7 @@ pub(crate) fn project_source_output(
             })
             .transpose()?
             .flatten();
-        let identity_basis = unit_bases[unit.id.as_str()].clone();
+        let identity_basis = unit_bases[*unit_index].clone();
         let namespace = occurrence
             .native_identity
             .as_ref()

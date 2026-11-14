@@ -190,7 +190,10 @@ impl ArtifactValidationCapture {
         build: ResultValidationCapture,
         check_input: FixedInput,
     ) -> Result<Self, ExecutionError> {
-        let plan = ReleasePlan::from_input(&build.input)?;
+        let plan = match build.input.open_build_plan() {
+            Some(plan) => plan.clone(),
+            None => Arc::new(ReleasePlan::from_input(&build.input)?),
+        };
         Self::restore_with_plan(build, check_input, &plan).map(|(capture, _)| capture)
     }
 

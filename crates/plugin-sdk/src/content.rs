@@ -149,7 +149,7 @@ impl ContentExchange {
             &self.source_language,
             &self.artifacts,
         )?;
-        let mut sources = SourceReferences::new(&self.artifacts);
+        let mut sources = SourceReferences::from_validated(&self.artifacts);
         for (len, field) in [
             (self.units.len(), "content.units"),
             (self.order.len(), "content.order"),
@@ -298,6 +298,20 @@ impl<'a> SourceReferences<'a> {
             binary_sizes: vec![None; artifacts.len()],
         }
     }
+    fn from_validated(artifacts: &'a [CapturedArtifact]) -> Self {
+        // Material verification already decoded canonical padded RFC 4648.
+        // Its exact length can be read from the representation without decoding again.
+        let binary_sizes = artifacts.iter().map(|artifact| match artifact {
+            CapturedArtifact::Binary(binary) => {
+                let encoded = binary.base64.as_bytes();
+                let padding = encoded.iter().rev().take_while(|&&byte| byte == b'=').count();
+                Some(encoded.len() / 4 * 3 - padding)
+            }
+            CapturedArtifact::Text(_) => None,
+        }).collect();
+        Self { artifacts, binary_sizes }
+    }
+
     pub(crate) fn validate(&mut self, source: &SourceReference) -> Result<(), ContractError> {
         let (index, artifact) = self
             .artifacts
@@ -379,8 +393,7 @@ pub(crate) fn validate_source_material(
     )?;
     let mut total_bytes = 0usize;
     for artifact in artifacts {
-        let bytes = artifact.validated_bytes()?;
-        total_bytes = total_bytes.saturating_add(bytes.len());
+        total_bytes = total_bytes.saturating_add(artifact.validated_len()?);
         if total_bytes > MAX_MATERIAL_SET_BYTES {
             return Err(ContractError::at(
                 ContractErrorCode::LimitExceeded,

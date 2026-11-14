@@ -170,6 +170,8 @@ impl FixedInput {
             max_result_bytes: self.plugin_result_budget(binding)?,
         };
         request.validate().map_err(contract_error)?;
+        self.plugin_payload_digests.lock().unwrap_or_else(std::sync::PoisonError::into_inner)
+            .insert(item_id, request.input.sha256.clone());
         Ok(request)
     }
 
@@ -230,7 +232,15 @@ impl FixedInput {
     }
 
     fn plugin_payload_digest(&self, item_id: ExecutionId) -> Result<String, ExecutionError> {
-        self.plugin_payload(item_id, |payload, limit| payload.digest(limit.min(sdk::MAX_MATERIAL_INVOCATION_BYTES)))
+        let mut digests = self.plugin_payload_digests.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+        if let Some(digest) = digests.get(&item_id) {
+            return Ok(digest.clone());
+        }
+        let digest = self.plugin_payload(item_id, |payload, limit| {
+            payload.digest(limit.min(sdk::MAX_MATERIAL_INVOCATION_BYTES))
+        })?;
+        digests.insert(item_id, digest.clone());
+        Ok(digest)
     }
 
     fn plugin_result_budget(&self, binding: &PluginExecutionBinding) -> Result<u32, ExecutionError> {
