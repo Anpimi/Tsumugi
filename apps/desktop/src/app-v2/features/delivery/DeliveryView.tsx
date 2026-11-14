@@ -120,7 +120,7 @@ export function DeliveryView(props: DeliveryViewProps) {
       : delivery.destinationAvailability(delivery.destinationPayload(), !!selection).enabled;
   }
   async function recorded(actionId: string) {
-    const response = await releasesRead.refetch();
+    const response = await releasesRead.refetch({ cancelRefetch: false });
     if (!sameSession() || response.error || owner.current().buildReceipt?.actionId !== actionId) return;
     const record = response.data?.find(item => item.actionId === actionId && item.attemptId === owner.current().buildReceipt?.attemptId), current = owner.current();
     if (record && !current.chosen && !current.selection && !current.preview && !current.result && !current.deliveryDirty && canInteract() && commands.dispatch("release.choose-release", commandScope, delivery.recordPayload(record))) setPrimaryMode("export");

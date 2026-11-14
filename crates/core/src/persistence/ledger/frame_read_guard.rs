@@ -36,6 +36,7 @@ type Row = (Table, i64);
 #[derive(Default)]
 struct Observer {
     rows: BTreeMap<Row, Vec<Weak<AtomicBool>>>,
+    release_evidence: u64,
 }
 impl Observer {
     fn invalidate(&mut self, row: Row) {
@@ -80,12 +81,18 @@ pub(super) fn register(connection: &Connection, identity: &str) -> rusqlite::Res
             if database != "main" {
                 return;
             }
-            let Some(table) = Table::named(table) else {
+            let invalidates_release = super::super::release::invalidates_evidence(table, case);
+            let table = Table::named(table);
+            if table.is_none() && !invalidates_release {
                 return;
-            };
+            }
             let mut observer = state
                 .lock()
                 .unwrap_or_else(std::sync::PoisonError::into_inner);
+            if invalidates_release {
+                observer.release_evidence += 1;
+            }
+            let Some(table) = table else { return; };
             match case {
                 PreUpdateCase::Insert(value) => {
                     observer.invalidate((table, value.get_new_row_id()))
@@ -114,10 +121,12 @@ pub(super) fn register(connection: &Connection, identity: &str) -> rusqlite::Res
 }
 
 #[derive(Clone, PartialEq, Eq)]
+#[derive(Debug)]
 struct Stamp {
     connection: String,
     data: i64,
     schema: i64,
+    temp_schema: i64,
 }
 fn stamp(connection: &Connection) -> Result<Stamp, ExecutionError> {
     Ok(Stamp {
@@ -130,12 +139,43 @@ fn stamp(connection: &Connection) -> Result<Stamp, ExecutionError> {
         schema: connection
             .query_row("PRAGMA main.schema_version", [], |row| row.get(0))
             .map_err(sql_error)?,
+        temp_schema: connection
+            .query_row("PRAGMA temp.schema_version", [], |row| row.get(0))
+            .map_err(sql_error)?,
     })
 }
 fn pin(connection: &Connection) -> Result<(), ExecutionError> {
     connection
         .query_row("SELECT count(*) FROM main.sqlite_schema", [], |_| Ok(()))
         .map_err(sql_error)
+}
+
+/// Snapshot marker for historical release evidence. The release owner checks
+/// the few insert-sensitive relationships that can change independently.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(in crate::persistence) struct ReleaseEvidenceStamp {
+    stamp: Stamp,
+    generation: u64,
+}
+
+impl ReleaseEvidenceStamp {
+    pub(in crate::persistence) fn capture(connection: &Connection) -> Result<Option<Self>, ExecutionError> {
+        if connection.is_autocommit() {
+            return Ok(None);
+        }
+        pin(connection)?;
+        let stamp = stamp(connection)?;
+        let state = registry()
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .get(&stamp.connection)
+            .and_then(Weak::upgrade);
+        Ok(state.map(|state| {
+            let generation = state.lock().unwrap_or_else(std::sync::PoisonError::into_inner)
+                .release_evidence;
+            Self { stamp, generation }
+        }))
+    }
 }
 
 pub(super) struct ReadObservation {

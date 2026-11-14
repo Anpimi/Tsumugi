@@ -1,7 +1,7 @@
 //! Fixed build inputs, verified locale artifacts and immutable local releases.
 
 use super::ProjectStore;
-use super::ledger::{OpenPluginProofs, OpenResultReader, ReadSnapshotStamp, read_snapshot_stamp, snapshot_stamp};
+use super::ledger::{OpenPluginProofs, OpenResultReader, ReleaseEvidenceStamp};
 #[cfg(any(test, feature = "execution-test-host", feature = "legacy-desktop-domain"))]
 use crate::content::{
     BUILDER_VERSION, BuildEntry, BuildLocale, BuildManifest, BuildOutput, VALIDATOR_VERSION,
@@ -160,6 +160,27 @@ pub(super) fn validate(connection: &Connection) -> rusqlite::Result<()> {
     Ok(())
 }
 
+/// Preupdate hook policy for qualified release projections. Point reads of
+/// present rows with unique identities survive unrelated inserts. The record
+/// owner separately compares the few sets and links where membership can
+/// change. Source projection validation depends on complete source sets
+/// and lineage, so writes to those tables require fresh qualification.
+pub(super) fn invalidates_evidence(table: &str, case: &rusqlite::hooks::PreUpdateCase) -> bool {
+    use rusqlite::hooks::PreUpdateCase::{Insert, Unknown};
+    if matches!(case, Unknown) { return true; }
+    match table {
+        "execution_attempts" | "execution_results" | "execution_input_chunks" | "execution_actions"
+        | "plugin_execution_grants" | "release_records" | "release_artifacts"
+        | "adoption_receipts" => !matches!(case, Insert(_)),
+        "project_metadata" | "content_scope"
+        | "source_sets" | "source_files" | "source_snapshots" | "source_units" | "source_revisions"
+        | "source_occurrences" | "source_identity" | "source_unit_mappings"
+        | "source_lineage" | "source_lineage_evidence"
+        | "source_lineage_corrections" | "source_lineage_correction_bindings" => true,
+        _ => false,
+    }
+}
+
 const RETAINED_RELEASES: usize = 2;
 
 /// Full frames are borrowed from the ledger owner while it verifies their
@@ -201,7 +222,7 @@ impl OpenReleaseValidation {
         for id in self.pending.remove(&attempt).into_iter().flatten() {
             let record = record::load(connection, id, Some(record::OpenRecordFrames { results, proofs }))?;
             if self.newest.contains(&id)
-                && let Some(verified) = VerifiedRelease::capture(&record)
+                && let Some(verified) = VerifiedRelease::capture(connection, &record)?
             {
                 self.verified.push(Arc::new(verified));
             }
@@ -221,7 +242,7 @@ impl OpenReleaseValidation {
 /// Retain bounded release projections from one fully validated snapshot. The
 /// original frames and artifacts are released before the store becomes usable.
 #[derive(Clone, Debug, Default)]
-pub(super) struct ReleaseReadCache(Option<(ReadSnapshotStamp, Vec<Arc<VerifiedRelease>>)>);
+pub(super) struct ReleaseReadCache(Option<(ReleaseEvidenceStamp, Vec<Arc<VerifiedRelease>>)>);
 
 impl ReleaseReadCache {
     /// Capture after the last write while the writer still holds the snapshot.
@@ -235,32 +256,34 @@ impl ReleaseReadCache {
              UNION ALL SELECT 1 FROM temp.sqlite_schema WHERE type='trigger')", [], |row| row.get(0),
         ).ok()?;
         if has_triggers { return None; }
-        let stamp = snapshot_stamp(connection).ok()?;
+        let stamp = ReleaseEvidenceStamp::capture(connection).ok()??;
         Some(Self(Some((stamp, releases))))
+    }
+
+    pub(super) fn after_adoption(&self, connection: &Connection, release: VerifiedRelease) -> Option<Self> {
+        let mut verified = self.verified_at(connection).ok()?.to_vec();
+        Self::remember(&mut verified, Some(release));
+        Self::after_write(connection, verified)
     }
 
     fn verified_at(&self, connection: &Connection) -> Result<&[Arc<VerifiedRelease>], ExecutionError> {
         match &self.0 {
-            Some((stamp, releases)) if stamp.still_matches(connection)? => Ok(releases),
+            Some((stamp, releases)) if ReleaseEvidenceStamp::capture(connection)?.as_ref() == Some(stamp) => Ok(releases),
             _ => Ok(&[]),
         }
     }
 
     pub(super) fn for_reopen(&self, connection: &Connection) -> Self {
-        match &self.0 {
-            Some((stamp, _)) if stamp.still_matches(connection).unwrap_or(false) => self.clone(),
-            _ => Self::default(),
-        }
+        let Ok(verified) = self.verified_at(connection) else { return Self::default(); };
+        let still_current = verified.iter()
+            .filter(|release| release.evidence_unchanged(connection).unwrap_or(false))
+            .cloned().collect();
+        Self::from_verified(connection, still_current).unwrap_or_default()
     }
 
     pub(super) fn rebind(&self, connection: &Connection) -> Self {
         match &self.0 {
-            Some((_, releases)) => Self(
-                read_snapshot_stamp(connection)
-                    .ok()
-                    .flatten()
-                    .map(|stamp| (stamp, releases.clone())),
-            ),
+            Some((_, releases)) => Self::from_verified(connection, releases.clone()).unwrap_or_default(),
             None => Self::default(),
         }
     }
@@ -270,7 +293,12 @@ impl ReleaseReadCache {
         verified: Vec<Arc<VerifiedRelease>>,
     ) -> Result<Self, ExecutionError> {
         if verified.is_empty() { return Ok(Self::default()); }
-        let entry = read_snapshot_stamp(connection)?.map(|stamp| (stamp, verified));
+        if connection.transaction_state(Some(rusqlite::MAIN_DB)).map_err(sql)?
+            != rusqlite::TransactionState::Read
+        {
+            return Ok(Self::default());
+        }
+        let entry = ReleaseEvidenceStamp::capture(connection)?.map(|stamp| (stamp, verified));
         Ok(Self(entry))
     }
 
@@ -279,7 +307,11 @@ impl ReleaseReadCache {
         connection: &Connection,
         id: ExecutionId,
     ) -> Result<Option<&record::VerifiedRelease>, ExecutionError> {
-        Ok(self.verified_at(connection)?.iter().find(|release| release.view.release_id == id).map(Arc::as_ref))
+        let release = self.verified_at(connection)?.iter().find(|release| release.view.release_id == id);
+        match release {
+            Some(release) if release.evidence_unchanged(connection)? => Ok(Some(release)),
+            _ => Ok(None),
+        }
     }
 
     fn remember(releases: &mut Vec<Arc<VerifiedRelease>>, release: Option<VerifiedRelease>) {
@@ -514,11 +546,11 @@ impl ProjectStore {
             return Err(failure(ErrorCode::InvalidInput, "delivery-directory"));
         }
         let mut qualified = release_reads.verified_at(&tx)?.to_vec();
-        let record = match qualified.iter().find(|release| release.view.release_id == release_id) {
+        let record = match release_reads.get(&tx, release_id)? {
             Some(release) => release.read(&tx)?,
             None => {
                 let record = record::load(&tx, release_id, None)?;
-                ReleaseReadCache::remember(&mut qualified, VerifiedRelease::capture(&record));
+                ReleaseReadCache::remember(&mut qualified, VerifiedRelease::capture(&tx, &record)?);
                 record
             }
         };
@@ -618,26 +650,22 @@ impl ProjectStore {
             .map_err(|_| failure(ErrorCode::StorageFailed, "delivery-encode"))?;
         let changes = self.changes.clone();
         let unknown = self.execution_unknown.clone();
-        let release_reads = self.release_reads.get_mut().clone();
         let tx = self.connection_mut().map_err(|_| failure(ErrorCode::StorageFailed, "delivery-write"))?
             .transaction_with_behavior(TransactionBehavior::Immediate).map_err(sql)?;
         let observer = changes.observe(&tx, super::ChangeScope::Delivery);
         if delivery::by_action_in(&tx, action_id)?.as_ref() != Some(&current) {
             return Err(failure(ErrorCode::DependencyConflict, "delivery-finish-race"));
         }
-        let qualified = release_reads.verified_at(&tx)?.to_vec();
         let updated = tx.execute(
                 "UPDATE release_deliveries SET state=?2,results_json=?3 WHERE action_id=?1 AND state='pending'",
                 params![action_id.to_string(), state, encoded],
             )
             .map_err(sql)?;
         if updated != 1 { return Err(failure(ErrorCode::DependencyConflict, "delivery-finish-race")); }
-        let next_cache = ReleaseReadCache::after_write(&tx, qualified);
         observer.commit(tx).map_err(|_| {
             unknown.store(true, std::sync::atomic::Ordering::Release);
             failure(ErrorCode::OutcomeUnknown, "delivery-finish-commit")
         })?;
-        if let Some(cache) = next_cache { *self.release_reads.get_mut() = cache; }
         self.delivery_by_action(action_id)?
             .ok_or_else(|| failure(ErrorCode::StorageFailed, "delivery-write"))
     }
@@ -977,7 +1005,7 @@ impl ProjectStore {
             let record = record::load(connection, release_id, None)?;
             if retain {
                 let mut verified = self.release_reads.borrow().verified_at(connection)?.to_vec();
-                ReleaseReadCache::remember(&mut verified, VerifiedRelease::capture(&record));
+                ReleaseReadCache::remember(&mut verified, VerifiedRelease::capture(connection, &record)?);
                 let cache = ReleaseReadCache::from_verified(connection, verified)?;
                 *self.release_reads.borrow_mut() = cache;
             }

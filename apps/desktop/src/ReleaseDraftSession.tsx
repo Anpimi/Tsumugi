@@ -245,7 +245,7 @@ function useReleaseOwner(project: ProjectView) {
       const value = await executionCommands.pluginStartAction({ ...session, attemptId: intent.request.attemptId,
         inputDigest: intent.request.inputDigest, operation: intent.kind === "start-build" ? "locale-build" : "artifact-semantic-check" });
       if (!original(sent)) return;
-      if (value) { acceptBuildStart(sent); reads.invalidate(["execution", "release"], false); }
+      if (value) { acceptBuildStart(sent); reads.invalidate(["execution"], false); }
       else update(before => ({ ...before, pending: fixed({ ...sent, retryAllowed: true }) }));
     } finally { if (live()) update(before => ({ ...before, checkingStart: false })); }
   }
@@ -306,7 +306,9 @@ function useReleaseOwner(project: ProjectView) {
         }
       }
       throw failure;
-    } finally { if (live()) reads.invalidate(["execution", "release"], false); }
+    } finally {
+      if (live()) reads.invalidate(intent.kind === "adopt" && intent.prepared ? ["execution", "release"] : ["execution"], false);
+    }
   }
   function pendingFor(intent: ReleasePluginIntent, before = current(), generation = version.current): BuildPending { return fixed({ kind: "build", intent, editSeq: before.editSeq,
     version: generation, retryAllowed: false, uncertain: false, sourceSnapshotId: before.assessment?.scope.currentSnapshot ?? before.prepared?.review.sourceSnapshotId ?? null }); }
@@ -407,7 +409,7 @@ function useReleaseOwner(project: ProjectView) {
         pending: sent.uncertain || hasUnknownOutcome(failure) ? kind : null,
         uncertain: sent.uncertain || hasUnknownOutcome(failure) }) }));
       throw failure;
-    } finally { if (live()) reads.invalidate(["execution", "release"], false); }
+    } finally { if (live()) reads.invalidate(["execution"], false); }
   }
   async function prepareWorkflow(detail: AttemptDetail, proof?: ReleaseReadProof) {
     const before = current(), prepared = before.prepared, generation = version.current;
@@ -503,7 +505,7 @@ function useReleaseOwner(project: ProjectView) {
         if (live() && now && same(now.request, value.request) && same(now.stop, request)) update(before => ({ ...before,
           workflow: fixed({ ...now, stopPending: next.stopUncertain || hasUnknownOutcome(failure), stopUncertain: next.stopUncertain || hasUnknownOutcome(failure) }) }));
         throw failure;
-      } finally { if (live()) reads.invalidate(["execution", "release"], false); }
+      } finally { if (live()) reads.invalidate(["execution"], false); }
     });
   }
   /** Accept only an exact fresh read of this owner's original intent; never dispatch from a read. */

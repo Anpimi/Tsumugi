@@ -406,6 +406,50 @@ fn all_artifacts_survive_frozen_edits_delivery_outcomes_and_current_format_move(
 }
 
 #[test]
+fn recording_a_second_build_preserves_the_first_and_rechecks_a_changed_link() {
+    use rusqlite::trace::{TraceEvent, TraceEventCodes};
+
+    let (_directory, mut store, generation, first) = fixture_build(&["zh-CN"]);
+    let project = first.envelope().project_id;
+    let result = builder_result(&mut store, &first, first.envelope().items[0].item_id);
+    prove(&mut store, generation, &first, &result);
+    let first_action = action(&mut store, &first, &[result.clone()]);
+    let first_release = release_id(&store.adopt_execution(&first_action, &ReleaseAdoptionHandler).unwrap());
+
+    thread_local! { static MANIFEST_READS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) }; }
+    store.connection().unwrap().trace_v2(TraceEventCodes::SQLITE_TRACE_STMT, Some(|event| {
+        if let TraceEvent::Stmt(_, sql) = event
+            && sql.starts_with("SELECT action_id,project_id,attempt_id,manifest,manifest_digest,created_at")
+        {
+            MANIFEST_READS.with(|count| count.set(count.get() + 1));
+        }
+    }));
+
+    let plan = ReleasePlan::from_input(&first).unwrap();
+    let second = store.prepare_plugin_build(
+        project, ExecutionId::new(), &plan.choices(), plan.eligibility_basis(), plan.build_environment(),
+    ).unwrap();
+    authorize(&mut store, generation, &second);
+    let second_result = builder_result(&mut store, &second, second.envelope().items[0].item_id);
+    prove(&mut store, generation, &second, &second_result);
+    assert_eq!(store.list_releases(project).unwrap()[0].release_id, first_release);
+    let second_action = action(&mut store, &second, &[second_result]);
+    let second_release = release_id(&store.adopt_execution(&second_action, &ReleaseAdoptionHandler).unwrap());
+    let history = store.list_releases(project).unwrap();
+    assert_eq!(history.len(), 2);
+    assert!(history.iter().any(|release| release.release_id == second_release));
+    assert_eq!(MANIFEST_READS.with(|count| count.replace(0)), 0);
+
+    store.connection().unwrap().execute(
+        "UPDATE plugin_validation_links SET valid=0 WHERE producer_result_id=?1",
+        [result.envelope().result_id.to_string()],
+    ).unwrap();
+    assert!(store.release_view(first_release).is_err());
+    assert_eq!(store.release_view(second_release).unwrap().release_id, second_release);
+    assert_eq!(MANIFEST_READS.with(|count| count.replace(0)), 1);
+}
+
+#[test]
 fn a_trigger_that_changes_committed_release_bytes_cannot_seed_a_verified_projection() {
     let (_directory, mut store, generation, input) = fixture_build(&["zh-CN"]);
     let result = builder_result(&mut store, &input, input.envelope().items[0].item_id);
@@ -576,7 +620,7 @@ fn saved_proof_with_superseded_builder_or_checker_refuses_new_release() {
 
 #[test]
 fn release_reads_and_reopen_refuse_rehashed_substitution_or_missing_links_without_writes() {
-    for damage in 0..13 {
+    for damage in 0..14 {
         let (_directory, mut store, generation, input) = fixture_build(&["zh-CN"]);
         let result = builder_result(&mut store, &input, input.envelope().items[0].item_id);
         prove(&mut store, generation, &input, &result);
@@ -664,6 +708,14 @@ fn release_reads_and_reopen_refuse_rehashed_substitution_or_missing_links_withou
                         WHERE l.producer_result_id=?2
                     ) WHERE release_id=?1",
                     rusqlite::params![id, result.envelope().result_id.to_string()],
+                ).unwrap();
+            }
+            13 => {
+                connection.execute(
+                    "INSERT INTO release_artifacts
+                     SELECT release_id,locale,'extra',role,'extra.txt',bytes,sha256,validator_version,entry_count
+                     FROM release_artifacts WHERE release_id=?1 AND artifact_id='artifact-0'",
+                    [&id],
                 ).unwrap();
             }
             _ => unreachable!(),

@@ -66,24 +66,66 @@ pub(super) struct Record {
     pub view: ReleaseView,
     pub artifacts: Vec<Artifact>,
     pub report_paths: BTreeSet<String>,
+    plugin_results: Option<Vec<ExecutionId>>,
 }
 
 #[derive(Debug)]
 pub(crate) struct VerifiedRelease {
     pub(super) view: ReleaseView,
     report_paths: BTreeSet<String>,
+    links: Vec<(ExecutionId, Option<(String, bool)>)>,
+    source_receipt: Option<(String, String)>,
 }
 
 impl VerifiedRelease {
-    pub(super) fn capture(record: &Record) -> Option<Self> {
-        Self::bounded(record.view.clone(), record.report_paths.clone())
+    pub(super) fn capture(connection: &Connection, record: &Record) -> Result<Option<Self>, ExecutionError> {
+        Self::bounded(connection, record.view.clone(), record.report_paths.clone(), record.plugin_results.as_deref())
     }
 
-    fn bounded(view: ReleaseView, report_paths: BTreeSet<String>) -> Option<Self> {
+    fn bounded(connection: &Connection, view: ReleaseView, report_paths: BTreeSet<String>, plugin_results: Option<&[ExecutionId]>) -> Result<Option<Self>, ExecutionError> {
         // Bound the retained projection independently of the artifact budget.
         const MAX_VIEW_BYTES: usize = 16 * 1024 * 1024;
-        codec::check_encoded_size(&view, MAX_VIEW_BYTES).ok()?;
-        Some(Self { view, report_paths })
+        if codec::check_encoded_size(&view, MAX_VIEW_BYTES).is_err() {
+            return Ok(None);
+        }
+        let (mut links, mut source_receipt) = (Vec::new(), None);
+        if let Some(results) = plugin_results {
+            let (attempt, result): (String, String) = connection.query_row(
+                "SELECT attempt_id,result_id FROM source_snapshots WHERE snapshot_id=?1",
+                [view.source_snapshot_id.to_string()], |row| Ok((row.get(0)?, row.get(1)?)),
+            ).map_err(sql)?;
+            let receipt = source_adoption(connection, &attempt)?.ok_or_else(
+                || failure(ErrorCode::CorruptLedger, "release-source-receipt"),
+            )?;
+            source_receipt = Some((attempt, receipt));
+            // Source can be a built-in import in the migration profile.
+            // Preserve even an absent link as part of the observation.
+            for result in results.iter().copied().chain([parse_id(result)?]) {
+                links.push((result, check_link(connection, result)?));
+            }
+        }
+        Ok(Some(Self { view, report_paths, links, source_receipt }))
+    }
+
+    pub(super) fn evidence_unchanged(&self, connection: &Connection) -> Result<bool, ExecutionError> {
+        let artifact_count: i64 = connection.query_row(
+            "SELECT COUNT(*) FROM release_artifacts WHERE release_id=?1",
+            [self.view.release_id.to_string()], |row| row.get(0),
+        ).map_err(sql)?;
+        if artifact_count != self.view.artifacts.len() as i64 {
+            return Ok(false);
+        }
+        if let Some((attempt, receipt)) = &self.source_receipt
+            && source_adoption(connection, attempt)?.as_ref() != Some(receipt)
+        {
+            return Ok(false);
+        }
+        for (result, link) in &self.links {
+            if check_link(connection, *result)? != *link {
+                return Ok(false);
+            }
+        }
+        Ok(true)
     }
 
     /// Only use after confirming the snapshot that qualified this release.
@@ -100,8 +142,25 @@ impl VerifiedRelease {
             view: self.view.clone(),
             artifacts,
             report_paths: self.report_paths.clone(),
+            plugin_results: None,
         })
     }
+}
+
+fn check_link(connection: &Connection, result: ExecutionId) -> Result<Option<(String, bool)>, ExecutionError> {
+    use rusqlite::OptionalExtension;
+    connection.query_row(
+        "SELECT checker_result_id,valid FROM plugin_validation_links WHERE producer_result_id=?1",
+        [result.to_string()], |row| Ok((row.get(0)?, row.get(1)?)),
+    ).optional().map_err(sql)
+}
+
+fn source_adoption(connection: &Connection, attempt: &str) -> Result<Option<String>, ExecutionError> {
+    use rusqlite::OptionalExtension;
+    connection.query_row(
+        "SELECT action_id FROM adoption_receipts WHERE attempt_id=?1",
+        [attempt], |row| row.get(0),
+    ).optional().map_err(sql)
 }
 
 struct PreparedRecord {
@@ -250,6 +309,7 @@ pub(super) fn prepare(
         prepare_data(input, action, results, version, None)?;
     let manifest_bytes = codec::encode(&manifest, MAX_INPUT_BYTES)?;
     let digest = codec::digest(&manifest_bytes);
+    let plugin_results = input.envelope().plugin.is_some().then_some(manifest.result_ids);
     let action = action.clone();
     Ok(Box::new(move |transaction| {
         let release_id = ExecutionId::new();
@@ -279,7 +339,7 @@ pub(super) fn prepare(
         }
         let report_paths = report_paths(version, &artifacts);
         let view = release_view(release_id, action.action_id, action.attempt_id, digest, created_at, summary, &artifacts);
-        if let Some(verified) = VerifiedRelease::bounded(view, report_paths) {
+        if let Some(verified) = VerifiedRelease::bounded(transaction.connection(), view, report_paths, plugin_results.as_deref())? {
             transaction.remember_release(verified);
         }
         Ok(vec![ChangeReference {
@@ -430,7 +490,8 @@ pub(super) fn load(
     }
     let report_paths = report_paths(manifest.version, &artifacts);
     let view = release_view(release_id, action_id, attempt, digest, created, summary, &artifacts);
-    Ok(Record { view, artifacts, report_paths })
+    let plugin_results = input.envelope().plugin.is_some().then_some(manifest.result_ids);
+    Ok(Record { view, artifacts, report_paths, plugin_results })
 }
 
 fn release_view(release_id: ExecutionId, action_id: ExecutionId, attempt: ExecutionId,

@@ -5,6 +5,7 @@ use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet};
 mod activity;
 mod frame_read_guard;
+pub(super) use frame_read_guard::ReleaseEvidenceStamp;
 mod input_storage;
 pub use activity::{TaskActivity, TaskActivityPhase, TaskActivityRow};
 pub(crate) mod provider;
@@ -1244,14 +1245,21 @@ fn check_stored_result(
     result: &FixedResult,
 ) -> Result<(), ExecutionError> {
     let expected = result.envelope();
-    let (bytes,digest,item,token): (Vec<u8>,String,String,String) = connection.query_row(
-        "SELECT CASE WHEN length(bytes)<=?3 THEN bytes END,digest,item_id,dispatch_token FROM execution_results WHERE result_id=?1 AND attempt_id=?2",
-        params![expected.result_id.to_string(),expected.attempt_id.to_string(),MAX_PLUGIN_RESULT_BYTES as i64],
-        |r| Ok((r.get(0)?,r.get(1)?,r.get(2)?,r.get(3)?))).map_err(sql_error)?;
-    if digest != result.digest()
-        || bytes != result.bytes()
-        || item != expected.item_id.to_string()
-        || token != expected.dispatch_token.to_string()
+    let mut statement = connection.prepare_cached(
+        "SELECT CASE WHEN length(bytes)<=?3 THEN bytes END,digest,item_id,dispatch_token
+         FROM execution_results WHERE result_id=?1 AND attempt_id=?2",
+    ).map_err(sql_error)?;
+    let mut rows = statement.query(params![
+        expected.result_id.to_string(), expected.attempt_id.to_string(), MAX_PLUGIN_RESULT_BYTES as i64
+    ]).map_err(sql_error)?;
+    let row = rows.next().map_err(sql_error)?
+        .ok_or_else(|| sql_error(rusqlite::Error::QueryReturnedNoRows))?;
+    let text = |column| row.get_ref(column).map_err(sql_error)?.as_str()
+        .map_err(|_| error(ErrorCode::CorruptLedger, "result-bytes"));
+    if text(1)? != result.digest()
+        || row.get_ref(0).map_err(sql_error)?.as_blob().ok() != Some(result.bytes())
+        || text(2)? != expected.item_id.to_string()
+        || text(3)? != expected.dispatch_token.to_string()
     {
         return Err(error(ErrorCode::CorruptLedger, "result-bytes"));
     }
@@ -1531,17 +1539,6 @@ pub(super) struct ReadSnapshotStamp {
     data_version: i64,
     schema_version: i64,
     total_changes: u64,
-}
-
-impl ReadSnapshotStamp {
-    /// A new transaction can consume read evidence before it changes the database.
-    pub(super) fn still_matches(&self, connection: &Connection) -> Result<bool, ExecutionError> {
-        if connection.is_autocommit() {
-            return Ok(false);
-        }
-        pin_snapshot(connection)?;
-        Ok(*self == snapshot_stamp(connection)?)
-    }
 }
 
 fn pin_snapshot(connection: &Connection) -> Result<(), ExecutionError> {
@@ -4833,6 +4830,7 @@ impl ProjectStore {
     ) -> Result<AdoptionReceipt, ExecutionError> {
         let authority = self.plugin_authority.clone();
         let store_epoch = self.changes_since(Revision::new(0)?).epoch;
+        let release_reads = self.release_reads.borrow().clone();
         let mut tx = self.execution_write()?;
         let action = &prepared.capture.action;
         let current = capture_adoption_in(&tx, action, &authority)?;
@@ -4888,7 +4886,7 @@ impl ProjectStore {
         for result in &current.results {
             tx.execute("UPDATE execution_items SET adoption='committed' WHERE attempt_id=?1 AND item_id=?2",params![action.attempt_id.to_string(),result.envelope().item_id.to_string()]).map_err(sql_error)?;
         }
-        let release = release.and_then(|release| super::release::ReleaseReadCache::after_write(&tx, vec![std::sync::Arc::new(release)]));
+        let release = release.and_then(|release| release_reads.after_adoption(&tx, release));
         #[cfg(test)]
         crash_hook("before-adoption-commit");
         commit(tx)?;
