@@ -839,6 +839,24 @@ fn read_stored_input(
     connection: &Connection,
     attempt: ExecutionId,
 ) -> Result<StoredInputFrame, ExecutionError> {
+    with_stored_input(connection, attempt, |manifest, row| {
+        let (bytes, frame_digest) = input_storage::read_frame(connection, manifest)?;
+        Ok(StoredInputFrame {
+            bytes,
+            frame_digest,
+            digest: row.get(1).map_err(sql_error)?,
+            task: row.get(2).map_err(sql_error)?,
+            project: row.get(3).map_err(sql_error)?,
+            previous: row.get(4).map_err(sql_error)?,
+        })
+    })
+}
+
+fn with_stored_input<T>(
+    connection: &Connection,
+    attempt: ExecutionId,
+    read: impl FnOnce(&[u8], &rusqlite::Row<'_>) -> Result<T, ExecutionError>,
+) -> Result<T, ExecutionError> {
     let mut statement = connection.prepare_cached(&format!(
         "SELECT {},a.digest,a.task_id,a.project_id,a.previous_attempt_id
          FROM execution_attempts a WHERE a.attempt_id=?1",
@@ -847,15 +865,7 @@ fn read_stored_input(
     let mut rows = statement.query([attempt.to_string()]).map_err(sql_error)?;
     let row = rows.next().map_err(sql_error)?.ok_or_else(|| sql_error(rusqlite::Error::QueryReturnedNoRows))?;
     let manifest = row.get_ref(0).map_err(sql_error)?.as_blob().map_err(|_| error(ErrorCode::CorruptLedger, "input-storage"))?;
-    let (bytes, frame_digest) = input_storage::read_frame(connection, manifest)?;
-    Ok(StoredInputFrame {
-        bytes,
-        frame_digest,
-        digest: row.get(1).map_err(sql_error)?,
-        task: row.get(2).map_err(sql_error)?,
-        project: row.get(3).map_err(sql_error)?,
-        previous: row.get(4).map_err(sql_error)?,
-    })
+    read(manifest, row)
 }
 
 fn check_input_association(
@@ -1236,17 +1246,18 @@ pub(super) fn visit_result_pairs(
 // Comparing with a verified immutable frame is as strong as restoring its
 // digest again, while avoiding repeated SDK decoding/structural qualification.
 fn check_stored_input(connection: &Connection, input: &FixedInput) -> Result<(), ExecutionError> {
-    let stored = read_stored_input(connection, input.envelope().attempt_id)?;
-    if stored.digest != input.digest() || stored.bytes != input.bytes() {
-        return Err(error(ErrorCode::CorruptLedger, "input-bytes"));
-    }
-    check_input_association(
-        input,
-        input.envelope().attempt_id,
-        &stored.task,
-        &stored.project,
-        stored.previous.as_deref(),
-    )
+    let attempt = input.envelope().attempt_id;
+    with_stored_input(connection, attempt, |manifest, row| {
+        let digest: String = row.get(1).map_err(sql_error)?;
+        if digest != input.digest() {
+            return Err(error(ErrorCode::CorruptLedger, "input-bytes"));
+        }
+        input_storage::check_frame(connection, manifest, input.bytes())?;
+        let task: String = row.get(2).map_err(sql_error)?;
+        let project: String = row.get(3).map_err(sql_error)?;
+        let previous: Option<String> = row.get(4).map_err(sql_error)?;
+        check_input_association(input, attempt, &task, &project, previous.as_deref())
+    })
 }
 struct StoredResult {
     row_id: i64,
@@ -3706,6 +3717,33 @@ impl ProjectStore {
         offset: u32,
         limit: u32,
     ) -> Result<AttemptDetail, ExecutionError> {
+        self.attempt_detail_in(attempt_id, active, offset, limit, None)
+    }
+
+    /// The current checker review already owns the complete fixed input.
+    /// Verify the stored chunks and associations before reusing it to read
+    /// progress, without reconstructing another large immutable input.
+    pub fn artifact_checker_attempt_detail(
+        &self,
+        input: &FixedInput,
+        active: bool,
+        offset: u32,
+        limit: u32,
+    ) -> Result<AttemptDetail, ExecutionError> {
+        if input.envelope().operation != ARTIFACT_CHECK_OPERATION {
+            return Err(error(ErrorCode::InvalidInput, "artifact-check-attempt"));
+        }
+        self.attempt_detail_in(input.envelope().attempt_id, active, offset, limit, Some(input))
+    }
+
+    fn attempt_detail_in(
+        &self,
+        attempt_id: ExecutionId,
+        active: bool,
+        offset: u32,
+        limit: u32,
+        captured: Option<&FixedInput>,
+    ) -> Result<AttemptDetail, ExecutionError> {
         let connection = self.execution_connection()?;
         super::review::read_snapshot(connection, |connection| {
             if limit == 0 || limit > 100 {
@@ -3723,7 +3761,14 @@ impl ProjectStore {
                     return Ok(page.1.clone());
                 }
             }
-            let input = load_input(connection, attempt_id)?;
+            let input = match captured {
+                Some(input) => {
+                    check_stored_input(connection, input)?;
+                    super::resources::verify_input_fact_decisions(connection, input)?;
+                    input.clone()
+                }
+                None => load_input(connection, attempt_id)?,
+            };
             let mut view = read_attempt_in(connection, &input, active)?;
             let total = view.items.len();
             if offset as usize > total {

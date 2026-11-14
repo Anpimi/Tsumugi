@@ -28,6 +28,11 @@ impl Default for PluginBuildSession {
     }
 }
 impl PluginBuildSession {
+    pub(in crate::commands::execution) fn captured_checker(&self, attempt_id: ExecutionId) -> Option<&FixedInput> {
+        self.check.as_ref().filter(|check| check.view.attempt_id == attempt_id)
+            .map(|check| check.capture.check_input())
+    }
+
     pub(super) fn stop_package(
         &mut self,
         package: &crate::commands::plugins::PluginPackageRequest,

@@ -1362,6 +1362,13 @@ pub async fn read_execution_attempt(
                 )?;
                 let running = active.execution.as_ref()
                     .is_some_and(|host| host.runtime.is_active(request.attempt_id));
+                if let Some(captured) = active.execution.as_ref()
+                    .and_then(|host| host.release.plugin.captured_checker(request.attempt_id))
+                {
+                    return active.store.artifact_checker_attempt_detail(
+                        captured, running, request.offset, request.limit,
+                    ).map_err(attempt_detail_error);
+                }
                 attempt_detail_read(
                     &active.store,
                     request.attempt_id,
@@ -1397,13 +1404,15 @@ fn attempt_detail_read(
             offset,
             limit,
         )
-        .map_err(|error| {
-            if error.code == ErrorCode::InvalidInput && error.stage == "offset" {
-                CommandError::invalid_input(CommandStage::ExecutionRead, Some("offset"))
-            } else {
-                map_read(error)
-            }
-        })
+        .map_err(attempt_detail_error)
+}
+
+fn attempt_detail_error(error: ExecutionError) -> CommandError {
+    if error.code == ErrorCode::InvalidInput && error.stage == "offset" {
+        CommandError::invalid_input(CommandStage::ExecutionRead, Some("offset"))
+    } else {
+        map_read(error)
+    }
 }
 
 fn source_failure(

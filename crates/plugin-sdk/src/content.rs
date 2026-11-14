@@ -149,6 +149,16 @@ impl ContentExchange {
             &self.source_language,
             &self.artifacts,
         )?;
+        self.validate_references()?;
+        self.validate_encoded_size()
+    }
+
+    pub(crate) fn validate_encoded_size(&self) -> Result<(), ContractError> {
+        encoded_limit(self, MAX_CONTENT_EXCHANGE_BYTES, "contentExchange")
+    }
+
+    // Only called after checking the material or matching it to checked input.
+    pub(crate) fn validate_references(&self) -> Result<(), ContractError> {
         let mut sources = SourceReferences::from_validated(&self.artifacts);
         for (len, field) in [
             (self.units.len(), "content.units"),
@@ -207,12 +217,17 @@ impl ContentExchange {
                 convert_text_range(&unit.text, fragment.range, TextEncoding::Utf8Byte)?;
             }
         }
-        unique(self.order.iter(), "content.order")?;
-        if self.order.iter().collect::<BTreeSet<_>>() != occurrences {
-            return Err(ContractError::at(
-                ContractErrorCode::InvalidCoverage,
-                "content.order",
-            ));
+        {
+            let order: BTreeSet<_> = self.order.iter().collect();
+            if order.len() != self.order.len() {
+                return Err(ContractError::at(ContractErrorCode::DuplicateIdentity, "content.order"));
+            }
+            if order != occurrences {
+                return Err(ContractError::at(
+                    ContractErrorCode::InvalidCoverage,
+                    "content.order",
+                ));
+            }
         }
         unique(
             self.relations
@@ -261,7 +276,7 @@ impl ContentExchange {
                 crate::source_capture::parse_block_with_sources(block, &mut sources)?;
             }
         }
-        encoded_limit(self, MAX_CONTENT_EXCHANGE_BYTES, "contentExchange")
+        Ok(())
     }
 
     /// Use before an operation that needs domain interpretation. Reading stored

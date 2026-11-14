@@ -735,6 +735,27 @@ fn release_reads_and_reopen_refuse_rehashed_substitution_or_missing_links_withou
 }
 
 #[test]
+fn artifact_checker_detail_matches_the_ledger_and_rejects_changed_input() {
+    let (_directory, mut store, generation, input) = fixture_build(&["zh-CN"]);
+    let result = builder_result(&mut store, &input, input.envelope().items[0].item_id);
+    let (checker, _, _) = prove(&mut store, generation, &input, &result);
+    let attempt = checker.envelope().attempt_id;
+    let captured = store.artifact_checker_attempt_detail(&checker, false, 0, 100).unwrap();
+    let ledger = store.execution_attempt_detail(attempt, false, 0, 100).unwrap();
+    assert_eq!(serde_json::to_value(captured).unwrap(), serde_json::to_value(ledger).unwrap());
+    let connection = store.connection().unwrap();
+    let chunk: String = connection.query_row(
+        "SELECT json_extract(CAST(input AS TEXT),'$.chunks[0]') FROM execution_attempts WHERE attempt_id=?1",
+        [attempt.to_string()], |row| row.get(0),
+    ).unwrap();
+    connection.execute(
+        "UPDATE execution_input_chunks SET bytes=zeroblob(length(bytes)) WHERE digest=?1",
+        [chunk],
+    ).unwrap();
+    assert!(store.artifact_checker_attempt_detail(&checker, false, 0, 100).is_err());
+}
+
+#[test]
 fn release_commit_reuses_unchanged_qualification_without_loading_result_frames() {
     use rusqlite::trace::{TraceEvent, TraceEventCodes};
     thread_local! { static FRAME_READS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) }; }

@@ -139,7 +139,7 @@ pub(crate) fn digest_encoded<T: Serialize>(value: &T, limit: usize) -> Result<St
     Ok(digest_hex(writer.0.finish()))
 }
 
-fn encode_to<T: Serialize>(value: &T, limit: usize, writer: impl Write) -> Result<(), ExecutionError> {
+pub(crate) fn encode_to<T: Serialize>(value: &T, limit: usize, writer: impl Write) -> Result<(), ExecutionError> {
     struct BoundedWriter<W> {
         writer: W,
         remaining: usize,

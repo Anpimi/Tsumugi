@@ -751,7 +751,7 @@ pub(crate) fn validate_output_for_bundle(
     {
         return Err(invalid("source-result"));
     }
-    let exchange: sdk::ContentExchange = if let Some(evidence) = &result.envelope().plugin {
+    let output = if let Some(evidence) = &result.envelope().plugin {
         let sdk::InvocationOutcome::Succeeded { output } = &evidence.result.outcome else {
             return Err(invalid("source-result"));
         };
@@ -764,9 +764,9 @@ pub(crate) fn validate_output_for_bundle(
         if bytes.len() > sdk::MAX_CONTENT_EXCHANGE_BYTES {
             return Err(failure(ErrorCode::LimitExceeded, "source-result"));
         }
-        // project_source_output checks the typed content and its association
-        // with the captured materials together, before projecting any fields.
-        serde_json::from_slice(bytes).map_err(|_| invalid("source-result"))?
+        let exchange = sdk::parse_source_extraction_result(&bundle.source_input(), bytes)
+            .map_err(source_contract_error)?;
+        project_validated_source_output(bundle, exchange, policy)?
     } else {
         #[cfg(any(
             test,
@@ -774,13 +774,14 @@ pub(crate) fn validate_output_for_bundle(
             feature = "legacy-desktop-domain"
         ))]
         {
-            from_value(
+            let exchange = from_value(
                 result
                     .envelope()
                     .output
                     .as_ref()
                     .ok_or_else(|| invalid("source-result"))?,
-            )?
+            )?;
+            project_source_output(bundle, exchange, policy)?
         }
         #[cfg(not(any(
             test,
@@ -789,7 +790,6 @@ pub(crate) fn validate_output_for_bundle(
         )))]
         return Err(invalid("source-result-plugin"));
     };
-    let output = project_source_output(bundle, exchange, policy)?;
     #[cfg(any(
         test,
         feature = "execution-test-host",
@@ -819,6 +819,14 @@ pub(crate) fn project_source_output(
 ) -> Result<SourceOutput, ExecutionError> {
     sdk::validate_source_extraction(&bundle.source_input(), &exchange)
         .map_err(source_contract_error)?;
+    project_validated_source_output(bundle, exchange, policy)
+}
+
+fn project_validated_source_output(
+    bundle: &SourceBundle,
+    exchange: sdk::ContentExchange,
+    policy: sdk::SourceRevisionPolicy,
+) -> Result<SourceOutput, ExecutionError> {
     // The SDK has validated every range against these immutable materials.
     // Raw coordinates already are byte offsets; decoding the whole binary for
     // each occurrence/display range would repeat work proportional to its size.
@@ -864,19 +872,21 @@ pub(crate) fn project_source_output(
             }
         }
     }
+    let identity_policy = codec::digest(&codec::encode(&policy, MAX_INPUT_BYTES)?);
     let mut unit_bases = Vec::with_capacity(exchange.units.len());
+    let mut basis_bytes = Vec::new();
+    let mut blocks = Vec::new();
     for unit in &exchange.units {
-        let mut blocks = snapshot_blocks.clone();
+        blocks.clear();
+        blocks.extend_from_slice(&snapshot_blocks);
         blocks.extend(unit_blocks.remove(unit.id.as_str()).unwrap_or_default());
         // Preserve the previous exact multiset and ordering of schema/payload
         // pairs. Operation-local target IDs never enter the revision basis.
         blocks.sort();
-        unit_bases.push(
-            codec::digest(&codec::encode(
-                &(&policy, &unit.text, &unit.protected_fragments, blocks),
-                MAX_SOURCE_RESULT_BYTES,
-            )?),
-        );
+        basis_bytes.clear();
+        codec::encode_to(&(&policy, &unit.text, &unit.protected_fragments, &blocks),
+            MAX_SOURCE_RESULT_BYTES, &mut basis_bytes)?;
+        unit_bases.push(codec::digest(&basis_bytes));
     }
     drop(unit_blocks);
     drop(snapshot_blocks);
@@ -944,7 +954,7 @@ pub(crate) fn project_source_output(
         manifest_digest: bundle.manifest_digest.clone(),
         format_id: bundle.format_id.clone(),
         format_version: bundle.format_version,
-        identity_policy: codec::digest(&codec::encode(&policy, MAX_INPUT_BYTES)?),
+        identity_policy,
         namespace: occurrences
             .first()
             .map(|row| row.namespace.clone())

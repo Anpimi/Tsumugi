@@ -208,16 +208,45 @@ impl SourceExtractionCheckInput {
 }
 
 pub fn parse_content_exchange(bytes: &[u8]) -> Result<ContentExchange, ContractError> {
+    let content = decode_content_exchange(bytes)?;
+    validate_source_material(&content.profile, &content.source_set_id, &content.source_language, &content.artifacts)?;
+    content.validate_references()?;
+    check_decoded_content_size(bytes, &content)?;
+    Ok(content)
+}
+
+/// Decode a source result directly from its original bytes and match its
+/// material to the captured input before interpreting occurrence references.
+pub fn parse_source_extraction_result(
+    input: &SourceExtractionInput,
+    bytes: &[u8],
+) -> Result<ContentExchange, ContractError> {
+    let content = decode_content_exchange(bytes)?;
+    validate_source_extraction_references(input, &content)?;
+    check_decoded_content_size(bytes, &content)?;
+    Ok(content)
+}
+
+fn decode_content_exchange(bytes: &[u8]) -> Result<ContentExchange, ContractError> {
     if bytes.len() > MAX_CONTENT_EXCHANGE_BYTES {
         return Err(ContractError::at(
             ContractErrorCode::LimitExceeded,
             "contentExchange",
         ));
     }
-    let content: ContentExchange = serde_json::from_slice(bytes)
-        .map_err(|_| ContractError::at(ContractErrorCode::InvalidSchema, "contentExchange"))?;
-    content.validate()?;
-    Ok(content)
+    serde_json::from_slice(bytes)
+        .map_err(|_| ContractError::at(ContractErrorCode::InvalidSchema, "contentExchange"))
+}
+
+fn check_decoded_content_size(bytes: &[u8], content: &ContentExchange) -> Result<(), ContractError> {
+    // The closed wire shape has required fields, unsigned integer offsets and
+    // strings. Compact JSON adds at most one member per occurrence when the
+    // optional native identity was omitted. Near the limit, count exactly.
+    const MAX_CANONICAL_GROWTH: usize = crate::MAX_CONTENT_ITEMS * b",\"nativeIdentity\":null".len();
+    if bytes.len() <= MAX_CONTENT_EXCHANGE_BYTES - MAX_CANONICAL_GROWTH {
+        return Ok(());
+    }
+    content.validate_encoded_size()
 }
 
 pub fn parse_source_extraction_check_input(
@@ -329,8 +358,15 @@ pub fn validate_source_extraction(
     input: &SourceExtractionInput,
     exchange: &ContentExchange,
 ) -> Result<(), ContractError> {
+    validate_source_extraction_references(input, exchange)?;
+    exchange.validate_encoded_size()
+}
+
+fn validate_source_extraction_references(
+    input: &SourceExtractionInput,
+    exchange: &ContentExchange,
+) -> Result<(), ContractError> {
     input.validate()?;
-    exchange.validate()?;
     if input.profile != exchange.profile
         || input.source_set_id != exchange.source_set_id
         || input.source_language != exchange.source_language
@@ -340,17 +376,17 @@ pub fn validate_source_extraction(
             "sourceExtraction.content",
         ));
     }
-    // Artifact collection order does not define occurrence order. IDs are
-    // unique after validation; every captured byte and metadata field matches.
+    // Artifact order has no semantics. Exact equality and unique IDs bind
+    // every proposed artifact to already checked material without redecoding.
     let captured: BTreeMap<_, _> = input.artifacts.iter().map(|a| (a.id(), a)).collect();
     let proposed: BTreeMap<_, _> = exchange.artifacts.iter().map(|a| (a.id(), a)).collect();
-    if captured != proposed {
+    if proposed.len() != exchange.artifacts.len() || captured != proposed {
         return Err(ContractError::at(
             ContractErrorCode::ResultMismatch,
             "sourceExtraction.artifacts",
         ));
     }
-    Ok(())
+    exchange.validate_references()
 }
 
 #[cfg(feature = "schema")]

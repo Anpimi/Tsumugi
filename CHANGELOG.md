@@ -192,6 +192,7 @@ The current workspace targets **`0.3.0-alpha.1`**. The published `0.2.0-alpha.1`
 ### Fixed
 
 - Keep export folder checks responsive by pausing background review reads on the delivery workbench. Reuse unchanged evidence when saving a verified build, and reduce history decoding and material allocations when opening large projects.
+- Keep independent artifact check results responsive by pausing builder detail refreshes until the verdict is recorded. Reuse the captured checker input for progress reads and reduce duplicate work when validating large source proposals.
 
 - Keep release history and export receipts responsive after saving a build by retiring its live task reads. Read large saved execution frames with fewer copies and qualify independent checks against their original evidence.
 

@@ -126,7 +126,10 @@ async function start(user: ReturnType<typeof userEvent.setup>) {
   await user.click(primary()); await openStep(user, "build");
 }
 async function check(user: ReturnType<typeof userEvent.setup>, locale: string) {
+  const builderReads = () => invoke.mock.calls.filter(([command, args]) =>
+    command === "read_execution_attempt" && args.request.attemptId === build?.attemptId).length;
   await openStep(user, "build");
+  const beforeCheck = builderReads();
   await user.click(await screen.findByRole("button", { name: i18n.t("releasePlugin.prepareCheck", { locale }) }));
   await openStep(user, "verification");
   const consent = await screen.findByRole("checkbox", { name: i18n.t("releasePlugin.checkerConsent") });
@@ -134,6 +137,13 @@ async function check(user: ReturnType<typeof userEvent.setup>, locale: string) {
   expect(primary()).toHaveAccessibleName(i18n.t("deliveryWorkbench.verify"));
   await user.click(consent); await user.click(primary());
   await screen.findByText(i18n.t("releasePlugin.checkReceived"));
+  const checkerId = [...checks.keys()].at(-1);
+  expect(checkerId).toBeDefined();
+  const checkerReads = () => invoke.mock.calls.filter(([command, args]) =>
+    command === "read_execution_attempt" && args.request.attemptId === checkerId).length;
+  await refreshWorkbenchReads(["execution"]);
+  expect(builderReads()).toBe(beforeCheck);
+  expect(checkerReads()).toBeGreaterThan(0);
   await waitFor(() => expect(primary()).toHaveAccessibleName(i18n.t("releasePlugin.recordCheck")));
   expect(primary()).toBeEnabled();
   const starts = invoke.mock.calls.filter(([command]) => command === "start_artifact_check").length;

@@ -135,6 +135,46 @@ pub(super) fn read_frame(
 ) -> Result<(Vec<u8>, String), ExecutionError> {
     use aws_lc_rs::digest::{Context, SHA256};
     let manifest = read_manifest(stored)?;
+    let mut bytes = vec![0; manifest.raw_bytes];
+    let mut frame_digest = Some(Context::new(&SHA256));
+    visit_chunks(connection, stored, &manifest, |index, count, start, chunk| {
+        // json_each normally yields array order. Hash the assembled frame
+        // instead if an SQLite plan changes the traversal order.
+        if index != count {
+            frame_digest = None;
+        }
+        if let Some(digest) = &mut frame_digest {
+            digest.update(chunk);
+        }
+        bytes[start..start + chunk.len()].copy_from_slice(chunk);
+        Ok(())
+    })?;
+    let digest = match frame_digest {
+        Some(hash) => codec::digest_hex(hash.finish()),
+        None => codec::digest(&bytes),
+    };
+    Ok((bytes, digest))
+}
+
+pub(super) fn check_frame(connection: &Connection, stored: &[u8], expected: &[u8]) -> Result<(), ExecutionError> {
+    let manifest = read_manifest(stored)?;
+    if manifest.raw_bytes != expected.len() {
+        return Err(error(ErrorCode::CorruptLedger, "input-bytes"));
+    }
+    visit_chunks(connection, stored, &manifest, |_, _, start, chunk| {
+        if expected.get(start..start + chunk.len()) != Some(chunk) {
+            return Err(error(ErrorCode::CorruptLedger, "input-bytes"));
+        }
+        Ok(())
+    })
+}
+
+fn visit_chunks(
+    connection: &Connection,
+    stored: &[u8],
+    manifest: &StoredInput,
+    mut visit: impl FnMut(usize, usize, usize, &[u8]) -> Result<(), ExecutionError>,
+) -> Result<(), ExecutionError> {
     let mut statement = connection.prepare_cached(&format!(
         "SELECT part.key, CASE WHEN typeof(c.bytes)='blob' AND length(c.bytes) BETWEEN 1 AND {CHUNK_BYTES} THEN c.bytes END
          FROM json_each(CAST(?1 AS TEXT),'$.chunks') part
@@ -142,9 +182,7 @@ pub(super) fn read_frame(
     )).map_err(sql_error)?;
     let mut rows = statement.query([stored]).map_err(sql_error)?;
     let invalid = || error(ErrorCode::CorruptLedger, "input-chunk");
-    let mut bytes = vec![0; manifest.raw_bytes];
     let mut count = 0;
-    let mut frame_digest = Some(Context::new(&SHA256));
     while let Some(row) = rows.next().map_err(sql_error)? {
         let index = usize::try_from(row.get::<_, i64>(0).map_err(sql_error)?)
             .map_err(|_| invalid())?;
@@ -155,26 +193,14 @@ pub(super) fn read_frame(
         if chunk.len() != end - start || !codec::matches_digest(chunk, digest) {
             return Err(invalid());
         }
-        // json_each normally yields array order. Hash the assembled frame
-        // instead if an SQLite plan changes the traversal order.
-        if index != count {
-            frame_digest = None;
-        }
-        if let Some(digest) = &mut frame_digest {
-            digest.update(chunk);
-        }
-        bytes[start..end].copy_from_slice(chunk);
+        visit(index, count, start, chunk)?;
         count += 1;
     }
     // Each array index has at most one joined row because digest is the PK.
     if count != manifest.chunks.len() {
         return Err(invalid());
     }
-    let digest = match frame_digest {
-        Some(hash) => codec::digest_hex(hash.finish()),
-        None => codec::digest(&bytes),
-    };
-    Ok((bytes, digest))
+    Ok(())
 }
 pub(super) fn restore(
     stored: Option<Vec<u8>>,

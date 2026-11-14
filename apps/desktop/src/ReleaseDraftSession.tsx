@@ -307,7 +307,11 @@ function useReleaseOwner(project: ProjectView) {
       }
       throw failure;
     } finally {
-      if (live()) reads.invalidate(intent.kind === "adopt" && intent.prepared ? ["execution", "release"] : ["execution"], false);
+      // Starting an independent checker enables its previously disabled
+      // attempt query. Native changes continue to drive execution refreshes.
+      if (live() && intent.kind !== "start-check") {
+        reads.invalidate(intent.kind === "adopt" && intent.prepared ? ["execution", "release"] : ["execution"], false);
+      }
     }
   }
   function pendingFor(intent: ReleasePluginIntent, before = current(), generation = version.current): BuildPending { return fixed({ kind: "build", intent, editSeq: before.editSeq,

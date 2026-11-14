@@ -218,6 +218,26 @@ fn material_set_order_is_independent_of_explicit_occurrence_order() {
 }
 
 #[test]
+fn encoded_extraction_still_requires_unique_matched_artifacts_and_valid_ranges() {
+    let input = input();
+    let mut exchange = content(CONTENT);
+    let occurrence = &mut exchange.units[0].occurrences[0];
+    occurrence.native_identity = None;
+    let mut wire = serde_json::to_value(&exchange).unwrap();
+    wire["units"][0]["occurrences"][0].as_object_mut().unwrap().remove("nativeIdentity");
+    let bytes = serde_json::to_vec(&wire).unwrap();
+    assert_eq!(parse_source_extraction_result(&input, &bytes).unwrap(), exchange);
+
+    exchange.artifacts.push(exchange.artifacts[0].clone());
+    let bytes = serde_json::to_vec(&exchange).unwrap();
+    assert!(parse_source_extraction_result(&input, &bytes).is_err());
+    exchange.artifacts.pop();
+    exchange.units[0].occurrences[0].source.range.end = u32::MAX;
+    let bytes = serde_json::to_vec(&exchange).unwrap();
+    assert!(parse_source_extraction_result(&input, &bytes).is_err());
+}
+
+#[test]
 fn generic_extraction_check_does_not_interpret_domains_or_allocate_revisions() {
     let input = input();
     let mut exchange = content(CONTENT);

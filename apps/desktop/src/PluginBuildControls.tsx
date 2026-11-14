@@ -109,7 +109,9 @@ export function PluginBuildControls({ project, open, settingsOpen, disabled, onR
   const displayedChoiceKey = capturedBuild ? `${capturedBuild.builder.provider.packageDigest}:${capturedBuild.resourceId}` : choiceKey;
   const displayedRuntimeDigest = capturedBuild?.environmentDigest ?? runtimeDigest;
   const buildKey = ["release-plugin-build",attempt],checkKey = ["release-artifact-check",checkAttempt];
-  const buildRead = useSessionQuery({ key:buildKey,scopes:["execution"],enabled:setupOpen && !!attempt && !busy && !buildSaved,
+  // While checking a fixed build result, only the checker can make progress.
+  // The build is read again after recording the verdict, before saving it.
+  const buildRead = useSessionQuery({ key:buildKey,scopes:["execution"],enabled:setupOpen && !!attempt && !busy && !buildSaved && !checkReview,
     read:()=>attempt ? readCompleteAttempt(context,attempt,"locale-build") : Promise.resolve(null) });
   const checkRead = useSessionQuery({ key:checkKey,scopes:["execution"],enabled:setupOpen && !!checkAttempt && !busy,
     read:()=>checkAttempt ? readCompleteAttempt(context,checkAttempt,"artifact-semantic-check") : Promise.resolve(null) });
@@ -360,7 +362,7 @@ export function PluginBuildControls({ project, open, settingsOpen, disabled, onR
           {item.resultId && item.scope.locale !== null && matchesBuildScope(item, prepared?.review) && item.status.execution === "succeeded" && item.status.validation !== "valid" && !item.status.cancellationRequested ? <Button variant="secondary" disabled={!artifactAvailability(artifactPayload(item.resultId)).enabled} onClick={() => { const payload = artifactPayload(item.resultId!); if (payload) registry.dispatch("release.prepare-artifact-check", scope, payload); }}>{t("releasePlugin.prepareCheck", { locale: item.scope.locale })}</Button> : null}
         </li>)}</ul> : <Banner role="status">{t("releasePlugin.waiting")}</Banner>}
         <div className={styles.actions}>
-          <Button variant="secondary" disabled={busy || buildRead.isFetching} onClick={() => void buildRead.refetch()}>{t("execution.refresh")}</Button>
+          <Button variant="secondary" disabled={busy || !!checkReview || buildRead.isFetching} onClick={() => void buildRead.refetch()}>{t("execution.refresh")}</Button>
           {detail && buildActive ? <Button variant="secondary" disabled={!cancelAvailability(cancelPayload(detail)).enabled} onClick={() => registry.dispatch("release.cancel-task", scope, cancelPayload(detail))}>{t("execution.cancel")}</Button> : null}
         </div>
         {detail && buildActive ? <p className={styles.help}>{t("execution.cancelHelp")}</p> : null}
