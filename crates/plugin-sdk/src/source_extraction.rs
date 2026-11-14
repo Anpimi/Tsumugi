@@ -209,9 +209,14 @@ impl SourceExtractionCheckInput {
 
 pub fn parse_content_exchange(bytes: &[u8]) -> Result<ContentExchange, ContractError> {
     let content = decode_content_exchange(bytes)?;
-    validate_source_material(&content.profile, &content.source_set_id, &content.source_language, &content.artifacts)?;
+    validate_source_material(
+        &content.profile,
+        &content.source_set_id,
+        &content.source_language,
+        &content.artifacts,
+    )?;
     content.validate_references()?;
-    check_decoded_content_size(bytes, &content)?;
+    check_decoded_content_size(bytes.len(), &content, MAX_CONTENT_EXCHANGE_BYTES)?;
     Ok(content)
 }
 
@@ -223,7 +228,7 @@ pub fn parse_source_extraction_result(
 ) -> Result<ContentExchange, ContractError> {
     let content = decode_content_exchange(bytes)?;
     validate_source_extraction_references(input, &content)?;
-    check_decoded_content_size(bytes, &content)?;
+    check_decoded_content_size(bytes.len(), &content, MAX_CONTENT_EXCHANGE_BYTES)?;
     Ok(content)
 }
 
@@ -238,15 +243,55 @@ fn decode_content_exchange(bytes: &[u8]) -> Result<ContentExchange, ContractErro
         .map_err(|_| ContractError::at(ContractErrorCode::InvalidSchema, "contentExchange"))
 }
 
-fn check_decoded_content_size(bytes: &[u8], content: &ContentExchange) -> Result<(), ContractError> {
-    // The closed wire shape has required fields, unsigned integer offsets and
-    // strings. Compact JSON adds at most one member per occurrence when the
-    // optional native identity was omitted. Near the limit, count exactly.
-    const MAX_CANONICAL_GROWTH: usize = crate::MAX_CONTENT_ITEMS * b",\"nativeIdentity\":null".len();
-    if bytes.len() <= MAX_CONTENT_EXCHANGE_BYTES - MAX_CANONICAL_GROWTH {
+fn check_decoded_content_size(
+    wire_size: usize,
+    content: &ContentExchange,
+    limit: usize,
+) -> Result<(), ContractError> {
+    // Compact JSON string escaping and unsigned numbers cannot grow. Serde
+    // also accepts positional structs, which gain their field names when
+    // written as objects. Allow 128 bytes per group of fields, including
+    // nested refs and ranges. Occurrences may include two source references,
+    // identity evidence, and its display or gain an omitted nativeIdentity.
+    let mut groups = 2
+        + content.artifacts.len()
+        + content.units.len()
+        + content.relations.len()
+        + content.domain_blocks.len();
+    for unit in &content.units {
+        groups += 4 * unit.occurrences.len() + unit.protected_fragments.len();
+    }
+    if wire_size.saturating_add(groups.saturating_mul(128)) <= limit {
         return Ok(());
     }
-    content.validate_encoded_size()
+    encoded_limit(content, limit, "contentExchange")
+}
+
+#[cfg(test)]
+mod content_size_tests {
+    use super::*;
+
+    #[test]
+    fn positional_structs_do_not_bypass_the_canonical_byte_limit() {
+        let wire = br#"[
+            ["profile",1,1],"source","en",
+            [["artifact","sample.txt","primary","digest","sample"]],
+            [["unit","revision","sample",[["occurrence",["artifact",["utf8-byte",0,6]],null]],[]]],
+            ["occurrence"],[],[]
+        ]"#;
+        let content = decode_content_exchange(wire).unwrap();
+        let compact_wire =
+            serde_json::to_vec(&serde_json::from_slice::<serde_json::Value>(wire).unwrap()).unwrap();
+        let canonical = serde_json::to_vec(&content).unwrap();
+        assert!(canonical.len() > compact_wire.len());
+        assert_eq!(
+            check_decoded_content_size(compact_wire.len(), &content, canonical.len() - 1)
+                .unwrap_err()
+                .code,
+            ContractErrorCode::LimitExceeded
+        );
+        check_decoded_content_size(compact_wire.len(), &content, canonical.len()).unwrap();
+    }
 }
 
 pub fn parse_source_extraction_check_input(
