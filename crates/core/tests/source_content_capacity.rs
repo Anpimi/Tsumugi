@@ -64,6 +64,8 @@ fn large_quoted_source_uses_one_original_frame_and_checked_digest_projection_aft
             .code,
         ErrorCode::ResultMismatch
     );
+    // The widened material budget admits the bytes, but the persisted output
+    // must still be the exact compact schema and digest projection.
     let mut duplicate_projection = result.envelope().clone();
     duplicate_projection.output = Some(serde_json::to_value(&exchange).unwrap());
     assert_eq!(
@@ -74,7 +76,7 @@ fn large_quoted_source_uses_one_original_frame_and_checked_digest_projection_aft
         )
         .unwrap_err()
         .code,
-        ErrorCode::LimitExceeded
+        ErrorCode::ResultMismatch
     );
     println!(
         "sourceRawBytes={} storedResultBytes={} projectionBytes={}",

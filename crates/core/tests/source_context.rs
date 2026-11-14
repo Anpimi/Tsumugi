@@ -72,7 +72,7 @@ fn with_facts(mut exchange: sdk::ContentExchange) -> sdk::ContentExchange {
         ),
     ];
     let mut unsupported = block(sdk::ContentTarget::Snapshot, vec![]);
-    unsupported.schema.schema_version = 2;
+    unsupported.schema.schema_version += 1;
     unsupported.payload_utf8 = "opaque unsupported syntax".into();
     exchange.domain_blocks.push(unsupported);
     exchange
@@ -124,7 +124,10 @@ fn current_projection_preserves_origins_targets_empty_and_unsupported_versions()
     assert!(view.blocks[2].facts.as_ref().unwrap().facts.is_empty());
     assert!(view.blocks[3].facts.is_none());
     assert!(!view.blocks[3].in_revision_basis);
-    assert_eq!(view.blocks[3].schema.schema_version, 2);
+    assert_eq!(
+        view.blocks[3].schema.schema_version,
+        sdk::source_context_facts_contract().schema_version + 1
+    );
     assert_eq!(
         view.occurrences[0].occurrence_id,
         rows[0].occurrence_id.unwrap()

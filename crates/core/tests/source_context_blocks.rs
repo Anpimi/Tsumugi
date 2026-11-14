@@ -225,7 +225,7 @@ fn with_unknown_facts(exchange: sdk::ContentExchange) -> sdk::ContentExchange {
         sdk::SOURCE_CONTEXT_FACTS_SCHEMA_ID,
         "Uninterpreted future syntax \" <script>".into(),
     );
-    unknown.schema.schema_version = 2;
+    unknown.schema.schema_version = sdk::source_context_facts_contract().schema_version + 1;
     exchange.domain_blocks.push(unknown);
     exchange
 }
@@ -239,7 +239,10 @@ fn unknown_required_facts_remain_inspectable_but_selection_still_refuses_interpr
     assert_eq!(page.observations.unknown_required_blocks, 1);
     let descriptor = descriptors(&page)
         .into_iter()
-        .find(|value| value.schema.schema_version == 2)
+        .find(|value| {
+            value.schema.id == sdk::SOURCE_CONTEXT_FACTS_SCHEMA_ID
+                && !sdk::is_source_context_facts_contract(&value.schema)
+        })
         .unwrap();
     let detail = store
         .source_context_block(&read(&view, descriptor))

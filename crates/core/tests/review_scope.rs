@@ -53,17 +53,15 @@ impl SetupProfile {
 // These windows begin at each validation loop's first query and end at the
 // next identifiable query. They include intervening validation work, so their
 // elapsed times are diagnostic windows rather than exclusive CPU timings.
+const ATTEMPT_SCAN: &str = "SELECT a.attempt_id,t.operation FROM execution_attempts a";
+const UNREFERENCED_CHUNKS: &str = "WITH referenced(digest) AS MATERIALIZED (";
 const REOPEN_WINDOWS: [(&str, &str, &str); 4] = [
     (
         "review-index",
         "SELECT project_id,action_id FROM review_checks WHERE purpose='qa'",
-        "SELECT attempt_id FROM execution_attempts ORDER BY sequence",
+        ATTEMPT_SCAN,
     ),
-    (
-        "ledger-attempts",
-        "SELECT attempt_id FROM execution_attempts ORDER BY sequence",
-        "SELECT producer_result_id,valid FROM plugin_validation_links",
-    ),
+    ("ledger-attempts", ATTEMPT_SCAN, UNREFERENCED_CHUNKS),
     (
         "plugin-grants",
         "SELECT grant_id,attempt_id,task_id,input_digest,generation,expires_at_ms,unsandboxed_execution,application_execution,revoked,delegation FROM plugin_execution_grants",
@@ -102,6 +100,7 @@ struct ActiveReopenWindow {
     statements: usize,
     frames: usize,
     frame_bytes: u64,
+    chunk_bytes: u64,
 }
 
 #[derive(Default)]
@@ -111,10 +110,17 @@ struct ReopenProfile {
     completed: Vec<serde_json::Value>,
 }
 
+fn reopen_anchor(sql: &str, anchor: &str) -> bool {
+    match anchor {
+        ATTEMPT_SCAN | UNREFERENCED_CHUNKS => sql.trim().starts_with(anchor),
+        _ => sql.trim() == anchor,
+    }
+}
+
 impl ReopenProfile {
     fn statement(&mut self, sql: &str) {
         if let Some(active) = &self.active {
-            if sql.trim() == REOPEN_WINDOWS[self.next].2 {
+            if reopen_anchor(sql, REOPEN_WINDOWS[self.next].2) {
                 let elapsed = active.started.elapsed();
                 let active = self.active.take().unwrap();
                 self.completed.push(serde_json::json!({
@@ -123,19 +129,21 @@ impl ReopenProfile {
                     "statements": active.statements,
                     "reconstructedFrames": active.frames,
                     "reconstructedBytes": active.frame_bytes,
+                    "streamedChunkBytes": active.chunk_bytes,
                 }));
                 self.next += 1;
             }
         }
         if self.active.is_none()
             && self.next < REOPEN_WINDOWS.len()
-            && sql.trim() == REOPEN_WINDOWS[self.next].1
+            && reopen_anchor(sql, REOPEN_WINDOWS[self.next].1)
         {
             self.active = Some(ActiveReopenWindow {
                 started: Instant::now(),
                 statements: 0,
                 frames: 0,
                 frame_bytes: 0,
+                chunk_bytes: 0,
             });
         }
         if let Some(active) = &mut self.active {
@@ -150,6 +158,11 @@ impl ReopenProfile {
         if let Some(bytes) = returned_input_bytes(sql, statement) {
             active.frames += 1;
             active.frame_bytes += bytes;
+        }
+        if sql.contains("FROM json_each(CAST(?1 AS TEXT),'$.chunks') part")
+            && sql.contains("LEFT JOIN execution_input_chunks")
+        {
+            active.chunk_bytes += unsafe { ffi::sqlite3_column_bytes(statement, 1) } as u64;
         }
     }
 }
@@ -520,7 +533,8 @@ fn normal_reopen_streams_control_associations_without_a_second_frame_scan() {
         .iter()
         .find(|window| window["name"] == "ledger-attempts")
         .unwrap();
-    assert!(ledger["reconstructedFrames"].as_u64().unwrap() >= 2);
+    assert_eq!(ledger["reconstructedFrames"], 0);
+    assert!(ledger["streamedChunkBytes"].as_u64().unwrap() > 0);
     let control = profile
         .completed
         .iter()
@@ -528,6 +542,7 @@ fn normal_reopen_streams_control_associations_without_a_second_frame_scan() {
         .unwrap();
     assert_eq!(control["reconstructedFrames"], 0);
     assert_eq!(control["reconstructedBytes"], 0);
+    assert_eq!(control["streamedChunkBytes"], 0);
     let full_control_scan = |sql: &&String| {
         sql.contains("tsumugi_input_chunks(")
             && sql.contains(
@@ -786,11 +801,12 @@ fn assert_full_2000_qa_scope(
     );
     for window in &profile.completed {
         if window["name"] == "ledger-attempts" {
-            assert!(window["reconstructedFrames"].as_u64().unwrap() >= 2000);
-            assert!(window["reconstructedBytes"].as_u64().unwrap() >= input_bytes as u64);
+            assert_eq!(window["reconstructedFrames"], 0);
+            assert!(window["streamedChunkBytes"].as_u64().unwrap() >= input_bytes as u64);
         } else {
             assert_eq!(window["reconstructedFrames"], 0);
             assert_eq!(window["reconstructedBytes"], 0);
+            assert_eq!(window["streamedChunkBytes"], 0);
         }
     }
     assert!(
