@@ -110,9 +110,28 @@ impl InvocationContext {
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 pub struct EncodedPayload {
     pub schema: ContractRef,
+    #[serde(deserialize_with = "deserialize_payload_text")]
     pub utf8: std::sync::Arc<str>,
     pub sha256: String,
 }
+fn deserialize_payload_text<'de, D: serde::Deserializer<'de>>(
+    decoder: D,
+) -> Result<std::sync::Arc<str>, D::Error> {
+    struct PayloadText;
+    impl serde::de::Visitor<'_> for PayloadText {
+        type Value = std::sync::Arc<str>;
+
+        fn expecting(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+            formatter.write_str("UTF-8 payload text")
+        }
+
+        fn visit_str<E: serde::de::Error>(self, text: &str) -> Result<Self::Value, E> {
+            Ok(text.into())
+        }
+    }
+    decoder.deserialize_str(PayloadText)
+}
+
 impl EncodedPayload {
     pub fn capture(schema: ContractRef, utf8: String) -> Result<Self, ContractError> {
         let payload = Self {
@@ -189,13 +208,47 @@ impl InvocationRequest {
     }
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
 #[serde(tag = "kind", rename_all = "kebab-case", deny_unknown_fields)]
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 pub enum InvocationOutcome {
     Succeeded { output: EncodedPayload },
     Failed { error: EncodedPayload },
     Unknown { error: EncodedPayload },
+}
+
+// A tagged derive buffers the payload as an intermediate Serde tree before
+// selecting the variant. Decode the closed fields once even when kind is last.
+impl<'de> Deserialize<'de> for InvocationOutcome {
+    fn deserialize<D: serde::Deserializer<'de>>(decoder: D) -> Result<Self, D::Error> {
+        #[derive(Deserialize)]
+        #[serde(rename_all = "kebab-case")]
+        enum Kind {
+            Succeeded,
+            Failed,
+            Unknown,
+        }
+        fn present_payload<'de, D: serde::Deserializer<'de>>(
+            decoder: D,
+        ) -> Result<Option<EncodedPayload>, D::Error> {
+            EncodedPayload::deserialize(decoder).map(Some)
+        }
+        #[derive(Deserialize)]
+        #[serde(deny_unknown_fields)]
+        struct Fields {
+            kind: Kind,
+            #[serde(default, deserialize_with = "present_payload")]
+            output: Option<EncodedPayload>,
+            #[serde(default, deserialize_with = "present_payload")]
+            error: Option<EncodedPayload>,
+        }
+        match Fields::deserialize(decoder)? {
+            Fields { kind: Kind::Succeeded, output: Some(output), error: None } => Ok(Self::Succeeded { output }),
+            Fields { kind: Kind::Failed, output: None, error: Some(error) } => Ok(Self::Failed { error }),
+            Fields { kind: Kind::Unknown, output: None, error: Some(error) } => Ok(Self::Unknown { error }),
+            _ => Err(serde::de::Error::custom("unexpected invocation outcome payload")),
+        }
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]

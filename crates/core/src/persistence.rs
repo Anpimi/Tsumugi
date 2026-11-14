@@ -1243,6 +1243,22 @@ fn validate_schema_shape(connection: &Connection) -> Result<release::ReleaseRead
     Ok(release_reads)
 }
 
+/// Compare a captured frame to SQLite without materializing the stored BLOB.
+fn blob_matches(blob: &rusqlite::blob::Blob<'_>, expected: &[u8]) -> rusqlite::Result<bool> {
+    if blob.len() != expected.len() {
+        return Ok(false);
+    }
+    let mut buffer = vec![0; expected.len().min(64 * 1024)];
+    for (index, chunk) in expected.chunks(64 * 1024).enumerate() {
+        let stored = &mut buffer[..chunk.len()];
+        blob.read_at_exact(stored, index * 64 * 1024)?;
+        if stored != chunk {
+            return Ok(false);
+        }
+    }
+    Ok(true)
+}
+
 fn acquire_lock(lock: &File) -> Result<(), PersistenceError> {
     lock.try_lock().map_err(|error| match error {
         std::fs::TryLockError::WouldBlock => PersistenceError::ProjectInUse {

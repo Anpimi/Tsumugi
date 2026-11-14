@@ -61,7 +61,7 @@ impl ArtifactValidationCapture {
         attempt: Option<ExecutionId>,
     ) -> Result<Self, ExecutionError> {
         let plan = ReleasePlan::from_input(&build.input)?;
-        let (mut envelope, checks, _) = Self::reconstruct(&build, &plan)?;
+        let (mut envelope, checks, _) = Self::reconstruct(&build, &plan, None)?;
         envelope.attempt_id = attempt.unwrap_or(envelope.attempt_id);
         let check_input = FixedInput::capture(envelope)?;
         Ok(Self { build, check_input, checks })
@@ -70,6 +70,7 @@ impl ArtifactValidationCapture {
     fn reconstruct(
         build: &ResultValidationCapture,
         plan: &ReleasePlan,
+        saved_payload: Option<&Value>,
     ) -> Result<(InputEnvelope, sdk::FixedCheckSet, sdk::ArtifactSet), ExecutionError> {
         let result = &build.result;
         result.validate_for_input(&build.input)?;
@@ -130,13 +131,36 @@ impl ArtifactValidationCapture {
             build_input_digest: build.input.digest().into(),
             build_result_digest: result.digest().into(),
         };
+        let encoded_payload = if let Some(saved) = saved_payload {
+            let matched = saved.as_object().is_some_and(|saved| {
+                saved.len() == 3
+                    && saved.get("input").and_then(Value::as_object).is_some_and(|input| {
+                        input.len() == 6
+                            && validation::matches_exchange(input.get("source"), &payload.input.source)
+                            && validation::matches_value(input.get("targetLanguage"), &payload.input.target_language)
+                            && validation::matches_array(input.get("targets"), &payload.input.targets,
+                                |saved, target| validation::matches_value(Some(saved), target))
+                            && validation::matches_value(input.get("configuration"), &payload.input.configuration)
+                            && validation::matches_value(input.get("outputPaths"), &payload.input.output_paths)
+                            && validation::matches_value(input.get("outputLimits"), &payload.input.output_limits)
+                    })
+                    && validation::matches_artifact_set(saved.get("output"), &payload.output)
+                    && validation::matches_value(saved.get("requirements"), &payload.requirements)
+            });
+            if !matched {
+                return Err(ExecutionError::new(ErrorCode::ResultMismatch, "semantic-check-input"));
+            }
+            Value::Null
+        } else {
+            serde_json::to_value(&payload).map_err(|_| invalid())?
+        };
         let item = InputItem::new(
             Scope {
                 kind: "artifact-check".into(),
                 id: payload.input.source.source_set_id.clone(),
                 locale: Some(locale.into()),
             },
-            serde_json::to_value(&payload).map_err(|_| invalid())?,
+            encoded_payload,
             vec![],
         );
         let project = build
@@ -176,8 +200,9 @@ impl ArtifactValidationCapture {
         check_input: FixedInput,
         plan: &ReleasePlan,
     ) -> Result<(Self, sdk::ArtifactSet), ExecutionError> {
-        let (envelope, checks, output) = Self::reconstruct(&build, plan)?;
-        validation::restore_reconstructed_check_input(envelope, &check_input)?;
+        let item = check_input.envelope().items.first().ok_or_else(invalid)?;
+        let (envelope, checks, output) = Self::reconstruct(&build, plan, Some(&item.payload))?;
+        validation::restore_check_header(envelope, &check_input)?;
         Ok((Self { build, check_input, checks }, output))
     }
     /// Coverage can be complete and still have blocking findings. The ledger

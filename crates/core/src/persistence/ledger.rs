@@ -974,35 +974,41 @@ fn load_result_with_verified(
         .iter()
         .find(|r| r.result_id == result);
     let result_input = result_input(connection, input, result)?;
-    let (bytes,digest,item,token): (Vec<u8>,String,String,String) = connection.query_row(
-        "SELECT CASE WHEN length(bytes)<=?3 THEN bytes END,digest,item_id,dispatch_token FROM execution_results WHERE result_id=?1 AND attempt_id=?2",
-        params![result.to_string(),result_input.envelope().attempt_id.to_string(),i64::from(result_input.envelope().limits.max_result_bytes)], |r| Ok((r.get(0)?,r.get(1)?,r.get(2)?,r.get(3)?))).map_err(sql_error)?;
-    let token = parse_id(token)?;
-    let result_value = match verified {
-        Some(verified)
-            if verified.envelope().result_id == result
-                && verified.envelope().attempt_id == result_input.envelope().attempt_id
-                && verified.envelope().dispatch_token == token
-                && verified.envelope().item_id.to_string() == item
-                && verified.digest() == digest.as_str()
-                && verified.bytes() == bytes.as_slice() =>
+    let result_value = super::review::read_snapshot(connection, |connection| {
+        let row = stored_result(
+            connection, result_input.envelope().attempt_id, result,
+            result_input.envelope().limits.max_result_bytes as usize,
+        )?;
+        let token = ExecutionId::parse(&row.token)?;
+        let bytes = row.open_bytes(connection)?;
+        if let Some(verified) = verified
+            && verified.envelope().result_id == result
+            && verified.envelope().attempt_id == result_input.envelope().attempt_id
+            && verified.envelope().dispatch_token == token
+            && verified.envelope().item_id.to_string() == row.item
+            && verified.digest() == row.digest
+            && super::blob_matches(&bytes, verified.bytes()).map_err(sql_error)?
         {
-            verified.clone()
+            super::plugin_execution::validate_result_in(connection, &result_input, verified)?;
+            return Ok(verified.clone());
         }
-        _ => FixedResult::restore_owned(bytes, &digest, &result_input, token)?,
-    };
+        // Reading the BLOB directly keeps SQLite from first materializing a full
+        // result value that would overlap the Rust frame during typed decoding.
+        let mut frame = vec![0; bytes.len()];
+        bytes.read_at_exact(&mut frame, 0).map_err(sql_error)?;
+        let fixed = FixedResult::restore_owned(frame, &row.digest, &result_input, token)?;
+        if fixed.envelope().item_id.to_string() != row.item || fixed.envelope().result_id != result {
+            return Err(error(ErrorCode::CorruptLedger, "result-association"));
+        }
+        super::plugin_execution::validate_result_in(connection, &result_input, &fixed)?;
+        Ok(fixed)
+    })?;
     if reused.is_some_and(|reference| {
         reference.item_id != result_value.envelope().item_id
             || result_value.envelope().outcome != ExecutionState::Succeeded
     }) {
         return Err(error(ErrorCode::CorruptLedger, "reused-result"));
     }
-    if result_value.envelope().result_id != result
-        || result_value.envelope().item_id.to_string() != item
-    {
-        return Err(error(ErrorCode::CorruptLedger, "result-association"));
-    }
-    super::plugin_execution::validate_result_in(connection, &result_input, &result_value)?;
     Ok(result_value)
 }
 
@@ -1240,30 +1246,63 @@ fn check_stored_input(connection: &Connection, input: &FixedInput) -> Result<(),
         stored.previous.as_deref(),
     )
 }
+struct StoredResult {
+    row_id: i64,
+    size: u32,
+    digest: String,
+    item: String,
+    token: String,
+}
+impl StoredResult {
+    fn open_bytes<'a>(&self, connection: &'a Connection) -> Result<rusqlite::blob::Blob<'a>, ExecutionError> {
+        let bytes = connection.blob_open(rusqlite::MAIN_DB, "execution_results", "bytes", self.row_id, true)
+            .map_err(sql_error)?;
+        if bytes.len() != self.size as usize {
+            return Err(error(ErrorCode::CorruptLedger, "result-bytes"));
+        }
+        Ok(bytes)
+    }
+}
+
+fn stored_result(
+    connection: &Connection,
+    attempt: ExecutionId,
+    result: ExecutionId,
+    max_bytes: usize,
+) -> Result<StoredResult, ExecutionError> {
+    let row = connection.prepare_cached(
+        "SELECT rowid,CASE WHEN typeof(bytes)='blob' AND length(bytes) BETWEEN 1 AND ?3 THEN length(bytes) END,
+                digest,item_id,dispatch_token
+         FROM execution_results WHERE result_id=?1 AND attempt_id=?2",
+    ).map_err(sql_error)?
+        .query_row(params![result.to_string(), attempt.to_string(), max_bytes as i64], |row| {
+            Ok(StoredResult {
+                row_id: row.get(0)?,
+                size: row.get(1)?,
+                digest: row.get(2)?,
+                item: row.get(3)?,
+                token: row.get(4)?,
+            })
+        }).map_err(sql_error)?;
+    Ok(row)
+}
+
 fn check_stored_result(
     connection: &Connection,
     result: &FixedResult,
 ) -> Result<(), ExecutionError> {
     let expected = result.envelope();
-    let mut statement = connection.prepare_cached(
-        "SELECT CASE WHEN length(bytes)<=?3 THEN bytes END,digest,item_id,dispatch_token
-         FROM execution_results WHERE result_id=?1 AND attempt_id=?2",
-    ).map_err(sql_error)?;
-    let mut rows = statement.query(params![
-        expected.result_id.to_string(), expected.attempt_id.to_string(), MAX_PLUGIN_RESULT_BYTES as i64
-    ]).map_err(sql_error)?;
-    let row = rows.next().map_err(sql_error)?
-        .ok_or_else(|| sql_error(rusqlite::Error::QueryReturnedNoRows))?;
-    let text = |column| row.get_ref(column).map_err(sql_error)?.as_str()
-        .map_err(|_| error(ErrorCode::CorruptLedger, "result-bytes"));
-    if text(1)? != result.digest()
-        || row.get_ref(0).map_err(sql_error)?.as_blob().ok() != Some(result.bytes())
-        || text(2)? != expected.item_id.to_string()
-        || text(3)? != expected.dispatch_token.to_string()
-    {
-        return Err(error(ErrorCode::CorruptLedger, "result-bytes"));
-    }
-    Ok(())
+    super::review::read_snapshot(connection, |connection| {
+        let row = stored_result(connection, expected.attempt_id, expected.result_id, MAX_PLUGIN_RESULT_BYTES)?;
+        if row.digest != result.digest()
+            || row.item != expected.item_id.to_string()
+            || row.token != expected.dispatch_token.to_string()
+            || !super::blob_matches(&row.open_bytes(connection)?, result.bytes()).map_err(sql_error)?
+        {
+            return Err(error(ErrorCode::CorruptLedger, "result-bytes"));
+        }
+        Ok(())
+    })
 }
 fn read_attempt(
     connection: &Connection,

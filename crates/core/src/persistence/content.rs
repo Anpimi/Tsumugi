@@ -234,20 +234,22 @@ fn validate_bundle_files(
         return Err(corrupt());
     }
     let mut file_row = connection.prepare_cached(
-        "SELECT logical_path,role,CASE WHEN length(bytes)<=?3 THEN bytes END,digest
+        "SELECT rowid,logical_path,role,digest,typeof(bytes)
          FROM source_files WHERE set_id=?1 AND artifact_id=?2",
     ).map_err(sql_error)?;
     for file in &source.artifacts {
-        let mut rows = file_row.query(params![set.to_string(), file.id(), tsumugi_plugin_sdk::MAX_MATERIAL_BYTES as i64])
+        let (rowid, path, role, digest, storage): (i64, String, String, String, String) = file_row
+            .query_row(params![set.to_string(), file.id()],
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?, row.get(4)?)))
             .map_err(sql_error)?;
-        let row = rows.next().map_err(sql_error)?.ok_or_else(corrupt)?;
-        let text = |column| row.get_ref(column).map_err(sql_error)?.as_str().map_err(|_| corrupt());
-        let bytes = row.get_ref(2).map_err(sql_error)?.as_blob().map_err(|_| corrupt())?;
-        if text(0)? != file.logical_path()
-            || text(1)? != file.role()
-            || bytes != file.bytes().map_err(|_| corrupt())?.as_ref()
-            || text(3)? != file.sha256()
+        if path != file.logical_path() || role != file.role() || digest != file.sha256()
+            || storage != "blob"
         {
+            return Err(corrupt());
+        }
+        let blob = connection.blob_open(rusqlite::MAIN_DB, "source_files", "bytes", rowid, true)
+            .map_err(sql_error)?;
+        if !super::blob_matches(&blob, file.bytes().map_err(|_| corrupt())?.as_ref()).map_err(sql_error)? {
             return Err(corrupt());
         }
     }
@@ -329,23 +331,25 @@ pub(super) fn validate_bundle_in(
     connection: &Connection,
     bundle: &SourceBundle,
 ) -> Result<(), ExecutionError> {
+    super::review::read_snapshot(connection, |connection| validate_bundle_snapshot(connection, bundle))
+}
+
+fn validate_bundle_snapshot(connection: &Connection, bundle: &SourceBundle) -> Result<(), ExecutionError> {
     let expected = bundle.source_input();
     let project = super::read_metadata_from(connection).map_err(|_| corrupt())?.project_id().to_string();
-    let mut statement = connection.prepare_cached(
-        "SELECT project_id,CASE WHEN length(payload)<=?2 THEN payload END,digest FROM source_sets WHERE set_id=?1",
-    ).map_err(sql_error)?;
-    let mut rows = statement.query(params![bundle.set_id.to_string(), MAX_CAPTURED_SOURCE_INPUT_BYTES as i64])
+    let (rowid, stored_project, digest, storage): (i64, String, String, String) = connection
+        .query_row("SELECT rowid,project_id,digest,typeof(payload) FROM source_sets WHERE set_id=?1",
+            [bundle.set_id.to_string()], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)))
         .map_err(sql_error)?;
-    let row = rows.next().map_err(sql_error)?.ok_or_else(corrupt)?;
-    let stored_project: String = row.get(0).map_err(sql_error)?;
-    let bytes = row.get_ref(1).map_err(sql_error)?.as_blob().map_err(|_| corrupt())?;
-    let digest: String = row.get(2).map_err(sql_error)?;
-    // The exact source payload was already qualified with the fixed input.
-    // Compare its canonical encoding in place, without parsing or validating
-    // another full bundle. Still verify the stored digest and captured files.
-    if stored_project != project
-        || !codec::matches_digest(bytes, &digest)
-        || !codec::matches_encoding(&expected, MAX_CAPTURED_SOURCE_INPUT_BYTES, bytes)?
+    if stored_project != project || storage != "blob" {
+        return Err(corrupt());
+    }
+    // The fixed input has qualified this source payload already. Check the
+    // stored representation and digest without owning another complete BLOB.
+    let payload = connection.blob_open(rusqlite::MAIN_DB, "source_sets", "payload", rowid, true)
+        .map_err(sql_error)?;
+    if payload.len() > MAX_CAPTURED_SOURCE_INPUT_BYTES
+        || !codec::matches_stored_encoding(&expected, MAX_CAPTURED_SOURCE_INPUT_BYTES, payload, &digest)?
     {
         return Err(corrupt());
     }

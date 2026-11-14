@@ -162,9 +162,17 @@ it("opens the independent artifact checker for the Core source-snapshot build sc
   expect(invoke.mock.calls.filter(([command]) => command === "start_artifact_check")).toHaveLength(1);
   await screen.findByRole("button", { name: i18n.t("deliveryWorkbench.saveBuild") });
   expect(invoke.mock.calls.filter(([command]) => command === "list_releases")).toHaveLength(1);
+  const attemptReads = () => invoke.mock.calls.filter(([command, args]) =>
+    command === "read_execution_attempt" && args.request.attemptId === build?.attemptId).length;
+  const beforeSave = attemptReads();
   await user.click(screen.getByRole("button", { name: i18n.t("deliveryWorkbench.saveBuild") }));
   await screen.findByText(i18n.t("releasePlugin.recorded"));
   expect(invoke.mock.calls.filter(([command]) => command === "list_releases").length).toBeGreaterThan(1);
+  expect(attemptReads()).toBe(beforeSave);
+  const history = screen.getByRole("button", { name: i18n.t("deliveryWorkbench.history") });
+  await user.click(history);
+  await screen.findByRole("button", { name: /^Use saved build from/ });
+  expect(attemptReads()).toBe(beforeSave);
 });
 
 

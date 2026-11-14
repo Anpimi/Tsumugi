@@ -191,6 +191,8 @@ The current workspace targets **`0.3.0-alpha.1`**. The published `0.2.0-alpha.1`
 
 ### Fixed
 
+- Keep release history and export receipts responsive after saving a build by retiring its live task reads. Read large saved execution frames with fewer copies and qualify independent checks against their original evidence.
+
 - Preparing or checking a new build keeps verified release history available. Saved releases are revalidated when their evidence changes, and opening large projects compares stored source evidence without decoding a second copy.
 
 - Reduce historical decoding and avoid rebuilding full plugin requests when opening projects with large plugin imports or builds. After saving a verified build, history reuses the evidence verified by that commit. Recording an export receipt keeps still-valid build history available.

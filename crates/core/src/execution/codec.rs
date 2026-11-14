@@ -1,4 +1,4 @@
-use std::{collections::BTreeSet, fmt, io::Write};
+use std::{collections::BTreeSet, fmt, io::{Read, Write}};
 
 use aws_lc_rs::digest::{Digest, SHA256, digest as compute_digest};
 use serde::{
@@ -75,6 +75,52 @@ pub(crate) fn matches_encoding<T: Serialize>(
     let mut comparison = Comparison { rest: bytes, equal: true };
     encode_to(value, limit, std::io::BufWriter::new(&mut comparison))?;
     Ok(comparison.equal && comparison.rest.is_empty())
+}
+
+/// Check an already qualified value against a stored canonical byte stream.
+pub(crate) fn matches_stored_encoding<T: Serialize>(
+    value: &T,
+    limit: usize,
+    reader: impl Read,
+    digest: &str,
+) -> Result<bool, ExecutionError> {
+    struct Comparison<R> {
+        reader: R,
+        hash: aws_lc_rs::digest::Context,
+        equal: bool,
+        buffer: [u8; 16 * 1024],
+    }
+    impl<R: Read> Write for Comparison<R> {
+        fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
+            for chunk in bytes.chunks(self.buffer.len()) {
+                let stored = &mut self.buffer[..chunk.len()];
+                if !self.equal {
+                    break;
+                }
+                self.equal = match self.reader.read_exact(stored) {
+                    Ok(()) => stored == chunk,
+                    Err(error) if error.kind() == std::io::ErrorKind::UnexpectedEof => false,
+                    Err(error) => return Err(error),
+                };
+            }
+            self.hash.update(bytes);
+            Ok(bytes.len())
+        }
+
+        fn flush(&mut self) -> std::io::Result<()> {
+            Ok(())
+        }
+    }
+    let mut comparison = Comparison {
+        reader,
+        hash: aws_lc_rs::digest::Context::new(&SHA256),
+        equal: true,
+        buffer: [0; 16 * 1024],
+    };
+    encode_to(value, limit, std::io::BufWriter::new(&mut comparison))?;
+    Ok(comparison.equal
+        && matches!(comparison.reader.read(&mut [0]), Ok(0))
+        && digest_hex(comparison.hash.finish()) == digest)
 }
 
 pub(crate) fn digest_encoded<T: Serialize>(value: &T, limit: usize) -> Result<String, ExecutionError> {

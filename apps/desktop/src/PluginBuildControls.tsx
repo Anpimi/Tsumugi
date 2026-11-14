@@ -55,6 +55,7 @@ export function PluginBuildControls({ project, open, disabled, onRecorded, onOpe
     checkReview, checkConsent, checkAttempt, pending, buildReceipt: receipt, busy } = owner;
   const failure = owner.failureArea === "build" ? owner.failure : null;
   const setupOpen = open && !savedAttempt;
+  const buildSaved = !!receipt && receipt.attemptId === attempt;
   // Discovery belongs to editable setup. Captured execution keeps its original
   // environment and authority; unrelated Store reads must not replace that result.
   const discovering = setupOpen && !prepared && !attempt;
@@ -108,14 +109,14 @@ export function PluginBuildControls({ project, open, disabled, onRecorded, onOpe
   const displayedChoiceKey = capturedBuild ? `${capturedBuild.builder.provider.packageDigest}:${capturedBuild.resourceId}` : choiceKey;
   const displayedRuntimeDigest = capturedBuild?.environmentDigest ?? runtimeDigest;
   const buildKey = ["release-plugin-build",attempt],checkKey = ["release-artifact-check",checkAttempt];
-  const buildRead = useSessionQuery({ key:buildKey,scopes:["execution"],enabled:setupOpen && !!attempt && !busy,
+  const buildRead = useSessionQuery({ key:buildKey,scopes:["execution"],enabled:setupOpen && !!attempt && !busy && !buildSaved,
     read:()=>attempt ? readCompleteAttempt(context,attempt,"locale-build") : Promise.resolve(null) });
   const checkRead = useSessionQuery({ key:checkKey,scopes:["execution"],enabled:setupOpen && !!checkAttempt && !busy,
     read:()=>checkAttempt ? readCompleteAttempt(context,checkAttempt,"artifact-semantic-check") : Promise.resolve(null) });
   const savedRead = useSessionQuery({ key:["saved-plugin-build",savedAttempt],scopes:["execution","release"],enabled:open && !!savedAttempt,
     read:()=>{if(!savedAttempt)throw new Error("No saved build selected");return releaseCommands.savedBuild({...context,attemptId:savedAttempt});} });
-  const detail = buildRead.data, checkDetail = checkRead.data, checkItem = checkDetail?.items[0];
-  const buildActive = !!attempt && (!detail || detail.items.some(item=>["queued","dispatched"].includes(item.status.execution)));
+  const detail = buildSaved ? null : buildRead.data, checkDetail = checkRead.data, checkItem = checkDetail?.items[0];
+  const buildActive = !buildSaved && !!attempt && (!detail || detail.items.some(item=>["queued","dispatched"].includes(item.status.execution)));
   const checkActive = !!checkAttempt && (!checkDetail || checkDetail.items.some(item=>["queued","dispatched"].includes(item.status.execution)));
   const locked = disabled || owner.reserved() || tasks.unresolved(), draftLocked = locked || !!prepared || !!attempt;
   const loading = inventoryRead.isFetching, environmentLoading = environmentRead.isFetching;
@@ -138,7 +139,7 @@ export function PluginBuildControls({ project, open, disabled, onRecorded, onOpe
   useEffect(() => { if (!open) composing.current = false; }, [open]);
   useEffect(()=>{if(failure && open)errorRegion.current?.focus();},[failure,open]);
   useEffect(()=>{if(savedRead.error && open)savedErrorRegion.current?.focus();},[savedRead.error,open]);
-  useEffect(()=>{const error=inventoryRead.error??environmentRead.error??buildRead.error??checkRead.error;if(error)owner.reportFailure(commandFailure(error));},[inventoryRead.error,environmentRead.error,buildRead.error,checkRead.error]);
+  useEffect(()=>{const error=inventoryRead.error??environmentRead.error??(buildSaved ? null : buildRead.error)??checkRead.error;if(error)owner.reportFailure(commandFailure(error));},[inventoryRead.error,environmentRead.error,buildRead.error,checkRead.error,buildSaved]);
   const recorded = useRef<string|null>(null);
   useEffect(()=>{if(receipt && !owner.reserved() && recorded.current!==receipt.actionId){recorded.current=receipt.actionId;void onRecorded(receipt.actionId);}},[receipt,busy,onRecorded]);
   const scope = {projectId:context.projectId,sessionToken:context.sessionToken,area:"release" as const};
@@ -215,7 +216,8 @@ export function PluginBuildControls({ project, open, disabled, onRecorded, onOpe
       registry.register({...meta,id:"release.check-cancellation",nameKey:"execution.checkCancellation",risk:"reads-execution",payloadKind:"execution-cancellation-retry",availability:payload=>cancelRetryAvailability(payload,false),handler:payload=>{void tasks.checkCancellation(payload.taskId);}}),
     ];return()=>remove.forEach(dispose=>dispose());
   });
-  function mainAction(): BuildWorkbenchAction {
+  function mainAction(): BuildWorkbenchAction | null {
+    if (buildSaved) return null;
     const action = (step: BuildWorkbenchAction["step"], key: "check" | "prepare" | "startBuild" | "verify" | "saveBuild" | "checkResult", enabled: boolean, run: () => void): BuildWorkbenchAction => ({ step, label: t(`deliveryWorkbench.${key}`), enabled, run });
     if (pending?.kind === "build" && pending.uncertain) return action("build", "checkResult", pendingAvailability(pendingPayload()).enabled, () => { const payload = pendingPayload(); if (payload) registry.dispatch("release.check-build", scope, payload); });
     if (canRecord && !receipt) return action("verification", "saveBuild", recordAvailability(recordPayload()).enabled, () => { const payload = recordPayload(); if (payload) registry.dispatch("release.record-build", scope, payload); });
@@ -348,7 +350,7 @@ export function PluginBuildControls({ project, open, disabled, onRecorded, onOpe
           </div>
         </> : null}
       </section> : null}
-      {attempt ? <section className={styles.results} aria-label={t("releasePlugin.results")}>
+      {attempt && !buildSaved ? <section className={styles.results} aria-label={t("releasePlugin.results")}>
         <h4>{t("releasePlugin.results")}</h4>
         {owner.earlierBuild ? <Banner tone="warning" role="status">{t("release.earlierBuild")}</Banner> : null}
         {detail ? <ul className={styles.resultList}>{detail.items.map(item => <li key={item.status.itemId}>
@@ -383,7 +385,7 @@ export function PluginBuildControls({ project, open, disabled, onRecorded, onOpe
           </div>
         </>}
       </section> : null}
-      <ArtifactCheckWorkflowControls project={project} open={setupOpen} disabled={disabled} canInteract={canInteract} detail={detail ?? null} buildKey={buildKey} readProof={() => proof(buildKey)}/>
+      <ArtifactCheckWorkflowControls project={project} open={setupOpen && !buildSaved} disabled={disabled} canInteract={canInteract} detail={detail ?? null} buildKey={buildKey} readProof={() => proof(buildKey)}/>
       {canRecord && !receipt ? <>
         <Banner tone="success" role="status">{t("releasePlugin.allChecked")}</Banner>
       </> : null}
@@ -406,7 +408,7 @@ export function PluginBuildControls({ project, open, disabled, onRecorded, onOpe
     feedback: feedbackContent, recovery: recoveryContent, saved: savedContent, primary: savedAttempt ? null : mainAction(),
     status: { buildActive, checkActive, outputReceived: !!detail?.items.length && detail.items.every(item => item.resultId && item.status.execution === "succeeded"), complete,
       failed: !!detail?.items.some(item => item.status.execution === "failed" || item.status.execution === "cancelled-before-dispatch"),
-      unknown: pending?.kind === "build" && pending.uncertain || !!detail?.items.some(item => item.status.execution === "unknown"), readFailed: !!buildRead.error || !!checkRead.error },
+      unknown: pending?.kind === "build" && pending.uncertain || !!detail?.items.some(item => item.status.execution === "unknown"), readFailed: !buildSaved && !!buildRead.error || !!checkRead.error },
   });
   return <div className={styles.root}
     onCompositionStartCapture={() => { composing.current = true; }}

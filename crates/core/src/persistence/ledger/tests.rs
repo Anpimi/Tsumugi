@@ -89,7 +89,8 @@ fn attempt_detail_reuses_verified_page_but_detects_changed_result_bytes() {
 
     store.connection().unwrap().trace_v2(TraceEventCodes::SQLITE_TRACE_STMT, Some(|event| {
         if let TraceEvent::Stmt(_, sql) = event
-            && sql.contains("SELECT CASE WHEN length(bytes)<=")
+            && sql.contains("FROM execution_results WHERE result_id=?1 AND attempt_id=?2")
+            && sql.contains("SELECT rowid,CASE WHEN typeof(bytes)='blob'")
         {
             FRAME_READS.with(|reads| reads.set(reads.get() + 1));
         }

@@ -21,6 +21,7 @@ pub(crate) fn restore_check_input(
     compare_check_input(expected.envelope().clone(), actual)
 }
 
+#[cfg(test)]
 pub(super) fn restore_reconstructed_check_input(
     mut expected: InputEnvelope,
     actual: &FixedInput,
@@ -29,8 +30,52 @@ pub(super) fn restore_reconstructed_check_input(
     compare_check_input(expected, actual)
 }
 
-fn compare_check_input(mut rebuilt: InputEnvelope, actual: &FixedInput) -> Result<(), ExecutionError> {
+/// The payload is verified separately against the original producer evidence.
+/// A canonical re-encoding verifies the original JSON representation as well.
+pub(super) fn restore_check_header(
+    mut expected: InputEnvelope,
+    actual: &FixedInput,
+) -> Result<(), ExecutionError> {
     let captured = actual.envelope();
+    bind_check_ids(&mut expected, captured)?;
+    // Compare the header and the item identity, scope and dependencies without
+    // cloning the already qualified material payload.
+    if expected.items[0].scope != captured.items[0].scope
+        || expected.items[0].dependencies != captured.items[0].dependencies
+        || expected.version != captured.version
+        || expected.project_id != captured.project_id
+        || expected.previous_attempt_id != captured.previous_attempt_id
+        || expected.automation != captured.automation
+        || expected.plugin != captured.plugin
+        || expected.operation != captured.operation
+        || expected.capability_id != captured.capability_id
+        || expected.capability_version != captured.capability_version
+        || expected.settings != captured.settings
+        || expected.limits != captured.limits
+        || expected.units != captured.units
+        || expected.reused_results != captured.reused_results
+        || !codec::matches_encoding(captured, FixedInput::byte_limit(captured), actual.bytes())?
+    {
+        return Err(ExecutionError::new(ErrorCode::ResultMismatch, "semantic-check-input"));
+    }
+    Ok(())
+}
+
+fn compare_check_input(mut rebuilt: InputEnvelope, actual: &FixedInput) -> Result<(), ExecutionError> {
+    bind_check_ids(&mut rebuilt, actual.envelope())?;
+    // Both inputs were already validated. Exact canonical bytes also check
+    // the rebound identities without decoding and validating another frame.
+    rebuilt.normalize();
+    if !codec::matches_encoding(&rebuilt, FixedInput::byte_limit(&rebuilt), actual.bytes())? {
+        return Err(ExecutionError::new(
+            ErrorCode::ResultMismatch,
+            "semantic-check-input",
+        ));
+    }
+    Ok(())
+}
+
+fn bind_check_ids(rebuilt: &mut InputEnvelope, captured: &InputEnvelope) -> Result<(), ExecutionError> {
     if captured.items.len() != 1 || captured.units.len() != 1 {
         return Err(ExecutionError::new(
             ErrorCode::ResultMismatch,
@@ -42,16 +87,79 @@ fn compare_check_input(mut rebuilt: InputEnvelope, actual: &FixedInput) -> Resul
     rebuilt.items[0].item_id = captured.items[0].item_id;
     rebuilt.units[0].unit_id = captured.units[0].unit_id;
     rebuilt.units[0].item_ids = vec![captured.items[0].item_id];
-    // Both inputs were already validated. Exact canonical bytes also check
-    // the rebound identities without decoding and validating another frame.
-    rebuilt.normalize();
-    if !codec::matches_encoding(&rebuilt, FixedInput::byte_limit(&rebuilt), actual.bytes())? {
-        return Err(ExecutionError::new(
-            ErrorCode::ResultMismatch,
-            "semantic-check-input",
-        ));
-    }
     Ok(())
+}
+
+// Compare one typed value at a time to limit temporary JSON allocations.
+pub(super) fn matches_value<T: ?Sized + Serialize>(saved: Option<&Value>, expected: &T) -> bool {
+    serde_json::to_value(expected).is_ok_and(|value| saved == Some(&value))
+}
+
+pub(super) fn matches_array<T>(
+    saved: Option<&Value>,
+    expected: &[T],
+    matches: impl Fn(&Value, &T) -> bool,
+) -> bool {
+    saved.and_then(Value::as_array).is_some_and(|saved| {
+        saved.len() == expected.len() && saved.iter().zip(expected).all(|(a, b)| matches(a, b))
+    })
+}
+
+fn matches_artifacts(saved: Option<&Value>, expected: &[sdk::CapturedArtifact]) -> bool {
+    matches_array(saved, expected, |saved, artifact| {
+        let Some(saved) = saved.as_object().filter(|object| object.len() == 5) else { return false; };
+        let (field, data) = match artifact {
+            sdk::CapturedArtifact::Text(text) => ("utf8", text.utf8.as_str()),
+            sdk::CapturedArtifact::Binary(binary) => ("base64", binary.base64.as_ref()),
+        };
+        saved.get(field).and_then(Value::as_str) == Some(data)
+            && saved.get("id").and_then(Value::as_str) == Some(artifact.id())
+            && saved.get("logicalPath").and_then(Value::as_str) == Some(artifact.logical_path())
+            && saved.get("role").and_then(Value::as_str) == Some(artifact.role())
+            && saved.get("sha256").and_then(Value::as_str) == Some(artifact.sha256())
+    })
+}
+
+pub(super) fn matches_source_input(saved: Option<&Value>, expected: &sdk::SourceExtractionInput) -> bool {
+    saved.and_then(Value::as_object).is_some_and(|saved| {
+        saved.len() == 4
+            && matches_material(saved, &expected.profile, &expected.source_set_id, "sourceLanguage",
+                &expected.source_language, &expected.artifacts)
+    })
+}
+
+fn matches_material(
+    saved: &serde_json::Map<String, Value>,
+    profile: &sdk::ContractRef,
+    set: &str,
+    language_key: &str,
+    language: &str,
+    artifacts: &[sdk::CapturedArtifact],
+) -> bool {
+    matches_value(saved.get("profile"), profile)
+        && saved.get("sourceSetId").and_then(Value::as_str) == Some(set)
+        && saved.get(language_key).and_then(Value::as_str) == Some(language)
+        && matches_artifacts(saved.get("artifacts"), artifacts)
+}
+
+pub(super) fn matches_exchange(saved: Option<&Value>, expected: &sdk::ContentExchange) -> bool {
+    saved.and_then(Value::as_object).is_some_and(|saved| {
+        saved.len() == 8
+            && matches_material(saved, &expected.profile, &expected.source_set_id, "sourceLanguage",
+                &expected.source_language, &expected.artifacts)
+            && matches_array(saved.get("units"), &expected.units, |saved, unit| matches_value(Some(saved), unit))
+            && matches_array(saved.get("order"), &expected.order, |saved, id| saved.as_str() == Some(id.as_str()))
+            && matches_array(saved.get("relations"), &expected.relations, |saved, relation| matches_value(Some(saved), relation))
+            && matches_array(saved.get("domainBlocks"), &expected.domain_blocks, |saved, block| matches_value(Some(saved), block))
+    })
+}
+
+pub(super) fn matches_artifact_set(saved: Option<&Value>, expected: &sdk::ArtifactSet) -> bool {
+    saved.and_then(Value::as_object).is_some_and(|saved| {
+        saved.len() == 4
+            && matches_material(saved, &expected.profile, &expected.source_set_id, "targetLanguage",
+                &expected.target_language, &expected.artifacts)
+    })
 }
 
 /// Domain output cannot assert Core checks or another provider's coverage. Core
