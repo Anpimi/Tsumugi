@@ -879,7 +879,7 @@ fn current_review_layout_preserves_and_refuses_schema_51() {
     assert_eq!(
         c.query_row("PRAGMA user_version", [], |r| r.get::<_, u32>(0))
             .unwrap(),
-        61
+        77
     );
     let before: u32 = c
         .query_row("SELECT COUNT(*) FROM execution_results", [], |r| r.get(0))
