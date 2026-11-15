@@ -184,21 +184,25 @@ pub(in crate::persistence) fn validate(c:&Connection)->Result<(),ExecutionError>
             || snapshot!=request.basis.snapshot_id.to_string() || receipt_in(c,request.action_id)?.is_some(){return Err(corrupt());}
         check_request(c,&request)?;
     }
-    let mut q=c.prepare("SELECT snapshot_id FROM source_snapshots").map_err(sql_error)?;
-    let snapshots=q.query_map([],|r|r.get::<_,String>(0)).map_err(sql_error)?.collect::<Result<Vec<_>,_>>().map_err(sql_error)?;
-    for snapshot in snapshots {
+    let mut q=c.prepare("SELECT snapshot_id,attempt_id FROM source_snapshots").map_err(sql_error)?;
+    let snapshots=q.query_map([],|r|Ok((r.get::<_,String>(0)?,r.get::<_,String>(1)?))).map_err(sql_error)?.collect::<Result<Vec<_>,_>>().map_err(sql_error)?;
+    for (snapshot,attempt) in snapshots {
         let snapshot=id(snapshot)?;
-        let (scope_revision,(input,result,_,rows))=snapshot_rows(c,snapshot,true)?;
-        let original:Vec<u8>=c.query_row("SELECT a.request FROM execution_actions a JOIN adoption_receipts r ON r.action_id=a.action_id WHERE r.attempt_id=?1",[input.envelope().attempt_id.to_string()],|r|r.get(0)).map_err(sql_error)?;
+        let original:Vec<u8>=c.query_row("SELECT a.request FROM execution_actions a JOIN adoption_receipts r ON r.action_id=a.action_id WHERE r.attempt_id=?1",[attempt],|r|r.get(0)).map_err(sql_error)?;
         let original:AdoptionAction=codec::decode(&original,MAX_INPUT_BYTES)?;
         let original:SourceConfirmation=from_value(&original.parameters)?;
         if let Some(previous)=original.expected_current_snapshot {
             let frozen:Option<i64>=c.query_row("SELECT mapping_revision FROM source_snapshot_mapping_bases WHERE snapshot_id=?1 AND base_snapshot_id=?2",params![snapshot.to_string(),previous.to_string()],|r|r.get(0)).optional().map_err(sql_error)?;
             if frozen.unwrap_or(0) as u64!=original.expected_mapping_revision.map_or(0,Revision::get){return Err(corrupt());}
         }
+        let receipts=receipts_in(c,snapshot)?;
+        // Content validates the original source in this transaction. Only a
+        // correction needs the complete row projection for receipt replay.
+        if receipts.is_empty() {continue;}
+        let (scope_revision,(_,result,_,rows))=snapshot_rows(c,snapshot,true)?;
         let raw=rows.iter().map(|r|(r.occurrence_id.unwrap(),r)).collect::<BTreeMap<_,_>>();
         let mut version=0;
-        for receipt in receipts_in(c,snapshot)? {
+        for receipt in receipts {
             let request=&receipt.request;
             check_request(c,request)?;
             version+=1;

@@ -198,7 +198,7 @@ The current workspace targets **`0.3.0-alpha.1`**. The published `0.2.0-alpha.1`
 - Reuse verified binary source material during history checks and carry the verified fingerprint through an unchanged warm session until close.
 - Reuse verified canonical input bytes when binding independent source and file check results during history replay.
 - Load pending decisions when their inbox opens, so the entries view leaves the session queue available for delivery history.
-- Release verified source frames before opening saved build history, and hash stored results as they are read.
+- Release verified source frames before opening saved build history, skip source row reconstruction when there are no lineage corrections, and keep saved files out of the database sorter.
 
 - Keep release history and export receipts responsive after saving a build by retiring its live task reads. Read large saved execution frames with fewer copies and qualify independent checks against their original evidence.
 

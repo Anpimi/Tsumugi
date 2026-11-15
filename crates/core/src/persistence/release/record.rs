@@ -286,9 +286,7 @@ fn prepare_data(
             return Err(failure(ErrorCode::InvalidInput, "build-plugin-required"));
         }
     };
-    artifacts.sort_by(|a, b| {
-        (&a.summary.locale, &a.summary.file_name).cmp(&(&b.summary.locale, &b.summary.file_name))
-    });
+    sort_artifacts(&mut artifacts);
     Ok(PreparedRecord {
         manifest: ReleaseManifest {
             version,
@@ -532,13 +530,19 @@ fn report_paths(version: u32, artifacts: &[Artifact]) -> BTreeSet<String> {
     }
 }
 
+fn sort_artifacts(artifacts: &mut [Artifact]) {
+    artifacts.sort_by(|a, b| {
+        (&a.summary.locale, &a.summary.file_name).cmp(&(&b.summary.locale, &b.summary.file_name))
+    });
+}
+
 fn read_artifacts(
     connection: &Connection,
     release_id: ExecutionId,
 ) -> Result<Vec<Artifact>, ExecutionError> {
     let mut query = connection.prepare(
         "SELECT locale,artifact_id,role,file_name,bytes,sha256,validator_version,entry_count
-         FROM release_artifacts WHERE release_id=?1 ORDER BY locale,file_name",
+         FROM release_artifacts WHERE release_id=?1",
     ).map_err(sql)?;
     let rows = query.query_map([release_id.to_string()], |r| {
         Ok(Artifact {
@@ -554,5 +558,9 @@ fn read_artifacts(
             bytes: r.get(4)?,
         })
     }).map_err(sql)?;
-    rows.collect::<Result<_, _>>().map_err(sql)
+    // Keep the BLOBs out of SQLite's sorter. Ordering here moves only the
+    // artifact metadata and byte buffers' handles.
+    let mut artifacts = rows.collect::<Result<Vec<_>, _>>().map_err(sql)?;
+    sort_artifacts(&mut artifacts);
+    Ok(artifacts)
 }
