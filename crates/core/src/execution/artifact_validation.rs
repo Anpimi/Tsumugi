@@ -139,7 +139,12 @@ impl ArtifactValidationCapture {
                             && validation::matches_exchange(input.get("source"), &payload.input.source)
                             && validation::matches_value(input.get("targetLanguage"), &payload.input.target_language)
                             && validation::matches_array(input.get("targets"), &payload.input.targets,
-                                |saved, target| validation::matches_value(Some(saved), target))
+                                |saved, target| saved.as_object().is_some_and(|fields| {
+                                    fields.len() == 3
+                                        && fields.get("unitId").and_then(Value::as_str) == Some(&target.unit_id)
+                                        && fields.get("sourceRevisionId").and_then(Value::as_str) == Some(&target.source_revision_id)
+                                        && fields.get("text").and_then(Value::as_str) == Some(&target.text)
+                                }))
                             && validation::matches_value(input.get("configuration"), &payload.input.configuration)
                             && validation::matches_value(input.get("outputPaths"), &payload.input.output_paths)
                             && validation::matches_value(input.get("outputLimits"), &payload.input.output_limits)

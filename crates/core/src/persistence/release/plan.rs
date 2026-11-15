@@ -153,7 +153,7 @@ impl ReleasePlan {
         Ok(output)
     }
     /// Decode the declared builder output. Callers must still verify its
-    /// association with the build input before accepting it.
+    /// complete artifact contract against the build input before accepting it.
     pub(crate) fn parse_artifact_set(
         &self,
         result: &FixedResult,
@@ -166,7 +166,14 @@ impl ReleasePlan {
         if output.schema != self.build.binding.builder.declaration.output_schema {
             return Err(invalid());
         }
-        sdk::parse_artifact_set(output.utf8.as_bytes()).map_err(|_| invalid())
+        // The binding validator counts and verifies the decoded artifact set
+        // against the same builder contract. Only the wire byte ceiling must
+        // also be checked before allocating the typed output.
+        let bytes = output.utf8.as_bytes();
+        if bytes.len() > sdk::MAX_ARTIFACT_SET_BYTES {
+            return Err(invalid());
+        }
+        serde_json::from_slice(bytes).map_err(|_| invalid())
     }
     pub(super) fn release_summary(&self) -> super::record::ManifestSummary {
         let binding = &self.build.binding;

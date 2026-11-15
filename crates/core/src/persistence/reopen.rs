@@ -105,11 +105,14 @@ pub(super) fn database_digest(path: &Path, file: &File, expected: &FileStamp) ->
     {
         return None;
     }
-    let lanes = if expected.length >= 64 * 1024 * 1024 {
+    let lanes = if expected.length >= 512 * 1024 * 1024 {
+        8
+    } else if expected.length >= 64 * 1024 * 1024 {
         4
     } else {
         1
     };
+    let buffer_bytes = if lanes == 8 { 1024 * 1024 } else { 256 * 1024 };
     let span = expected.length.div_ceil(lanes);
     let mut combined = Context::new(&SHA256);
     combined.update(&expected.length.to_le_bytes());
@@ -118,7 +121,7 @@ pub(super) fn database_digest(path: &Path, file: &File, expected: &FileStamp) ->
             .map(|lane| {
                 scope.spawn(move || {
                     let offset = lane * span;
-                    digest_range(file, offset, span.min(expected.length - offset))
+                    digest_range(file, offset, span.min(expected.length - offset), buffer_bytes)
                 })
             })
             .collect();
@@ -141,9 +144,14 @@ pub(super) fn database_digest(_: &Path, _: &File, _: &FileStamp) -> Option<[u8; 
 }
 
 #[cfg(unix)]
-fn digest_range(file: &File, mut offset: u64, length: u64) -> Option<aws_lc_rs::digest::Digest> {
+fn digest_range(
+    file: &File,
+    mut offset: u64,
+    length: u64,
+    buffer_bytes: usize,
+) -> Option<aws_lc_rs::digest::Digest> {
     let mut digest = Context::new(&SHA256);
-    let mut buffer = vec![0; 256 * 1024];
+    let mut buffer = vec![0; buffer_bytes];
     let mut remaining = length;
     while remaining != 0 {
         let count = remaining.min(buffer.len() as u64) as usize;

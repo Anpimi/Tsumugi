@@ -1639,6 +1639,22 @@ struct AttemptDetailKey {
     limit: u32,
 }
 
+impl AttemptDetailCache {
+    fn use_stamp(&mut self, stamp: &ReadSnapshotStamp) {
+        if self.stamp.as_ref() != Some(stamp) {
+            self.pages.clear();
+            self.stamp = Some(stamp.clone());
+        }
+    }
+
+    fn insert(&mut self, key: AttemptDetailKey, detail: AttemptDetail) {
+        if self.pages.len() == 4 {
+            self.pages.pop_front();
+        }
+        self.pages.push_back((key, detail));
+    }
+}
+
 struct SourceReadValidation {
     stamp: ReadSnapshotStamp,
     bundle: bool,
@@ -3753,10 +3769,7 @@ impl ProjectStore {
             let stamp = read_snapshot_stamp(connection)?;
             if let Some(stamp) = &stamp {
                 let mut cache = self.attempt_details.borrow_mut();
-                if cache.stamp.as_ref() != Some(stamp) {
-                    cache.pages.clear();
-                    cache.stamp = Some(stamp.clone());
-                }
+                cache.use_stamp(stamp);
                 if let Some(page) = cache.pages.iter().find(|(saved, _)| *saved == key) {
                     return Ok(page.1.clone());
                 }
@@ -3769,61 +3782,69 @@ impl ProjectStore {
                 }
                 None => load_input(connection, attempt_id)?,
             };
-            let mut view = read_attempt_in(connection, &input, active)?;
-            let total = view.items.len();
-            if offset as usize > total {
-                return Err(error(ErrorCode::InvalidInput, "offset"));
-            }
-            let mut recovery = self.execution_recovery_in(connection, &input, &view)?;
-            let items = std::mem::take(&mut view.items)
-                .into_iter()
-                .skip(offset as usize)
-                .take(limit as usize)
-                .map(|status| {
-                    Ok(ItemView {
-                        scope: input.item(status.item_id)?.scope.clone(),
-                        result_id: self.execution_current_result(attempt_id, status.item_id)?,
-                        status,
-                    })
-                })
-                .collect::<Result<Vec<_>, ExecutionError>>()?;
-            // A unit can span pages. Return it on each page containing a member so its
-            // full scope remains explicit before an action is requested.
-            recovery.units.retain(|unit| {
-                items
-                    .iter()
-                    .any(|item| unit.item_ids.contains(&item.status.item_id))
-            });
-            if view.operation == crate::ai::OPERATION
-                || view.operation == crate::ai::team::OPERATION
-            {
-                for unit in &mut recovery.units {
-                    unit.actions.retain(|a| {
-                        !matches!(
-                            a,
-                            RecoveryAction::ResumeUndispatched | RecoveryAction::RetrySafeFailure
-                        )
-                    });
-                }
-            }
-            let end = offset + items.len() as u32;
-            let detail = AttemptDetail {
-                attempt_id: view.attempt_id,
-                task_id: view.task_id,
-                operation: view.operation,
-                progress: view.progress,
-                items,
-                recovery,
-                next_offset: ((end as usize) < total).then_some(end),
-            };
+            let view = read_attempt_in(connection, &input, active)?;
+            let detail = self.project_attempt_detail(connection, &input, view, offset, limit)?;
             if stamp.is_some() {
-                let mut cache = self.attempt_details.borrow_mut();
-                if cache.pages.len() == 4 {
-                    cache.pages.pop_front();
-                }
-                cache.pages.push_back((key, detail.clone()));
+                self.attempt_details.borrow_mut().insert(key, detail.clone());
             }
             Ok(detail)
+        })
+    }
+
+    fn project_attempt_detail(
+        &self,
+        connection: &Connection,
+        input: &FixedInput,
+        mut view: AttemptView,
+        offset: u32,
+        limit: u32,
+    ) -> Result<AttemptDetail, ExecutionError> {
+        let attempt_id = view.attempt_id;
+        let total = view.items.len();
+        if offset as usize > total {
+            return Err(error(ErrorCode::InvalidInput, "offset"));
+        }
+        let mut recovery = self.execution_recovery_in(connection, input, &view)?;
+        let items = std::mem::take(&mut view.items)
+            .into_iter()
+            .skip(offset as usize)
+            .take(limit as usize)
+            .map(|status| {
+                Ok(ItemView {
+                    scope: input.item(status.item_id)?.scope.clone(),
+                    result_id: self.execution_current_result(attempt_id, status.item_id)?,
+                    status,
+                })
+            })
+            .collect::<Result<Vec<_>, ExecutionError>>()?;
+        // A unit can span pages. Return it on each page containing a member so its
+        // full scope remains explicit before an action is requested.
+        recovery.units.retain(|unit| {
+            items
+                .iter()
+                .any(|item| unit.item_ids.contains(&item.status.item_id))
+        });
+        if view.operation == crate::ai::OPERATION
+            || view.operation == crate::ai::team::OPERATION
+        {
+            for unit in &mut recovery.units {
+                unit.actions.retain(|a| {
+                    !matches!(
+                        a,
+                        RecoveryAction::ResumeUndispatched | RecoveryAction::RetrySafeFailure
+                    )
+                });
+            }
+        }
+        let end = offset + items.len() as u32;
+        Ok(AttemptDetail {
+            attempt_id: view.attempt_id,
+            task_id: view.task_id,
+            operation: view.operation,
+            progress: view.progress,
+            items,
+            recovery,
+            next_offset: ((end as usize) < total).then_some(end),
         })
     }
     pub fn execution_tasks(
@@ -4425,7 +4446,38 @@ impl ProjectStore {
             super::plugin_execution::check_input_in(&tx, input, &authority)?;
         }
         Self::publish_semantic_frames_in(&tx, &producer_input, &producer_result, &check_input, &check_result, &proof)?;
-        commit(tx)
+        // This commit already qualified the original frames, grants and link.
+        // A single-item build can immediately supply the usual detail page.
+        // Publish that small view only after the write is durably committed.
+        let detail = if producer_input.envelope().operation == crate::content::BUILD_OPERATION
+            && producer_input.envelope().items.len() == 1
+        {
+            let view = read_attempt_with_results(
+                &tx, &producer_input, false,
+                |id| {
+                    if id == producer_result.envelope().result_id {
+                        Ok(producer_result.clone())
+                    } else {
+                        Err(error(ErrorCode::CorruptLedger, "semantic-validation-current-result"))
+                    }
+                },
+                |_| Ok(()),
+            )?;
+            Some((
+                snapshot_stamp(&tx)?,
+                self.project_attempt_detail(&tx, &producer_input, view, 0, 100)?,
+            ))
+        } else {
+            None
+        };
+        commit(tx)?;
+        if let Some((stamp, detail)) = detail {
+            let key = AttemptDetailKey { attempt_id: detail.attempt_id, active: false, offset: 0, limit: 100 };
+            let mut cache = self.attempt_details.borrow_mut();
+            cache.use_stamp(&stamp);
+            cache.insert(key, detail);
+        }
+        Ok(())
     }
 
     pub(super) fn semantic_publication_frames_in(

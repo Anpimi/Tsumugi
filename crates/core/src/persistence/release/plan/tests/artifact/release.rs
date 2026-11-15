@@ -756,6 +756,38 @@ fn artifact_checker_detail_matches_the_ledger_and_rejects_changed_input() {
 }
 
 #[test]
+fn recorded_check_supplies_build_detail_until_its_snapshot_changes() {
+    use rusqlite::trace::{TraceEvent, TraceEventCodes};
+    thread_local! { static FRAME_READS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) }; }
+    let (directory, mut store, generation, input) = fixture_build(&["zh-CN"]);
+    let result = builder_result(&mut store, &input, input.envelope().items[0].item_id);
+    let (checker, _, _) = prove(&mut store, generation, &input, &result);
+    let attempt = input.envelope().attempt_id;
+    store.connection().unwrap().trace_v2(TraceEventCodes::SQLITE_TRACE_STMT, Some(|event| {
+        if let TraceEvent::Stmt(_, sql) = event
+            && sql.contains("FROM execution_results WHERE result_id=?1 AND attempt_id=?2")
+        {
+            FRAME_READS.with(|count| count.set(count.get() + 1));
+        }
+    }));
+    let detail = store.execution_attempt_detail(attempt, false, 0, 100).unwrap();
+    assert_eq!(FRAME_READS.with(|count| count.replace(0)), 0);
+    assert!(detail.recovery.units[0].actions.contains(&RecoveryAction::AdoptResult));
+    let uncached = store.execution_attempt_detail(attempt, false, 0, 99).unwrap();
+    assert!(FRAME_READS.with(|count| count.replace(0)) > 0);
+    assert_eq!(serde_json::to_value(detail).unwrap(), serde_json::to_value(uncached).unwrap());
+
+    let external = rusqlite::Connection::open(directory.path().join("project/project.sqlite3")).unwrap();
+    external.execute(
+        "UPDATE plugin_validation_links SET valid=0 WHERE checker_result_id IN (
+            SELECT result_id FROM execution_results WHERE attempt_id=?1
+        )",
+        [checker.envelope().attempt_id.to_string()],
+    ).unwrap();
+    assert!(store.execution_attempt_detail(attempt, false, 0, 100).is_err());
+}
+
+#[test]
 fn release_commit_reuses_unchanged_qualification_without_loading_result_frames() {
     use rusqlite::trace::{TraceEvent, TraceEventCodes};
     thread_local! { static FRAME_READS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) }; }
