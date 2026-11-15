@@ -30,35 +30,84 @@ pub(super) fn restore_reconstructed_check_input(
     compare_check_input(expected, actual)
 }
 
-/// The payload is verified separately against the original producer evidence.
-/// A canonical re-encoding verifies the original JSON representation as well.
+/// The payload is compared separately with the original producer evidence.
+/// Check its canonical bytes and reuse them for the checker result binding.
 pub(super) fn restore_check_header(
-    mut expected: InputEnvelope,
+    expected: InputEnvelope,
     actual: &FixedInput,
 ) -> Result<(), ExecutionError> {
     let captured = actual.envelope();
-    bind_check_ids(&mut expected, captured)?;
-    // Compare the header and the item identity, scope and dependencies without
-    // cloning the already qualified material payload.
-    if expected.items[0].scope != captured.items[0].scope
-        || expected.items[0].dependencies != captured.items[0].dependencies
-        || expected.version != captured.version
-        || expected.project_id != captured.project_id
-        || expected.previous_attempt_id != captured.previous_attempt_id
-        || expected.automation != captured.automation
-        || expected.plugin != captured.plugin
-        || expected.operation != captured.operation
-        || expected.capability_id != captured.capability_id
-        || expected.capability_version != captured.capability_version
-        || expected.settings != captured.settings
-        || expected.limits != captured.limits
-        || expected.units != captured.units
-        || expected.reused_results != captured.reused_results
-        || !codec::matches_encoding(captured, FixedInput::byte_limit(captured), actual.bytes())?
-    {
-        return Err(ExecutionError::new(ErrorCode::ResultMismatch, "semantic-check-input"));
-    }
+    let binding = captured.plugin.as_ref().filter(|_| {
+        matches!(captured.operation.as_str(), SOURCE_CHECK_OPERATION | ARTIFACT_CHECK_OPERATION)
+    }).ok_or_else(|| ExecutionError::new(ErrorCode::ResultMismatch, "semantic-check-input"))?;
+    let limit = (binding.capability.declaration.limits.max_input_bytes as usize)
+        .min(sdk::MAX_MATERIAL_INVOCATION_BYTES);
+    let payload = checked_payload_bytes(expected, actual, limit)?;
+    let item_id = captured.items[0].item_id;
+    actual.plugin_payload_digests.lock().unwrap_or_else(std::sync::PoisonError::into_inner)
+        .entry(item_id).or_insert_with(|| codec::digest(payload));
     Ok(())
+}
+
+fn checked_payload_bytes(
+    mut expected: InputEnvelope,
+    actual: &FixedInput,
+    limit: usize,
+) -> Result<&[u8], ExecutionError> {
+    let invalid = || ExecutionError::new(ErrorCode::ResultMismatch, "semantic-check-input");
+    let captured = actual.envelope();
+    bind_check_ids(&mut expected, captured)?;
+    let frame_limit = FixedInput::byte_limit(&expected);
+    // Serialize the small reconstructed header with two single-byte values.
+    // Their one differing byte locates the payload without scanning material
+    // or relying on field order, offsets or marker text in the stored frame.
+    expected.items[0].payload = Value::from(0);
+    let header = codec::encode(&expected, frame_limit)?;
+    expected.items[0].payload = Value::from(1);
+    let alternate = codec::encode(&expected, frame_limit)?;
+    let offset = header.iter().zip(&alternate).position(|(a, b)| a != b).ok_or_else(invalid)?;
+    let payload = actual.bytes().strip_prefix(&header[..offset])
+        .and_then(|rest| rest.strip_suffix(&header[offset + 1..]))
+        .ok_or_else(invalid)?;
+    if !codec::matches_encoding(&captured.items[0].payload, limit, payload)? {
+        return Err(invalid());
+    }
+    Ok(payload)
+}
+
+#[cfg(test)]
+#[test]
+fn checker_payload_digest_uses_only_the_exact_canonical_item_payload() {
+    let project = ProjectId::new_v4();
+    let payload = serde_json::json!({"text": "a\n\"字\"", "payload": 0});
+    let capture = |payload| {
+        let scope = Scope { kind: "source-check".into(), id: "sample".into(), locale: None };
+        let item = InputItem::new(scope, payload, vec![]);
+        let mut envelope = InputEnvelope::new(project, "check", "controlled", "1", vec![item]).unwrap();
+        envelope.settings = serde_json::json!({"payload": 0, "text": "payload"});
+        envelope
+    };
+    let expected = capture(Value::Null);
+    let fixed = FixedInput::capture(capture(payload.clone())).unwrap();
+    let bytes = checked_payload_bytes(expected.clone(), &fixed, MAX_INPUT_BYTES).unwrap();
+    assert_eq!(codec::digest(bytes), codec::digest_encoded(&payload, MAX_INPUT_BYTES).unwrap());
+    assert_eq!(checked_payload_bytes(expected.clone(), &fixed, bytes.len() - 1).unwrap_err().code,
+        ErrorCode::LimitExceeded);
+
+    // The decoded value and full-frame digest still qualify, but the
+    // payload's representation is different from the SDK's canonical bytes.
+    let offset = fixed.bytes().windows(bytes.len()).position(|window| window == bytes).unwrap();
+    let mut spaced = fixed.bytes().to_vec();
+    spaced.insert(offset + 1, b' ');
+    let spaced = FixedInput::restore(&spaced, &codec::digest(&spaced)).unwrap();
+    assert_eq!(fixed.envelope(), spaced.envelope());
+    assert_eq!(checked_payload_bytes(expected.clone(), &spaced, MAX_INPUT_BYTES).unwrap_err().code,
+        ErrorCode::ResultMismatch);
+
+    let mut wrong_header = expected;
+    wrong_header.settings["payload"] = Value::from(1);
+    assert_eq!(checked_payload_bytes(wrong_header, &fixed, MAX_INPUT_BYTES).unwrap_err().code,
+        ErrorCode::ResultMismatch);
 }
 
 fn compare_check_input(mut rebuilt: InputEnvelope, actual: &FixedInput) -> Result<(), ExecutionError> {

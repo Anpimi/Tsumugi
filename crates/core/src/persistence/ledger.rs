@@ -1488,25 +1488,24 @@ fn require_open_valid_plugin_link(
     Ok(())
 }
 
+fn stored_check_link(
+    connection: &Connection,
+    result: &FixedResult,
+) -> Result<(String, bool), ExecutionError> {
+    connection.query_row(
+        "SELECT checker_result_id,valid FROM plugin_validation_links WHERE producer_result_id=?1",
+        [result.envelope().result_id.to_string()], |r| Ok((r.get(0)?, r.get(1)?)),
+    ).map_err(|_| error(ErrorCode::CorruptLedger, "semantic-validation-link"))
+}
+
 fn load_check_link(
     connection: &Connection,
     result: &FixedResult,
 ) -> Result<(FixedInput, FixedResult, bool), ExecutionError> {
-    let (checker_id, saved_valid): (String, bool) = connection.query_row(
-        "SELECT checker_result_id,valid FROM plugin_validation_links WHERE producer_result_id=?1",
-        [result.envelope().result_id.to_string()], |r| Ok((r.get(0)?, r.get(1)?)),
-    ).map_err(|_| error(ErrorCode::CorruptLedger, "semantic-validation-link"))?;
-    let (check_input, check_result) = load_check_frames(connection, &checker_id)?;
+    let (checker_id, saved_valid) = stored_check_link(connection, result)?;
+    let check_input = load_check_input(connection, &checker_id)?;
+    let check_result = load_check_result(connection, &check_input, &checker_id)?;
     Ok((check_input, check_result, saved_valid))
-}
-
-fn load_check_frames(
-    connection: &Connection,
-    checker_id: &str,
-) -> Result<(FixedInput, FixedResult), ExecutionError> {
-    let check_input = load_check_input(connection, checker_id)?;
-    let check_result = load_check_result(connection, &check_input, checker_id)?;
-    Ok((check_input, check_result))
 }
 
 fn load_check_input(connection: &Connection, checker_id: &str) -> Result<FixedInput, ExecutionError> {
@@ -1551,15 +1550,19 @@ pub(super) fn artifact_check_proof_in(
     let Some((checker_id, saved_valid)) = link else {
         return Ok(None);
     };
-    let (check_input, check_result) = load_check_frames(connection, &checker_id)?;
-    let prepared = ArtifactValidationCapture::restore(
+    let check_input = load_check_input(connection, &checker_id)?;
+    let (capture, _) = ArtifactValidationCapture::restore_with_plan(
         ResultValidationCapture {
             input: original.as_ref().clone(),
             result: result.clone(),
         },
-        check_input.clone(),
-    )?
-    .prepare(check_result.clone())?;
+        check_input,
+        &plan,
+    )?;
+    let check_result = load_check_result(connection, &capture.check_input, &checker_id)?;
+    let prepared = capture.prepare(check_result)?;
+    let check_input = &prepared.capture.check_input;
+    let check_result = &prepared.check_result;
     if prepared.valid() != saved_valid {
         return Err(error(ErrorCode::CorruptLedger, "semantic-validation-proof"));
     }
@@ -1853,10 +1856,7 @@ fn validate_source_link_with_bundle(
     // Each reuse checks all four original frames and row associations, plus
     // the current proof link. Execution grants/currentness are never cached.
     let cache = source_validation_cache();
-    let (checker_id, saved_valid): (String, bool) = connection.query_row(
-        "SELECT checker_result_id,valid FROM plugin_validation_links WHERE producer_result_id=?1",
-        [result.envelope().result_id.to_string()], |r| Ok((r.get(0)?, r.get(1)?)),
-    ).map_err(|_| error(ErrorCode::CorruptLedger, "semantic-validation-link"))?;
+    let (checker_id, saved_valid) = stored_check_link(connection, result)?;
     let cached = cache
         .lock()
         .unwrap_or_else(std::sync::PoisonError::into_inner)
@@ -1991,7 +1991,8 @@ fn validate_plugin_link_with_open_evidence(
             "semantic-validation-operation",
         ));
     }
-    let (check_input, check_result, saved_valid) = load_check_link(connection, result)?;
+    let (checker_id, saved_valid) = stored_check_link(connection, result)?;
+    let check_input = load_check_input(connection, &checker_id)?;
     let build_result = ResultValidationCapture {
         input: input.clone(),
         result: result.clone(),
@@ -2017,6 +2018,7 @@ fn validate_plugin_link_with_open_evidence(
     } else {
         (ArtifactValidationCapture::restore(build_result, check_input)?, None)
     };
+    let check_result = load_check_result(connection, &capture.check_input, &checker_id)?;
     let prepared = capture.prepare(check_result)?;
     if saved_valid != expected_valid || prepared.proof.valid != saved_valid {
         return Err(error(ErrorCode::CorruptLedger, "semantic-validation-proof"));
