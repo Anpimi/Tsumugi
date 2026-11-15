@@ -743,6 +743,38 @@ pub(crate) fn validate_output_for_bundle(
     bundle: &SourceBundle,
     policy: sdk::SourceRevisionPolicy,
 ) -> Result<SourceOutput, ExecutionError> {
+    if input.envelope().plugin.is_some() {
+        let exchange = validated_plugin_source_exchange(input, result, bundle)?;
+        return project_validated_source_output(bundle, exchange, policy);
+    }
+    validate_source_result(input, result)?;
+    #[cfg(any(
+        test,
+        feature = "execution-test-host",
+        feature = "legacy-desktop-domain"
+    ))]
+    {
+        let exchange = from_value(
+            result.envelope().output.as_ref().ok_or_else(|| invalid("source-result"))?,
+        )?;
+        let mut output = project_source_output(bundle, exchange, policy)?;
+        output.diagnostics = result.envelope().diagnostic.iter()
+            .map(|diagnostic| diagnostic.code.clone())
+            .collect();
+        Ok(output)
+    }
+    #[cfg(not(any(
+        test,
+        feature = "execution-test-host",
+        feature = "legacy-desktop-domain"
+    )))]
+    {
+        let _ = (bundle, policy);
+        Err(invalid("source-result-plugin"))
+    }
+}
+
+fn validate_source_result(input: &FixedInput, result: &FixedResult) -> Result<(), ExecutionError> {
     if input.envelope().plugin.is_some() != result.envelope().plugin.is_some() {
         return Err(invalid("source-result-plugin"));
     }
@@ -751,65 +783,45 @@ pub(crate) fn validate_output_for_bundle(
     {
         return Err(invalid("source-result"));
     }
-    let output = if let Some(evidence) = &result.envelope().plugin {
-        let sdk::InvocationOutcome::Succeeded { output } = &evidence.result.outcome else {
-            return Err(invalid("source-result"));
-        };
-        if Some(&output.schema) != input.envelope().plugin.as_ref().map(|binding| &binding.capability.declaration.output_schema) {
-            return Err(invalid("source-result-schema"));
-        }
-        // Typed Serde sees the original bytes; Value is only an independently
-        // checked result projection and cannot conceal duplicate typed fields.
-        let bytes = output.utf8.as_bytes();
-        if bytes.len() > sdk::MAX_CONTENT_EXCHANGE_BYTES {
-            return Err(failure(ErrorCode::LimitExceeded, "source-result"));
-        }
-        let exchange = sdk::parse_source_extraction_result(&bundle.source_input(), bytes)
-            .map_err(source_contract_error)?;
-        project_validated_source_output(bundle, exchange, policy)?
-    } else {
-        #[cfg(any(
-            test,
-            feature = "execution-test-host",
-            feature = "legacy-desktop-domain"
-        ))]
-        {
-            let exchange = from_value(
-                result
-                    .envelope()
-                    .output
-                    .as_ref()
-                    .ok_or_else(|| invalid("source-result"))?,
-            )?;
-            project_source_output(bundle, exchange, policy)?
-        }
-        #[cfg(not(any(
-            test,
-            feature = "execution-test-host",
-            feature = "legacy-desktop-domain"
-        )))]
-        return Err(invalid("source-result-plugin"));
+    Ok(())
+}
+
+pub(crate) fn validated_plugin_source_exchange(
+    input: &FixedInput,
+    result: &FixedResult,
+    bundle: &SourceBundle,
+) -> Result<sdk::ContentExchange, ExecutionError> {
+    validate_source_result(input, result)?;
+    let evidence = result.envelope().plugin.as_ref().ok_or_else(|| invalid("source-result-plugin"))?;
+    let sdk::InvocationOutcome::Succeeded { output } = &evidence.result.outcome else {
+        return Err(invalid("source-result"));
     };
-    #[cfg(any(
-        test,
-        feature = "execution-test-host",
-        feature = "legacy-desktop-domain"
-    ))]
-    let mut output = output;
-    #[cfg(any(
-        test,
-        feature = "execution-test-host",
-        feature = "legacy-desktop-domain"
-    ))]
-    if input.envelope().plugin.is_none() {
-        output.diagnostics = result
-            .envelope()
-            .diagnostic
-            .iter()
-            .map(|diagnostic| diagnostic.code.clone())
-            .collect();
+    if Some(&output.schema) != input.envelope().plugin.as_ref().map(|binding| &binding.capability.declaration.output_schema) {
+        return Err(invalid("source-result-schema"));
     }
-    Ok(output)
+    // Typed Serde checks the original output, including field multiplicity.
+    let bytes = output.utf8.as_bytes();
+    if bytes.len() > sdk::MAX_CONTENT_EXCHANGE_BYTES {
+        return Err(failure(ErrorCode::LimitExceeded, "source-result"));
+    }
+    let source = bundle.source_input();
+    let mut exchange = sdk::parse_source_extraction_result(&source, bytes)
+        .map_err(source_contract_error)?;
+    // The SDK establishes exact artifact equality by ID. Keep the original
+    // output order and share the input's already-owned binary strings.
+    let binaries: std::collections::BTreeMap<_, _> = source.artifacts.iter().filter_map(|artifact| {
+        match artifact {
+            sdk::CapturedArtifact::Binary(binary) => Some((binary.id.as_str(), &binary.base64)),
+            sdk::CapturedArtifact::Text(_) => None,
+        }
+    }).collect();
+    for artifact in &mut exchange.artifacts {
+        if let sdk::CapturedArtifact::Binary(binary) = artifact {
+            binary.base64 = binaries.get(binary.id.as_str())
+                .copied().ok_or_else(|| invalid("source-result"))?.clone();
+        }
+    }
+    Ok(exchange)
 }
 
 pub(crate) fn project_source_output(
@@ -822,7 +834,7 @@ pub(crate) fn project_source_output(
     project_validated_source_output(bundle, exchange, policy)
 }
 
-fn project_validated_source_output(
+pub(crate) fn project_validated_source_output(
     bundle: &SourceBundle,
     exchange: sdk::ContentExchange,
     policy: sdk::SourceRevisionPolicy,

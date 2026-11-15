@@ -23,13 +23,23 @@ fn clean_reopen_accepts_owned_commits_but_revalidates_an_externally_changed_data
 
     let reopened = ProjectStore::open_with_reopen_proof(&directory, Some(&proof)).unwrap();
     assert_eq!(reopened.metadata().unwrap().display_name(), "After");
-    reopened.close().unwrap();
-
     let database = directory.join(DATABASE_FILENAME);
+    let stamp = reopen::FileStamp::read(&database).unwrap();
+    let current = reopen::OpenBasis::read(reopened.connection().unwrap(), stamp).unwrap();
+    let opening = reopened.open_basis.as_ref().unwrap();
+    assert_eq!(opening.verified_digest_for(&current), Some(proof.digest));
+    let unchanged = reopened.close_with_reopen_proof().unwrap().unwrap();
+    assert_eq!(unchanged.digest, proof.digest);
+
+    let mut reopened = ProjectStore::open_with_reopen_proof(&directory, Some(&unchanged)).unwrap();
+    reopened.rename(2, "Saved after warm open").unwrap();
+    let changed = reopened.close_with_reopen_proof().unwrap().unwrap();
+    assert_ne!(changed.digest, unchanged.digest);
+
     let external = Connection::open(&database).unwrap();
     external.execute_batch("ALTER TABLE translation_contributors ADD COLUMN invalid TEXT").unwrap();
     drop(external);
-    let error = ProjectStore::open_with_reopen_proof(&directory, Some(&proof)).unwrap_err();
+    let error = ProjectStore::open_with_reopen_proof(&directory, Some(&changed)).unwrap_err();
     assert_eq!(error.code(), PersistenceErrorCode::CorruptProject);
 }
 

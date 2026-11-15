@@ -72,6 +72,7 @@ pub(super) struct OpenBasis {
     data_version: i64,
     schema_version: i64,
     total_changes: u64,
+    verified_digest: Option<[u8; 32]>,
 }
 
 impl OpenBasis {
@@ -85,6 +86,7 @@ impl OpenBasis {
                 .pragma_query_value(None, "schema_version", |row| row.get(0))
                 .ok()?,
             total_changes: connection.total_changes(),
+            verified_digest: None,
         })
     }
 
@@ -93,6 +95,18 @@ impl OpenBasis {
             && self.schema_version == current.schema_version
             && self.file.same_file(&current.file)
             && (self.total_changes != current.total_changes || self.file == current.file)
+    }
+
+    pub(super) fn remember_verified_digest(&mut self, digest: [u8; 32]) {
+        self.verified_digest = Some(digest);
+    }
+
+    pub(super) fn verified_digest_for(&self, current: &Self) -> Option<[u8; 32]> {
+        (self.permits_close(current)
+            && self.file == current.file
+            && self.total_changes == current.total_changes)
+            .then_some(self.verified_digest)
+            .flatten()
     }
 }
 

@@ -688,7 +688,10 @@ impl ProjectStore {
         if !opening.permits_close(&current) {
             return None;
         }
-        let digest = reopen::database_digest(&path, &database, &file)?;
+        // An unchanged session can carry forward the digest just verified at
+        // admission. Reopening always checks the complete file again.
+        let digest = opening.verified_digest_for(&current)
+            .or_else(|| reopen::database_digest(&path, &database, &file))?;
         let releases = self.release_reads.borrow().for_reopen(&snapshot);
         snapshot.commit().ok()?;
         Some(ProjectReopenProof {
@@ -1112,7 +1115,7 @@ fn validate_database(
     }
     let current_file =
         file.filter(|(path, initial)| reopen::FileStamp::read(path).as_ref() == Some(*initial));
-    let open_basis =
+    let mut open_basis =
         current_file.and_then(|(_, file)| reopen::OpenBasis::read(&snapshot, file.clone()));
     let verified = proof
         .zip(current_file)
@@ -1121,6 +1124,9 @@ fn validate_database(
             (reopen::database_digest(path, database, file) == Some(proof.digest)).then_some(proof)
         });
     let releases = if let Some(proof) = verified {
+        if let Some(basis) = &mut open_basis {
+            basis.remember_verified_digest(proof.digest);
+        }
         proof.releases.rebind(&snapshot)
     } else {
         validate_schema_shape(&snapshot)?

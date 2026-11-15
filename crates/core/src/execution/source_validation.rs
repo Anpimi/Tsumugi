@@ -76,31 +76,21 @@ impl SourceValidationCapture {
         attempt: Option<ExecutionId>,
     ) -> Result<Self, ExecutionError> {
         let (bundle, settings) = crate::content::SourceBundle::from_input_with_settings(&source.input)?;
-        let projected = Self::project(&source, &bundle, &settings)?;
-        let (mut envelope, checks) = Self::reconstruct(&source, &bundle, &settings, &projected, None)?;
+        let projected = Arc::new(crate::content::validate_output_for_bundle(
+            &source.input, &source.result, &bundle, settings.revision_policy.clone(),
+        )?);
+        let (mut envelope, checks) =
+            Self::reconstruct(&source, &bundle, &settings, &projected.exchange, None)?;
         envelope.attempt_id = attempt.unwrap_or(envelope.attempt_id);
         let check_input = FixedInput::capture(envelope)?;
         Ok(Self { source, check_input, projected, checks })
-    }
-
-    fn project(
-        source: &ResultValidationCapture,
-        bundle: &crate::content::SourceBundle,
-        settings: &crate::content::SourceSettings,
-    ) -> Result<Arc<crate::content::SourceOutput>, ExecutionError> {
-        crate::content::validate_output_for_bundle(
-            &source.input,
-            &source.result,
-            bundle,
-            settings.revision_policy.clone(),
-        ).map(Arc::new)
     }
 
     fn reconstruct(
         source: &ResultValidationCapture,
         bundle: &crate::content::SourceBundle,
         settings: &crate::content::SourceSettings,
-        projected: &crate::content::SourceOutput,
+        exchange: &sdk::ContentExchange,
         saved_payload: Option<&Value>,
     ) -> Result<(InputEnvelope, sdk::FixedCheckSet), ExecutionError> {
         if source.input.envelope().plugin.is_none() {
@@ -110,7 +100,7 @@ impl SourceValidationCapture {
         if settings.semantic_rules.is_empty() {
             return Err(invalid());
         }
-        let targets = vec![projected.exchange.source_set_id.clone()];
+        let targets = vec![exchange.source_set_id.clone()];
         let requirement = |key| sdk::CheckRequirement {
             key,
             input_digest: source.input.digest().into(),
@@ -146,7 +136,7 @@ impl SourceValidationCapture {
             let matched = saved.as_object().is_some_and(|saved| {
                 saved.len() == 3
                     && validation::matches_source_input(saved.get("source"), &source_material)
-                    && validation::matches_exchange(saved.get("proposal"), &projected.exchange)
+                    && validation::matches_exchange(saved.get("proposal"), exchange)
                     && validation::matches_value(saved.get("requirements"), &domain)
             });
             if !matched {
@@ -156,7 +146,7 @@ impl SourceValidationCapture {
         } else {
             let payload = sdk::SourceExtractionCheckInput {
                 source: source_material,
-                proposal: projected.exchange.clone(),
+                proposal: exchange.clone(),
                 requirements: domain,
             };
             payload.validate().map_err(|_| invalid())?;
@@ -222,14 +212,19 @@ impl SourceValidationCapture {
                 (&owned.0, &owned.1)
             }
         };
-        // Finish decoding the producer's projection before reading the large
-        // checker frame. Only its completed projection overlaps the checker.
-        let projected = Self::project(&source, bundle, settings)?;
+        // Finish decoding the producer before reading the checker frame. The
+        // local occurrence projection is only needed once the inputs agree.
+        let exchange = crate::content::validated_plugin_source_exchange(
+            &source.input, &source.result, bundle,
+        )?;
         let check_input = load_checker()?;
         let item = check_input.envelope().items.first().ok_or_else(invalid)?;
         let (envelope, checks) =
-            Self::reconstruct(&source, bundle, settings, &projected, Some(&item.payload))?;
+            Self::reconstruct(&source, bundle, settings, &exchange, Some(&item.payload))?;
         validation::restore_check_header(envelope, &check_input)?;
+        let projected = Arc::new(crate::content::project_validated_source_output(
+            bundle, exchange, settings.revision_policy.clone(),
+        )?);
         Ok(Self { source, check_input, projected, checks })
     }
 

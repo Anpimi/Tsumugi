@@ -147,10 +147,31 @@ pub(super) fn matches_exchange(saved: Option<&Value>, expected: &sdk::ContentExc
         saved.len() == 8
             && matches_material(saved, &expected.profile, &expected.source_set_id, "sourceLanguage",
                 &expected.source_language, &expected.artifacts)
-            && matches_array(saved.get("units"), &expected.units, |saved, unit| matches_value(Some(saved), unit))
+            && matches_array(saved.get("units"), &expected.units, matches_content_unit)
             && matches_array(saved.get("order"), &expected.order, |saved, id| saved.as_str() == Some(id.as_str()))
             && matches_array(saved.get("relations"), &expected.relations, |saved, relation| matches_value(Some(saved), relation))
-            && matches_array(saved.get("domainBlocks"), &expected.domain_blocks, |saved, block| matches_value(Some(saved), block))
+            && matches_array(saved.get("domainBlocks"), &expected.domain_blocks, matches_domain_block)
+    })
+}
+
+fn matches_content_unit(saved: &Value, unit: &sdk::ContentUnit) -> bool {
+    saved.as_object().is_some_and(|saved| {
+        saved.len() == 5
+            && saved.get("id").and_then(Value::as_str) == Some(&unit.id)
+            && saved.get("sourceRevisionId").and_then(Value::as_str) == Some(&unit.source_revision_id)
+            && saved.get("text").and_then(Value::as_str) == Some(&unit.text)
+            && matches_value(saved.get("occurrences"), &unit.occurrences)
+            && matches_value(saved.get("protectedFragments"), &unit.protected_fragments)
+    })
+}
+
+fn matches_domain_block(saved: &Value, block: &sdk::DomainBlock) -> bool {
+    saved.as_object().is_some_and(|saved| {
+        saved.len() == 4
+            && saved.get("payloadUtf8").and_then(Value::as_str) == Some(&block.payload_utf8)
+            && matches_value(saved.get("target"), &block.target)
+            && matches_value(saved.get("schema"), &block.schema)
+            && matches_value(saved.get("handling"), &block.handling)
     })
 }
 

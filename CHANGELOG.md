@@ -195,6 +195,7 @@ The current workspace targets **`0.3.0-alpha.1`**. The published `0.2.0-alpha.1`
 - Keep independent artifact check results responsive by pausing builder detail refreshes until the verdict is recorded. Reuse the captured checker input for progress reads and reduce duplicate work when validating large source proposals.
 - Show the save action promptly after recording an independent file check. Reuse the committed build qualification and reduce repeated artifact validation on open and whole-file verification time on warm reopen for large projects.
 - Release completed source check frames earlier when opening large projects and compare saved build output without allocating a second JSON tree.
+- Reuse verified binary source material during history checks and carry the verified fingerprint through an unchanged warm session until close.
 
 - Keep release history and export receipts responsive after saving a build by retiring its live task reads. Read large saved execution frames with fewer copies and qualify independent checks against their original evidence.
 
