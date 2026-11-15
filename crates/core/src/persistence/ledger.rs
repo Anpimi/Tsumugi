@@ -113,15 +113,75 @@ pub(super) enum CheckedPluginLink {
     Translation,
 }
 
-/// Proof identities already validated in the current SQLite open transaction.
-/// This holds no frames or runtime authority.
+/// Evidence validated in the current SQLite open transaction.
 pub(super) struct OpenPluginProofs<'a> {
     connection: &'a Connection,
     links: BTreeMap<ExecutionId, (CheckedPluginLink, bool)>,
     pub(super) source_sets: BTreeSet<ExecutionId>,
+    source_revisions: BTreeMap<ExecutionId, (u64, bool)>,
+    recent_source: Option<OpenSourceSnapshot>,
+}
+
+pub(super) struct OpenSourceSnapshot {
+    snapshot: ExecutionId,
+    pub(super) project: ExecutionId,
+    pub(super) input_digest: String,
+    pub(super) result_digest: String,
+    pub(super) output: std::sync::Arc<crate::content::SourceOutput>,
 }
 
 impl OpenPluginProofs<'_> {
+    pub(super) fn source_revision(
+        &self, connection: &Connection, snapshot: ExecutionId, has_lineage: bool,
+    ) -> Option<u64> {
+        if !std::ptr::eq(self.connection, connection) || connection.is_autocommit() {
+            return None;
+        }
+        let &(revision, lineage) = self.source_revisions.get(&snapshot)?;
+        (lineage || !has_lineage).then_some(revision)
+    }
+
+    pub(super) fn source_snapshot(
+        &self, connection: &Connection, snapshot: ExecutionId,
+    ) -> Option<&OpenSourceSnapshot> {
+        self.source_revision(connection, snapshot, true)?;
+        self.recent_source.as_ref().filter(|source| source.snapshot == snapshot)
+    }
+
+    fn qualify_sources(&mut self, input: &FixedInput) -> Result<(), ExecutionError> {
+        let connection = self.connection;
+        let attempt = input.envelope().attempt_id;
+        let mut statement = connection.prepare_cached(
+            "SELECT snapshot_id FROM source_snapshots WHERE attempt_id=?1",
+        ).map_err(sql_error)?;
+        let snapshots = statement.query_map([attempt.to_string()], |row| row.get::<_, String>(0))
+            .map_err(sql_error)?;
+        for row in snapshots {
+            let snapshot = parse_id(row.map_err(sql_error)?)?;
+            let has_lineage = super::content::has_source_lineage(connection)?;
+            let (revision, (input, result, output)) =
+                super::content::snapshot_qualification(connection, snapshot, has_lineage)?;
+            self.source_revisions.insert(snapshot, (revision, has_lineage));
+            self.recent_source = Some(OpenSourceSnapshot {
+                snapshot, project: input.envelope().project_id,
+                input_digest: input.digest().into(), result_digest: result.digest().into(), output,
+            });
+        }
+        // The release scan needs the source projection, not the original
+        // producer and checker frames. Read paths outside this open can
+        // still qualify their own frames against the current snapshot.
+        if let Some(stamp) = read_snapshot_stamp(connection)? {
+            let mut cache = source_validation_cache().lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+            if cache.as_ref().is_some_and(|memo| {
+                memo.source.input.envelope().attempt_id == attempt
+                    && memo.read.as_ref().is_some_and(|read| read.stamp == stamp)
+            }) {
+                *cache = None;
+            }
+        }
+        Ok(())
+    }
+
     pub(super) fn matches(
         &self,
         connection: &Connection,
@@ -151,6 +211,8 @@ pub(super) fn validate_for_open<'a>(
         connection,
         links: BTreeMap::new(),
         source_sets: BTreeSet::new(),
+        source_revisions: BTreeMap::new(),
+        recent_source: None,
     };
     validate_schema(
         connection,
@@ -174,6 +236,9 @@ pub(super) fn validate_for_open<'a>(
             results.validate_links(links, source.as_ref(), |result, link, valid| {
                 proofs.links.insert(result, (link, valid));
             })?;
+            if source.is_some() && input.envelope().plugin.is_some() {
+                proofs.qualify_sources(input)?;
+            }
             validate_associations(connection, input, results, &proofs)
         },
     )?;
@@ -1004,11 +1069,17 @@ fn load_result_with_verified(
             super::plugin_execution::validate_result_in(connection, &result_input, verified)?;
             return Ok(verified.clone());
         }
-        // Reading the BLOB directly keeps SQLite from first materializing a full
-        // result value that would overlap the Rust frame during typed decoding.
+        // Read and hash bounded slices of the original BLOB. Decode only after
+        // releasing the SQLite reader and verifying the complete frame.
+        const READ_BYTES: usize = 1024 * 1024;
         let mut frame = vec![0; bytes.len()];
-        bytes.read_at_exact(&mut frame, 0).map_err(sql_error)?;
-        let fixed = FixedResult::restore_owned(frame, &row.digest, &result_input, token)?;
+        let mut digest = aws_lc_rs::digest::Context::new(&aws_lc_rs::digest::SHA256);
+        for (index, block) in frame.chunks_mut(READ_BYTES).enumerate() {
+            bytes.read_at_exact(block, index * READ_BYTES).map_err(sql_error)?;
+            digest.update(block);
+        }
+        drop(bytes);
+        let fixed = FixedResult::restore_hashed(frame, codec::digest_hex(digest.finish()), &row.digest, &result_input, token)?;
         if fixed.envelope().item_id.to_string() != row.item || fixed.envelope().result_id != result {
             return Err(error(ErrorCode::CorruptLedger, "result-association"));
         }

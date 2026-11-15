@@ -270,12 +270,24 @@ impl ReleasePlan {
         &self,
         connection: &Connection,
     ) -> Result<(), ExecutionError> {
+        self.validate_source_reference_with_proofs(connection, None)
+    }
+
+    pub(super) fn validate_source_reference_with_proofs(
+        &self,
+        connection: &Connection,
+        proofs: Option<&super::super::ledger::OpenPluginProofs<'_>>,
+    ) -> Result<(), ExecutionError> {
         super::super::review::read_snapshot(connection, |connection| {
-            self.validate_source_reference_in(connection)
+            self.validate_source_reference_in(connection, proofs)
         })
     }
 
-    fn validate_source_reference_in(&self, connection: &Connection) -> Result<(), ExecutionError> {
+    fn validate_source_reference_in(
+        &self,
+        connection: &Connection,
+        proofs: Option<&super::super::ledger::OpenPluginProofs<'_>>,
+    ) -> Result<(), ExecutionError> {
         let invalid = || failure(ErrorCode::CorruptLedger, "release-source-reference");
         let associated: (String, String, String) = connection
             .query_row(
@@ -293,13 +305,22 @@ impl ReleasePlan {
         {
             return Err(invalid());
         }
-        let (_, (input, result, output)) =
-            super::super::content::snapshot_qualification(connection, self.source_snapshot_id, true)?;
-        if input.envelope().project_id != self.project_id
-            || input.digest() != self.source_input_digest
-            || result.digest() != self.source_result_digest
-            || output.exchange != self.source
+        let matches_source = if let Some(source) = proofs
+            .and_then(|proofs| proofs.source_snapshot(connection, self.source_snapshot_id))
         {
+            source.project == self.project_id
+                && source.input_digest == self.source_input_digest
+                && source.result_digest == self.source_result_digest
+                && source.output.exchange == self.source
+        } else {
+            let (_, (input, result, output)) =
+                super::super::content::snapshot_qualification(connection, self.source_snapshot_id, true)?;
+            input.envelope().project_id == self.project_id
+                && input.digest() == self.source_input_digest
+                && result.digest() == self.source_result_digest
+                && output.exchange == self.source
+        };
+        if !matches_source {
             return Err(invalid());
         }
         let version = self.source_mapping_revision.unwrap_or(Revision::new(0)?);

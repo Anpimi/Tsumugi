@@ -643,8 +643,6 @@ it("updates native command readiness and suspends the workspace group without re
     }, []);
     return visible ? settings : { ...settings, openReferences: undefined, openMcpQuery: undefined, openMcpShare: undefined };
   });
-  // Hold the independent background read so it cannot commit while measuring the gate update.
-  const readDecisions = vi.spyOn(decisionCommands, "page").mockReturnValue(new Promise(() => {}));
   vi.stubGlobal("isTauri", true);
   vi.stubGlobal("innerWidth", 1440);
   mockIPC((command, args) => {
@@ -687,10 +685,7 @@ it("updates native command readiness and suspends the workspace group without re
     expect(await screen.findByText(page.rows[0].content.sourcePreview, {}, { timeout: 5000 })).toBeVisible();
     await waitForSourceAndKnowledgeJournals();
     await screen.findByRole("button", { name: i18n.t("conversation.chooseThread") }, { timeout: 5000 });
-    await waitFor(() => {
-      expect(readDecisions).toHaveBeenCalled();
-      expect(enabled("workspace.open-project")).toBe(true);
-    }, { timeout: 5000 });
+    await waitFor(() => expect(enabled("workspace.open-project")).toBe(true), { timeout: 5000 });
     const activity = within(screen.getByRole("navigation", { name: i18n.t("workbenchV2.activity") }));
     const entries = () => activity.getByRole("button", { name: i18n.t("workbenchV2.entries") });
     expect(entries()).toBeEnabled();
@@ -754,7 +749,7 @@ it("updates native command readiness and suspends the workspace group without re
   }
 }, 15000);
 
-it("lets the first entries and startup journals settle before starting the passive decision count", async () => {
+it("leaves the session free of decision reads after the first entries and startup journals settle", async () => {
   let finishPage!: (value: SegmentPage) => void;
   const firstPage = new Promise<SegmentPage>(resolve => { finishPage = resolve; });
   const readEntries = vi.mocked(segmentCommands.page).mockReturnValue(firstPage);
@@ -787,13 +782,18 @@ it("lets the first entries and startup journals settle before starting the passi
     await act(async () => { failResources(new Error("Synthetic resource journal read failed")); });
     expect(ownerLoad.knowledgeValue?.journal.hydration).toBe("failed");
     await act(async () => { await vi.advanceTimersByTimeAsync(500); });
-    expect(readDecisions).toHaveBeenCalledOnce();
+    expect(readDecisions).not.toHaveBeenCalled();
   } finally {
     vi.useRealTimers();
   }
+  fireEvent.click(screen.getByRole("button", { name: i18n.t("workbenchV2.delivery") }));
+  const openDecisions = await screen.findByRole("button", { name: i18n.t("deliveryWorkbench.openDecisions") });
+  expect(readDecisions).not.toHaveBeenCalled();
+  fireEvent.click(openDecisions);
+  await waitFor(() => expect(readDecisions).toHaveBeenCalled());
 });
 
-it("keeps the passive decision count off the source import queue until its panel closes", async () => {
+it("keeps decision reads off the source import queue after its panel closes", async () => {
   let releaseSource!: () => void;
   ownerLoad.source = new Promise<void>(resolve => { releaseSource = resolve; });
   const readDecisions = vi.spyOn(decisionCommands, "page").mockRejectedValue(new Error("No decision fixture"));
@@ -812,10 +812,11 @@ it("keeps the passive decision count off the source import queue until its panel
     expect(readDecisions).not.toHaveBeenCalled();
   } finally { vi.useRealTimers(); }
   fireEvent.click(within(sheet).getByRole("button", { name: i18n.t("sourceMaintenance.close") }));
-  await waitFor(() => expect(readDecisions).toHaveBeenCalledOnce());
+  await waitFor(() => expect(sheet).not.toBeInTheDocument());
+  expect(readDecisions).not.toHaveBeenCalled();
 });
 
-it("keeps passive decisions off the delivery queue and reads them when opened from Delivery", async () => {
+it("loads decisions from Delivery only when the inbox is opened", async () => {
   const original = vi.mocked(resourceDraftCommands.read).getMockImplementation()!;
   let releaseResources!: () => void;
   const resources = new Promise<void>(resolve => { releaseResources = resolve; });
@@ -840,7 +841,7 @@ it("keeps passive decisions off the delivery queue and reads them when opened fr
   await waitFor(() => expect(readDecisions).toHaveBeenCalledOnce());
 });
 
-it("waits for the new session's journals and still reads decisions when opened explicitly", async () => {
+it("reads decisions in the reopened session when explicitly opened while a journal is pending", async () => {
   const reopened = { ...project, sessionToken: "reopened-session" };
   const readSource = vi.mocked(sourceDraftCommands.read);
   const original = readSource.getMockImplementation()!;
@@ -848,8 +849,7 @@ it("waits for the new session's journals and still reads decisions when opened e
   readSource.mockImplementation(request => request.sessionToken === reopened.sessionToken ? held : original(request));
   const readDecisions = vi.spyOn(decisionCommands, "page").mockRejectedValue(new Error("No decision fixture"));
   await openImportWorkspace(project, { open: vi.fn().mockResolvedValueOnce(project).mockResolvedValueOnce(reopened) });
-  await waitFor(() => expect(readDecisions).toHaveBeenCalledWith(expect.objectContaining({ sessionToken: project.sessionToken })));
-  readDecisions.mockClear();
+  await screen.findByText(page.rows[0].content.sourcePreview);
   await act(async () => { expect(await controller.open(reopened.locator)).toBe(true); });
   await waitFor(() => expect(readSource).toHaveBeenCalledWith({ sessionToken: reopened.sessionToken, key: { projectId: reopened.metadata.projectId } }));
   expect(await screen.findByText(page.rows[0].content.sourcePreview)).toBeVisible();
@@ -867,11 +867,13 @@ it("waits for the new session's journals and still reads decisions when opened e
 it.each([
   { owner: "source", error: "sourceMaintenance.ownerFailed" },
   { owner: "execution", error: "knowledge.loadFailed" },
-] as const)("continues the passive decision count when the $owner owner cannot load", async ({ owner, error }) => {
+] as const)("lets users open the inbox when the $owner owner cannot load", async ({ owner, error }) => {
   ownerLoad[owner] = new Error("Synthetic startup owner load failed");
   const readDecisions = vi.spyOn(decisionCommands, "page").mockRejectedValue(new Error("No decision fixture"));
   await openImportWorkspace();
   expect(await screen.findByText(i18n.t(error))).toBeVisible();
+  expect(readDecisions).not.toHaveBeenCalled();
+  fireEvent.click(screen.getByRole("button", { name: i18n.t("workbenchV2.decisions") }));
   await waitFor(() => expect(readDecisions).toHaveBeenCalled());
 });
 
@@ -946,7 +948,6 @@ it("keeps entries stable when opening the first local draft and pasting in recov
     head = { key: write.key, revision: (BigInt(head.revision) + 1n).toString(), writerId: write.writerId, value: { basis, editSeq, text, pending: null } };
     return structuredClone(head);
   });
-  vi.spyOn(decisionCommands, "page").mockRejectedValue(new Error("No decision fixture"));
   await openImportWorkspace();
   const edit = await screen.findByRole("button", { name: i18n.t("workbenchV2.entryEdit", { key: nativeKey }) }, { timeout: 5000 });
   await waitFor(() => expect(edit).toBeEnabled());
@@ -954,7 +955,7 @@ it("keeps entries stable when opening the first local draft and pasting in recov
   const inputName = i18n.t("workbenchV2.editorLabel", { key: nativeKey });
   const input = await screen.findByRole("textbox", { name: inputName }, { timeout: 5000 });
   await waitForSourceAndKnowledgeJournals();
-  await screen.findByLabelText(i18n.t("workbenchV2.decisionsBadgeError"), {}, { timeout: 5000 });
+  expect(screen.getByLabelText(i18n.t("workbenchV2.decisionsBadgeUnread"))).toBeVisible();
   const recoveryName = i18n.t("workbenchV2.draftRecoveryTitle");
   expect(screen.getByRole("button", { name: recoveryName })).toBeDisabled();
   entriesPresentation.mockClear();

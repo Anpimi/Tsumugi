@@ -53,14 +53,14 @@ function page(basis: string, cursor: DecisionCursor | null = null, activity: Dec
   return value;
 }
 
-interface Presentation { owners: DecisionOwners; cursor: DecisionCursor | null; visible: boolean; enabled: boolean; backgroundReady: boolean }
+interface Presentation { owners: DecisionOwners; cursor: DecisionCursor | null; visible: boolean }
 function harness(read: (request: DecisionPageRequest) => Promise<DecisionPage>, initial?: Partial<Presentation>) {
   const reads = new SessionReads(context); retained.push(reads);
   const first = owner(id(85000)), second = owner(id(85001));
-  let presentation: Presentation = { owners: [first, second], cursor: null, visible: true, enabled: true, backgroundReady: true, ...initial };
+  let presentation: Presentation = { owners: [first, second], cursor: null, visible: true, ...initial };
   function useConsumers(value: Presentation) {
-    const one = useDecisionFeed(reads, value.owners, value.cursor, value, read);
-    const two = useDecisionFeed(reads, value.owners, value.cursor, value, read);
+    const one = useDecisionFeed(reads, value.owners, value.cursor, value.visible, read);
+    const two = useDecisionFeed(reads, value.owners, value.cursor, value.visible, read);
     return { one, two };
   }
   const rendered = renderHook(useConsumers, { initialProps: presentation,
@@ -113,35 +113,26 @@ it("waits for the dispatched read and requests only the latest submission state"
     .some(([, data]) => data?.basis === old.basis)).toBe(false);
 });
 
-it("keeps the passive count behind startup and confirmation while an explicit inbox still reads", async () => {
+it("reads only for a visible inbox, including after invalidation", async () => {
   const read = vi.fn(async (request: DecisionPageRequest) => page("a".repeat(64), request.cursor ?? null, request.activity));
-  const h = harness(read, { visible: false, backgroundReady: false });
-  expect(h.result.current.one.firstLoading).toBe(true);
+  const h = harness(read, { visible: false });
+  expect(h.result.current.one.firstLoading).toBe(false);
   expect(read).not.toHaveBeenCalled();
-  h.show({ backgroundReady: true });
-  expect(read).not.toHaveBeenCalled();
-  await waitFor(() => expect(h.result.current.one.first.data).toBeDefined());
+  h.show({ visible: true });
+  await waitFor(() => expect(h.result.current.one.current("a".repeat(64))).toBe(true));
   expect(read).toHaveBeenCalledTimes(1);
-  expect(h.result.current.one.current("a".repeat(64))).toBe(true);
 
-  h.show({ backgroundReady: false });
+  h.show({ visible: false });
   const submission: DecisionClientAction = { key: { kind: "translation", unitId: id(86002), locale: "zh-CN" },
     slot: "primary", actionId: id(86003), submittedSeq: "1" };
   await act(async () => { h.first.observe([submission]); h.reads.invalidate(["translation"]); });
   expect(read).toHaveBeenCalledTimes(1);
-  expect(h.result.current.one.firstLoading).toBe(true);
+  expect(h.result.current.one.firstLoading).toBe(false);
   expect(h.result.current.one.current("a".repeat(64))).toBe(false);
 
   h.show({ visible: true });
   await waitFor(() => expect(h.result.current.one.first.data?.localActions?.activity?.[0]?.actions).toEqual([submission]));
   expect(read).toHaveBeenCalledTimes(2);
-
-  h.show({ visible: false });
-  await act(async () => { h.first.observe([]); });
-  expect(read).toHaveBeenCalledTimes(2);
-  h.show({ backgroundReady: true });
-  await waitFor(() => expect(h.result.current.one.first.data?.localActions?.activity?.[0]?.actions).toEqual([]));
-  expect(read).toHaveBeenCalledTimes(3);
 });
 
 it("rejects a late response after replacement by another owner with the same displayed identity", async () => {

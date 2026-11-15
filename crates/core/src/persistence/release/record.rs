@@ -437,12 +437,13 @@ pub(super) fn load(
         return Err(failure(ErrorCode::CorruptLedger, "release-fixed-input"));
     }
     if input.envelope().plugin.is_some() {
+        let proofs = open.as_ref().map(|frames| frames.proofs);
         match &expected_manifest.plan {
-            FrozenPlan::Plugin(plan) => plan.validate_source_reference(connection)?,
+            FrozenPlan::Plugin(plan) => plan.validate_source_reference_with_proofs(connection, proofs)?,
             FrozenPlan::PluginInput => referenced_plan
                 .as_ref()
                 .ok_or_else(|| failure(ErrorCode::CorruptLedger, "release-plugin-plan"))?
-                .validate_source_reference(connection)?,
+                .validate_source_reference_with_proofs(connection, proofs)?,
             #[cfg(any(
                 test,
                 feature = "execution-test-host",

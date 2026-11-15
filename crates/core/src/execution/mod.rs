@@ -1172,6 +1172,26 @@ impl FixedResult {
             return Err(ExecutionError::new(ErrorCode::LimitExceeded, "result"));
         }
         let digest = codec::digest(&bytes);
+        Self::decode_hashed(bytes, digest, expected_digest, input, token)
+    }
+
+    pub(crate) fn restore_hashed(
+        bytes: Vec<u8>,
+        digest: String,
+        expected_digest: &str,
+        input: &FixedInput,
+        token: ExecutionId,
+    ) -> Result<Self, ExecutionError> {
+        Self::decode_hashed(bytes.into(), digest, expected_digest, input, token)
+    }
+
+    fn decode_hashed(
+        bytes: std::borrow::Cow<'_, [u8]>,
+        digest: String,
+        expected_digest: &str,
+        input: &FixedInput,
+        token: ExecutionId,
+    ) -> Result<Self, ExecutionError> {
         if digest != expected_digest {
             return Err(ExecutionError::new(
                 ErrorCode::OutputInvalid,

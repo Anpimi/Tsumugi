@@ -126,7 +126,7 @@ type ShellActions = { requestOpen: () => void; close: () => Promise<boolean>; re
   confirm: (advance: boolean) => Promise<void>; exitEditor: () => Promise<void>; toggleFocus: () => Promise<void>; toggleConversationMode: () => void; isEditing: () => boolean; canConfirm: () => boolean; canAdvance: () => boolean };
 type SessionContext = { previousProject: RecentProject | null; session: ProjectSession; lifecycle: ProjectLifecycle; runtime: Runtime; store: ReturnType<typeof createWorkspaceStore>; gate: InteractionGate; readOnly: boolean; requestOpen: () => void; requestCreate: () => void;
   onRecentProjectsChange: (projects: RecentProject[]) => void;
-  sourceOwner: SourceOwner | null; sourceLoadFailed: boolean; sourceOpen: boolean; setSourceOpen: (open: boolean) => void;
+  sourceOwner: SourceOwner | null; sourceOpen: boolean; setSourceOpen: (open: boolean) => void;
   sourceTarget: SourceReviewTarget | null; setSourceTarget: (target: SourceReviewTarget | null) => void;
   sourceDrop: SourceDrop | null; clearSourceDrop: () => void; sourceDropFailure: CommandFailure | null;
   drafts: TranslationDrafts | null; draftLoadFailed: boolean; retryDrafts: () => void; recoveryKey: DraftKey | null; revealDraft: (key: DraftKey | null) => void;
@@ -240,10 +240,6 @@ function SourceLoadFailure({ canRetry, onRetry }: { canRetry: boolean; onRetry: 
     action={canRetry ? <Button onClick={onRetry}>{t("retryOwner")}</Button> : undefined}/>;
 }
 
-function draftHydrationSettled(hydration?: TranslationDraftSnapshot["hydration"]) {
-  return hydration === "ready" || hydration === "failed";
-}
-
 function StrategyLoadFailure({ onFailure }: { onFailure: () => void }) {
   const reported = useRef(false);
   useEffect(() => { if (!reported.current) { reported.current = true; onFailure(); } }, [onFailure]);
@@ -263,8 +259,6 @@ function ProjectWorkspace({ session, lifecycle, gate, readOnly, requestOpen, req
   const [runtime, setRuntime] = useState<Runtime | null>(null);
   const [SourceOwnerHost, setSourceOwnerHost] = useState(createSourceOwnerHost), [sourceAttempt, setSourceAttempt] = useState(0);
   const [sourceOwner, setSourceOwner] = useState<SourceOwner | null>(null), sourceHadOwner = useRef(false);
-  const [sourceLoadFailed, setSourceLoadFailed] = useState(false);
-  const failSourceLoad = useCallback(() => setSourceLoadFailed(true), []);
   const [sourceOpen, setSourceOpen] = useState(false), [sourceTarget, setSourceTarget] = useState<SourceReviewTarget | null>(null);
   const [sourceDrop, setSourceDrop] = useState<SourceDrop | null>(null), [sourceDropFailure, setSourceDropFailure] = useState<CommandFailure | null>(null);
   const sourceParticipant = useRef<LifecycleParticipant | null>(null);
@@ -393,7 +387,7 @@ function ProjectWorkspace({ session, lifecycle, gate, readOnly, requestOpen, req
     setKnowledgeLoadFailed(false);
     // React.lazy caches a rejected loader promise. Only an explicit initial
     // load retry creates a fresh loader; published owners retain their lifetime.
-    if (execution) { setSourceLoadFailed(false); setExecutionOwnerHost(() => createExecutionOwnerHost()); setExecutionAttempt(value => value + 1); }
+    if (execution) { setExecutionOwnerHost(() => createExecutionOwnerHost()); setExecutionAttempt(value => value + 1); }
     else { setKnowledgeOwnerHost(() => createKnowledgeOwnerHost()); setKnowledgeAttempt(value => value + 1); }
     requestKnowledge();
     setKnowledgeOpenIntent({ newView: false, restoreDraft: false, viewId: store.getState().activeViewId, origin: document.activeElement });
@@ -554,7 +548,7 @@ function ProjectWorkspace({ session, lifecycle, gate, readOnly, requestOpen, req
   const { t } = useTranslation(undefined, { keyPrefix: "workbenchV2" });
   if (!runtime) return <LoadingState label={t("loadingEntries")} />;
   return <WorkspaceContext.Provider value={{ previousProject, session, lifecycle, runtime, store, gate, readOnly, requestOpen, requestCreate, onRecentProjectsChange, drafts, draftLoadFailed,
-    sourceOwner: executionTasks ? sourceOwner : null, sourceLoadFailed, sourceOpen, setSourceOpen, sourceTarget, setSourceTarget, sourceDrop,
+    sourceOwner: executionTasks ? sourceOwner : null, sourceOpen, setSourceOpen, sourceTarget, setSourceTarget, sourceDrop,
     clearSourceDrop: () => { setSourceDrop(null); setSourceDropFailure(null); }, sourceDropFailure,
     retryDrafts: () => { if (draftOwner.current) void draftOwner.current.initialize(); else setDraftAttempt(attempt => attempt + 1); }, recoveryKey, revealDraft: setRecoveryKey,
     importOwners, importRecovery, requestImport, revealImport, hideImportRecovery,
@@ -571,7 +565,7 @@ function ProjectWorkspace({ session, lifecycle, gate, readOnly, requestOpen, req
     revealConversation: target => { setConversationTarget(target ? { kind: "request", value: { ...target } } : null); setConversationReveal(value => value + 1); },
     revealConversationProposal: target => { setConversationTarget({ kind: "proposal", value: { ...target } }); setConversationReveal(value => value + 1); },
     revealConversationTeamQuestion: target => { setConversationTarget({ kind: "team-question", value: { ...target } }); setConversationReveal(value => value + 1); } }}>
-    {(importRequested || reviewRequested || knowledgeRequested) && drafts ? <FeatureBoundary key={executionAttempt} onFailure={failSourceLoad} fallback={knowledgeRequested ? <KnowledgeLoadFailure canRetry={!executionHadOwner.current && !knowledgeHadOwner.current} onFailure={failKnowledgeLoad} onRetry={() => retryKnowledgeLoad(true)}/> : <ErrorState title={t("reviewUnavailable")} />}><Suspense fallback={null}>
+    {(importRequested || reviewRequested || knowledgeRequested) && drafts ? <FeatureBoundary key={executionAttempt} fallback={knowledgeRequested ? <KnowledgeLoadFailure canRetry={!executionHadOwner.current && !knowledgeHadOwner.current} onFailure={failKnowledgeLoad} onRetry={() => retryKnowledgeLoad(true)}/> : <ErrorState title={t("reviewUnavailable")} />}><Suspense fallback={null}>
       <ExecutionOwnerHost project={session.project} drafts={drafts} lifecycle={lifecycle} onReveal={revealTask} onOwner={publishExecutionTasks} onParticipant={publishExecutionParticipant}>
         {importRequested ? <FeatureBoundary fallback={<ErrorState title={t("importUnavailable")} description={t("importHelp")} />}><Suspense fallback={null}>
           <ImportOwnerHost project={session.project} drafts={drafts} lifecycle={lifecycle} onOwners={publishImportOwners} onReveal={revealImport}/>
@@ -582,8 +576,8 @@ function ProjectWorkspace({ session, lifecycle, gate, readOnly, requestOpen, req
         {knowledgeRequested ? <FeatureBoundary key={knowledgeAttempt} fallback={<KnowledgeLoadFailure canRetry={!knowledgeHadOwner.current} onFailure={failKnowledgeLoad} onRetry={() => retryKnowledgeLoad(false)}/>}><Suspense fallback={null}>
           <KnowledgeOwnerHost project={session.project} lifecycle={lifecycle} onOwner={publishKnowledgeOwner} onReveal={revealKnowledge} onParticipant={publishKnowledgeParticipant}/>
         </Suspense></FeatureBoundary> : null}
-        <FeatureBoundary key={`source-${sourceAttempt}`} onFailure={failSourceLoad} fallback={<SourceLoadFailure canRetry={!sourceHadOwner.current} onRetry={() => {
-          if (!sourceHadOwner.current) { setSourceLoadFailed(false); setSourceOwnerHost(() => createSourceOwnerHost()); setSourceAttempt(value => value + 1); }
+        <FeatureBoundary key={`source-${sourceAttempt}`} fallback={<SourceLoadFailure canRetry={!sourceHadOwner.current} onRetry={() => {
+          if (!sourceHadOwner.current) { setSourceOwnerHost(() => createSourceOwnerHost()); setSourceAttempt(value => value + 1); }
         }}/>}><Suspense fallback={null}><SourceOwnerHost project={session.project} lifecycle={lifecycle} onOwner={publishSourceOwner}
           onParticipant={publishSourceParticipant} onReveal={revealSource}/></Suspense></FeatureBoundary>
       </ExecutionOwnerHost>
@@ -612,7 +606,7 @@ function WorkspaceShell() {
   const settings = useApplicationSettings();
   const readStatus = useSessionReadStatus();
   const { previousProject, session, lifecycle, runtime, store, gate, readOnly, requestOpen, requestCreate, onRecentProjectsChange, drafts, draftLoadFailed, retryDrafts, recoveryKey, revealDraft,
-    sourceOwner, sourceLoadFailed, sourceOpen, setSourceOpen, sourceTarget, setSourceTarget, sourceDrop, clearSourceDrop, sourceDropFailure,
+    sourceOwner, sourceOpen, setSourceOpen, sourceTarget, setSourceTarget, sourceDrop, clearSourceDrop, sourceDropFailure,
     importOwners, importRecovery, requestImport, revealImport, hideImportRecovery,
     strategyOwner, requestStrategy, strategyReveal, strategyLoadFailed, retryStrategy,
     deliveryOwner, executionTasks, requestDelivery, deliveryReveal, deliveryLoadFailed, canRetryDelivery, retryDelivery,
@@ -728,26 +722,17 @@ function WorkspaceShell() {
   const strategySubscribe = strategyOwner?.subscribe, readStrategyActivity = strategyOwner?.getDecisionActivity;
   const strategyActivity = useMemo(() => strategySubscribe && readStrategyActivity ? { subscribe: strategySubscribe, getDecisionActivity: readStrategyActivity } : null,
     [strategySubscribe, readStrategyActivity]);
-  const draftIndexSettled = draftLoadFailed || draftHydrationSettled(draftState.hydration);
-  const conversationsSettled = conversationLoadFailed || draftHydrationSettled(conversationHydration);
-  const knowledgeSettled = knowledgeLoadFailed || draftHydrationSettled(knowledgeOwner?.journal.hydration);
-  const sourceSettled = sourceLoadFailed || draftHydrationSettled(sourceOwner?.journal.hydration);
-  // Both journals mount under the translation draft owner. Let the passive
-  // count run after their startup reads or when their parent could not load.
-  const ownerJournalsSettled = draftLoadFailed || knowledgeSettled && sourceSettled;
   const [entriesReadSettled, setEntriesReadSettled] = useState(false);
   const settleEntriesRead = useCallback(() => setEntriesReadSettled(true), []);
   const waitingForEntries = view?.kind === "entries" && !importVisible && !entriesReadSettled;
   const importInFocus = sourceOpen || importVisible;
-  // Full decision projection shares the desktop session queue. Delivery has
-  // its own readiness and recovery reads; the inbox is reached explicitly.
+  // The full inbox projection shares the session queue with foreground reads.
   const deliveryInFocus = view?.kind === "delivery";
+  const decisionsInFocus = view?.kind === "decisions" && !importInFocus;
   const decisionFeed = useDecisionFeed(session.reads, strategyActivity ? [drafts, conversations, resourceActivity, sourceActivity, strategyActivity] : [drafts, conversations, resourceActivity, sourceActivity], view?.kind === "decisions" ? view.decisionCursor : null,
-    { visible: view?.kind === "decisions" && !importInFocus, enabled: !disabled && !deliveryInFocus,
-      backgroundReady: !!view && !importInFocus && !waitingForEntries
-        && draftIndexSettled && conversationsSettled && ownerJournalsSettled && !draftState.mutationReserved });
-  const decisionSummary = { page: deliveryInFocus ? undefined : decisionFeed.first.data,
-    loading: decisionFeed.firstLoading, error: deliveryInFocus ? null : decisionFeed.first.error };
+    decisionsInFocus && !disabled);
+  const decisionSummary = { page: decisionsInFocus ? decisionFeed.first.data : undefined,
+    loading: decisionFeed.firstLoading, error: decisionsInFocus ? decisionFeed.first.error : null };
   const decisionBadgeId = useId();
   const lastDecisionView = useRef<string | null>(null);
   useEffect(() => { if (view?.kind === "decisions") lastDecisionView.current = view.id; }, [view?.kind, view?.id]);

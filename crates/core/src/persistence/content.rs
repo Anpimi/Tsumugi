@@ -318,6 +318,13 @@ pub(super) fn validate(
     super::review::read_snapshot(connection, |connection| validate_in(connection, open_proofs))
 }
 
+pub(super) fn has_source_lineage(connection: &Connection) -> Result<bool, ExecutionError> {
+    connection.query_row(
+        "SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE type='table' AND name='source_lineage')",
+        [], |row| row.get(0),
+    ).map_err(sql_error)
+}
+
 pub(super) fn validate_input_bundle(
     connection: &Connection,
     input: &FixedInput,
@@ -403,7 +410,7 @@ fn validate_in(
     {
         return Err(corrupt());
     }
-    let has_lineage: bool = connection.query_row("SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE type='table' AND name='source_lineage')", [], |r| r.get(0)).map_err(sql_error)?;
+    let has_lineage = has_source_lineage(connection)?;
     if has_lineage {
         let actual: String = connection
             .query_row(
@@ -439,7 +446,10 @@ fn validate_in(
         .map_err(sql_error)?
     {
         let snapshot = id(raw.map_err(sql_error)?)?;
-        let (receipt_revision, _) = snapshot_qualification(connection, snapshot, has_lineage)?;
+        let receipt_revision = match open_proofs.and_then(|proofs| proofs.source_revision(connection, snapshot, has_lineage)) {
+            Some(revision) => revision,
+            None => snapshot_qualification(connection, snapshot, has_lineage)?.0,
+        };
         if !revisions.insert(receipt_revision) {
             return Err(corrupt());
         }
