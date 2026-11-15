@@ -1504,6 +1504,12 @@ fn load_check_frames(
     connection: &Connection,
     checker_id: &str,
 ) -> Result<(FixedInput, FixedResult), ExecutionError> {
+    let check_input = load_check_input(connection, checker_id)?;
+    let check_result = load_check_result(connection, &check_input, checker_id)?;
+    Ok((check_input, check_result))
+}
+
+fn load_check_input(connection: &Connection, checker_id: &str) -> Result<FixedInput, ExecutionError> {
     let checker_attempt: String = connection
         .query_row(
             "SELECT attempt_id FROM execution_results WHERE result_id=?1",
@@ -1511,8 +1517,15 @@ fn load_check_frames(
             |r| r.get(0),
         )
         .map_err(sql_error)?;
-    let check_input = load_input(connection, parse_id(checker_attempt)?)?;
-    let check_result = load_result(connection, &check_input, parse_id(checker_id.to_owned())?)
+    load_input(connection, parse_id(checker_attempt)?)
+}
+
+fn load_check_result(
+    connection: &Connection,
+    check_input: &FixedInput,
+    checker_id: &str,
+) -> Result<FixedResult, ExecutionError> {
+    load_result(connection, check_input, parse_id(checker_id.to_owned())?)
         .map_err(|failure| {
             // This is a saved proof frame, not a fresh worker response.
             if failure.stage == "result-digest" {
@@ -1520,8 +1533,7 @@ fn load_check_frames(
             } else {
                 failure
             }
-        })?;
-    Ok((check_input, check_result))
+        })
 }
 
 pub(super) fn artifact_check_proof_in(
@@ -1657,6 +1669,7 @@ impl AttemptDetailCache {
 
 struct SourceReadValidation {
     stamp: ReadSnapshotStamp,
+    semantic_valid: bool,
     bundle: bool,
     snapshot: Option<(ExecutionId, bool, u64)>,
     summary: Option<Option<tsumugi_plugin_sdk::SourceCaptureSummary>>,
@@ -1759,9 +1772,11 @@ pub(super) fn load_source_projection(
             let source = &memo.source;
             source.input.envelope().attempt_id == attempt
                 && source.result.envelope().result_id == result
-                && (!require_semantic || source.input.envelope().plugin.is_none()
-                    || memo.prepared.as_ref().is_some_and(|prepared| prepared.proof.valid))
-                && memo.read.as_ref().is_some_and(|read| Some(&read.stamp) == stamp.as_ref())
+                && memo.read.as_ref().is_some_and(|read| {
+                    Some(&read.stamp) == stamp.as_ref()
+                        && (!require_semantic || source.input.envelope().plugin.is_none()
+                            || read.semantic_valid)
+                })
         }).map(|memo| (memo.source.clone(), memo.projected.clone()));
     if let Some((source, projected)) = verified {
         return Ok((source.input, source.result, projected));
@@ -1804,14 +1819,14 @@ pub(super) fn load_source_projection(
         // adopted side's qualified proof warm across pages without retaining
         // both complete captures in the cache.
         let keeps_adopted_proof = !require_semantic && cache.as_ref().is_some_and(|memo| {
-            memo.prepared.is_some()
-                && memo.read.as_ref().is_some_and(|read| read.stamp == stamp)
+            memo.read.as_ref().is_some_and(|read| read.stamp == stamp && read.semantic_valid)
         });
         if !keeps_adopted_proof {
+            let semantic_valid = prepared.as_ref().is_some_and(|prepared| prepared.proof.valid);
             *cache = Some(SourceValidationMemo {
                 source: ResultValidationCapture { input: input.clone(), result: result.clone() },
                 projected: output.clone(), prepared,
-                read: Some(SourceReadValidation { stamp, bundle: false, snapshot: None, summary: None }),
+                read: Some(SourceReadValidation { stamp, semantic_valid, bundle: false, snapshot: None, summary: None }),
             });
         }
     }
@@ -1866,16 +1881,16 @@ fn validate_source_link_with_bundle(
         check_cached_source_validation(connection, &prepared)?;
         return Ok(prepared);
     }
-    let (check_input, check_result) = load_check_frames(connection, &checker_id)?;
-    let prepared = SourceValidationCapture::restore_with_source(
+    let capture = SourceValidationCapture::restore_with_source(
         ResultValidationCapture {
             input: input.clone(),
             result: result.clone(),
         },
-        check_input,
         source.map(|(bundle, settings)| (bundle, settings)),
-    )?
-    .prepare(check_result)?;
+        || load_check_input(connection, &checker_id),
+    )?;
+    let check_result = load_check_result(connection, &capture.check_input, &checker_id)?;
+    let prepared = capture.prepare(check_result)?;
     if saved_valid != expected_valid || prepared.proof.valid != saved_valid {
         return Err(error(ErrorCode::CorruptLedger, "semantic-validation-proof"));
     }
@@ -1946,13 +1961,16 @@ fn validate_plugin_link_with_open_evidence(
             open.checker.remember(&proof.capture.check_input, &proof.check_result);
             if same_attempt && let Some(stamp) = read_snapshot_stamp(connection)? {
                 // The source association, bundle and checker all passed in
-                // this transaction. The snapshot owner can consume them now.
+                // this transaction. Keep the projection for the snapshot owner
+                // without pinning the checker frames through later build scans.
                 *source_validation_cache().lock().unwrap_or_else(std::sync::PoisonError::into_inner) =
                     Some(SourceValidationMemo {
                         source: proof.capture.source.clone(),
                         projected: proof.capture.projected.clone(),
-                        prepared: Some(proof.clone()),
-                        read: Some(SourceReadValidation { stamp, bundle: true, snapshot: None, summary: None }),
+                        prepared: None,
+                        read: Some(SourceReadValidation {
+                            stamp, semantic_valid: proof.proof.valid, bundle: true, snapshot: None, summary: None,
+                        }),
                     });
             }
         }

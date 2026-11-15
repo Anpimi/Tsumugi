@@ -76,24 +76,33 @@ impl SourceValidationCapture {
         attempt: Option<ExecutionId>,
     ) -> Result<Self, ExecutionError> {
         let (bundle, settings) = crate::content::SourceBundle::from_input_with_settings(&source.input)?;
-        let (mut envelope, projected, checks) = Self::reconstruct(&source, &bundle, &settings, None)?;
+        let projected = Self::project(&source, &bundle, &settings)?;
+        let (mut envelope, checks) = Self::reconstruct(&source, &bundle, &settings, &projected, None)?;
         envelope.attempt_id = attempt.unwrap_or(envelope.attempt_id);
         let check_input = FixedInput::capture(envelope)?;
         Ok(Self { source, check_input, projected, checks })
+    }
+
+    fn project(
+        source: &ResultValidationCapture,
+        bundle: &crate::content::SourceBundle,
+        settings: &crate::content::SourceSettings,
+    ) -> Result<Arc<crate::content::SourceOutput>, ExecutionError> {
+        crate::content::validate_output_for_bundle(
+            &source.input,
+            &source.result,
+            bundle,
+            settings.revision_policy.clone(),
+        ).map(Arc::new)
     }
 
     fn reconstruct(
         source: &ResultValidationCapture,
         bundle: &crate::content::SourceBundle,
         settings: &crate::content::SourceSettings,
+        projected: &crate::content::SourceOutput,
         saved_payload: Option<&Value>,
-    ) -> Result<(InputEnvelope, Arc<crate::content::SourceOutput>, sdk::FixedCheckSet), ExecutionError> {
-        let projected = Arc::new(crate::content::validate_output_for_bundle(
-            &source.input,
-            &source.result,
-            bundle,
-            settings.revision_policy.clone(),
-        )?);
+    ) -> Result<(InputEnvelope, sdk::FixedCheckSet), ExecutionError> {
         if source.input.envelope().plugin.is_none() {
             return Err(invalid());
         }
@@ -186,7 +195,7 @@ impl SourceValidationCapture {
         envelope.limits.max_result_bytes = MAX_RESULT_BYTES as u32;
         envelope.limits.timeout_ms = binding.capability.declaration.limits.timeout_ms.min(300_000);
         envelope.plugin = Some(binding.clone());
-        Ok((envelope, projected, checks))
+        Ok((envelope, checks))
     }
     pub fn check_input(&self) -> &FixedInput {
         &self.check_input
@@ -197,23 +206,29 @@ impl SourceValidationCapture {
         source: ResultValidationCapture,
         check_input: FixedInput,
     ) -> Result<Self, ExecutionError> {
-        Self::restore_with_source(source, check_input, None)
+        Self::restore_with_source(source, None, || Ok(check_input))
     }
 
     pub(crate) fn restore_with_source(
         source: ResultValidationCapture,
-        check_input: FixedInput,
         verified_source: Option<(&crate::content::SourceBundle, &crate::content::SourceSettings)>,
+        load_checker: impl FnOnce() -> Result<FixedInput, ExecutionError>,
     ) -> Result<Self, ExecutionError> {
-        let item = check_input.envelope().items.first().ok_or_else(invalid)?;
-        let saved_payload = Some(&item.payload);
-        let (envelope, projected, checks) = match verified_source {
-            Some((bundle, settings)) => Self::reconstruct(&source, bundle, settings, saved_payload)?,
+        let owned;
+        let (bundle, settings) = match verified_source {
+            Some(source) => source,
             None => {
-                let (bundle, settings) = crate::content::SourceBundle::from_input_with_settings(&source.input)?;
-                Self::reconstruct(&source, &bundle, &settings, saved_payload)?
+                owned = crate::content::SourceBundle::from_input_with_settings(&source.input)?;
+                (&owned.0, &owned.1)
             }
         };
+        // Finish decoding the producer's projection before reading the large
+        // checker frame. Only its completed projection overlaps the checker.
+        let projected = Self::project(&source, bundle, settings)?;
+        let check_input = load_checker()?;
+        let item = check_input.envelope().items.first().ok_or_else(invalid)?;
+        let (envelope, checks) =
+            Self::reconstruct(&source, bundle, settings, &projected, Some(&item.payload))?;
         validation::restore_check_header(envelope, &check_input)?;
         Ok(Self { source, check_input, projected, checks })
     }

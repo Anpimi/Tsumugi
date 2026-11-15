@@ -414,14 +414,17 @@ impl PluginResultEvidence {
         }
         match &self.result.outcome {
             sdk::InvocationOutcome::Succeeded { output } => {
-                let projected = ledger_output(input, output)?;
-                if envelope.outcome != ExecutionState::Succeeded
-                    || envelope.output.as_ref() != Some(&projected)
-                {
-                    return Err(ExecutionError::new(
-                        ErrorCode::ResultMismatch,
-                        "plugin-output",
-                    ));
+                let mismatch = || ExecutionError::new(ErrorCode::ResultMismatch, "plugin-output");
+                let expected = envelope.output.as_ref().ok_or_else(mismatch)?;
+                if envelope.outcome != ExecutionState::Succeeded {
+                    return Err(mismatch());
+                }
+                if input.envelope().operation == crate::content::BUILD_OPERATION {
+                    codec::matches_json(
+                        output.utf8.as_bytes(), input.envelope().limits.max_result_bytes as usize, expected,
+                    )?;
+                } else if *expected != ledger_output(input, output)? {
+                    return Err(mismatch());
                 }
             }
             sdk::InvocationOutcome::Failed { .. } if envelope.outcome == ExecutionState::Failed => {
