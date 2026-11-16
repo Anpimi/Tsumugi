@@ -15,6 +15,50 @@ fn bundle() -> SourceBundle {
     )
     .unwrap()
 }
+
+#[test]
+fn source_bundle_rejects_lengths_that_disagree_with_the_verified_material() {
+    let mut bundle = bundle();
+    let id = bundle.files[0].artifact_id;
+    let artifact = sdk::CapturedArtifact::from_bytes(
+        id.to_string(),
+        bundle.files[0].logical_path.clone(),
+        bundle.files[0].role.clone(),
+        &[0, 0xfe, 0xff, 0],
+    )
+    .unwrap();
+    bundle.files[0] = CapturedFile::from_artifact(&artifact, id).unwrap();
+    bundle.manifest_digest = bundle.calculate_digest().unwrap();
+    bundle.validate().unwrap();
+
+    for index in 0..bundle.files.len() {
+        let mut altered = bundle.clone();
+        altered.files[index].byte_length += 1;
+        altered.manifest_digest = altered.calculate_digest().unwrap();
+        assert_eq!(altered.validate().unwrap_err().stage, "invalid-structure");
+    }
+}
+
+#[test]
+fn restoring_source_bundle_checks_identity_collisions_after_uuid_normalization() {
+    let dir = tempfile::tempdir().unwrap();
+    let store = create(&dir.path().join("project"));
+    let input = generic_source_input(&store, 1, 1, "CaseKey", false);
+    let mut envelope = input.envelope().clone();
+    let artifacts = envelope.items[0].payload["artifacts"].as_array_mut().unwrap();
+    let mut duplicate = artifacts[0].clone();
+    duplicate["id"] = json!(duplicate["id"].as_str().unwrap().replace('-', ""));
+    duplicate["logicalPath"] = json!("another.json");
+    artifacts.push(duplicate);
+    let raw: sdk::SourceExtractionInput = from_value(&envelope.items[0].payload).unwrap();
+    raw.validate().unwrap();
+    let captured = FixedInput::capture(envelope).unwrap();
+    assert_eq!(
+        SourceBundle::from_input(&captured).unwrap_err().stage,
+        "source-contract"
+    );
+}
+
 fn small(source: &str) -> SourceBundle {
     SourceBundle::capture(br#"{"UniqueID":"Example.Mod","Name":"Example","Version":"1.0.0","EntryDll":"Example.dll"}"#,source.as_bytes(),"en").unwrap()
 }

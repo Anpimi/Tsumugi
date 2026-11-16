@@ -141,11 +141,24 @@ pub struct SourceExtractionInput {
 }
 impl SourceExtractionInput {
     pub fn validate(&self) -> Result<(), ContractError> {
-        validate_source_material(
+        self.validate_with_lengths(|_| {})
+    }
+
+    /// Validate the complete input and return the decoded length of each
+    /// artifact in input order, without retaining decoded binary files.
+    pub fn validated_artifact_lengths(&self) -> Result<Vec<usize>, ContractError> {
+        let mut lengths = Vec::new();
+        self.validate_with_lengths(|length| lengths.push(length))?;
+        Ok(lengths)
+    }
+
+    fn validate_with_lengths(&self, on_length: impl FnMut(usize)) -> Result<(), ContractError> {
+        crate::content::validate_source_material_with_lengths(
             &self.profile,
             &self.source_set_id,
             &self.source_language,
             &self.artifacts,
+            on_length,
         )?;
         encoded_limit(
             self,

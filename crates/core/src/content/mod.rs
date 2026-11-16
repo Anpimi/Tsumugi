@@ -267,13 +267,14 @@ impl SourceBundle {
     /// Generic captured-material validation. Domain file requirements belong to
     /// the selected extractor, not to this project capture projection.
     pub fn validate(&self) -> Result<(), ExecutionError> {
-        let source = self.source_input();
-        source.validate().map_err(source_contract_error)?;
-        for file in &self.files {
-            if file.bytes()?.len() != file.byte_length as usize {
-                return Err(invalid("invalid-structure"));
-            }
+        let lengths = self.source_input().validated_artifact_lengths().map_err(source_contract_error)?;
+        if self.files.iter().zip(lengths).any(|(file, length)| file.byte_length as usize != length) {
+            return Err(invalid("invalid-structure"));
         }
+        self.validate_manifest()
+    }
+
+    fn validate_manifest(&self) -> Result<(), ExecutionError> {
         let locale =
             Locale::parse(&self.source_language).map_err(|_| invalid("language-required"))?;
         if locale.as_str() != self.source_language
@@ -379,7 +380,7 @@ impl SourceBundle {
             return Err(invalid("source-input"));
         }
         let source: sdk::SourceExtractionInput = from_value(&e.items[0].payload)?;
-        source.validate().map_err(source_contract_error)?;
+        let lengths = source.validated_artifact_lengths().map_err(source_contract_error)?;
         let settings = SourceSettings::for_source(input, &source)?;
         let (plugin_id, plugin_version) = if let Some(binding) = &e.plugin {
             binding.validate_project_or_attempt()?;
@@ -421,11 +422,15 @@ impl SourceBundle {
         {
             return Err(invalid("source-scope"));
         }
+        let mut normalized_ids = source.source_set_id != set_id.to_string();
         let files = source
             .artifacts
             .iter()
-            .map(|artifact| {
-                CapturedFile::from_artifact(artifact, ExecutionId::parse(artifact.id())?)
+            .zip(lengths)
+            .map(|(artifact, length)| {
+                let artifact_id = ExecutionId::parse(artifact.id())?;
+                normalized_ids |= artifact.id() != artifact_id.to_string();
+                CapturedFile::from_validated_artifact(artifact, artifact_id, length)
             })
             .collect::<Result<Vec<_>, ExecutionError>>()?;
         let mut bundle = Self {
@@ -442,7 +447,13 @@ impl SourceBundle {
             files,
         };
         bundle.manifest_digest = bundle.calculate_digest()?;
-        bundle.validate()?;
+        // A different UUID spelling can change the encoded size or create
+        // duplicate IDs. Otherwise the SDK already qualified this material.
+        if normalized_ids {
+            bundle.validate()?;
+        } else {
+            bundle.validate_manifest()?;
+        }
         #[cfg(any(
             test,
             feature = "execution-test-host",

@@ -207,7 +207,7 @@ The current workspace targets **`0.3.0-alpha.1`**. The published `0.2.0-alpha.1`
 - Preparing or checking a new build keeps verified release history available. Saved releases are revalidated when their evidence changes, and opening large projects compares stored source evidence without decoding a second copy.
 
 - Reduce historical decoding and avoid rebuilding full plugin requests when opening projects with large plugin imports or builds. After saving a verified build, history reuses the evidence verified by that commit. Recording an export receipt keeps still-valid build history available.
-- Reduce memory copies when opening projects with large saved execution inputs. Reuse validated source materials when checking import history and read saved build bindings without loading every source text again.
+- Reduce memory copies when opening projects with large saved execution inputs. Reuse verified file lengths without decoding source files again, and read saved build bindings without loading every source text again.
 - Reduce historical frame decoding when opening large projects and reuse verified source-check evidence when recording an import check.
 
 - Reopen a cleanly closed project faster in the same desktop process by checking its exact database bytes before reusing the completed history validation.

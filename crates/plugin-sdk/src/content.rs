@@ -390,6 +390,16 @@ pub(crate) fn validate_source_material(
     source_language: &str,
     artifacts: &[CapturedArtifact],
 ) -> Result<usize, ContractError> {
+    validate_source_material_with_lengths(profile, source_set_id, source_language, artifacts, |_| {})
+}
+
+pub(crate) fn validate_source_material_with_lengths(
+    profile: &ContractRef,
+    source_set_id: &str,
+    source_language: &str,
+    artifacts: &[CapturedArtifact],
+    mut on_length: impl FnMut(usize),
+) -> Result<usize, ContractError> {
     reference(profile, "content.profile")?;
     opaque_id(source_set_id, "content.sourceSetId")?;
     crate::validation::language_label(source_language, "content.sourceLanguage")?;
@@ -408,13 +418,15 @@ pub(crate) fn validate_source_material(
     )?;
     let mut total_bytes = 0usize;
     for artifact in artifacts {
-        total_bytes = total_bytes.saturating_add(artifact.validated_len()?);
+        let length = artifact.validated_len()?;
+        total_bytes = total_bytes.saturating_add(length);
         if total_bytes > MAX_MATERIAL_SET_BYTES {
             return Err(ContractError::at(
                 ContractErrorCode::LimitExceeded,
                 "content.artifacts",
             ));
         }
+        on_length(length);
     }
     Ok(total_bytes)
 }

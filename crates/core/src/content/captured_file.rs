@@ -105,11 +105,19 @@ impl CapturedFile {
         artifact_id: ExecutionId,
     ) -> Result<Self, ExecutionError> {
         let bytes = artifact.validated_bytes().map_err(source_contract_error)?;
+        Self::from_validated_artifact(artifact, artifact_id, bytes.len())
+    }
+
+    pub(super) fn from_validated_artifact(
+        artifact: &sdk::CapturedArtifact,
+        artifact_id: ExecutionId,
+        byte_length: usize,
+    ) -> Result<Self, ExecutionError> {
         Ok(Self {
             artifact_id,
             logical_path: artifact.logical_path().into(),
             role: artifact.role().into(),
-            byte_length: u32::try_from(bytes.len()).map_err(|_| invalid("source-bytes"))?,
+            byte_length: u32::try_from(byte_length).map_err(|_| invalid("source-bytes"))?,
             sha256: artifact.sha256().into(),
             data: artifact.data(),
         })
