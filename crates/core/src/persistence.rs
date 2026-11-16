@@ -1139,7 +1139,20 @@ fn validate_database(
 }
 
 
+fn validate_foreign_keys(connection: &Connection) -> rusqlite::Result<()> {
+    let enabled: i64 = connection.pragma_query_value(None, "foreign_keys", |row| row.get(0))?;
+    if enabled != 1 || connection.prepare("PRAGMA foreign_key_check")?.exists([])? {
+        return Err(rusqlite::Error::InvalidQuery);
+    }
+    Ok(())
+}
+
 fn validate_schema_shape(connection: &Connection) -> Result<release::ReleaseReadCache, PersistenceError> {
+    // All owners below read this same pinned snapshot. The pragma audits the
+    // whole database, so repeating it per owner re-scans unrelated tables.
+    validate_foreign_keys(connection).map_err(|_| PersistenceError::CorruptProject {
+        stage: PersistenceStage::Open,
+    })?;
     let table_names: Vec<String> = connection
         .prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%' ORDER BY name")
         .map_err(|error| map_sqlite(error, PersistenceStage::Open))?
@@ -1226,7 +1239,7 @@ fn validate_schema_shape(connection: &Connection) -> Result<release::ReleaseRead
     content::validate(connection, Some(&open_proofs)).map_err(|_| PersistenceError::CorruptProject {
         stage: PersistenceStage::Open,
     })?;
-    translation::validate(connection).map_err(|_| PersistenceError::CorruptProject {
+    translation::validate_after_foreign_keys(connection).map_err(|_| PersistenceError::CorruptProject {
         stage: PersistenceStage::Open,
     })?;
     resources::validate(connection).map_err(|_| PersistenceError::CorruptProject {

@@ -127,8 +127,10 @@ impl ArtifactValidationCapture {
             output,
             requirements: domain,
         };
+        // The result binding above validates the original plan's build
+        // payload. The fixed checker serialization enforces its own byte limit.
         binding
-            .validate_check_input(&payload)
+            .validate_check_for_validated_build(&payload)
             .map_err(|_| invalid())?;
         let selected = environment.checker().clone();
         selected.validate()?;

@@ -77,22 +77,23 @@ impl SourceValidationCapture {
         materialize: bool,
     ) -> Result<Self, ExecutionError> {
         let (bundle, settings) = crate::content::SourceBundle::from_input_with_settings(&source.input)?;
-        let projected = Arc::new(crate::content::validate_output_for_bundle(
+        let mut projected = crate::content::validate_output_for_bundle(
             &source.input, &source.result, &bundle, settings.revision_policy.clone(),
-        )?);
+        )?;
         let (mut envelope, checks, payload) =
-            Self::reconstruct(&source, &bundle, &settings, &projected.exchange)?;
+            Self::reconstruct(&source, &bundle, &settings, projected.exchange)?;
         envelope.attempt_id = attempt.unwrap_or(envelope.attempt_id);
         payload.validate().map_err(|_| invalid())?;
         let check_input = validation::fixed_check(envelope, &payload, materialize)?;
-        Ok(Self { source, check_input, projected, checks })
+        projected.exchange = payload.proposal;
+        Ok(Self { source, check_input, projected: Arc::new(projected), checks })
     }
 
     fn reconstruct(
         source: &ResultValidationCapture,
         bundle: &crate::content::SourceBundle,
         settings: &crate::content::SourceSettings,
-        exchange: &sdk::ContentExchange,
+        exchange: sdk::ContentExchange,
     ) -> Result<(InputEnvelope, sdk::FixedCheckSet, sdk::SourceExtractionCheckInput), ExecutionError> {
         if source.input.envelope().plugin.is_none() {
             return Err(invalid());
@@ -135,7 +136,7 @@ impl SourceValidationCapture {
         let scope_id = source_material.source_set_id.clone();
         let payload = sdk::SourceExtractionCheckInput {
             source: source_material,
-            proposal: exchange.clone(),
+            proposal: exchange,
             requirements: domain,
         };
         let basis = SourceValidationBasis {
@@ -216,9 +217,9 @@ impl SourceValidationCapture {
         let exchange = crate::content::validated_plugin_source_exchange(
             &source.input, &source.result, bundle,
         )?;
-        let (envelope, checks, payload) = Self::reconstruct(source, bundle, settings, &exchange)?;
+        let (envelope, checks, payload) = Self::reconstruct(source, bundle, settings, exchange)?;
         let checked = validation::restore_fixed_check(envelope, actual, &payload, materialize)?;
-        Ok((exchange, checked, checks))
+        Ok((payload.proposal, checked, checks))
     }
 
     pub(crate) fn derive_input(

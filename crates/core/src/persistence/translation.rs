@@ -692,6 +692,11 @@ fn record_plugin_input(connection: &Connection, input: &FixedInput) -> Result<()
 }
 
 pub(super) fn validate(connection: &Connection) -> rusqlite::Result<()> {
+    super::validate_foreign_keys(connection)?;
+    validate_after_foreign_keys(connection)
+}
+
+pub(super) fn validate_after_foreign_keys(connection: &Connection) -> rusqlite::Result<()> {
     for (name, expected) in TABLES {
         let actual: String = connection.query_row(
             "SELECT sql FROM sqlite_master WHERE type='table' AND name=?1",
@@ -701,9 +706,6 @@ pub(super) fn validate(connection: &Connection) -> rusqlite::Result<()> {
         if actual != *expected {
             return Err(rusqlite::Error::InvalidQuery);
         }
-    }
-    if connection.prepare("PRAGMA foreign_key_check")?.exists([])? {
-        return Err(rusqlite::Error::InvalidQuery);
     }
     let project: String = connection.query_row(
         "SELECT project_id FROM project_metadata WHERE row_id=1",

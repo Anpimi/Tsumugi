@@ -724,6 +724,39 @@ fn current_legacy_checks_share_source_validation_inside_one_read() {
 }
 
 #[test]
+fn project_open_audits_foreign_keys_once_and_rejects_an_orphaned_review_reference() {
+    let (_directory, store, project) = large_fixture(4);
+    let connection = store.connection().unwrap();
+    let (audit, statements, _) = measure(&store, || {
+        queries::read_snapshot(connection, |connection| {
+            Ok(crate::persistence::validate_schema_shape(connection))
+        }).unwrap()
+    });
+    audit.unwrap();
+    assert_eq!(
+        statements.iter().filter(|sql| sql.as_str() == "PRAGMA foreign_key_check").count(),
+        1,
+    );
+
+    let path = store.directory().to_owned();
+    store.close().unwrap();
+    let external = Connection::open(path.join("project.sqlite3")).unwrap();
+    external.pragma_update(None, "foreign_keys", false).unwrap();
+    external.execute(
+        "INSERT INTO review_waivers
+         (waiver_id,action_id,project_id,unit_id,locale,basis,issue_id,kind,policy_version,actor,reason,request_digest)
+         VALUES (?1,?2,?3,?4,'zh-CN',?5,'issue','grant','test','reviewer','fixture',?5)",
+        params![ExecutionId::new().to_string(), ExecutionId::new().to_string(),
+            project.to_string(), ExecutionId::new().to_string(), "a".repeat(64)],
+    ).unwrap();
+    drop(external);
+    assert_eq!(
+        ProjectStore::open(&path).unwrap_err().code(),
+        crate::PersistenceErrorCode::CorruptProject,
+    );
+}
+
+#[test]
 fn translation_history_validation_batches_relationships_and_rejects_damaged_proofs() {
     let (_directory, mut store, project) = large_fixture(40);
     let units = store.review_summary_page(project, "zh-CN", 0, 10, "", None).unwrap().rows

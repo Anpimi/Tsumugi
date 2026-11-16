@@ -615,9 +615,6 @@ pub(super) fn prepare_open(connection: &Connection) -> rusqlite::Result<OpenRevi
             return Err(rusqlite::Error::InvalidQuery);
         }
     }
-    if connection.prepare("PRAGMA foreign_key_check")?.exists([])? {
-        return Err(rusqlite::Error::InvalidQuery);
-    }
     for table in ["review_decisions", "review_checks"] {
         let mut statement = connection.prepare(&format!("SELECT basis,basis_json FROM {table}"))?;
         let rows = statement.query_map([], |row| {

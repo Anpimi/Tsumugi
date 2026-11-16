@@ -266,10 +266,11 @@ pub struct ArtifactCheckInput {
 impl ArtifactCheckInput {
     pub fn validate(&self) -> Result<(), ContractError> {
         validate_build_artifacts(&self.input, &self.output)?;
-        self.validate_requirements_and_size(MAX_MATERIAL_INVOCATION_BYTES)
+        self.validate_requirements()?;
+        self.validate_encoded_size(MAX_MATERIAL_INVOCATION_BYTES)
     }
 
-    fn validate_requirements_and_size(&self, limit: usize) -> Result<(), ContractError> {
+    fn validate_requirements(&self) -> Result<(), ContractError> {
         if self.requirements.is_empty() || self.requirements.len() > 32 {
             return Err(ContractError::at(
                 ContractErrorCode::InvalidCoverage,
@@ -313,6 +314,10 @@ impl ArtifactCheckInput {
             provider = Some(selected);
             basis = Some((&requirement.input_digest, &requirement.scope_digest));
         }
+        Ok(())
+    }
+
+    fn validate_encoded_size(&self, limit: usize) -> Result<(), ContractError> {
         encoded_limit(self, limit.min(MAX_MATERIAL_INVOCATION_BYTES), "artifactCheckInput")
     }
 }
@@ -433,6 +438,14 @@ impl BuildBinding {
         output: &ArtifactSet,
     ) -> Result<(), ContractError> {
         self.validate_input(input)?;
+        self.validate_artifacts_for_validated_build(input, output)
+    }
+
+    fn validate_artifacts_for_validated_build(
+        &self,
+        input: &BuildInput,
+        output: &ArtifactSet,
+    ) -> Result<(), ContractError> {
         validate_artifacts_for_checked_input(
             input, output, self.builder.declaration.limits.max_output_bytes as usize,
         )?;
@@ -445,8 +458,20 @@ impl BuildBinding {
         Ok(())
     }
     pub fn validate_check_input(&self, input: &ArtifactCheckInput) -> Result<(), ContractError> {
-        self.validate_artifacts(&input.input, &input.output)?;
-        input.validate_requirements_and_size(self.checker.declaration.limits.max_input_bytes as usize)?;
+        self.validate_input(&input.input)?;
+        self.validate_check_for_validated_build(input)?;
+        input.validate_encoded_size(self.checker.declaration.limits.max_input_bytes as usize)
+    }
+
+    /// Validate the actual artifacts and checker requirements for an input
+    /// already validated with this build binding. The caller must enforce the
+    /// checker's encoded request limit when serializing the complete request.
+    pub fn validate_check_for_validated_build(
+        &self,
+        input: &ArtifactCheckInput,
+    ) -> Result<(), ContractError> {
+        self.validate_artifacts_for_validated_build(&input.input, &input.output)?;
+        input.validate_requirements()?;
         let expected: std::collections::BTreeSet<_> =
             self.declaration.artifact_rules.iter().collect();
         if input

@@ -378,6 +378,15 @@ fn fixture_build_policy(
     bytes: u32,
     policy: RecoveryPolicy,
 ) -> (tempfile::TempDir, ProjectStore, ExecutionId, FixedInput) {
+    fixture_build_configured(locales, policy, |build| {
+        build.binding.declaration.output_limits.max_total_bytes = bytes;
+    })
+}
+fn fixture_build_configured(
+    locales: &[&str],
+    policy: RecoveryPolicy,
+    configure: impl FnOnce(&mut ReleaseBuildEnvironment),
+) -> (tempfile::TempDir, ProjectStore, ExecutionId, FixedInput) {
     let directory = tempfile::tempdir().unwrap();
     let mut store = ProjectStore::create(
         directory.path().join("project"),
@@ -408,7 +417,7 @@ fn fixture_build_policy(
         })
         .collect();
     let mut build = environment(&store);
-    build.binding.declaration.output_limits.max_total_bytes = bytes;
+    configure(&mut build);
     build
         .binding
         .declaration
@@ -566,6 +575,26 @@ fn checker_result(
     let result = sdk_result(&request, serde_json::to_value(checked).unwrap());
     store.save_execution_result(&result).unwrap();
     (result, grant)
+}
+
+#[test]
+fn artifact_check_rejects_full_request_above_its_dispatch_limit() {
+    let (_directory, mut store, _, input) = fixture_build_configured(
+        &["zh-CN"], RecoveryPolicy::ExternalUnknown, |build| {
+            build.binding.checker.declaration.limits.max_input_bytes = 1;
+            build.checker_execution.capability = build.binding.checker.clone();
+        },
+    );
+    let result = builder_result(&mut store, &input, input.envelope().items[0].item_id);
+    let capture = store.capture_result_validation(
+        input.envelope().attempt_id, result.envelope().result_id,
+    ).unwrap();
+    for failure in [
+        capture.clone().prepare_artifact_check(ExecutionId::new()).err(),
+        capture.prepare_artifact_check_with_output(ExecutionId::new()).err(),
+    ] {
+        assert_eq!(failure.unwrap().code, ErrorCode::LimitExceeded);
+    }
 }
 
 #[test]

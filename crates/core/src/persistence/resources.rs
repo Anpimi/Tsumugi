@@ -780,9 +780,6 @@ pub(super) fn validate(connection: &Connection) -> rusqlite::Result<()> {
             return Err(rusqlite::Error::InvalidQuery);
         }
     }
-    if connection.prepare("PRAGMA foreign_key_check")?.exists([])? {
-        return Err(rusqlite::Error::InvalidQuery);
-    }
     let inconsistent: bool = connection.query_row(
         "SELECT EXISTS(
             SELECT 1 FROM term_current c JOIN term_revisions r ON r.revision_id=c.revision_id

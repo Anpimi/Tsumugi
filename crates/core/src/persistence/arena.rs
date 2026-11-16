@@ -45,9 +45,6 @@ pub(super) fn validate(c: &Connection) -> rusqlite::Result<()> {
             return Err(rusqlite::Error::InvalidQuery);
         }
     }
-    if c.prepare("PRAGMA foreign_key_check")?.exists([])? {
-        return Err(rusqlite::Error::InvalidQuery);
-    }
     let invalid:bool=c.query_row("SELECT EXISTS(SELECT 1 FROM arena_entries e JOIN arena_comparisons a USING(comparison_id) JOIN translation_revisions r USING(revision_id) WHERE r.project_id<>a.project_id OR r.unit_id<>a.unit_id OR r.locale<>a.locale) OR EXISTS(SELECT 1 FROM translation_contributors e JOIN translation_revisions r ON r.revision_id=e.revision_id JOIN translation_revisions p ON p.revision_id=e.parent_revision_id WHERE r.project_id<>p.project_id OR r.unit_id<>p.unit_id OR r.locale<>p.locale OR r.source_revision_id<>p.source_revision_id OR r.ordinal<=p.ordinal) OR EXISTS(SELECT 1 FROM arena_comparisons a WHERE (SELECT COUNT(*) FROM arena_entries e WHERE e.comparison_id=a.comparison_id) NOT BETWEEN 2 AND 4)",[],|r|r.get(0))?;
     if invalid {
         return Err(rusqlite::Error::InvalidQuery);

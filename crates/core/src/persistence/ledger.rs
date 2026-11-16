@@ -342,19 +342,9 @@ fn validate_schema(
             return Err(error(ErrorCode::CorruptLedger, "schema"));
         }
     }
-    let foreign_keys: i64 = connection
-        .query_row("PRAGMA foreign_keys", [], |r| r.get(0))
-        .map_err(sql_error)?;
-    if foreign_keys != 1
-        || connection
-            .prepare("PRAGMA foreign_key_check")
-            .map_err(sql_error)?
-            .exists([])
-            .map_err(sql_error)?
-    {
-        return Err(error(ErrorCode::CorruptLedger, "foreign-keys"));
-    }
     if !opening {
+        super::validate_foreign_keys(connection)
+            .map_err(|_| error(ErrorCode::CorruptLedger, "foreign-keys"))?;
         input_storage::validate_chunks(connection, false)?;
     }
     let project = super::read_metadata_from(connection)
