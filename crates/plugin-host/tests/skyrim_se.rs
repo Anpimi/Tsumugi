@@ -16,7 +16,7 @@ use tsumugi_plugin_host::{core::RunnerProxy, *};
 use tsumugi_plugin_sdk as sdk;
 #[path = "support/core_execution.rs"]
 mod core_execution;
-use core_execution::{authorize, execute};
+use core_execution::{authorize, authorize_for, execute};
 
 #[path = "skyrim_se/paired.rs"]
 mod paired;
@@ -1203,7 +1203,10 @@ fn run_capacity_case(directory: &str, records: usize, exact_raw_bytes: Option<us
     let build_input = store.prepare_plugin_build(project, ExecutionId::new(), &[PluginBuildLocaleChoice {
         translation_units: Some(vec![]), locale: "zh-CN".into(), output_paths: vec!["FormatProbe.esp".into()], configuration: configuration(&build_binding),
     }], &eligibility.basis, &build_environment).unwrap();
-    grants.push(authorize(&runtime, &mut store, &build_input));
+    // Saving checks both original grants after the whole large material
+    // pipeline. Keep their leases independent of each dispatch's timeout.
+    let build_lifetime = std::time::Duration::from_secs(20 * 60);
+    grants.push(authorize_for(&runtime, &mut store, &build_input, build_lifetime));
     let built = execute(&mut runtime, &mut store, &build_input);
     eprintln!("capacity_build_seconds={}", build_started.elapsed().as_secs_f64());
     let action = store.prepare_adoption(build_input.envelope().attempt_id, build_input.envelope().units[0].unit_id, vec![built.envelope().result_id], json!({})).unwrap();
@@ -1216,7 +1219,7 @@ fn run_capacity_case(directory: &str, records: usize, exact_raw_bytes: Option<us
     assert!(frame_bytes < 64 * 1024);
     assert!(wire_bytes > 4 * 1024 * 1024);
     eprintln!("capacity_artifact_check_frame_bytes={frame_bytes} wire_bytes={wire_bytes}");
-    grants.push(authorize(&runtime, &mut store, &check));
+    grants.push(authorize_for(&runtime, &mut store, &check, build_lifetime));
     let checked = execute(&mut runtime, &mut store, &check);
     store.commit_artifact_validation(capture.prepare(checked).unwrap()).unwrap();
     eprintln!("capacity_artifact_check_seconds={}", artifact_check_started.elapsed().as_secs_f64());

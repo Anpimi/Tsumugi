@@ -7,12 +7,26 @@ pub fn authorize(
     store: &mut ProjectStore,
     input: &FixedInput,
 ) -> ExecutionId {
+    authorize_for(
+        runtime,
+        store,
+        input,
+        Duration::from_millis(u64::from(input.envelope().limits.timeout_ms)) + Duration::from_secs(60),
+    )
+}
+
+pub fn authorize_for(
+    runtime: &ExecutionRuntime,
+    store: &mut ProjectStore,
+    input: &FixedInput,
+    lifetime: Duration,
+) -> ExecutionId {
     let grant = ExecutionId::new();
     let expires = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .unwrap()
         .as_millis() as u64
-        + u64::from(input.envelope().limits.timeout_ms) + 60_000;
+        + u64::try_from(lifetime.as_millis()).unwrap();
     runtime
         .authorize_plugin(
             store,
