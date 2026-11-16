@@ -1104,7 +1104,6 @@ fn run_capacity_case(directory: &str, records: usize, exact_raw_bytes: Option<us
         preview_summary,
     } = adopt_source(&mut store, &mut runtime, &input);
     eprintln!("capacity Core adoption returned in {:?}", started.elapsed());
-    assert!(extracted.bytes().len() > 8 * 1024 * 1024);
     assert!(check_frame_bytes < 64 * 1024);
     assert!(check_wire_bytes > 4 * 1024 * 1024);
     eprintln!("capacity_source_check_frame_bytes={check_frame_bytes} wire_bytes={check_wire_bytes}");
@@ -1113,6 +1112,9 @@ fn run_capacity_case(directory: &str, records: usize, exact_raw_bytes: Option<us
     else {
         panic!("expected captured domain content")
     };
+    assert!(extracted.bytes().ends_with(output.utf8.as_bytes()));
+    assert!(extracted.bytes().len() < output.utf8.len() + 16 * 1024);
+    eprintln!("capacity_source_result_frame_bytes={} raw_payload_bytes={}", extracted.bytes().len(), output.utf8.len());
     let expected = sdk::parse_content_exchange(output.utf8.as_bytes()).unwrap();
     assert_eq!(expected.units.len(), fields);
     assert_eq!(preview_total as usize, fields);
@@ -1214,6 +1216,7 @@ fn run_capacity_case(directory: &str, records: usize, exact_raw_bytes: Option<us
         panic!("expected saved original build output");
     };
     assert_eq!(built.envelope().output, Some(json!([output.schema, output.sha256])));
+    assert!(built.bytes().ends_with(output.utf8.as_bytes()));
     assert!(built.bytes().len() < output.utf8.len() + 16 * 1024);
     eprintln!("capacity_build_result_frame_bytes={} raw_payload_bytes={}", built.bytes().len(), output.utf8.len());
     eprintln!("capacity_build_seconds={}", build_started.elapsed().as_secs_f64());

@@ -750,33 +750,48 @@ fn compact_build_result_keeps_checked_original_bytes_and_rejects_conflicting_pro
     let original = sdk::parse_artifact_set(output.utf8.as_bytes()).unwrap();
     assert_eq!(plan.artifact_set(&restored).unwrap(), original);
 
+    let restore = |frame: &[u8]| FixedResult::restore(frame, &codec::digest(frame), &input, token);
+    let raw = output.utf8.as_bytes();
+    assert!(result.bytes().ends_with(raw));
+    let header_end = result.bytes().len() - raw.len() - 1;
+    let header_start = result.bytes().iter().position(|&byte| byte == b'{').unwrap();
+    assert_eq!(result.bytes()[header_end], b'\n');
+    let mut header: crate::execution::ResultEnvelope =
+        serde_json::from_slice(&result.bytes()[header_start..header_end]).unwrap();
+    let frame_with = |header: &crate::execution::ResultEnvelope, raw: &[u8]| {
+        [
+            &result.bytes()[..header_start],
+            &serde_json::to_vec(header).unwrap(),
+            b"\n",
+            raw,
+        ].concat()
+    };
+    assert!(restore(&serde_json::to_vec(result.envelope()).unwrap()).is_err());
+    assert!(restore(&result.bytes()[..header_end]).is_err());
+    assert!(restore(&frame_with(&header, b"\xff")).is_err());
+    assert!(restore(&frame_with(&header, &raw[..raw.len() - 1])).is_err());
     for projection in [
         serde_json::to_value(&original).unwrap(),
         serde_json::json!([output.schema, "0".repeat(64)]),
         serde_json::json!([sdk::build_input_contract(), output.sha256]),
     ] {
-        let mut envelope = result.envelope().clone();
-        envelope.output = Some(projection);
-        let frame = serde_json::to_vec(&envelope).unwrap();
-        let error = FixedResult::restore(&frame, &codec::digest(&frame), &input, token).unwrap_err();
-        assert_eq!(error.code, ErrorCode::ResultMismatch);
+        header.output = Some(projection);
+        assert_eq!(restore(&frame_with(&header, raw)).unwrap_err().code, ErrorCode::ResultMismatch);
     }
 
-    let mut envelope = result.envelope().clone();
-    let sdk::InvocationOutcome::Succeeded { output } =
-        &mut envelope.plugin.as_mut().unwrap().result.outcome
-    else {
-        unreachable!();
-    };
     // Both digests and the reference are consistent; a duplicate decoded key
     // must still be rejected before an artifact reader can use the outcome.
     let duplicated = output.utf8.replacen("\"targetLanguage\":", "\"target\\u004canguage\":\"zh-CN\",\"targetLanguage\":", 1);
     assert_ne!(duplicated, &*output.utf8);
-    *output = sdk::EncodedPayload::capture(output.schema.clone(), duplicated).unwrap();
-    envelope.output = Some(serde_json::json!([output.schema, output.sha256]));
-    let frame = serde_json::to_vec(&envelope).unwrap();
+    let sdk::InvocationOutcome::Succeeded { output: stub } =
+        &mut header.plugin.as_mut().unwrap().result.outcome
+    else {
+        unreachable!();
+    };
+    stub.sha256 = sdk::payload_digest(&duplicated);
+    header.output = Some(serde_json::json!([stub.schema, stub.sha256]));
     assert_eq!(
-        FixedResult::restore(&frame, &codec::digest(&frame), &input, token).unwrap_err().stage,
+        restore(&frame_with(&header, duplicated.as_bytes())).unwrap_err().stage,
         "decoding"
     );
 }

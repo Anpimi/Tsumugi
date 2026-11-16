@@ -7,6 +7,7 @@ mod adoption;
 mod artifact_validation;
 pub(crate) mod codec;
 mod plugin;
+mod result_frame;
 pub(crate) mod plugin_authority;
 mod runner;
 mod runtime;
@@ -1120,7 +1121,7 @@ impl FixedResult {
         token: ExecutionId,
     ) -> Result<Self, ExecutionError> {
         envelope.validate(input, token)?;
-        let bytes = codec::encode(&envelope, input.envelope().limits.max_result_bytes as usize)?;
+        let bytes = result_frame::encode(&envelope, input)?;
         let digest = codec::digest(&bytes);
         Ok(Self {
             envelope: Arc::new(envelope),
@@ -1144,8 +1145,7 @@ impl FixedResult {
         token: ExecutionId,
         verified_digest: Option<String>,
     ) -> Result<Self, ExecutionError> {
-        let envelope: ResultEnvelope =
-            codec::decode_frame(&bytes, input.envelope().limits.max_result_bytes as usize)?;
+        let envelope = result_frame::decode(&bytes, input)?;
         envelope.validate(input, token)?;
         let digest = verified_digest.unwrap_or_else(|| codec::digest(&bytes));
         Ok(Self {

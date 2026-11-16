@@ -563,7 +563,7 @@ fn ledger_output(
     }
 }
 
-fn stores_output_reference(input: &FixedInput) -> bool {
+pub(super) fn stores_output_reference(input: &FixedInput) -> bool {
     matches!(
         input.envelope().operation.as_str(),
         crate::content::OPERATION
