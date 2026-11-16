@@ -194,7 +194,7 @@ The current workspace targets **`0.3.0-alpha.1`**. The published `0.2.0-alpha.1`
 - Keep export folder checks responsive by pausing background review reads on the delivery workbench. Reuse unchanged evidence when saving a verified build, and reduce history decoding and material allocations when opening large projects.
 - Keep independent artifact check results responsive by pausing builder detail refreshes until the verdict is recorded. Reuse the captured checker input for progress reads and reduce duplicate work when validating large source proposals.
 - Show the save action promptly after recording an independent file check. Reuse the committed build qualification and reduce repeated artifact validation on open and whole-file verification time on warm reopen for large projects.
-- Release completed source check frames earlier when opening large projects and compare saved build output without allocating a second JSON tree.
+- Release completed source check frames earlier when opening large projects, measure plugin result sizes without re-encoding the payload text, and reuse verified build output when reading saved files.
 - Reuse verified binary source material during history checks and carry the verified fingerprint through an unchanged warm session until close.
 - Reuse verified canonical input bytes when binding independent source and file check results during history replay.
 - Load pending decisions when their inbox opens, so the entries view leaves the session queue available for delivery history.

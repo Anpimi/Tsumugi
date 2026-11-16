@@ -376,25 +376,6 @@ impl PluginResultEvidence {
             envelope.item_id, token, binding, input.plugin_payload_digest(envelope.item_id)?,
         )?;
         let max_result_bytes = input.plugin_result_budget(binding)?;
-        // The ledger already decoded the typed response. Measure its complete
-        // wire envelope without copying it or passing it through the decoder again.
-        #[derive(Serialize)]
-        #[serde(rename_all = "camelCase")]
-        struct ResultDocument<'a> {
-            protocol_version: u32,
-            body: ResultBody<'a>,
-        }
-        #[derive(Serialize)]
-        #[serde(tag = "kind", content = "data", rename_all = "kebab-case")]
-        enum ResultBody<'a> {
-            Result(&'a sdk::InvocationResult),
-        }
-        let document = ResultDocument {
-            protocol_version: sdk::EXCHANGE_PROTOCOL,
-            body: ResultBody::Result(&self.result),
-        };
-        codec::check_encoded_size(&document, max_result_bytes as usize)
-            .map_err(|_| ExecutionError::new(ErrorCode::ResultMismatch, "plugin-contract"))?;
         sdk::validate_invocation_result_binding(
             &self.result, &context, &self.channel, &declaration.contract, binding.profile.as_ref(),
             &declaration.output_schema, &declaration.error_schema, &self.channel,
@@ -438,6 +419,7 @@ impl PluginResultEvidence {
                 ));
             }
         }
+        check_result_document_size(&self.result, max_result_bytes as usize)?;
         if envelope.diagnostic.as_ref().is_some_and(|d| d.retry_safe) {
             return Err(ExecutionError::new(
                 ErrorCode::ResultMismatch,
@@ -446,6 +428,35 @@ impl PluginResultEvidence {
         }
         Ok(())
     }
+}
+
+fn check_result_document_size(result: &sdk::InvocationResult, limit: usize) -> Result<(), ExecutionError> {
+    let check = |result, limit| {
+        let doc = sdk::ExchangeDocument {
+            protocol_version: sdk::EXCHANGE_PROTOCOL,
+            body: sdk::ExchangeBody::Result(result),
+        };
+        codec::check_encoded_size(&doc, limit)
+    };
+    // Successful output has already passed the strict JSON comparison above.
+    // Its only literal control bytes can be tab, LF and CR. Quoting any
+    // byte therefore needs at most two bytes. The empty string counts the
+    // quotes in the actual SDK envelope so metadata stays inside the limit.
+    if let sdk::InvocationOutcome::Succeeded { output } = &result.outcome
+        && let Some(metadata_limit) = limit.checked_sub(output.utf8.len().saturating_mul(2))
+    {
+        let metadata = sdk::InvocationResult {
+            outcome: sdk::InvocationOutcome::Succeeded {
+                output: sdk::EncodedPayload { utf8: "".into(), ..output.clone() },
+            },
+            ..result.clone()
+        };
+        if check(metadata, metadata_limit).is_ok() {
+            return Ok(());
+        }
+    }
+    // Opaque failure payloads and successes close to the limit use exact size.
+    check(result.clone(), limit).map_err(|_| ExecutionError::new(ErrorCode::ResultMismatch, "plugin-contract"))
 }
 impl FixedResult {
     /// Called by a trusted adapter after actual-channel validation. This keeps
@@ -514,5 +525,41 @@ fn ledger_output(
             .map_err(|_| ExecutionError::new(ErrorCode::OutputInvalid, "plugin-output"))
     } else {
         codec::decode(output.utf8.as_bytes(), limit)
+    }
+}
+
+#[cfg(test)]
+#[test]
+fn result_wire_budget_accepts_exact_size_and_rejects_one_byte_less() {
+    let document: sdk::ExchangeDocument = serde_json::from_slice(include_bytes!(
+        "../../../plugin-sdk/tests/fixtures/invocation.result.json"
+    )).unwrap();
+    let sdk::ExchangeBody::Result(mut result) = document.body else {
+        panic!("expected a plugin result fixture")
+    };
+    let sdk::InvocationOutcome::Succeeded { output } = &result.outcome else {
+        panic!("expected a successful result fixture")
+    };
+    let text = "\"path\\name\"\n\u{0001}文".repeat(512);
+    let success = sdk::EncodedPayload::capture(
+        output.schema.clone(),
+        serde_json::to_string(&text).unwrap(),
+    ).unwrap();
+    let error = sdk::EncodedPayload::capture(output.schema.clone(), text).unwrap();
+    for outcome in [
+        sdk::InvocationOutcome::Succeeded { output: success },
+        sdk::InvocationOutcome::Failed { error: error.clone() },
+        sdk::InvocationOutcome::Unknown { error },
+    ] {
+        result.outcome = outcome;
+        let wire = serde_json::to_vec(&sdk::ExchangeDocument {
+            protocol_version: sdk::EXCHANGE_PROTOCOL,
+            body: sdk::ExchangeBody::Result(result.clone()),
+        }).unwrap();
+        check_result_document_size(&result, wire.len()).unwrap();
+        assert_eq!(
+            check_result_document_size(&result, wire.len() - 1).unwrap_err().code,
+            ErrorCode::ResultMismatch
+        );
     }
 }

@@ -173,7 +173,11 @@ impl ReleasePlan {
         if bytes.len() > sdk::MAX_ARTIFACT_SET_BYTES {
             return Err(invalid());
         }
-        serde_json::from_slice(bytes).map_err(|_| invalid())
+        // FixedResult already matched the strict stored projection against
+        // these original bytes. Read its typed fields without lexing the
+        // complete artifact JSON a second time.
+        let projected = result.envelope().output.as_ref().ok_or_else(invalid)?;
+        sdk::ArtifactSet::deserialize(projected).map_err(|_| invalid())
     }
     pub(super) fn release_summary(&self) -> super::record::ManifestSummary {
         let binding = &self.build.binding;
