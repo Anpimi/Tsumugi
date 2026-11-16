@@ -275,6 +275,7 @@ fn captures_core_qualification_and_sends_only_fixed_build_data() {
             &channel,
         )
         .unwrap();
+    assert_eq!(request.input.utf8.as_bytes(), serde_json::to_vec(&minimal).unwrap());
     assert_eq!(
         sdk::parse_build_input(request.input.utf8.as_bytes()).unwrap(),
         minimal

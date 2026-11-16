@@ -58,6 +58,34 @@ fn output(input: &BuildInput) -> ArtifactSet {
 }
 
 #[test]
+fn build_write_matches_canonical_bytes_and_enforces_the_declared_limit() {
+    let mut input = input("caption");
+    input.targets[0].text.push_str(" \"\\\u{0000}\t\r\n 🧵");
+    let expected = serde_json::to_vec(&input).unwrap();
+    let mut binding = binding();
+    binding.builder.declaration.limits.max_input_bytes = expected.len() as u32;
+
+    let mut actual = Vec::new();
+    binding.write_input(&input, &mut actual).unwrap();
+    assert_eq!(actual, expected);
+    binding.validate_input(&input).unwrap();
+
+    binding.builder.declaration.limits.max_input_bytes -= 1;
+    actual.clear();
+    assert_eq!(
+        binding.write_input(&input, &mut actual).unwrap_err(),
+        ContractError { code: ContractErrorCode::LimitExceeded, field: "buildInput".into() },
+    );
+    assert!(actual.len() < expected.len());
+
+    binding.builder.declaration.limits.max_input_bytes = expected.len() as u32;
+    input.targets[0].source_revision_id.push('x');
+    actual.clear();
+    assert!(binding.write_input(&input, &mut actual).is_err());
+    assert!(actual.is_empty());
+}
+
+#[test]
 fn supported_text_binding_keeps_its_contract_family_and_refuses_binary_output() {
     let mut binding = binding();
     binding.builder.declaration.input_schema.schema_version = 1;

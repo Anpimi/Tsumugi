@@ -223,10 +223,16 @@ impl FixedInput {
         {
             let locale = item.scope.locale.as_deref()
                 .ok_or_else(|| ExecutionError::new(ErrorCode::InvalidInput, "release-plan"))?;
-            let payload = if let Some(plan) = self.open_build_plan() {
-                plan.plugin_input(locale)?
+            let restored;
+            let plan = if let Some(plan) = self.open_build_plan() {
+                plan.as_ref()
             } else {
-                crate::ReleasePlan::from_input(self)?.plugin_input(locale)?
+                restored = crate::ReleasePlan::from_input(self)?;
+                &restored
+            };
+            let payload = erased_payload::BuildPayload {
+                binding: plan.build_environment().binding(),
+                input: plan.project_plugin_input(locale)?,
             };
             encode(&payload, limit)
         } else {
@@ -369,6 +375,31 @@ mod erased_payload {
         }
         fn digest(&self, limit: usize) -> Result<String, ExecutionError> {
             codec::digest_encoded(self, limit)
+        }
+    }
+
+    pub(super) struct BuildPayload<'a> {
+        pub(super) binding: &'a sdk::BuildBinding,
+        pub(super) input: sdk::BuildInput,
+    }
+
+    impl BuildPayload<'_> {
+        fn write(&self, writer: impl std::io::Write) -> Result<(), ExecutionError> {
+            self.binding.write_input(&self.input, writer)
+                .map_err(|_| ExecutionError::new(ErrorCode::InvalidInput, "release-plan"))
+        }
+    }
+
+    impl Payload for BuildPayload<'_> {
+        // The restored plan binds this builder to the fixed capability. Its
+        // SDK encoder owns the same limit and the material ceiling together.
+        fn encode(&self, _limit: usize) -> Result<Vec<u8>, ExecutionError> {
+            let mut bytes = Vec::new();
+            self.write(&mut bytes)?;
+            Ok(bytes)
+        }
+        fn digest(&self, _limit: usize) -> Result<String, ExecutionError> {
+            codec::digest_written(|writer| self.write(writer)).map(|(digest, _)| digest)
         }
     }
 }

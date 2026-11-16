@@ -1,6 +1,6 @@
 //! Fixed build data, explicit options and actual artifact checks. Release eligibility,
 //! execution permission, filesystem access and publication remain host-owned.
-use crate::validation::{encoded_limit, name, opaque_id, reference, unique};
+use crate::validation::{encoded_limit, name, opaque_id, reference, unique, write_encoded};
 use crate::*;
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
@@ -111,10 +111,11 @@ pub struct BuildInput {
 }
 impl BuildInput {
     pub fn validate(&self) -> Result<(), ContractError> {
-        self.validate_with_limit(MAX_MATERIAL_INVOCATION_BYTES)
+        self.validate_structure()?;
+        encoded_limit(self, MAX_MATERIAL_INVOCATION_BYTES, "buildInput")
     }
 
-    fn validate_with_limit(&self, limit: usize) -> Result<(), ContractError> {
+    fn validate_structure(&self) -> Result<(), ContractError> {
         self.source.validate()?;
         language(&self.target_language)?;
         self.output_limits.validate()?;
@@ -156,7 +157,7 @@ impl BuildInput {
         for configuration in &self.configuration {
             configuration.validate()?;
         }
-        encoded_limit(self, limit.min(MAX_MATERIAL_INVOCATION_BYTES), "buildInput")
+        Ok(())
     }
 }
 
@@ -415,8 +416,14 @@ impl BuildDeclaration {
 }
 impl BuildBinding {
     pub fn validate_input(&self, input: &BuildInput) -> Result<(), ContractError> {
+        self.write_input(input, std::io::sink())
+    }
+
+    /// Validate the build request and write its JSON while enforcing the
+    /// builder's complete payload limit. Discard partial output on error.
+    pub fn write_input(&self, input: &BuildInput, writer: impl std::io::Write) -> Result<(), ContractError> {
         self.validate()?;
-        input.validate_with_limit(self.builder.declaration.limits.max_input_bytes as usize)?;
+        input.validate_structure()?;
         self.declaration
             .validate_configuration(&input.configuration)?;
         if self.builder.declaration.input_schema.schema_version == 1 {
@@ -430,7 +437,9 @@ impl BuildBinding {
         {
             return Err(mismatch("buildDeclaration.input"));
         }
-        Ok(())
+        let limit = (self.builder.declaration.limits.max_input_bytes as usize)
+            .min(MAX_MATERIAL_INVOCATION_BYTES);
+        write_encoded(input, limit, "buildInput", writer)
     }
     pub fn validate_artifacts(
         &self,

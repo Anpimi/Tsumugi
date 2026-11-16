@@ -408,39 +408,52 @@ pub(crate) fn encoded_limit<T: serde::Serialize>(
     limit: usize,
     field: &str,
 ) -> Result<(), ContractError> {
-    struct Counter {
-        bytes: usize,
-        limit: usize,
+    write_encoded(value, limit, field, std::io::sink())
+}
+
+pub(crate) fn write_encoded<T: serde::Serialize, W: std::io::Write>(
+    value: &T,
+    limit: usize,
+    field: &str,
+    writer: W,
+) -> Result<(), ContractError> {
+    use std::io::Write;
+
+    struct Bounded<W> {
+        writer: W,
+        remaining: usize,
         exceeded: bool,
     }
-    impl std::io::Write for Counter {
+    impl<W: Write> Write for Bounded<W> {
         fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
-            self.bytes = self.bytes.saturating_add(bytes.len());
-            if self.bytes > self.limit {
+            if bytes.len() > self.remaining {
                 self.exceeded = true;
                 return Err(std::io::Error::other("encoded data limit"));
             }
-            Ok(bytes.len())
+            let written = self.writer.write(bytes)?;
+            self.remaining -= written;
+            Ok(written)
         }
         fn flush(&mut self) -> std::io::Result<()> {
-            Ok(())
+            self.writer.flush()
         }
     }
-    let mut counter = Counter {
-        bytes: 0,
-        limit,
+    let mut bounded = Bounded {
+        writer,
+        remaining: limit,
         exceeded: false,
     };
-    serde_json::to_writer(&mut counter, value).map_err(|_| {
-        ContractError::at(
-            if counter.exceeded {
+    if serde_json::to_writer(&mut bounded, value).is_err() || bounded.flush().is_err() {
+        return Err(ContractError::at(
+            if bounded.exceeded {
                 ContractErrorCode::LimitExceeded
             } else {
                 ContractErrorCode::InvalidSchema
             },
             field,
-        )
-    })
+        ));
+    }
+    Ok(())
 }
 
 #[cfg(test)]

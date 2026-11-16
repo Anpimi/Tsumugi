@@ -199,7 +199,7 @@ The current workspace targets **`0.3.0-alpha.1`**. The published `0.2.0-alpha.1`
 - Reuse verified canonical input bytes when binding independent source and file check results during history replay.
 - Load pending decisions when their inbox opens, so the entries view leaves the session queue available for delivery history.
 - Load project brief counts without running the full build readiness check.
-- Read large project history with fewer intermediate allocations and compare saved files without copying their stored bytes. Audit foreign keys once during complete project validation.
+- Read large project history with fewer intermediate allocations and compare saved files without copying their stored bytes. Audit foreign keys once during complete project validation and enforce the build request size limit while producing its bytes or digest.
 - Reduce storage and replay allocations for independent source and artifact checks by reconstructing their SDK requests from the original evidence. Reuse the validated builder input and check the encoded request size during the same pass that computes its digest.
 - Release verified source frames before opening saved build history, skip source row reconstruction when there are no lineage corrections, and keep saved files out of the database sorter.
 

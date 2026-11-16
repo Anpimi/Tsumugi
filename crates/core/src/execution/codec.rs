@@ -131,6 +131,12 @@ pub(super) fn digest_encoded_with_size<T: Serialize>(
     value: &T,
     limit: usize,
 ) -> Result<(String, usize), ExecutionError> {
+    digest_written(|writer| encode_to(value, limit, writer))
+}
+
+pub(super) fn digest_written(
+    encode: impl FnOnce(&mut dyn Write) -> Result<(), ExecutionError>,
+) -> Result<(String, usize), ExecutionError> {
     struct HashWriter(aws_lc_rs::digest::Context, usize);
     impl Write for HashWriter {
         fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
@@ -143,7 +149,7 @@ pub(super) fn digest_encoded_with_size<T: Serialize>(
         }
     }
     let mut writer = HashWriter(aws_lc_rs::digest::Context::new(&SHA256), 0);
-    encode_to(value, limit, std::io::BufWriter::new(&mut writer))?;
+    encode(&mut std::io::BufWriter::new(&mut writer))?;
     Ok((digest_hex(writer.0.finish()), writer.1))
 }
 
