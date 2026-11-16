@@ -42,18 +42,18 @@ pub(super) fn restore_check_header(
     }).ok_or_else(|| ExecutionError::new(ErrorCode::ResultMismatch, "semantic-check-input"))?;
     let limit = (binding.capability.declaration.limits.max_input_bytes as usize)
         .min(sdk::MAX_MATERIAL_INVOCATION_BYTES);
-    let payload = checked_payload_bytes(expected, actual, limit)?;
+    let (_, digest) = checked_payload(expected, actual, limit)?;
     let item_id = captured.items[0].item_id;
     actual.plugin_payload_digests.lock().unwrap_or_else(std::sync::PoisonError::into_inner)
-        .entry(item_id).or_insert_with(|| codec::digest(payload));
+        .entry(item_id).or_insert(digest);
     Ok(())
 }
 
-fn checked_payload_bytes(
+fn checked_payload(
     mut expected: InputEnvelope,
     actual: &FixedInput,
     limit: usize,
-) -> Result<&[u8], ExecutionError> {
+) -> Result<(&[u8], String), ExecutionError> {
     let invalid = || ExecutionError::new(ErrorCode::ResultMismatch, "semantic-check-input");
     let captured = actual.envelope();
     bind_check_ids(&mut expected, captured)?;
@@ -69,10 +69,9 @@ fn checked_payload_bytes(
     let payload = actual.bytes().strip_prefix(&header[..offset])
         .and_then(|rest| rest.strip_suffix(&header[offset + 1..]))
         .ok_or_else(invalid)?;
-    if !codec::matches_encoding(&captured.items[0].payload, limit, payload)? {
-        return Err(invalid());
-    }
-    Ok(payload)
+    let digest = codec::matched_encoding_digest(&captured.items[0].payload, limit, payload)?
+        .ok_or_else(invalid)?;
+    Ok((payload, digest))
 }
 
 #[cfg(test)]
@@ -89,9 +88,9 @@ fn checker_payload_digest_uses_only_the_exact_canonical_item_payload() {
     };
     let expected = capture(Value::Null);
     let fixed = FixedInput::capture(capture(payload.clone())).unwrap();
-    let bytes = checked_payload_bytes(expected.clone(), &fixed, MAX_INPUT_BYTES).unwrap();
-    assert_eq!(codec::digest(bytes), codec::digest_encoded(&payload, MAX_INPUT_BYTES).unwrap());
-    assert_eq!(checked_payload_bytes(expected.clone(), &fixed, bytes.len() - 1).unwrap_err().code,
+    let (bytes, digest) = checked_payload(expected.clone(), &fixed, MAX_INPUT_BYTES).unwrap();
+    assert_eq!(digest, codec::digest_encoded(&payload, MAX_INPUT_BYTES).unwrap());
+    assert_eq!(checked_payload(expected.clone(), &fixed, bytes.len() - 1).unwrap_err().code,
         ErrorCode::LimitExceeded);
 
     // The decoded value and full-frame digest still qualify, but the
@@ -101,12 +100,12 @@ fn checker_payload_digest_uses_only_the_exact_canonical_item_payload() {
     spaced.insert(offset + 1, b' ');
     let spaced = FixedInput::restore(&spaced, &codec::digest(&spaced)).unwrap();
     assert_eq!(fixed.envelope(), spaced.envelope());
-    assert_eq!(checked_payload_bytes(expected.clone(), &spaced, MAX_INPUT_BYTES).unwrap_err().code,
+    assert_eq!(checked_payload(expected.clone(), &spaced, MAX_INPUT_BYTES).unwrap_err().code,
         ErrorCode::ResultMismatch);
 
     let mut wrong_header = expected;
     wrong_header.settings["payload"] = Value::from(1);
-    assert_eq!(checked_payload_bytes(wrong_header, &fixed, MAX_INPUT_BYTES).unwrap_err().code,
+    assert_eq!(checked_payload(wrong_header, &fixed, MAX_INPUT_BYTES).unwrap_err().code,
         ErrorCode::ResultMismatch);
 }
 
@@ -185,7 +184,7 @@ fn matches_material(
     language: &str,
     artifacts: &[sdk::CapturedArtifact],
 ) -> bool {
-    matches_value(saved.get("profile"), profile)
+    matches_contract(saved.get("profile"), profile)
         && saved.get("sourceSetId").and_then(Value::as_str) == Some(set)
         && saved.get(language_key).and_then(Value::as_str) == Some(language)
         && matches_artifacts(saved.get("artifacts"), artifacts)
@@ -209,8 +208,65 @@ fn matches_content_unit(saved: &Value, unit: &sdk::ContentUnit) -> bool {
             && saved.get("id").and_then(Value::as_str) == Some(&unit.id)
             && saved.get("sourceRevisionId").and_then(Value::as_str) == Some(&unit.source_revision_id)
             && saved.get("text").and_then(Value::as_str) == Some(&unit.text)
-            && matches_value(saved.get("occurrences"), &unit.occurrences)
+            && matches_array(saved.get("occurrences"), &unit.occurrences, matches_occurrence)
             && matches_value(saved.get("protectedFragments"), &unit.protected_fragments)
+    })
+}
+
+fn matches_contract(saved: Option<&Value>, contract: &sdk::ContractRef) -> bool {
+    saved.and_then(Value::as_object).is_some_and(|fields| {
+        fields.len() == 3
+            && fields.get("id").and_then(Value::as_str) == Some(contract.id.as_str())
+            && fields.get("schemaVersion").and_then(Value::as_u64) == Some(contract.schema_version.into())
+            && fields.get("behaviorVersion").and_then(Value::as_u64) == Some(contract.behavior_version.into())
+    })
+}
+
+fn matches_source_reference(saved: Option<&Value>, source: &sdk::SourceReference) -> bool {
+    let encoding = match source.range.encoding {
+        sdk::SourceEncoding::Utf8Byte => "utf8-byte",
+        sdk::SourceEncoding::Utf16 => "utf16",
+        sdk::SourceEncoding::Grapheme => "grapheme",
+        sdk::SourceEncoding::RawByte => "raw-byte",
+    };
+    saved.and_then(Value::as_object).is_some_and(|fields| {
+        fields.len() == 2
+            && fields.get("artifactId").and_then(Value::as_str) == Some(source.artifact_id.as_str())
+            && fields.get("range").and_then(Value::as_object).is_some_and(|range| {
+                range.len() == 3
+                    && range.get("encoding").and_then(Value::as_str) == Some(encoding)
+                    && range.get("start").and_then(Value::as_u64) == Some(source.range.start.into())
+                    && range.get("end").and_then(Value::as_u64) == Some(source.range.end.into())
+            })
+    })
+}
+
+fn matches_occurrence(saved: &Value, occurrence: &sdk::ContentOccurrence) -> bool {
+    saved.as_object().is_some_and(|fields| {
+        fields.len() == 3
+            && fields.get("id").and_then(Value::as_str) == Some(occurrence.id.as_str())
+            && matches_source_reference(fields.get("source"), &occurrence.source)
+            && match &occurrence.native_identity {
+                Some(identity) => matches_native_identity(fields.get("nativeIdentity"), identity),
+                None => matches!(fields.get("nativeIdentity"), Some(Value::Null)),
+            }
+    })
+}
+
+fn matches_native_identity(saved: Option<&Value>, identity: &sdk::NativeIdentityEvidence) -> bool {
+    saved.and_then(Value::as_object).is_some_and(|fields| {
+        fields.len() == 4
+            && fields.get("namespace").and_then(Value::as_str) == Some(identity.namespace.as_str())
+            && fields.get("value").and_then(Value::as_str) == Some(identity.value.as_str())
+            && matches_contract(fields.get("policy"), &identity.policy)
+            && fields.get("display").and_then(Value::as_object).is_some_and(|display| {
+                display.len() == 2
+                    && display.get("value").and_then(Value::as_str) == Some(identity.display.value.as_str())
+                    && match &identity.display.source {
+                        Some(source) => matches_source_reference(display.get("source"), source),
+                        None => matches!(display.get("source"), Some(Value::Null)),
+                    }
+            })
     })
 }
 
@@ -219,9 +275,38 @@ fn matches_domain_block(saved: &Value, block: &sdk::DomainBlock) -> bool {
         saved.len() == 4
             && saved.get("payloadUtf8").and_then(Value::as_str) == Some(&block.payload_utf8)
             && matches_value(saved.get("target"), &block.target)
-            && matches_value(saved.get("schema"), &block.schema)
+            && matches_contract(saved.get("schema"), &block.schema)
             && matches_value(saved.get("handling"), &block.handling)
     })
+}
+
+#[cfg(test)]
+#[test]
+fn occurrence_comparison_reads_the_exact_sdk_shape() {
+    let mut occurrence = sdk::ContentOccurrence {
+        id: "occurrence".into(),
+        source: sdk::SourceReference { artifact_id: "file".into(), range: sdk::SourceRange::raw_bytes(2, 8) },
+        native_identity: Some(sdk::NativeIdentityEvidence {
+            namespace: "namespace".into(),
+            value: "id".into(),
+            policy: sdk::ContractRef { id: "example".into(), schema_version: 1, behavior_version: 2 },
+            display: sdk::NativeIdentityDisplay { value: "ID".into(), source: None },
+        }),
+    };
+    for encoding in [sdk::SourceEncoding::Utf8Byte, sdk::SourceEncoding::Utf16,
+        sdk::SourceEncoding::Grapheme, sdk::SourceEncoding::RawByte] {
+        occurrence.source.range.encoding = encoding;
+        let mut saved = serde_json::to_value(&occurrence).unwrap();
+        assert!(matches_occurrence(&saved, &occurrence));
+        saved["nativeIdentity"]["policy"]["behaviorVersion"] = Value::from(1);
+        assert!(!matches_occurrence(&saved, &occurrence));
+    }
+    occurrence.native_identity = None;
+    let mut saved = serde_json::to_value(&occurrence).unwrap();
+    assert!(matches_occurrence(&saved, &occurrence));
+    saved.as_object_mut().unwrap().remove("nativeIdentity");
+    saved["unexpected"] = Value::Null;
+    assert!(!matches_occurrence(&saved, &occurrence));
 }
 
 pub(super) fn matches_artifact_set(saved: Option<&Value>, expected: &sdk::ArtifactSet) -> bool {

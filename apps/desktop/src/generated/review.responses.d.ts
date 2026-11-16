@@ -316,6 +316,7 @@ export interface Responses {
   neighbor: ReviewNeighbor;
   page: ReviewPage;
   prepareCheck: ReviewCheckPreparation;
+  progress: ReviewProgress;
   queueWindow: SegmentQueueWindow;
   scope: ReviewScopeCapture;
   segmentPage: SegmentPage;
@@ -1033,6 +1034,16 @@ export interface PluginTextReviewView {
   rules: ContractRef[];
   runtimeOrigin: PluginOriginView;
   settingsRevision: UnsignedDecimal;
+}
+export interface ReviewProgress {
+  locales: ReviewProgressLocale[];
+  sourceSnapshotId: ExecutionId;
+}
+export interface ReviewProgressLocale {
+  blockingUnits: number;
+  checkedUnits: number;
+  locale: string;
+  selectedUnits: number;
 }
 export interface SegmentQueueWindow {
   epoch: ExecutionId;

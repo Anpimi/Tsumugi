@@ -198,6 +198,11 @@ export const reviewCommands = {
     return confirmReviewFallback(await checkedInvoke("allow_source_fallback", { ...session, fallback }, validators.validateResponseFallback), fallback);
   },
   work: (request: ReviewWorkRequest) => checkedInvoke("read_review_work", request, validators.validateResponseWork),
+  progress: (request: Requests["progress"]) => checkedInvoke("read_review_progress", request,
+    (report): report is Responses["progress"] => validators.validateResponseProgress(report)
+      && new Set(report.locales.map(value => value.locale)).size === report.locales.length
+      && report.locales.every(value => request.locales.includes(value.locale)
+        && value.selectedUnits <= value.checkedUnits && value.blockingUnits <= value.checkedUnits)),
   eligibility: (request: EligibilityRequest) => checkedInvoke("read_review_eligibility", request,
     (report): report is Eligibility => validators.validateResponseEligibility(report)
       && new Set(report.locales.map(value => value.locale)).size === report.locales.length

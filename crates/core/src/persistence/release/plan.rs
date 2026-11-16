@@ -311,7 +311,7 @@ impl ReleasePlan {
             source.project == self.project_id
                 && source.input_digest == self.source_input_digest
                 && source.result_digest == self.source_result_digest
-                && source.output.exchange == self.source
+                && source.exchange == self.source
         } else {
             let (_, (input, result, output)) =
                 super::super::content::snapshot_qualification(connection, self.source_snapshot_id, true)?;

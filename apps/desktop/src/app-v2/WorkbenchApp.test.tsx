@@ -848,8 +848,14 @@ it("reads decisions in the reopened session when explicitly opened while a journ
   const held = new Promise<SourceDraftHead>(() => {});
   readSource.mockImplementation(request => request.sessionToken === reopened.sessionToken ? held : original(request));
   const readDecisions = vi.spyOn(decisionCommands, "page").mockRejectedValue(new Error("No decision fixture"));
-  await openImportWorkspace(project, { open: vi.fn().mockResolvedValueOnce(project).mockResolvedValueOnce(reopened) });
+  const { register } = await openImportWorkspace(project, { open: vi.fn().mockResolvedValueOnce(project).mockResolvedValueOnce(reopened) });
   await screen.findByText(page.rows[0].content.sourcePreview);
+  await waitFor(() => {
+    const participants = new Map(register.mock.calls.map(([participant]) => [participant.id, participant]));
+    const unsettled = [...participants.values()].filter(participant =>
+      participant.inspect({ kind: "open-project" }).status !== "ready");
+    expect(unsettled.map(participant => participant.id)).toEqual([]);
+  }, { timeout: 5000 });
   await act(async () => { expect(await controller.open(reopened.locator)).toBe(true); });
   await waitFor(() => expect(readSource).toHaveBeenCalledWith({ sessionToken: reopened.sessionToken, key: { projectId: reopened.metadata.projectId } }));
   expect(await screen.findByText(page.rows[0].content.sourcePreview)).toBeVisible();

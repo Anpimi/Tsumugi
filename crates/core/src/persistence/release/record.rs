@@ -478,18 +478,8 @@ pub(super) fn load(
     {
         return Err(failure(ErrorCode::CorruptLedger, "release-receipt"));
     }
-    let artifacts = read_artifacts(connection, release_id)?;
-    for artifact in &artifacts {
-        if expected_artifacts.iter().find(|expected| expected.summary.locale == artifact.summary.locale
-            && expected.summary.file_name == artifact.summary.file_name).is_some_and(|expected| expected.validator_version != artifact.validator_version) {
-            return Err(failure(ErrorCode::CorruptLedger, "release-validator"));
-        }
-    }
-    // Comparing all bytes, IDs, roles and paths to original verified results
-    // also rejects a substituted file whose own digest was recomputed.
-    if artifacts != expected_artifacts {
-        return Err(failure(ErrorCode::CorruptLedger, "release-artifacts"));
-    }
+    compare_saved_artifacts(connection, release_id, &expected_artifacts)?;
+    let artifacts = expected_artifacts;
     let report_paths = report_paths(manifest.version, &artifacts);
     let view = release_view(release_id, action_id, attempt, digest, created, summary, &artifacts);
     let plugin_results = input.envelope().plugin.is_some().then_some(manifest.result_ids);
@@ -534,6 +524,52 @@ fn sort_artifacts(artifacts: &mut [Artifact]) {
     artifacts.sort_by(|a, b| {
         (&a.summary.locale, &a.summary.file_name).cmp(&(&b.summary.locale, &b.summary.file_name))
     });
+}
+
+fn compare_saved_artifacts(
+    connection: &Connection,
+    release_id: ExecutionId,
+    expected: &[Artifact],
+) -> Result<(), ExecutionError> {
+    let invalid = || failure(ErrorCode::CorruptLedger, "release-artifacts");
+    let mut statement = connection.prepare(
+        "SELECT rowid,locale,artifact_id,role,file_name,sha256,validator_version,entry_count,typeof(bytes)
+         FROM release_artifacts WHERE release_id=?1 ORDER BY locale,file_name",
+    ).map_err(sql)?;
+    let mut rows = statement.query([release_id.to_string()]).map_err(sql)?;
+    for artifact in expected {
+        let row = rows.next().map_err(sql)?.ok_or_else(invalid)?;
+        let locale: String = row.get(1).map_err(sql)?;
+        let file: String = row.get(4).map_err(sql)?;
+        if locale != artifact.summary.locale || file != artifact.summary.file_name {
+            return Err(invalid());
+        }
+        let validator: String = row.get(6).map_err(sql)?;
+        if validator != artifact.validator_version {
+            return Err(failure(ErrorCode::CorruptLedger, "release-validator"));
+        }
+        let id: String = row.get(2).map_err(sql)?;
+        let role: String = row.get(3).map_err(sql)?;
+        let digest: String = row.get(5).map_err(sql)?;
+        let count: u32 = row.get(7).map_err(sql)?;
+        let storage: String = row.get(8).map_err(sql)?;
+        if id != artifact.id || role != artifact.role || digest != artifact.summary.sha256
+            || count != artifact.summary.entry_count || storage != "blob"
+        {
+            return Err(invalid());
+        }
+        let blob = connection.blob_open(rusqlite::MAIN_DB, "release_artifacts", "bytes",
+            row.get(0).map_err(sql)?, true).map_err(sql)?;
+        // Compare against the original builder result even if the stored
+        // artifact's digest was recomputed after substitution.
+        if !super::super::blob_matches(&blob, &artifact.bytes).map_err(sql)? {
+            return Err(invalid());
+        }
+    }
+    if rows.next().map_err(sql)?.is_some() {
+        return Err(invalid());
+    }
+    Ok(())
 }
 
 fn read_artifacts(

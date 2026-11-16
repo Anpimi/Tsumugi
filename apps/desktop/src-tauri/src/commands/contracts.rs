@@ -627,6 +627,7 @@ struct ReviewRequests {
     fallback: execution::review::FallbackRequest,
     fallback_action: execution::review::FallbackRequest,
     work: execution::review::ReviewWorkRequest,
+    progress: execution::review::ReviewProgressRequest,
     eligibility: execution::review::EligibilityRequest,
 }
 #[derive(JsonSchema)]
@@ -662,6 +663,7 @@ struct ReviewResponses {
     fallback: tsumugi_core::FallbackDecision,
     fallback_action: Option<tsumugi_core::ReviewFallbackActionRead>,
     work: tsumugi_core::WorkPage,
+    progress: tsumugi_core::ReviewProgress,
     eligibility: tsumugi_core::Eligibility,
     editor: tsumugi_core::ReviewEditorSnapshot,
 }

@@ -37,6 +37,7 @@ export interface Requests {
   neighbor: ReviewNeighborRequest;
   page: ReviewPageRequest;
   prepareCheck: ReviewCheckRequest;
+  progress: ReviewProgressRequest;
   queueWindow: SegmentQueueWindowRequest;
   scope: ReviewScopeRequest;
   segmentPage: SegmentPageRequest;
@@ -248,6 +249,11 @@ export interface ReviewPageRequest {
   locale: string;
   projectId: ExecutionId;
   query?: string | null;
+  sessionToken: string;
+}
+export interface ReviewProgressRequest {
+  locales: string[];
+  projectId: ExecutionId;
   sessionToken: string;
 }
 export interface SegmentQueueWindowRequest {

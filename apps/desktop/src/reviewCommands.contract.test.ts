@@ -110,6 +110,7 @@ it("validates both directions of every shared review contract and dispatches the
     ["waive_review_issue", fixture.requests.waiver, fixture.responses.waiver, () => reviewCommands.waive(session, fixture.requests.waiver.waiver)],
     ["allow_source_fallback", fixture.requests.fallback, fixture.responses.fallback, () => reviewCommands.fallback(session, fixture.requests.fallback.fallback)],
     ["read_review_work", fixture.requests.work, fixture.responses.work, () => reviewCommands.work(fixture.requests.work)],
+    ["read_review_progress", fixture.requests.progress, fixture.responses.progress, () => reviewCommands.progress(fixture.requests.progress)],
     ["read_review_eligibility", fixture.requests.eligibility, fixture.responses.eligibility, () => reviewCommands.eligibility(fixture.requests.eligibility)],
     ["read_review_editor_snapshot", fixture.requests.target, fixture.responses.editor, () => reviewCommands.editorSnapshot(fixture.requests.target)],
   ] as const) {

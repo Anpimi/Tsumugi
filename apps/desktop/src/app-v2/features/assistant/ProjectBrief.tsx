@@ -37,9 +37,7 @@ export default function ProjectBrief({ project, visible, disabled, briefEligible
   const snapshot = !source.error && !source.isFetching ? source.data?.currentSnapshot : undefined;
   const progress = useSessionQuery({ key: ["project-brief-progress", locales, source.data?.revision, snapshot],
     scopes: ["source", "translation", "review", "resources"], enabled: active && observeProgress && progressReady && !!snapshot && locales.length > 0,
-    // One canonical observation supplies all counts without creating retained
-    // segment scopes that could evict the user's fixed editing queue.
-    read: () => reviewCommands.eligibility({ ...context, locales: [...locales] }) });
+    read: () => reviewCommands.progress({ ...context, locales: [...locales] }) });
   if (!visible || !briefEligible) return null;
   const current = active && !disabled;
   const report = !source.error && !source.isFetching && !progress.error && !progress.isFetching

@@ -329,10 +329,10 @@ it("keeps the original editing queue when the adjacent project brief refreshes a
     if (!retained.includes(request.scopeId)) throw expired();
     return queueRead(request);
   });
-  const eligibility = vi.spyOn(reviewCommands, "eligibility").mockImplementation(async request => {
-    const report = copy(reviewFixture.responses.eligibility), entry = report.locales[0];
+  const progress = vi.spyOn(reviewCommands, "progress").mockImplementation(async request => {
+    const report = copy(reviewFixture.responses.progress), entry = report.locales[0];
     return { ...report, sourceSnapshotId: "snapshot", locales: request.locales.map(locale => ({ ...entry, locale, checkedUnits: units.length,
-      selectedUnits: h.ports.save.mock.calls.filter(([saved]) => saved.locale === locale).length, blockingUnits: units.length, blockerCount: units.length })) };
+      selectedUnits: h.ports.save.mock.calls.filter(([saved]) => saved.locale === locale).length, blockingUnits: units.length })) };
   });
   render(<SessionReadProvider context={context} reads={h.reads} bridge={false}>
     <ProjectBrief project={project} visible briefEligible progressReady disabled={false} decisions={{ page: undefined, loading: false, error: null }}
@@ -349,7 +349,7 @@ it("keeps the original editing queue when the adjacent project brief refreshes a
   expect(screen.queryByText(w("viewChanged"))).not.toBeInTheDocument();
   expect(h.view()).toMatchObject({ focus: "unit-b", queueActive: true, queueScopeId: "fixed-scope", selection });
   expect(h.ports.save).toHaveBeenCalledOnce();
-  expect(eligibility).toHaveBeenCalledTimes(3);
+  expect(progress).toHaveBeenCalledTimes(3);
   expect(captures).toBe(0);
   expect(h.page.mock.calls.filter(([request]) => request.scopeId === null && request.limit === 50)).toHaveLength(1);
   // A genuinely expired queue still requires the user's explicit refresh.

@@ -927,6 +927,29 @@
         ],
         "type": "object"
       },
+      "ReviewProgressRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "locales": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "projectId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "sessionToken": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "sessionToken",
+          "projectId",
+          "locales"
+        ],
+        "type": "object"
+      },
       "ReviewScopeRequest": {
         "additionalProperties": false,
         "properties": {
@@ -1657,6 +1680,9 @@
       "prepareCheck": {
         "$ref": "#/definitions/ReviewCheckRequest"
       },
+      "progress": {
+        "$ref": "#/definitions/ReviewProgressRequest"
+      },
       "queueWindow": {
         "$ref": "#/definitions/SegmentQueueWindowRequest"
       },
@@ -1730,6 +1756,7 @@
       "fallback",
       "fallbackAction",
       "work",
+      "progress",
       "eligibility"
     ],
     "title": "Requests",
@@ -5598,6 +5625,58 @@
         ],
         "type": "object"
       },
+      "ReviewProgress": {
+        "additionalProperties": false,
+        "properties": {
+          "locales": {
+            "items": {
+              "$ref": "#/definitions/ReviewProgressLocale"
+            },
+            "type": "array"
+          },
+          "sourceSnapshotId": {
+            "$ref": "#/definitions/ExecutionId"
+          }
+        },
+        "required": [
+          "sourceSnapshotId",
+          "locales"
+        ],
+        "type": "object"
+      },
+      "ReviewProgressLocale": {
+        "additionalProperties": false,
+        "properties": {
+          "blockingUnits": {
+            "format": "uint32",
+            "maximum": 4294967295,
+            "minimum": 0,
+            "type": "integer"
+          },
+          "checkedUnits": {
+            "format": "uint32",
+            "maximum": 4294967295,
+            "minimum": 0,
+            "type": "integer"
+          },
+          "locale": {
+            "type": "string"
+          },
+          "selectedUnits": {
+            "format": "uint32",
+            "maximum": 4294967295,
+            "minimum": 0,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "locale",
+          "checkedUnits",
+          "selectedUnits",
+          "blockingUnits"
+        ],
+        "type": "object"
+      },
       "ReviewRepairStatus": {
         "enum": [
           "awaiting-current-recheck",
@@ -8675,6 +8754,9 @@
       "prepareCheck": {
         "$ref": "#/definitions/ReviewCheckPreparation"
       },
+      "progress": {
+        "$ref": "#/definitions/ReviewProgress"
+      },
       "queueWindow": {
         "$ref": "#/definitions/SegmentQueueWindow"
       },
@@ -8762,6 +8844,7 @@
       "fallback",
       "fallbackAction",
       "work",
+      "progress",
       "eligibility",
       "editor"
     ],

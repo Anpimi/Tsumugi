@@ -118,10 +118,13 @@ pub(super) fn reconstructed_bytes(
 }
 
 fn read_manifest(stored: &[u8]) -> Result<StoredInput, ExecutionError> {
-    let manifest: StoredInput = codec::decode(stored, MAX_STORED_INPUT_BYTES)
+    if stored.len() > MAX_STORED_INPUT_BYTES {
+        return Err(error(ErrorCode::CorruptLedger, "input-storage"));
+    }
+    let manifest: StoredInput = serde_json::from_slice(stored)
         .map_err(|_| error(ErrorCode::CorruptLedger, "input-storage"))?;
     manifest.validate()?;
-    if codec::encode(&manifest, MAX_STORED_INPUT_BYTES)? != stored {
+    if !codec::matches_encoding(&manifest, MAX_STORED_INPUT_BYTES, stored)? {
         return Err(error(ErrorCode::CorruptLedger, "input-storage"));
     }
     Ok(manifest)

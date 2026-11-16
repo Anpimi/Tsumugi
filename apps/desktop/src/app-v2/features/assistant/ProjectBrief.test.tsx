@@ -7,7 +7,7 @@ import type { DecisionPage } from "../../../decisionCommands";
 import { executionContext } from "../../../executionCommands";
 import { projectBriefEn, projectBriefZh } from "../../../i18n/projectBrief";
 import type { ProjectView } from "../../../projectCommands";
-import type { Eligibility, EligibilityLocale } from "../../../reviewCommands";
+import type { ReviewProgress, ReviewProgressLocale } from "../../../generated/review.responses";
 import { SessionReadProvider } from "../../../SessionReadProvider";
 import { SessionReads } from "../../../sessionReads";
 import fixture from "../../../../test/fixtures/segmentCommands.contract.json";
@@ -22,7 +22,7 @@ const project: ProjectView = { sessionToken: "synthetic-project-brief", locator:
 const position = { unitId: base.rows[0].content.unitId, locale: "zh-CN", nativeKey: "greeting.{{name}}" };
 let reads: SessionReads, language = createInstance();
 let sourceEmpty: boolean, missingLocale: string | null, failReport: boolean;
-let reportPatch: Partial<Eligibility>, localePatch: Partial<EligibilityLocale>;
+let reportPatch: Partial<ReviewProgress>, localePatch: Partial<ReviewProgressLocale>;
 beforeEach(async () => {
   sourceEmpty = false; missingLocale = null; failReport = false; reportPatch = {}; localePatch = {}; invoke.mockReset();
   language = createInstance(); await language.use(initReactI18next).init({ lng: "en-US", fallbackLng: "en-US",
@@ -31,13 +31,13 @@ beforeEach(async () => {
   reads = new SessionReads(executionContext(project));
   invoke.mockImplementation(async (command: string, { request }: { request: { projectId: string; sessionToken: string; locales: string[] } }) => {
     if (command === "read_content_scope") return { revision: "1", currentSnapshot: sourceEmpty ? null : base.sourceSnapshotId };
-    if (command !== "read_review_eligibility") throw new Error(`Unexpected business command: ${command}`);
+    if (command !== "read_review_progress") throw new Error(`Unexpected business command: ${command}`);
     expect(request).toEqual({ projectId: project.metadata.projectId, sessionToken: project.sessionToken, locales: project.metadata.targetLocales });
     if (failReport) throw new Error("Synthetic report read failed");
-    const report = structuredClone(reviewFixture.responses.eligibility), entry = report.locales[0];
-    return { ...report, sourceSnapshotId: base.sourceSnapshotId, epoch: base.epoch, sequence: base.sequence,
+    const report = structuredClone(reviewFixture.responses.progress), entry = report.locales[0];
+    return { ...report, sourceSnapshotId: base.sourceSnapshotId,
       locales: request.locales.filter(locale => locale !== missingLocale).map(locale => ({ ...entry, locale, checkedUnits: 8, selectedUnits: 6,
-        blockingUnits: 1, blockerCount: 2, blockers: [entry.blockers[0], { ...entry.blockers[0], code: "qa-missing", reference: null }], ...localePatch })), ...reportPatch };
+        blockingUnits: 1, ...localePatch })), ...reportPatch };
   });
 });
 afterEach(() => { cleanup(); reads.retire(); });
@@ -71,34 +71,32 @@ it.each(["en-US", "zh-CN"])("reads deterministic counts and opens only explicit 
   await h.user.click(screen.getByRole("button", { name: locale === "en-US" ? "Review waiting decisions" : "查看待决定事项" }));
   expect(h.props.onDecisions).toHaveBeenCalledOnce();
   expect(screen.getAllByText(locale === "en-US" ? "Entries blocking delivery: 1" : "阻塞交付的条目：1")).toHaveLength(2);
-  expect(new Set(invoke.mock.calls.map(([command]) => command))).toEqual(new Set(["read_content_scope", "read_review_eligibility"]));
-  expect(invoke.mock.calls.filter(([command]) => command === "read_review_eligibility")).toHaveLength(1);
+  expect(new Set(invoke.mock.calls.map(([command]) => command))).toEqual(new Set(["read_content_scope", "read_review_progress"]));
+  expect(invoke.mock.calls.filter(([command]) => command === "read_review_progress")).toHaveLength(1);
 });
 
-it("waits for the work surface before reading review eligibility", async () => {
+it("waits for the work surface before reading review counts", async () => {
   const h = setup({ progressReady: false });
   await waitFor(() => expect(invoke.mock.calls.some(([command]) => command === "read_content_scope")).toBe(true));
-  expect(invoke.mock.calls.some(([command]) => command === "read_review_eligibility")).toBe(false);
+  expect(invoke.mock.calls.some(([command]) => command === "read_review_progress")).toBe(false);
   h.update({ progressReady: true });
   await waitFor(() => expect(screen.getAllByText("Selected translations: 6 / 8")).toHaveLength(2));
-  expect(invoke.mock.calls.filter(([command]) => command === "read_review_eligibility")).toHaveLength(1);
+  expect(invoke.mock.calls.filter(([command]) => command === "read_review_progress")).toHaveLength(1);
 });
 
-it("does not refetch review eligibility on Delivery after a window focus", async () => {
+it("does not refetch review counts on Delivery after a window focus", async () => {
   const h = setup();
   await waitFor(() => expect(screen.getAllByText("Selected translations: 6 / 8")).toHaveLength(2));
   h.update({ observeProgress: false });
   await act(async () => { reads.invalidate([], false, "focus"); });
-  expect(invoke.mock.calls.filter(([command]) => command === "read_review_eligibility")).toHaveLength(1);
+  expect(invoke.mock.calls.filter(([command]) => command === "read_review_progress")).toHaveLength(1);
   h.update({ observeProgress: true });
-  await waitFor(() => expect(invoke.mock.calls.filter(([command]) => command === "read_review_eligibility")).toHaveLength(2));
+  await waitFor(() => expect(invoke.mock.calls.filter(([command]) => command === "read_review_progress")).toHaveLength(2));
 });
 
 it("keeps reported languages and partial decisions while an omitted language stays unknown", async () => {
   missingLocale = "fr";
-  // The omitted locale can keep the complete assessment not ready even when
-  // every locale returned in this partial observation is ready.
-  localePatch = { ready: true, blockerCount: 0, blockingUnits: 0, blockers: [] };
+  localePatch = { blockingUnits: 0 };
   const h = setup({ decisions: { page: decisionPage(null), loading: false, error: null } });
   await screen.findByText("Selected translations: 6 / 8");
   expect(screen.getByText("Translation progress is not available.")).toBeVisible();
@@ -106,7 +104,7 @@ it("keeps reported languages and partial decisions while an omitted language sta
   expect(screen.queryByText("Selected translations: 0 / 0")).not.toBeInTheDocument();
   missingLocale = null; localePatch = {}; await h.user.click(screen.getByRole("button", { name: "Refresh project counts" }));
   await waitFor(() => expect(screen.getAllByText("Selected translations: 6 / 8")).toHaveLength(2));
-  expect(invoke.mock.calls.filter(([command]) => command === "read_review_eligibility")).toHaveLength(2);
+  expect(invoke.mock.calls.filter(([command]) => command === "read_review_progress")).toHaveLength(2);
 });
 
 it("keeps a report for a different source snapshot unknown", async () => {
@@ -128,14 +126,13 @@ it("keeps the whole atomic report unknown after failure and recovers through one
   expect(screen.getByText("Waiting for your decision: 2")).toBeVisible();
   failReport = false; await h.user.click(refresh);
   await waitFor(() => expect(screen.getAllByText("Selected translations: 6 / 8")).toHaveLength(2));
-  expect(invoke.mock.calls.filter(([command]) => command === "read_review_eligibility")).toHaveLength(2);
+  expect(invoke.mock.calls.filter(([command]) => command === "read_review_progress")).toHaveLength(2);
 });
 
-it.each(["epoch", "sequence", "selected", "blocking", "foreign locale"] as const)("rejects an invalid %s report without inventing progress", async invalid => {
-  if (invalid === "epoch") reportPatch = { epoch: "invalid-epoch" };
-  if (invalid === "sequence") reportPatch = { sequence: "invalid-sequence" };
+it.each(["source", "selected", "blocking", "foreign locale"] as const)("rejects an invalid %s report without inventing progress", async invalid => {
+  if (invalid === "source") reportPatch = { sourceSnapshotId: "invalid-snapshot-id" };
   if (invalid === "selected") localePatch = { selectedUnits: 9 };
-  if (invalid === "blocking") localePatch = { blockingUnits: 3 };
+  if (invalid === "blocking") localePatch = { blockingUnits: 9 };
   if (invalid === "foreign locale") localePatch = { locale: "de-DE" };
   setup();
   await waitFor(() => expect(screen.getAllByText("Translation progress is not available.")).toHaveLength(2));

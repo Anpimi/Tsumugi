@@ -55,14 +55,35 @@ pub(crate) fn matches_encoding<T: Serialize>(
     limit: usize,
     bytes: &[u8],
 ) -> Result<bool, ExecutionError> {
-    struct Comparison<'a> {
+    compare_encoding(value, limit, bytes, |_| {})
+}
+
+pub(super) fn matched_encoding_digest<T: Serialize>(
+    value: &T,
+    limit: usize,
+    bytes: &[u8],
+) -> Result<Option<String>, ExecutionError> {
+    let mut hash = aws_lc_rs::digest::Context::new(&SHA256);
+    let equal = compare_encoding(value, limit, bytes, |chunk| hash.update(chunk))?;
+    Ok(equal.then(|| digest_hex(hash.finish())))
+}
+
+fn compare_encoding<T: Serialize>(
+    value: &T,
+    limit: usize,
+    bytes: &[u8],
+    matched: impl FnMut(&[u8]),
+) -> Result<bool, ExecutionError> {
+    struct Comparison<'a, F> {
         rest: &'a [u8],
         equal: bool,
+        matched: F,
     }
-    impl Write for Comparison<'_> {
+    impl<F: FnMut(&[u8])> Write for Comparison<'_, F> {
         fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
             if let Some(rest) = self.rest.strip_prefix(bytes) {
                 self.rest = rest;
+                (self.matched)(bytes);
             } else {
                 self.equal = false;
             }
@@ -72,7 +93,7 @@ pub(crate) fn matches_encoding<T: Serialize>(
             Ok(())
         }
     }
-    let mut comparison = Comparison { rest: bytes, equal: true };
+    let mut comparison = Comparison { rest: bytes, equal: true, matched };
     encode_to(value, limit, std::io::BufWriter::new(&mut comparison))?;
     Ok(comparison.equal && comparison.rest.is_empty())
 }

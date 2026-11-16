@@ -409,6 +409,24 @@ pub struct Eligibility {
     pub translation_scopes: BTreeMap<String, Vec<ExecutionId>>,
 }
 
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+#[cfg_attr(feature = "wire-schema", derive(schemars::JsonSchema))]
+pub struct ReviewProgress {
+    pub source_snapshot_id: ExecutionId,
+    pub locales: Vec<ReviewProgressLocale>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+#[cfg_attr(feature = "wire-schema", derive(schemars::JsonSchema))]
+pub struct ReviewProgressLocale {
+    pub locale: String,
+    pub checked_units: u32,
+    pub selected_units: u32,
+    pub blocking_units: u32,
+}
+
 fn is_zero(value: &u32) -> bool { *value == 0 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
@@ -1727,7 +1745,89 @@ fn eligibility_reason(target: &ReviewTarget, reason: &str) -> EligibilityReason 
     }
 }
 
+fn review_locales(locales: &[String]) -> Result<BTreeSet<&String>, ExecutionError> {
+    if locales.is_empty() || locales.len() > 16 {
+        return Err(failure(ErrorCode::InvalidInput, "review-locales"));
+    }
+    let requested = locales.iter().collect::<BTreeSet<_>>();
+    if requested.len() != locales.len() {
+        return Err(failure(ErrorCode::InvalidInput, "review-locales"));
+    }
+    Ok(requested)
+}
+
 impl ProjectStore {
+    /// Observe the unscoped review counts without building a qualification.
+    pub fn review_progress(
+        &self,
+        project_id: ExecutionId,
+        locales: &[String],
+    ) -> Result<ReviewProgress, ExecutionError> {
+        let requested = review_locales(locales)?;
+        let connection = self
+            .connection()
+            .map_err(|_| failure(ErrorCode::StorageFailed, "review-read"))?;
+        queries::read_snapshot(connection, |connection| {
+            let source_snapshot_id = super::content::scope(connection)?.current_snapshot
+                .ok_or_else(|| failure(ErrorCode::DependencyConflict, "review-source"))?;
+            // Adoption already stores a unique unit mapping. Only a corrected
+            // snapshot needs to resolve and deduplicate its effective rows.
+            let units = if super::content::lineage_corrections::mapping_revision(connection, source_snapshot_id)?.get() == 0 {
+                "SELECT unit_id FROM source_unit_mappings WHERE snapshot_id=?1 LIMIT ?4"
+            } else {
+                "SELECT DISTINCT unit_id FROM source_effective_occurrences WHERE snapshot_id=?1 LIMIT ?4"
+            };
+            let mut statement = connection.prepare(&format!(
+                "WITH units AS MATERIALIZED (
+                     {units}
+                 ), selected AS MATERIALIZED (
+                     SELECT DISTINCT unit_id FROM translation_selections WHERE project_id=?2 AND locale=?3
+                 ), checked AS MATERIALIZED (
+                     SELECT DISTINCT unit_id FROM review_checks
+                     WHERE project_id=?2 AND locale=?3 AND purpose='qa'
+                 )
+                 SELECT COUNT(*), COUNT(selected.unit_id),
+                     json_group_array(units.unit_id) FILTER (WHERE checked.unit_id IS NOT NULL)
+                 FROM units LEFT JOIN selected USING(unit_id) LEFT JOIN checked USING(unit_id)",
+            )).map_err(sql)?;
+            let mut progress = Vec::with_capacity(locales.len());
+            let mut unresolved = None;
+            for locale in requested {
+                check_project(connection, project_id, locale)?;
+                let (checked_units, selected_units, candidates): (u32, u32, String) = statement
+                    .query_row(params![source_snapshot_id.to_string(), project_id.to_string(), locale, (MAX_SCOPE + 1) as i64],
+                        |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)))
+                    .map_err(sql)?;
+                if checked_units == 0 || checked_units as usize > MAX_SCOPE {
+                    return Err(failure(ErrorCode::LimitExceeded, "review-scope"));
+                }
+                let candidates: Vec<ExecutionId> = serde_json::from_str(&candidates)
+                    .map_err(|_| failure(ErrorCode::CorruptLedger, "review-units"))?;
+                // Missing QA always blocks. Resource impact can only add a
+                // reason to a unit already blocked by absent approval or QA.
+                let mut blocking_units = checked_units;
+                if !candidates.is_empty() {
+                    if unresolved.is_none() {
+                        unresolved = Some(super::content::maintenance::unresolved_occurrences_in(
+                            connection, source_snapshot_id, MAX_SCOPE + 1,
+                        )?.into_iter().map(|(_, unit)| unit).collect::<BTreeSet<_>>());
+                    }
+                    let unresolved = unresolved.as_ref().expect("unresolved occurrences loaded");
+                    let targets = queries::targets_in(connection, project_id, &candidates, locale)?;
+                    for target in targets {
+                        if !unresolved.contains(&target.unit_id) && assess(&target, false).0.is_empty() {
+                            blocking_units -= 1;
+                        }
+                    }
+                }
+                progress.push(ReviewProgressLocale {
+                    locale: locale.clone(), checked_units, selected_units, blocking_units,
+                });
+            }
+            Ok(ReviewProgress { source_snapshot_id, locales: progress })
+        })
+    }
+
     fn impact_map(
         &self,
         project_id: ExecutionId,
@@ -1849,18 +1949,11 @@ impl ProjectStore {
         cancellation: &Cancellation,
         mut capture: impl FnMut(&str, Vec<ReviewTarget>),
     ) -> Result<Eligibility, ExecutionError> {
-        if locales.is_empty()
-            || locales.len() > 16
-            || locales.iter().collect::<BTreeSet<_>>().len() != locales.len()
-        {
-            return Err(failure(ErrorCode::InvalidInput, "review-locales"));
-        }
+        let requested = review_locales(locales)?;
         queries::check_read_cancel(cancellation)?;
-        let mut requested = locales.to_vec();
-        requested.sort();
         let mut scopes = translation_scopes.clone();
         for (locale, units) in &mut scopes {
-            if !requested.contains(locale) || units.len() > MAX_SCOPE {
+            if !requested.contains(&locale) || units.len() > MAX_SCOPE {
                 return Err(failure(ErrorCode::InvalidInput, "build-translation-scope"));
             }
             units.sort();
@@ -1873,7 +1966,7 @@ impl ProjectStore {
             .connection()
             .map_err(|_| failure(ErrorCode::StorageFailed, "review-read"))?;
         queries::read_snapshot(connection, |connection| {
-            for locale in &requested {
+            for &locale in &requested {
                 check_project(connection, project_id, locale)?;
             }
             let (source_snapshot_id, units) = all_units(connection, project_id)?;
@@ -1882,7 +1975,7 @@ impl ProjectStore {
             let unresolved=super::content::maintenance::unresolved_occurrences_in(connection,source_snapshot_id,MAX_SCOPE+1)?.into_iter().map(|(_,unit)|unit).collect::<BTreeSet<_>>();
             let mut outcomes = Vec::new();
             let mut bases = Vec::new();
-            for locale in &requested {
+            for locale in requested {
                 queries::check_read_cancel(cancellation)?;
                 let translated = scopes.get(locale).map(|units| units.iter().copied().collect::<BTreeSet<_>>());
                 if translated.as_ref().is_some_and(|selected| !selected.is_subset(&source_units)) {
@@ -4061,10 +4154,17 @@ pub(super) mod tests {
         let mut first_basis = None;
         // More observations than the retained-scope capacity must leave the
         // person's original queue usable without capturing a replacement.
+        let locales = ["zh-CN".into(), "fr-FR".into()];
         for _ in 0..9 {
-            let eligibility = store
-                .review_eligibility(project, &["zh-CN".into(), "fr-FR".into()])
-                .unwrap();
+            let progress = store.review_progress(project, &locales).unwrap();
+            let eligibility = store.review_eligibility(project, &locales).unwrap();
+            assert_eq!(progress.source_snapshot_id, page.source_snapshot_id);
+            assert_eq!(progress.locales, eligibility.locales.iter().map(|locale| ReviewProgressLocale {
+                locale: locale.locale.clone(),
+                checked_units: locale.checked_units,
+                selected_units: locale.selected_units,
+                blocking_units: locale.blocking_units,
+            }).collect::<Vec<_>>());
             assert_eq!(eligibility.source_snapshot_id, page.source_snapshot_id);
             assert_eq!(eligibility.epoch, before.epoch);
             assert_eq!(eligibility.sequence, before.sequence);

@@ -127,7 +127,7 @@ pub(super) struct OpenSourceSnapshot {
     pub(super) project: ExecutionId,
     pub(super) input_digest: String,
     pub(super) result_digest: String,
-    pub(super) output: std::sync::Arc<crate::content::SourceOutput>,
+    pub(super) exchange: tsumugi_plugin_sdk::ContentExchange,
 }
 
 impl OpenPluginProofs<'_> {
@@ -156,16 +156,15 @@ impl OpenPluginProofs<'_> {
         ).map_err(sql_error)?;
         let snapshots = statement.query_map([attempt.to_string()], |row| row.get::<_, String>(0))
             .map_err(sql_error)?;
+        let mut latest = None;
         for row in snapshots {
             let snapshot = parse_id(row.map_err(sql_error)?)?;
             let has_lineage = super::content::has_source_lineage(connection)?;
             let (revision, (input, result, output)) =
                 super::content::snapshot_qualification(connection, snapshot, has_lineage)?;
             self.source_revisions.insert(snapshot, (revision, has_lineage));
-            self.recent_source = Some(OpenSourceSnapshot {
-                snapshot, project: input.envelope().project_id,
-                input_digest: input.digest().into(), result_digest: result.digest().into(), output,
-            });
+            latest = Some((snapshot, input.envelope().project_id,
+                input.digest().to_owned(), result.digest().to_owned(), output));
         }
         // The release scan needs the source projection, not the original
         // producer and checker frames. Read paths outside this open can
@@ -178,6 +177,16 @@ impl OpenPluginProofs<'_> {
             }) {
                 *cache = None;
             }
+        }
+        if let Some((snapshot, project, input_digest, result_digest, output)) = latest {
+            // Keep only what frozen release plans compare. The occurrences and
+            // diagnostics are no longer needed after qualifying this snapshot.
+            let exchange = std::sync::Arc::try_unwrap(output)
+                .map(|output| output.exchange)
+                .unwrap_or_else(|shared| shared.exchange.clone());
+            self.recent_source = Some(OpenSourceSnapshot {
+                snapshot, project, input_digest, result_digest, exchange,
+            });
         }
         Ok(())
     }
@@ -236,7 +245,9 @@ pub(super) fn validate_for_open<'a>(
             results.validate_links(links, source.as_ref(), |result, link, valid| {
                 proofs.links.insert(result, (link, valid));
             })?;
-            if source.is_some() && input.envelope().plugin.is_some() {
+            let source_captured = source.is_some();
+            drop(source);
+            if source_captured && input.envelope().plugin.is_some() {
                 proofs.qualify_sources(input)?;
             }
             validate_associations(connection, input, results, &proofs)

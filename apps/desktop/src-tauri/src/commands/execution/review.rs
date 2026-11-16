@@ -41,6 +41,7 @@ mod contracts {
         round_trip!("requests", "waiver", WaiverRequest);
         round_trip!("requests", "fallback", FallbackRequest);
         round_trip!("requests", "work", ReviewWorkRequest);
+        round_trip!("requests", "progress", ReviewProgressRequest);
         round_trip!("requests", "eligibility", EligibilityRequest);
         round_trip!("responses", "page", ReviewPage);
         round_trip!("responses", "target", ReviewTarget);
@@ -54,6 +55,7 @@ mod contracts {
         round_trip!("responses", "waiver", Waiver);
         round_trip!("responses", "fallback", FallbackDecision);
         round_trip!("responses", "work", WorkPage);
+        round_trip!("responses", "progress", tsumugi_core::ReviewProgress);
         round_trip!("responses", "eligibility", Eligibility);
         round_trip!("responses", "editor", ReviewEditorSnapshot);
         let segment_fixture: serde_json::Value = serde_json::from_str(include_str!(
@@ -277,6 +279,9 @@ request!(#[cfg_attr(feature = "wire-schema", derive(schemars::JsonSchema))] Elig
     locales: Vec<String>,
     #[serde(default, skip_serializing_if = "std::collections::BTreeMap::is_empty")]
     translation_scopes: std::collections::BTreeMap<String, Vec<ExecutionId>>
+});
+request!(#[cfg_attr(feature = "wire-schema", derive(schemars::JsonSchema))] ReviewProgressRequest {
+    locales: Vec<String>
 });
 
 fn mapped(error: ExecutionError, stage: CommandStage) -> CommandError {
@@ -951,6 +956,19 @@ pub async fn read_review_work(
             },
         )?
         .await
+}
+
+#[tauri::command]
+pub async fn read_review_progress(
+    state: State<'_, AppState>,
+    request: ReviewProgressRequest,
+) -> Result<tsumugi_core::ReviewProgress, CommandError> {
+    state.sessions.run("read_review_progress", CommandStage::ExecutionRead, move |sessions| {
+        authorized(sessions, &request.session_token, request.project_id, CommandStage::ExecutionRead)?
+            .store
+            .review_progress(request.project_id, &request.locales)
+            .map_err(|error| mapped(error, CommandStage::ExecutionRead))
+    }).await
 }
 
 #[tauri::command]
