@@ -2,6 +2,89 @@
 use super::*;
 use tsumugi_plugin_sdk as sdk;
 
+pub(crate) fn is_derived_check(operation: &str) -> bool {
+    matches!(operation, SOURCE_CHECK_OPERATION | ARTIFACT_CHECK_OPERATION)
+}
+
+#[derive(Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub(super) struct CheckPayloadIdentity {
+    pub(super) sha256: String,
+    bytes: usize,
+}
+
+fn invalid_check_payload() -> ExecutionError {
+    ExecutionError::new(ErrorCode::ResultMismatch, "semantic-check-input")
+}
+
+fn check_binding(envelope: &InputEnvelope) -> Result<&PluginExecutionBinding, ExecutionError> {
+    envelope.plugin.as_ref().ok_or_else(invalid_check_payload)
+}
+
+fn check_input_limit(binding: &PluginExecutionBinding) -> usize {
+    (binding.capability.declaration.limits.max_input_bytes as usize)
+        .min(sdk::MAX_MATERIAL_INVOCATION_BYTES)
+}
+
+pub(super) fn validate_check_payload(envelope: &InputEnvelope) -> Result<(), ExecutionError> {
+    if !is_derived_check(&envelope.operation) {
+        return Ok(());
+    }
+    let [item] = envelope.items.as_slice() else {
+        return Err(invalid_check_payload());
+    };
+    let identity = check_payload_identity(item)?;
+    if identity.bytes == 0 || identity.bytes > check_input_limit(check_binding(envelope)?)
+        || sdk::validate_package_digest(&identity.sha256).is_err()
+    {
+        return Err(invalid_check_payload());
+    }
+    Ok(())
+}
+
+pub(super) fn check_payload_identity(item: &InputItem) -> Result<CheckPayloadIdentity, ExecutionError> {
+    CheckPayloadIdentity::deserialize(&item.payload).map_err(|_| invalid_check_payload())
+}
+
+pub(super) fn fixed_check<T: Serialize>(
+    mut envelope: InputEnvelope,
+    payload: &T,
+    materialize: bool,
+) -> Result<FixedInput, ExecutionError> {
+    let binding = check_binding(&envelope)?;
+    let limit = check_input_limit(binding);
+    let (sha256, bytes, wire) = if materialize {
+        let bytes = codec::encode(payload, limit)?;
+        let size = bytes.len();
+        let text = String::from_utf8(bytes).map_err(|_| invalid_check_payload())?;
+        let wire = sdk::EncodedPayload::capture(binding.capability.declaration.input_schema.clone(), text)
+            .map_err(|_| invalid_check_payload())?;
+        (wire.sha256.clone(), size, Some(wire))
+    } else {
+        let (sha256, size) = codec::digest_encoded_with_size(payload, limit)?;
+        (sha256, size, None)
+    };
+    envelope.items[0].payload = serde_json::to_value(CheckPayloadIdentity { sha256, bytes })
+        .map_err(|_| invalid_check_payload())?;
+    let mut input = FixedInput::capture(envelope)?;
+    input.check_wire = wire;
+    Ok(input)
+}
+
+pub(super) fn restore_fixed_check<T: Serialize>(
+    mut envelope: InputEnvelope,
+    actual: &FixedInput,
+    payload: &T,
+    materialize: bool,
+) -> Result<FixedInput, ExecutionError> {
+    bind_check_ids(&mut envelope, actual.envelope())?;
+    let rebuilt = fixed_check(envelope, payload, materialize)?;
+    if rebuilt.bytes() != actual.bytes() {
+        return Err(invalid_check_payload());
+    }
+    Ok(rebuilt)
+}
+
 pub(crate) fn requires_semantic_check(input: &FixedInput) -> bool {
     input.envelope().plugin.is_some()
         && matches!(
@@ -28,85 +111,6 @@ pub(super) fn restore_reconstructed_check_input(
 ) -> Result<(), ExecutionError> {
     FixedInput::validate_capture(&mut expected)?;
     compare_check_input(expected, actual)
-}
-
-/// The payload is compared separately with the original producer evidence.
-/// Check its canonical bytes and reuse them for the checker result binding.
-pub(super) fn restore_check_header(
-    expected: InputEnvelope,
-    actual: &FixedInput,
-) -> Result<(), ExecutionError> {
-    let captured = actual.envelope();
-    let binding = captured.plugin.as_ref().filter(|_| {
-        matches!(captured.operation.as_str(), SOURCE_CHECK_OPERATION | ARTIFACT_CHECK_OPERATION)
-    }).ok_or_else(|| ExecutionError::new(ErrorCode::ResultMismatch, "semantic-check-input"))?;
-    let limit = (binding.capability.declaration.limits.max_input_bytes as usize)
-        .min(sdk::MAX_MATERIAL_INVOCATION_BYTES);
-    let (_, digest) = checked_payload(expected, actual, limit)?;
-    let item_id = captured.items[0].item_id;
-    actual.plugin_payload_digests.lock().unwrap_or_else(std::sync::PoisonError::into_inner)
-        .entry(item_id).or_insert(digest);
-    Ok(())
-}
-
-fn checked_payload(
-    mut expected: InputEnvelope,
-    actual: &FixedInput,
-    limit: usize,
-) -> Result<(&[u8], String), ExecutionError> {
-    let invalid = || ExecutionError::new(ErrorCode::ResultMismatch, "semantic-check-input");
-    let captured = actual.envelope();
-    bind_check_ids(&mut expected, captured)?;
-    let frame_limit = FixedInput::byte_limit(&expected);
-    // Serialize the small reconstructed header with two single-byte values.
-    // Their one differing byte locates the payload without scanning material
-    // or relying on field order, offsets or marker text in the stored frame.
-    expected.items[0].payload = Value::from(0);
-    let header = codec::encode(&expected, frame_limit)?;
-    expected.items[0].payload = Value::from(1);
-    let alternate = codec::encode(&expected, frame_limit)?;
-    let offset = header.iter().zip(&alternate).position(|(a, b)| a != b).ok_or_else(invalid)?;
-    let payload = actual.bytes().strip_prefix(&header[..offset])
-        .and_then(|rest| rest.strip_suffix(&header[offset + 1..]))
-        .ok_or_else(invalid)?;
-    let digest = codec::matched_encoding_digest(&captured.items[0].payload, limit, payload)?
-        .ok_or_else(invalid)?;
-    Ok((payload, digest))
-}
-
-#[cfg(test)]
-#[test]
-fn checker_payload_digest_uses_only_the_exact_canonical_item_payload() {
-    let project = ProjectId::new_v4();
-    let payload = serde_json::json!({"text": "a\n\"字\"", "payload": 0});
-    let capture = |payload| {
-        let scope = Scope { kind: "source-check".into(), id: "sample".into(), locale: None };
-        let item = InputItem::new(scope, payload, vec![]);
-        let mut envelope = InputEnvelope::new(project, "check", "controlled", "1", vec![item]).unwrap();
-        envelope.settings = serde_json::json!({"payload": 0, "text": "payload"});
-        envelope
-    };
-    let expected = capture(Value::Null);
-    let fixed = FixedInput::capture(capture(payload.clone())).unwrap();
-    let (bytes, digest) = checked_payload(expected.clone(), &fixed, MAX_INPUT_BYTES).unwrap();
-    assert_eq!(digest, codec::digest_encoded(&payload, MAX_INPUT_BYTES).unwrap());
-    assert_eq!(checked_payload(expected.clone(), &fixed, bytes.len() - 1).unwrap_err().code,
-        ErrorCode::LimitExceeded);
-
-    // The decoded value and full-frame digest still qualify, but the
-    // payload's representation is different from the SDK's canonical bytes.
-    let offset = fixed.bytes().windows(bytes.len()).position(|window| window == bytes).unwrap();
-    let mut spaced = fixed.bytes().to_vec();
-    spaced.insert(offset + 1, b' ');
-    let spaced = FixedInput::restore(&spaced, &codec::digest(&spaced)).unwrap();
-    assert_eq!(fixed.envelope(), spaced.envelope());
-    assert_eq!(checked_payload(expected.clone(), &spaced, MAX_INPUT_BYTES).unwrap_err().code,
-        ErrorCode::ResultMismatch);
-
-    let mut wrong_header = expected;
-    wrong_header.settings["payload"] = Value::from(1);
-    assert_eq!(checked_payload(wrong_header, &fixed, MAX_INPUT_BYTES).unwrap_err().code,
-        ErrorCode::ResultMismatch);
 }
 
 fn compare_check_input(mut rebuilt: InputEnvelope, actual: &FixedInput) -> Result<(), ExecutionError> {
@@ -138,187 +142,6 @@ fn bind_check_ids(rebuilt: &mut InputEnvelope, captured: &InputEnvelope) -> Resu
     Ok(())
 }
 
-// Compare one typed value at a time to limit temporary JSON allocations.
-pub(super) fn matches_value<T: ?Sized + Serialize>(saved: Option<&Value>, expected: &T) -> bool {
-    serde_json::to_value(expected).is_ok_and(|value| saved == Some(&value))
-}
-
-pub(super) fn matches_array<T>(
-    saved: Option<&Value>,
-    expected: &[T],
-    matches: impl Fn(&Value, &T) -> bool,
-) -> bool {
-    saved.and_then(Value::as_array).is_some_and(|saved| {
-        saved.len() == expected.len() && saved.iter().zip(expected).all(|(a, b)| matches(a, b))
-    })
-}
-
-fn matches_artifacts(saved: Option<&Value>, expected: &[sdk::CapturedArtifact]) -> bool {
-    matches_array(saved, expected, |saved, artifact| {
-        let Some(saved) = saved.as_object().filter(|object| object.len() == 5) else { return false; };
-        let (field, data) = match artifact {
-            sdk::CapturedArtifact::Text(text) => ("utf8", text.utf8.as_str()),
-            sdk::CapturedArtifact::Binary(binary) => ("base64", binary.base64.as_ref()),
-        };
-        saved.get(field).and_then(Value::as_str) == Some(data)
-            && saved.get("id").and_then(Value::as_str) == Some(artifact.id())
-            && saved.get("logicalPath").and_then(Value::as_str) == Some(artifact.logical_path())
-            && saved.get("role").and_then(Value::as_str) == Some(artifact.role())
-            && saved.get("sha256").and_then(Value::as_str) == Some(artifact.sha256())
-    })
-}
-
-pub(super) fn matches_source_input(saved: Option<&Value>, expected: &sdk::SourceExtractionInput) -> bool {
-    saved.and_then(Value::as_object).is_some_and(|saved| {
-        saved.len() == 4
-            && matches_material(saved, &expected.profile, &expected.source_set_id, "sourceLanguage",
-                &expected.source_language, &expected.artifacts)
-    })
-}
-
-fn matches_material(
-    saved: &serde_json::Map<String, Value>,
-    profile: &sdk::ContractRef,
-    set: &str,
-    language_key: &str,
-    language: &str,
-    artifacts: &[sdk::CapturedArtifact],
-) -> bool {
-    matches_contract(saved.get("profile"), profile)
-        && saved.get("sourceSetId").and_then(Value::as_str) == Some(set)
-        && saved.get(language_key).and_then(Value::as_str) == Some(language)
-        && matches_artifacts(saved.get("artifacts"), artifacts)
-}
-
-pub(super) fn matches_exchange(saved: Option<&Value>, expected: &sdk::ContentExchange) -> bool {
-    saved.and_then(Value::as_object).is_some_and(|saved| {
-        saved.len() == 8
-            && matches_material(saved, &expected.profile, &expected.source_set_id, "sourceLanguage",
-                &expected.source_language, &expected.artifacts)
-            && matches_array(saved.get("units"), &expected.units, matches_content_unit)
-            && matches_array(saved.get("order"), &expected.order, |saved, id| saved.as_str() == Some(id.as_str()))
-            && matches_array(saved.get("relations"), &expected.relations, |saved, relation| matches_value(Some(saved), relation))
-            && matches_array(saved.get("domainBlocks"), &expected.domain_blocks, matches_domain_block)
-    })
-}
-
-fn matches_content_unit(saved: &Value, unit: &sdk::ContentUnit) -> bool {
-    saved.as_object().is_some_and(|saved| {
-        saved.len() == 5
-            && saved.get("id").and_then(Value::as_str) == Some(&unit.id)
-            && saved.get("sourceRevisionId").and_then(Value::as_str) == Some(&unit.source_revision_id)
-            && saved.get("text").and_then(Value::as_str) == Some(&unit.text)
-            && matches_array(saved.get("occurrences"), &unit.occurrences, matches_occurrence)
-            && matches_value(saved.get("protectedFragments"), &unit.protected_fragments)
-    })
-}
-
-fn matches_contract(saved: Option<&Value>, contract: &sdk::ContractRef) -> bool {
-    saved.and_then(Value::as_object).is_some_and(|fields| {
-        fields.len() == 3
-            && fields.get("id").and_then(Value::as_str) == Some(contract.id.as_str())
-            && fields.get("schemaVersion").and_then(Value::as_u64) == Some(contract.schema_version.into())
-            && fields.get("behaviorVersion").and_then(Value::as_u64) == Some(contract.behavior_version.into())
-    })
-}
-
-fn matches_source_reference(saved: Option<&Value>, source: &sdk::SourceReference) -> bool {
-    let encoding = match source.range.encoding {
-        sdk::SourceEncoding::Utf8Byte => "utf8-byte",
-        sdk::SourceEncoding::Utf16 => "utf16",
-        sdk::SourceEncoding::Grapheme => "grapheme",
-        sdk::SourceEncoding::RawByte => "raw-byte",
-    };
-    saved.and_then(Value::as_object).is_some_and(|fields| {
-        fields.len() == 2
-            && fields.get("artifactId").and_then(Value::as_str) == Some(source.artifact_id.as_str())
-            && fields.get("range").and_then(Value::as_object).is_some_and(|range| {
-                range.len() == 3
-                    && range.get("encoding").and_then(Value::as_str) == Some(encoding)
-                    && range.get("start").and_then(Value::as_u64) == Some(source.range.start.into())
-                    && range.get("end").and_then(Value::as_u64) == Some(source.range.end.into())
-            })
-    })
-}
-
-fn matches_occurrence(saved: &Value, occurrence: &sdk::ContentOccurrence) -> bool {
-    saved.as_object().is_some_and(|fields| {
-        fields.len() == 3
-            && fields.get("id").and_then(Value::as_str) == Some(occurrence.id.as_str())
-            && matches_source_reference(fields.get("source"), &occurrence.source)
-            && match &occurrence.native_identity {
-                Some(identity) => matches_native_identity(fields.get("nativeIdentity"), identity),
-                None => matches!(fields.get("nativeIdentity"), Some(Value::Null)),
-            }
-    })
-}
-
-fn matches_native_identity(saved: Option<&Value>, identity: &sdk::NativeIdentityEvidence) -> bool {
-    saved.and_then(Value::as_object).is_some_and(|fields| {
-        fields.len() == 4
-            && fields.get("namespace").and_then(Value::as_str) == Some(identity.namespace.as_str())
-            && fields.get("value").and_then(Value::as_str) == Some(identity.value.as_str())
-            && matches_contract(fields.get("policy"), &identity.policy)
-            && fields.get("display").and_then(Value::as_object).is_some_and(|display| {
-                display.len() == 2
-                    && display.get("value").and_then(Value::as_str) == Some(identity.display.value.as_str())
-                    && match &identity.display.source {
-                        Some(source) => matches_source_reference(display.get("source"), source),
-                        None => matches!(display.get("source"), Some(Value::Null)),
-                    }
-            })
-    })
-}
-
-fn matches_domain_block(saved: &Value, block: &sdk::DomainBlock) -> bool {
-    saved.as_object().is_some_and(|saved| {
-        saved.len() == 4
-            && saved.get("payloadUtf8").and_then(Value::as_str) == Some(&block.payload_utf8)
-            && matches_value(saved.get("target"), &block.target)
-            && matches_contract(saved.get("schema"), &block.schema)
-            && matches_value(saved.get("handling"), &block.handling)
-    })
-}
-
-#[cfg(test)]
-#[test]
-fn occurrence_comparison_reads_the_exact_sdk_shape() {
-    let mut occurrence = sdk::ContentOccurrence {
-        id: "occurrence".into(),
-        source: sdk::SourceReference { artifact_id: "file".into(), range: sdk::SourceRange::raw_bytes(2, 8) },
-        native_identity: Some(sdk::NativeIdentityEvidence {
-            namespace: "namespace".into(),
-            value: "id".into(),
-            policy: sdk::ContractRef { id: "example".into(), schema_version: 1, behavior_version: 2 },
-            display: sdk::NativeIdentityDisplay { value: "ID".into(), source: None },
-        }),
-    };
-    for encoding in [sdk::SourceEncoding::Utf8Byte, sdk::SourceEncoding::Utf16,
-        sdk::SourceEncoding::Grapheme, sdk::SourceEncoding::RawByte] {
-        occurrence.source.range.encoding = encoding;
-        let mut saved = serde_json::to_value(&occurrence).unwrap();
-        assert!(matches_occurrence(&saved, &occurrence));
-        saved["nativeIdentity"]["policy"]["behaviorVersion"] = Value::from(1);
-        assert!(!matches_occurrence(&saved, &occurrence));
-    }
-    occurrence.native_identity = None;
-    let mut saved = serde_json::to_value(&occurrence).unwrap();
-    assert!(matches_occurrence(&saved, &occurrence));
-    saved.as_object_mut().unwrap().remove("nativeIdentity");
-    saved["unexpected"] = Value::Null;
-    assert!(!matches_occurrence(&saved, &occurrence));
-}
-
-pub(super) fn matches_artifact_set(saved: Option<&Value>, expected: &sdk::ArtifactSet) -> bool {
-    saved.and_then(Value::as_object).is_some_and(|saved| {
-        saved.len() == 4
-            && matches_material(saved, &expected.profile, &expected.source_set_id, "targetLanguage",
-                &expected.target_language, &expected.artifacts)
-    })
-}
-
-/// Domain output cannot assert Core checks or another provider's coverage. Core
-/// appends only the generic checks already established by the capture owner.
 pub(super) fn validate_required_check_result(
     checks: &sdk::FixedCheckSet,
     result: &FixedResult,
@@ -434,13 +257,22 @@ impl ResultValidationCapture {
     ) -> Result<ArtifactValidationCapture, ExecutionError> {
         ArtifactValidationCapture::capture(self, Some(attempt))
     }
+    /// Prepare the captured checker and its typed review material. The dispatch
+    /// owner reconstructs the wire payload only after accepting consent.
+    pub fn prepare_artifact_check_with_output(
+        self,
+        attempt: ExecutionId,
+    ) -> Result<(ArtifactValidationCapture, sdk::ArtifactSet, Vec<sdk::CheckRequirement>), ExecutionError> {
+        ArtifactValidationCapture::capture_with_output(self, Some(attempt), false)
+    }
+
     /// Build the mandatory source checker input from store-owned evidence on a
     /// computation worker, without retaining a project connection or write.
     pub fn prepare_source_check(
         self,
         attempt: ExecutionId,
     ) -> Result<SourceValidationCapture, ExecutionError> {
-        SourceValidationCapture::capture(self, Some(attempt))
+        SourceValidationCapture::capture(self, Some(attempt), false)
     }
 
     pub fn input(&self) -> &FixedInput {

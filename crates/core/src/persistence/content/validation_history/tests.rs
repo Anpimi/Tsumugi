@@ -7,7 +7,7 @@ fn another_check(store: &mut ProjectStore, generation: ExecutionId, input: &Fixe
     -> PreparedSourceValidation {
     let capture = store.capture_source_validation(input.envelope().attempt_id, producer).unwrap();
     let check_input = capture.check_input().clone();
-    let payload: sdk::SourceExtractionCheckInput = serde_json::from_value(check_input.envelope().items[0].payload.clone()).unwrap();
+    let payload: sdk::SourceExtractionCheckInput = check_input.checker_payload();
     let checks = payload.requirements.into_iter().map(|required| sdk::CheckResult {
         key: required.key, input_digest: required.input_digest, scope_digest: required.scope_digest,
         covered_targets: required.targets, outcome: sdk::CheckOutcome::Completed { findings: vec![] },

@@ -243,8 +243,7 @@ impl Runner for FixtureRunner {
             .unwrap()
         } else {
             let check: sdk::SourceExtractionCheckInput =
-                serde_json::from_value(request.input.item(request.item_id)?.payload.clone())
-                    .unwrap();
+                serde_json::from_str(&invocation.input.utf8).unwrap();
             check.validate().unwrap();
             assert_eq!(check.proposal, self.proposal(&check.source));
             let checks: Vec<_> = check

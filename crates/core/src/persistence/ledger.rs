@@ -410,6 +410,11 @@ fn validate_schema(
         {
             return Err(error(ErrorCode::CorruptLedger, "project"));
         }
+        if is_derived_check(&operation)
+            && !checker.as_ref().is_some_and(|frames| frames.qualified.contains(&id))
+        {
+            derive_check_input(connection, &input, false)?;
+        }
         if opening && operation == crate::content::BUILD_OPERATION && links_by_attempt.contains_key(&id) {
             input.cache_open_build_plan()?;
         }
@@ -1112,6 +1117,7 @@ fn load_result_with_verified(
 struct OpenCheckerFrames {
     next_attempt: Option<ExecutionId>,
     capture: Option<ResultValidationCapture>,
+    qualified: BTreeSet<ExecutionId>,
 }
 
 impl OpenCheckerFrames {
@@ -1123,6 +1129,7 @@ impl OpenCheckerFrames {
     }
 
     fn remember(&mut self, input: &FixedInput, result: &FixedResult) {
+        self.qualified.insert(input.envelope().attempt_id);
         const MAX_DEFERRED_FRAME_BYTES: usize = 16 * 1024 * 1024;
         let attempt = input.envelope().attempt_id;
         // An adjacent checker never overlaps the next producer's large
@@ -1599,6 +1606,40 @@ fn load_check_input(connection: &Connection, checker_id: &str) -> Result<FixedIn
         )
         .map_err(sql_error)?;
     load_input(connection, parse_id(checker_attempt)?)
+}
+
+/// The saved checker frame binds these typed inputs and the exact SDK request
+/// digest. Only dispatch needs to materialize the SDK request body.
+fn derive_check_input(
+    connection: &Connection,
+    checker: &FixedInput,
+    materialize: bool,
+) -> Result<FixedInput, ExecutionError> {
+    let envelope = checker.envelope();
+    let (attempt, result, operation) = match envelope.operation.as_str() {
+        SOURCE_CHECK_OPERATION => {
+            let basis = SourceValidationBasis::deserialize(&envelope.settings)
+                .map_err(|_| error(ErrorCode::CorruptLedger, "source-check-basis"))?;
+            (basis.source_attempt_id, basis.source_result_id, crate::content::OPERATION)
+        }
+        ARTIFACT_CHECK_OPERATION => {
+            let basis = ArtifactValidationBasis::deserialize(&envelope.settings)
+                .map_err(|_| error(ErrorCode::CorruptLedger, "artifact-check-basis"))?;
+            (basis.build_attempt_id, basis.build_result_id, crate::content::BUILD_OPERATION)
+        }
+        _ => return Err(error(ErrorCode::InvalidInput, "semantic-check-operation")),
+    };
+    let input = load_input(connection, attempt)?;
+    if input.envelope().operation != operation {
+        return Err(error(ErrorCode::CorruptLedger, "semantic-check-producer"));
+    }
+    let result = load_result(connection, &input, result)?;
+    let capture = ResultValidationCapture { input, result };
+    if operation == crate::content::OPERATION {
+        SourceValidationCapture::derive_input(capture, checker, materialize)
+    } else {
+        ArtifactValidationCapture::derive_input(capture, checker, materialize)
+    }
 }
 
 fn load_check_result(
@@ -2972,31 +3013,36 @@ impl ProjectStore {
         attempt: ExecutionId,
         item: ExecutionId,
     ) -> Result<DispatchRequest, ExecutionError> {
-        let input = self.execution_input(attempt)?;
-        let token: Option<String> = self
-            .execution_connection()?
-            .query_row(
+        super::review::read_snapshot(self.execution_connection()?, |connection| {
+            let input = load_input(connection, attempt)?;
+            let token: Option<String> = connection.query_row(
                 "SELECT dispatch_token FROM execution_items WHERE attempt_id=?1 AND item_id=?2",
                 params![attempt.to_string(), item.to_string()],
                 |r| r.get(0),
             )
             .map_err(sql_error)?;
-        let plugin_permit = if input.envelope().plugin.is_some() {
-            Some(self.plugin_permit(&input)?)
-        } else {
-            None
-        };
-        Ok(DispatchRequest {
-            provider: None,
-            plugin_permit,
-            service_origin: None,
-            planning_permit: None,
-            original_deadline: None,
-            input,
-            item_id: item,
-            dispatch_token: parse_id(
-                token.ok_or_else(|| error(ErrorCode::InvalidInput, "dispatch-token"))?,
-            )?,
+            let plugin_permit = if input.envelope().plugin.is_some() {
+                Some(self.plugin_permit(&input)?)
+            } else {
+                None
+            };
+            let input = if is_derived_check(&input.envelope().operation) {
+                derive_check_input(connection, &input, true)?
+            } else {
+                input
+            };
+            Ok(DispatchRequest {
+                provider: None,
+                plugin_permit,
+                service_origin: None,
+                planning_permit: None,
+                original_deadline: None,
+                input,
+                item_id: item,
+                dispatch_token: parse_id(
+                    token.ok_or_else(|| error(ErrorCode::InvalidInput, "dispatch-token"))?,
+                )?,
+            })
         })
     }
     pub fn note_execution_unknown(
@@ -4027,8 +4073,40 @@ impl ProjectStore {
         let started = std::time::Instant::now();
         let started_at_ms = crate::execution::plugin_authority::plugin_now_ms()?;
         let authority = self.plugin_authority.clone();
+        let connection = self.execution_connection()?;
+        let derived: bool = connection.query_row(
+            "SELECT EXISTS(SELECT 1 FROM execution_attempts a JOIN execution_tasks t USING(task_id)
+             WHERE a.attempt_id=?1 AND t.operation IN (?2,?3))",
+            params![attempt.to_string(), SOURCE_CHECK_OPERATION, ARTIFACT_CHECK_OPERATION],
+            |row| row.get(0),
+        ).map_err(sql_error)?;
+        let prepared = if derived {
+            super::review::read_snapshot(connection, |connection| {
+                let input = load_input(connection, attempt)?;
+                // Preserve the ordinary cancellation path for expired grants.
+                if super::plugin_execution::check_input_in(connection, &input, &authority).is_err() {
+                    return Ok(None);
+                }
+                let stamp = snapshot_stamp(connection)?;
+                Ok(Some((derive_check_input(connection, &input, true)?, stamp)))
+            })?
+        } else {
+            None
+        };
         let tx = self.execution_write()?;
-        let input = load_input_cached(&tx, attempt)?;
+        let ready = prepared.is_some();
+        let input = match prepared {
+            Some((input, stamp)) => {
+                // The bytes were reconstructed against one read snapshot
+                // outside the write transaction. No durable claim may change
+                // between that snapshot and recording dispatch.
+                if snapshot_stamp(&tx)? != stamp {
+                    return Err(error(ErrorCode::DependencyConflict, "semantic-check-dispatch-snapshot"));
+                }
+                input
+            }
+            None => load_input_cached(&tx, attempt)?,
+        };
         let planning_permit = match self.conversation_planning_permit(&input) {
             Ok(permit) => permit,
             Err(failure) => {
@@ -4061,6 +4139,9 @@ impl ProjectStore {
             }
             Err(failure) => return Err(failure),
         };
+        if is_derived_check(&input.envelope().operation) && !ready {
+            return Err(error(ErrorCode::DependencyConflict, "semantic-check-dispatch-snapshot"));
+        }
         if let Err(error) = super::application::check_input(&tx, &input)
             .and_then(|_| super::application::check_service_input(&tx, &input, &authority))
         {
@@ -4458,7 +4539,7 @@ impl ProjectStore {
         attempt: ExecutionId,
         result: ExecutionId,
     ) -> Result<SourceValidationCapture, ExecutionError> {
-        SourceValidationCapture::capture(self.capture_result_validation(attempt, result)?, None)
+        SourceValidationCapture::capture(self.capture_result_validation(attempt, result)?, None, true)
     }
     pub fn commit_source_validation(
         &mut self,

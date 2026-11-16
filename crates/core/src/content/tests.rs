@@ -2184,7 +2184,7 @@ impl Runner for GenericSourcePlugin {
             ))?
         } else {
             let check: sdk::SourceExtractionCheckInput =
-                from_value(&request.input.item(request.item_id)?.payload)?;
+                serde_json::from_str(&invocation.input.utf8).unwrap();
             check.validate().unwrap();
             let config: serde_json::Value =
                 serde_json::from_slice(&check.source.artifacts[0].bytes().unwrap()).unwrap();
@@ -2724,7 +2724,11 @@ fn generic_source_adopts_large_binary_capture_and_reopens_original_blobs() {
     assert!(store.adopt_execution(&action, &SourceAdoptionHandler).is_err());
     let captured_check = store.capture_source_validation(input.envelope().attempt_id, result.envelope().result_id).unwrap();
     let checker_input = captured_check.check_input().clone();
-    assert!(checker_input.bytes().len() > MAX_INPUT_BYTES, "complete source plus proposal exceeds an ordinary input");
+    assert!(checker_input.bytes().len() < 64 * 1024, "the checker ledger frame only binds its request");
+    assert!(
+        checker_input.envelope().items[0].payload["bytes"].as_u64().unwrap() as usize > MAX_INPUT_BYTES,
+        "the actual source and proposal exceed the ordinary input ceiling"
+    );
     let checked = run_generic_source_with_lease(&mut runtime, &mut store, &checker_input, 300_000);
     store.commit_source_validation(captured_check.prepare(checked).unwrap()).unwrap();
     let action = prepare(&mut store, &input, &result);
@@ -2745,19 +2749,19 @@ fn generic_source_adopts_large_binary_capture_and_reopens_original_blobs() {
     let raw = rusqlite::Connection::open(path.join("project.sqlite3")).unwrap();
     let bytes: Vec<u8> = raw.query_row("SELECT bytes FROM source_files WHERE artifact_id=?1", [id.to_string()], |row| row.get(0)).unwrap();
     assert_eq!(bytes, vec![0xff; CAPTURE_BYTES - original.len()]);
-    let stored: Vec<u8> = raw.query_row("SELECT input FROM execution_attempts WHERE attempt_id=?1", [checker_input.envelope().attempt_id.to_string()], |row| row.get(0)).unwrap();
+    let stored: Vec<u8> = raw.query_row("SELECT input FROM execution_attempts WHERE attempt_id=?1", [input.envelope().attempt_id.to_string()], |row| row.get(0)).unwrap();
     let manifest: serde_json::Value = serde_json::from_slice(&stored).unwrap();
     assert_eq!(manifest["format"], 1);
-    assert_eq!(manifest["rawBytes"].as_u64().unwrap() as usize, checker_input.bytes().len());
+    assert_eq!(manifest["rawBytes"].as_u64().unwrap() as usize, input.bytes().len());
     let chunks = manifest["chunks"].as_array().unwrap();
     const STORAGE_CHUNK_BYTES: usize = 64 * 1024;
-    assert_eq!(chunks.len(), checker_input.bytes().len().div_ceil(STORAGE_CHUNK_BYTES));
+    assert_eq!(chunks.len(), input.bytes().len().div_ceil(STORAGE_CHUNK_BYTES));
     for (index, digest) in chunks.iter().enumerate() {
         let length: i64 = raw.query_row("SELECT length(bytes) FROM execution_input_chunks WHERE digest=?1", [digest.as_str().unwrap()], |row| row.get(0)).unwrap();
-        let expected = (checker_input.bytes().len() - index * STORAGE_CHUNK_BYTES).min(STORAGE_CHUNK_BYTES);
+        let expected = (input.bytes().len() - index * STORAGE_CHUNK_BYTES).min(STORAGE_CHUNK_BYTES);
         assert_eq!(length, expected as i64);
     }
-    assert!(stored.len() < checker_input.bytes().len(), "the ledger stores bounded chunk references");
+    assert!(stored.len() < input.bytes().len(), "the ledger stores bounded chunk references");
     raw.execute("UPDATE source_files SET bytes=?1 WHERE artifact_id=?2", rusqlite::params![vec![0_u8, 0, 0, 0], id.to_string()]).unwrap();
     drop(raw);
     assert!(ProjectStore::open(&path).is_err(), "stored raw bytes must match their fixed capture");

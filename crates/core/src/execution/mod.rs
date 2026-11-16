@@ -36,12 +36,15 @@ pub use source_validation::{
     SourceValidationCapture, SourceValidationPublicationCapture,
 };
 pub(crate) use source_validation::SourceValidationBasis;
+pub(crate) use artifact_validation::ArtifactValidationBasis;
 pub use translation_validation::{
     PreparedTranslationValidation, TRANSLATION_CHECK_OPERATION, TranslationValidationCapture,
     translation_check_payload,
 };
 pub use validation::{PreparedResultValidation, ResultValidationCapture, ResultValidator};
-pub(crate) use validation::{ValidationProof, requires_semantic_check, restore_check_input};
+pub(crate) use validation::{
+    ValidationProof, is_derived_check, requires_semantic_check, restore_check_input,
+};
 
 /// Read-only domain Review computation; QA adoption remains a separate boundary.
 pub const REVIEW_CHECK_OPERATION: &str = "review-semantic-check";
@@ -591,6 +594,7 @@ impl InputEnvelope {
                 ExecutionError::new(ErrorCode::InvalidInput, "input")
             })?;
         }
+        validation::validate_check_payload(self)?;
         Ok(())
     }
 }
@@ -603,6 +607,7 @@ pub struct FixedInput {
     bytes: Arc<Vec<u8>>,
     digest: String,
     open_build_plan: Option<Arc<crate::ReleasePlan>>,
+    check_wire: Option<tsumugi_plugin_sdk::EncodedPayload>,
     plugin_payload_digests: Arc<std::sync::Mutex<std::collections::BTreeMap<ExecutionId, String>>>,
 }
 impl FixedInput {
@@ -635,6 +640,7 @@ impl FixedInput {
             bytes: Arc::new(bytes),
             digest,
             open_build_plan: None,
+            check_wire: None,
             plugin_payload_digests: Arc::default(),
         })
     }
@@ -686,6 +692,7 @@ impl FixedInput {
             bytes: Arc::new(bytes.into_owned()),
             digest,
             open_build_plan: None,
+            check_wire: None,
             plugin_payload_digests: Arc::default(),
         })
     }
@@ -697,6 +704,11 @@ impl FixedInput {
     }
     pub fn digest(&self) -> &str {
         &self.digest
+    }
+    #[cfg(test)]
+    pub(crate) fn checker_payload<T: serde::de::DeserializeOwned>(&self) -> T {
+        let wire = self.check_wire.as_ref().expect("captured checker input");
+        serde_json::from_str(&wire.utf8).expect("typed checker payload")
     }
     pub(crate) fn cache_open_build_plan(&mut self) -> Result<(), ExecutionError> {
         self.open_build_plan = Some(Arc::new(crate::ReleasePlan::from_input(self)?));

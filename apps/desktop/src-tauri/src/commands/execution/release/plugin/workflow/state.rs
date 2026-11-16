@@ -286,16 +286,12 @@ impl WorkflowSession {
                 let build_item_id = result.envelope().item_id;
                 let build_result_id = result.envelope().result_id;
                 let build_result_digest = result.digest().to_owned();
-                let captured = capture
-                    .prepare_artifact_check(ExecutionId::new())
+                let (captured, output, requirements) = capture
+                    .prepare_artifact_check_with_output(ExecutionId::new())
                     .map_err(map_read)?;
                 let input = captured.check_input();
-                let payload: sdk::ArtifactCheckInput = serde_json::from_value(
-                    input.envelope().items[0].payload.clone(),
-                )
-                .map_err(|_| failure(ErrorCode::OutputInvalid, "artifact-workflow-payload"))?;
                 let step = ArtifactCheckWorkflowStepIdentity {
-                    locale: payload.input.target_language.clone(),
+                    locale: output.target_language,
                     build_item_id,
                     build_result_id,
                     producer_attempt_id,
@@ -310,13 +306,12 @@ impl WorkflowSession {
                     build_attempt_id: producer_attempt_id,
                     build_result_id,
                     locale: step.locale.clone(),
-                    artifacts: payload
-                        .output
+                    artifacts: output
                         .artifacts
                         .into_iter()
                         .map(CheckedArtifact::capture)
                         .collect::<Result<Vec<_>, CommandError>>()?,
-                    requirements: payload.requirements,
+                    requirements,
                     build: environment.view()?,
                 };
                 views.push(ArtifactCheckWorkflowStepView {

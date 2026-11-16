@@ -57,7 +57,7 @@ fn check(store: &mut ProjectStore, generation: ExecutionId, input: &FixedInput,
     result: ExecutionId, valid: bool) -> (ExecutionId, PreparedSourceValidation) {
     let capture = store.capture_source_validation(input.envelope().attempt_id, result).unwrap();
     let checker = capture.check_input().clone();
-    let payload: sdk::SourceExtractionCheckInput = serde_json::from_value(checker.envelope().items[0].payload.clone()).unwrap();
+    let payload: sdk::SourceExtractionCheckInput = checker.checker_payload();
     let checks = payload.requirements.into_iter().map(|required| sdk::CheckResult {
         key: required.key, input_digest: required.input_digest, scope_digest: required.scope_digest,
         covered_targets: required.targets, outcome: sdk::CheckOutcome::Completed { findings: vec![] },

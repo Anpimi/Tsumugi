@@ -536,8 +536,7 @@ fn builder_result(store: &mut ProjectStore, input: &FixedInput, item: ExecutionI
     result
 }
 fn passing_results(capture: &ArtifactValidationCapture) -> Vec<sdk::CheckResult> {
-    let payload: sdk::ArtifactCheckInput =
-        serde_json::from_value(capture.check_input().envelope().items[0].payload.clone()).unwrap();
+    let payload: sdk::ArtifactCheckInput = capture.check_input().checker_payload();
     payload
         .requirements
         .into_iter()
@@ -568,6 +567,44 @@ fn checker_result(
     store.save_execution_result(&result).unwrap();
     (result, grant)
 }
+
+#[test]
+fn unlinked_checker_is_compact_and_its_input_digest_is_rederived_on_open() {
+    let (_directory, mut store, generation, input) = fixture_build(&["zh-CN"]);
+    let item = input.envelope().items[0].item_id;
+    let result = builder_result(&mut store, &input, item);
+    let capture = store.capture_artifact_validation(
+        input.envelope().attempt_id, result.envelope().result_id,
+    ).unwrap();
+    let checker = capture.check_input();
+    let attempt = checker.envelope().attempt_id;
+    let original: sdk::ArtifactCheckInput = checker.checker_payload();
+    let grant = authorize(&mut store, generation, checker);
+    let path = store.directory().to_owned();
+    let saved = store.execution_input(attempt).unwrap();
+    assert_eq!(saved.bytes(), checker.bytes());
+    assert_eq!(saved.envelope().items[0].payload.as_object().unwrap().len(), 2);
+    assert!(original.output.artifacts.len() > 1);
+    store.close().unwrap();
+    let store = ProjectStore::open(&path).unwrap();
+
+    // Update both the frame and its grant to a mutually consistent digest.
+    // The untouched upstream result must still decide the checker material.
+    let mut broken = checker.envelope().clone();
+    broken.items[0].payload["sha256"] = serde_json::json!("a".repeat(64));
+    let broken = FixedInput::capture(broken).unwrap();
+    let db = store.connection().unwrap();
+    crate::persistence::ledger::replace_test_input(db, &broken).unwrap();
+    db.execute(
+        "UPDATE plugin_execution_grants SET input_digest=?2 WHERE grant_id=?1",
+        params![grant.to_string(), broken.digest()],
+    ).unwrap();
+    store.close().unwrap();
+    assert_eq!(
+        ProjectStore::open(&path).unwrap_err().code(),
+        crate::PersistenceErrorCode::CorruptProject
+    );
+}
 fn state(store: &ProjectStore, input: &FixedInput, item: ExecutionId) -> ValidationState {
     store
         .execution_attempt(input.envelope().attempt_id, false)
@@ -597,8 +634,7 @@ fn actual_artifacts_freeze_full_scope_and_need_separate_current_checker_grants()
         store.enqueue_execution(check_input).is_err(),
         "producer consent cannot authorize its checker"
     );
-    let payload: sdk::ArtifactCheckInput =
-        serde_json::from_value(check_input.envelope().items[0].payload.clone()).unwrap();
+    let payload: sdk::ArtifactCheckInput = check_input.checker_payload();
     assert_eq!(payload.output.artifacts.len(), 2);
     assert_eq!(
         payload.input.source,

@@ -153,12 +153,19 @@ impl FixedInput {
         channel: &sdk::ProviderBinding,
     ) -> Result<sdk::InvocationRequest, ExecutionError> {
         let binding = self.plugin_binding_for_channel(channel)?;
-        let bytes = self.plugin_payload_bytes(item_id)?;
-        let input = sdk::EncodedPayload::capture(
-            binding.capability.declaration.input_schema.clone(),
-            String::from_utf8(bytes)
-                .map_err(|_| ExecutionError::new(ErrorCode::InvalidInput, "plugin-input"))?,
-        ).map_err(contract_error)?;
+        let input = if validation::is_derived_check(&self.envelope().operation) {
+            self.item(item_id)?;
+            self.check_wire.clone().ok_or_else(|| {
+                ExecutionError::new(ErrorCode::InvalidInput, "semantic-check-dispatch-material")
+            })?
+        } else {
+            let bytes = self.plugin_payload_bytes(item_id)?;
+            sdk::EncodedPayload::capture(
+                binding.capability.declaration.input_schema.clone(),
+                String::from_utf8(bytes)
+                    .map_err(|_| ExecutionError::new(ErrorCode::InvalidInput, "plugin-input"))?,
+            ).map_err(contract_error)?
+        };
         let request = sdk::InvocationRequest {
             context: self.plugin_context(item_id, dispatch_token, binding, input.sha256.clone())?,
             provider: channel.clone(),
@@ -232,6 +239,9 @@ impl FixedInput {
     }
 
     fn plugin_payload_digest(&self, item_id: ExecutionId) -> Result<String, ExecutionError> {
+        if validation::is_derived_check(&self.envelope().operation) {
+            return Ok(validation::check_payload_identity(self.item(item_id)?)?.sha256);
+        }
         let mut digests = self.plugin_payload_digests.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
         if let Some(digest) = digests.get(&item_id) {
             return Ok(digest.clone());

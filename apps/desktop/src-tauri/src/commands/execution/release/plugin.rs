@@ -581,26 +581,21 @@ pub async fn prepare_artifact_check(
                 accepted_work.check()?;
                 let environment = plugins.capture_build(&preparing.build)?;
                 matches_build(capture.input(), &environment)?;
-                let capture = capture
-                    .prepare_artifact_check(preparing.attempt_id)
+                let (capture, output, requirements) = capture
+                    .prepare_artifact_check_with_output(preparing.attempt_id)
                     .map_err(map_read)?;
-                let payload: sdk::ArtifactCheckInput = serde_json::from_value(
-                    capture.check_input().envelope().items[0].payload.clone(),
-                )
-                .map_err(|_| CommandError::unknown(CommandStage::ExecutionRead))?;
                 let view = ArtifactCheckReview {
                     attempt_id: preparing.attempt_id,
                     input_digest: capture.check_input().digest().into(),
                     build_attempt_id: preparing.build_attempt_id,
                     build_result_id: preparing.build_result_id,
-                    locale: payload.input.target_language,
-                    artifacts: payload
-                        .output
+                    locale: output.target_language,
+                    artifacts: output
                         .artifacts
                         .into_iter()
                         .map(CheckedArtifact::capture)
                         .collect::<Result<Vec<_>, CommandError>>()?,
-                    requirements: payload.requirements,
+                    requirements,
                     build: environment.view()?,
                 };
                 Ok(Arc::new(CheckReview {

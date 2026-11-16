@@ -4,7 +4,8 @@
 use serde_json::json;
 use std::{path::PathBuf, sync::Arc};
 use tsumugi_core::{
-    PluginBuildLocaleChoice, ProjectMetadata, ProjectStore, ReleaseAdoptionHandler,
+    DeliveryFile, DeliveryFileState, DeliveryState, ExportAdmission, PluginBuildLocaleChoice,
+    ProjectMetadata, ProjectStore, ReleaseAdoptionHandler,
     ReleaseBuildEnvironment, ReviewDecisionKind, ReviewWrite, SaveTranslationRevision,
     content::{
         ContentPage, SourceAdoptionHandler, SourceBundle, SourceReviewBinding, SourceSettings,
@@ -572,7 +573,8 @@ struct AdoptedSource {
     snapshot: ExecutionId,
     grants: Vec<ExecutionId>,
     extracted: FixedResult,
-    check_input_bytes: usize,
+    check_frame_bytes: usize,
+    check_wire_bytes: u64,
     preview_total: u32,
     preview_summary: sdk::SourceCaptureSummary,
 }
@@ -586,7 +588,9 @@ fn adopt_source(
         ErrorCode::Unauthorized
     );
     let mut grants = vec![authorize(runtime, store, input)];
+    let submitted = std::time::Instant::now();
     let extracted = execute(runtime, store, input);
+    eprintln!("source_extraction_seconds={}", submitted.elapsed().as_secs_f64());
     assert_eq!(
         store
             .execution_attempt(input.envelope().attempt_id, false)
@@ -642,16 +646,20 @@ fn adopt_source(
             .is_err()
     );
     assert!(store.content_scope().unwrap().current_snapshot.is_none());
+    let check_started = std::time::Instant::now();
     let capture = store
         .capture_source_validation(input.envelope().attempt_id, extracted.envelope().result_id)
         .unwrap();
     let check = capture.check_input().clone();
-    let check_input_bytes = check.bytes().len();
+    let check_frame_bytes = check.bytes().len();
+    let check_wire_bytes = check.envelope().items[0].payload["bytes"].as_u64().unwrap();
     grants.push(authorize(runtime, store, &check));
     let checked = execute(runtime, store, &check);
     store
         .commit_source_validation(capture.prepare(checked).unwrap())
         .unwrap();
+    eprintln!("source_independent_check_seconds={}", check_started.elapsed().as_secs_f64());
+    let preview_started = std::time::Instant::now();
     let mut after = 0;
     let mut pages = 0;
     loop {
@@ -679,9 +687,11 @@ fn adopt_source(
         after = next;
     }
     println!(
-        "Source preview covered {} rows in {pages} page(s)",
-        preview.total
+        "Source preview covered {} rows in {pages} page(s) in {:.3}s",
+        preview.total,
+        preview_started.elapsed().as_secs_f64()
     );
+    let adoption_started = std::time::Instant::now();
     let action = if pages == 1 {
         action
     } else {
@@ -690,12 +700,14 @@ fn adopt_source(
     store
         .adopt_execution(&action, &SourceAdoptionHandler)
         .unwrap();
+    eprintln!("source_adoption_seconds={}", adoption_started.elapsed().as_secs_f64());
     let snapshot = store.content_scope().unwrap().current_snapshot.unwrap();
     AdoptedSource {
         snapshot,
         grants,
         extracted,
-        check_input_bytes,
+        check_frame_bytes,
+        check_wire_bytes,
         preview_total: preview.total,
         preview_summary,
     }
@@ -1033,7 +1045,12 @@ fn run_capacity_case(directory: &str, records: usize, exact_raw_bytes: Option<us
     let review_checker = proxy(&source_binding.review.declaration.checker);
     let builder = proxy(&build_binding.declaration.builder);
     let artifact_checker = proxy(&build_binding.declaration.checker);
-    let path = root.path().join("project");
+    let retained = std::env::var_os("TSUMUGI_TEST_SKYRIM_PROJECT").map(PathBuf::from);
+    if let Some(directory) = &retained {
+        std::fs::create_dir(directory).unwrap();
+    }
+    let output = retained.as_deref().unwrap_or(root.path());
+    let path = output.join("project");
     let mut store = ProjectStore::create(
         &path,
         ProjectMetadata::create(
@@ -1081,13 +1098,16 @@ fn run_capacity_case(directory: &str, records: usize, exact_raw_bytes: Option<us
         snapshot,
         mut grants,
         extracted,
-        check_input_bytes,
+        check_frame_bytes,
+        check_wire_bytes,
         preview_total,
         preview_summary,
     } = adopt_source(&mut store, &mut runtime, &input);
     eprintln!("capacity Core adoption returned in {:?}", started.elapsed());
     assert!(extracted.bytes().len() > 8 * 1024 * 1024);
-    assert!(check_input_bytes > 4 * 1024 * 1024);
+    assert!(check_frame_bytes < 64 * 1024);
+    assert!(check_wire_bytes > 4 * 1024 * 1024);
+    eprintln!("capacity_source_check_frame_bytes={check_frame_bytes} wire_bytes={check_wire_bytes}");
     let sdk::InvocationOutcome::Succeeded { output } =
         &extracted.envelope().plugin.as_ref().unwrap().result.outcome
     else {
@@ -1179,24 +1199,70 @@ fn run_capacity_case(directory: &str, records: usize, exact_raw_bytes: Option<us
         builder.execution_binding(Some(build_binding.declaration.profile.clone())).unwrap(),
         artifact_checker.execution_binding(Some(build_binding.declaration.profile.clone())).unwrap(),
     ).unwrap();
+    let build_started = std::time::Instant::now();
     let build_input = store.prepare_plugin_build(project, ExecutionId::new(), &[PluginBuildLocaleChoice {
         translation_units: Some(vec![]), locale: "zh-CN".into(), output_paths: vec!["FormatProbe.esp".into()], configuration: configuration(&build_binding),
     }], &eligibility.basis, &build_environment).unwrap();
     grants.push(authorize(&runtime, &mut store, &build_input));
     let built = execute(&mut runtime, &mut store, &build_input);
+    eprintln!("capacity_build_seconds={}", build_started.elapsed().as_secs_f64());
     let action = store.prepare_adoption(build_input.envelope().attempt_id, build_input.envelope().units[0].unit_id, vec![built.envelope().result_id], json!({})).unwrap();
     assert!(store.adopt_execution(&action, &ReleaseAdoptionHandler).is_err());
+    let artifact_check_started = std::time::Instant::now();
     let capture = store.capture_artifact_validation(build_input.envelope().attempt_id, built.envelope().result_id).unwrap();
     let check = capture.check_input().clone();
+    let frame_bytes = check.bytes().len();
+    let wire_bytes = check.envelope().items[0].payload["bytes"].as_u64().unwrap();
+    assert!(frame_bytes < 64 * 1024);
+    assert!(wire_bytes > 4 * 1024 * 1024);
+    eprintln!("capacity_artifact_check_frame_bytes={frame_bytes} wire_bytes={wire_bytes}");
     grants.push(authorize(&runtime, &mut store, &check));
     let checked = execute(&mut runtime, &mut store, &check);
     store.commit_artifact_validation(capture.prepare(checked).unwrap()).unwrap();
+    eprintln!("capacity_artifact_check_seconds={}", artifact_check_started.elapsed().as_secs_f64());
+    let save_started = std::time::Instant::now();
     let receipt = store.adopt_execution(&action, &ReleaseAdoptionHandler).unwrap();
+    eprintln!("capacity_save_seconds={}", save_started.elapsed().as_secs_f64());
     let release = ExecutionId::parse(&receipt.changes[0].id).unwrap();
     let release_view = store.release_view(release).unwrap();
     assert!(!store.review_eligibility(project, &["zh-CN".into()]).unwrap().ready);
     assert_eq!(release_view.exceptions.iter().filter(|exception| exception.kind == tsumugi_core::ReleaseExceptionKind::SourceRetained).count(), fields);
     let staged_bytes = store.release_artifact_by_path(release, "zh-CN", "FormatProbe.esp").unwrap().1;
+    let export_started = std::time::Instant::now();
+    let destination_for_export = output.join("exports");
+    std::fs::create_dir(&destination_for_export).unwrap();
+    let export_action = ExecutionId::new();
+    let mut files: Vec<_> = release_view.artifacts.iter().map(|artifact| DeliveryFile {
+        locale: artifact.locale.clone(),
+        file_name: artifact.file_name.clone(),
+        expected_sha256: artifact.sha256.clone(),
+        actual_sha256: None,
+        state: DeliveryFileState::Pending,
+    }).collect();
+    let ExportAdmission::Started { release: admitted, bytes } = store
+        .begin_delivery_for_export(export_action, release, destination_for_export.to_str().unwrap(), false, &files)
+        .unwrap()
+    else {
+        panic!("first export must have original artifact bytes");
+    };
+    assert_eq!(admitted, release_view);
+    assert_eq!(files.len(), bytes.len());
+    for (file, bytes) in files.iter_mut().zip(bytes) {
+        let directory = destination_for_export.join(&file.locale);
+        std::fs::create_dir_all(&directory).unwrap();
+        let path = directory.join(&file.file_name);
+        std::fs::write(&path, &bytes).unwrap();
+        let exported = std::fs::read(path).unwrap();
+        assert_eq!(exported, bytes);
+        if file.file_name == "FormatProbe.esp" {
+            assert_eq!(exported, staged_bytes);
+        }
+        file.actual_sha256 = Some(sdk::artifact_bytes_digest(&exported));
+        file.state = DeliveryFileState::Succeeded;
+    }
+    let delivery = store.finish_delivery(export_action, files).unwrap();
+    assert_eq!(delivery.state, DeliveryState::Succeeded);
+    eprintln!("capacity_export_receipt_seconds={}", export_started.elapsed().as_secs_f64());
     let rows = read_rows(&store, "saved");
     if let Some(text_bytes) = text_bytes {
         assert_eq!(rows.iter().filter(|row| row.occurrence.text.len() == text_bytes).count(), records);
@@ -1224,6 +1290,7 @@ fn run_capacity_case(directory: &str, records: usize, exact_raw_bytes: Option<us
     let reopened = ProjectStore::open(&path).unwrap();
     eprintln!("capacity_reopen_seconds={}", reopen_started.elapsed().as_secs_f64());
     assert_eq!(reopened.release_view(release).unwrap(), release_view);
+    assert_eq!(reopened.delivery_by_action(export_action).unwrap().as_ref(), Some(&delivery));
     assert_eq!(reopened.release_artifact_by_path(release, "zh-CN", "FormatProbe.esp").unwrap().1, staged_bytes);
     assert_eq!(read_rows(&reopened, "reopened"), rows);
     assert_eq!(
@@ -1244,10 +1311,19 @@ fn run_capacity_case(directory: &str, records: usize, exact_raw_bytes: Option<us
             .bytes(),
         saved_result.bytes()
     );
+    reopened.close().unwrap();
+    let warm_started = std::time::Instant::now();
+    let warm = ProjectStore::open(&path).unwrap();
+    eprintln!("capacity_warm_reopen_seconds={}", warm_started.elapsed().as_secs_f64());
+    assert_eq!(warm.delivery_by_action(export_action).unwrap().as_ref(), Some(&delivery));
     if let Some(destination) = std::env::var_os("TSUMUGI_TEST_SKYRIM_BACKUP") {
         let destination = PathBuf::from(destination);
-        reopened.backup_to(&destination).unwrap();
+        warm.backup_to(&destination).unwrap();
         println!("skyrim_capacity_backup={}", destination.display());
+    }
+    warm.close().unwrap();
+    if retained.is_some() {
+        println!("skyrim_capacity_project={}", path.display());
     }
     eprintln!(
         "capacity Core capture/adopt/read/reopen completed in {:?}",

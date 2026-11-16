@@ -74,15 +74,17 @@ impl SourceValidationCapture {
     pub(crate) fn capture(
         source: ResultValidationCapture,
         attempt: Option<ExecutionId>,
+        materialize: bool,
     ) -> Result<Self, ExecutionError> {
         let (bundle, settings) = crate::content::SourceBundle::from_input_with_settings(&source.input)?;
         let projected = Arc::new(crate::content::validate_output_for_bundle(
             &source.input, &source.result, &bundle, settings.revision_policy.clone(),
         )?);
-        let (mut envelope, checks) =
-            Self::reconstruct(&source, &bundle, &settings, &projected.exchange, None)?;
+        let (mut envelope, checks, payload) =
+            Self::reconstruct(&source, &bundle, &settings, &projected.exchange)?;
         envelope.attempt_id = attempt.unwrap_or(envelope.attempt_id);
-        let check_input = FixedInput::capture(envelope)?;
+        payload.validate().map_err(|_| invalid())?;
+        let check_input = validation::fixed_check(envelope, &payload, materialize)?;
         Ok(Self { source, check_input, projected, checks })
     }
 
@@ -91,8 +93,7 @@ impl SourceValidationCapture {
         bundle: &crate::content::SourceBundle,
         settings: &crate::content::SourceSettings,
         exchange: &sdk::ContentExchange,
-        saved_payload: Option<&Value>,
-    ) -> Result<(InputEnvelope, sdk::FixedCheckSet), ExecutionError> {
+    ) -> Result<(InputEnvelope, sdk::FixedCheckSet, sdk::SourceExtractionCheckInput), ExecutionError> {
         if source.input.envelope().plugin.is_none() {
             return Err(invalid());
         }
@@ -132,25 +133,10 @@ impl SourceValidationCapture {
             .map_err(|_| invalid())?;
         let source_material = bundle.source_input();
         let scope_id = source_material.source_set_id.clone();
-        let payload = if let Some(saved) = saved_payload {
-            let matched = saved.as_object().is_some_and(|saved| {
-                saved.len() == 3
-                    && validation::matches_source_input(saved.get("source"), &source_material)
-                    && validation::matches_exchange(saved.get("proposal"), exchange)
-                    && validation::matches_value(saved.get("requirements"), &domain)
-            });
-            if !matched {
-                return Err(ExecutionError::new(ErrorCode::ResultMismatch, "semantic-check-input"));
-            }
-            Value::Null
-        } else {
-            let payload = sdk::SourceExtractionCheckInput {
-                source: source_material,
-                proposal: exchange.clone(),
-                requirements: domain,
-            };
-            payload.validate().map_err(|_| invalid())?;
-            serde_json::to_value(payload).map_err(|_| invalid())?
+        let payload = sdk::SourceExtractionCheckInput {
+            source: source_material,
+            proposal: exchange.clone(),
+            requirements: domain,
         };
         let basis = SourceValidationBasis {
             source_attempt_id: source.input.envelope().attempt_id,
@@ -164,7 +150,7 @@ impl SourceValidationCapture {
                 id: scope_id,
                 locale: None,
             },
-            payload,
+            Value::Null,
             vec![],
         );
         let project = source
@@ -185,7 +171,7 @@ impl SourceValidationCapture {
         envelope.limits.max_result_bytes = MAX_RESULT_BYTES as u32;
         envelope.limits.timeout_ms = binding.capability.declaration.limits.timeout_ms.min(300_000);
         envelope.plugin = Some(binding.clone());
-        Ok((envelope, checks))
+        Ok((envelope, checks, payload))
     }
     pub fn check_input(&self) -> &FixedInput {
         &self.check_input
@@ -212,26 +198,43 @@ impl SourceValidationCapture {
                 (&owned.0, &owned.1)
             }
         };
-        // Finish decoding the producer before reading the checker frame. The
-        // local occurrence projection is only needed once the inputs agree.
-        let exchange = crate::content::validated_plugin_source_exchange(
-            &source.input, &source.result, bundle,
-        )?;
-        let check_input = load_checker()?;
-        let item = check_input.envelope().items.first().ok_or_else(invalid)?;
-        let (envelope, checks) =
-            Self::reconstruct(&source, bundle, settings, &exchange, Some(&item.payload))?;
-        validation::restore_check_header(envelope, &check_input)?;
+        let (exchange, check_input, checks) =
+            Self::restore_input(&source, bundle, settings, &load_checker()?, false)?;
         let projected = Arc::new(crate::content::project_validated_source_output(
             bundle, exchange, settings.revision_policy.clone(),
         )?);
         Ok(Self { source, check_input, projected, checks })
     }
 
+    fn restore_input(
+        source: &ResultValidationCapture,
+        bundle: &crate::content::SourceBundle,
+        settings: &crate::content::SourceSettings,
+        actual: &FixedInput,
+        materialize: bool,
+    ) -> Result<(sdk::ContentExchange, FixedInput, sdk::FixedCheckSet), ExecutionError> {
+        let exchange = crate::content::validated_plugin_source_exchange(
+            &source.input, &source.result, bundle,
+        )?;
+        let (envelope, checks, payload) = Self::reconstruct(source, bundle, settings, &exchange)?;
+        let checked = validation::restore_fixed_check(envelope, actual, &payload, materialize)?;
+        Ok((exchange, checked, checks))
+    }
+
+    pub(crate) fn derive_input(
+        source: ResultValidationCapture,
+        actual: &FixedInput,
+        materialize: bool,
+    ) -> Result<FixedInput, ExecutionError> {
+        let (bundle, settings) = crate::content::SourceBundle::from_input_with_settings(&source.input)?;
+        Self::restore_input(&source, &bundle, &settings, actual, materialize)
+            .map(|(_, input, _)| input)
+    }
+
     /// A completed result can be invalid: coverage and blocking findings are
     /// checked independently. Commit requires this exact result in the ledger.
     pub fn prepare(
-        self,
+        mut self,
         check_result: FixedResult,
     ) -> Result<PreparedSourceValidation, ExecutionError> {
         check_result.validate_for_input(&self.check_input)?;
@@ -242,6 +245,7 @@ impl SourceValidationCapture {
             operation: crate::content::OPERATION.into(),
             valid,
         };
+        self.check_input.check_wire = None;
         Ok(PreparedSourceValidation {
             capture: self,
             check_result,

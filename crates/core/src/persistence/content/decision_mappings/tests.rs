@@ -326,8 +326,7 @@ pub(in crate::persistence) fn plugin_fixture_with_result_limit(result_limit: u32
     let capture = store.capture_source_validation(input.envelope().attempt_id,
         result.envelope().result_id).unwrap();
     let check_input = capture.check_input().clone();
-    let check: sdk::SourceExtractionCheckInput =
-        serde_json::from_value(check_input.envelope().items[0].payload.clone()).unwrap();
+    let check: sdk::SourceExtractionCheckInput = check_input.checker_payload();
     check.validate().unwrap();
     let checks = check.requirements.into_iter().map(|required| sdk::CheckResult {
         key: required.key, input_digest: required.input_digest, scope_digest: required.scope_digest,

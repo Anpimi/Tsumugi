@@ -55,35 +55,14 @@ pub(crate) fn matches_encoding<T: Serialize>(
     limit: usize,
     bytes: &[u8],
 ) -> Result<bool, ExecutionError> {
-    compare_encoding(value, limit, bytes, |_| {})
-}
-
-pub(super) fn matched_encoding_digest<T: Serialize>(
-    value: &T,
-    limit: usize,
-    bytes: &[u8],
-) -> Result<Option<String>, ExecutionError> {
-    let mut hash = aws_lc_rs::digest::Context::new(&SHA256);
-    let equal = compare_encoding(value, limit, bytes, |chunk| hash.update(chunk))?;
-    Ok(equal.then(|| digest_hex(hash.finish())))
-}
-
-fn compare_encoding<T: Serialize>(
-    value: &T,
-    limit: usize,
-    bytes: &[u8],
-    matched: impl FnMut(&[u8]),
-) -> Result<bool, ExecutionError> {
-    struct Comparison<'a, F> {
+    struct Comparison<'a> {
         rest: &'a [u8],
         equal: bool,
-        matched: F,
     }
-    impl<F: FnMut(&[u8])> Write for Comparison<'_, F> {
+    impl Write for Comparison<'_> {
         fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
             if let Some(rest) = self.rest.strip_prefix(bytes) {
                 self.rest = rest;
-                (self.matched)(bytes);
             } else {
                 self.equal = false;
             }
@@ -93,7 +72,7 @@ fn compare_encoding<T: Serialize>(
             Ok(())
         }
     }
-    let mut comparison = Comparison { rest: bytes, equal: true, matched };
+    let mut comparison = Comparison { rest: bytes, equal: true };
     encode_to(value, limit, std::io::BufWriter::new(&mut comparison))?;
     Ok(comparison.equal && comparison.rest.is_empty())
 }
@@ -145,19 +124,27 @@ pub(crate) fn matches_stored_encoding<T: Serialize>(
 }
 
 pub(crate) fn digest_encoded<T: Serialize>(value: &T, limit: usize) -> Result<String, ExecutionError> {
-    struct HashWriter(aws_lc_rs::digest::Context);
+    digest_encoded_with_size(value, limit).map(|(digest, _)| digest)
+}
+
+pub(super) fn digest_encoded_with_size<T: Serialize>(
+    value: &T,
+    limit: usize,
+) -> Result<(String, usize), ExecutionError> {
+    struct HashWriter(aws_lc_rs::digest::Context, usize);
     impl Write for HashWriter {
         fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
             self.0.update(bytes);
+            self.1 += bytes.len();
             Ok(bytes.len())
         }
         fn flush(&mut self) -> std::io::Result<()> {
             Ok(())
         }
     }
-    let mut writer = HashWriter(aws_lc_rs::digest::Context::new(&SHA256));
+    let mut writer = HashWriter(aws_lc_rs::digest::Context::new(&SHA256), 0);
     encode_to(value, limit, std::io::BufWriter::new(&mut writer))?;
-    Ok(digest_hex(writer.0.finish()))
+    Ok((digest_hex(writer.0.finish()), writer.1))
 }
 
 pub(crate) fn encode_to<T: Serialize>(value: &T, limit: usize, writer: impl Write) -> Result<(), ExecutionError> {

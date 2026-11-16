@@ -158,7 +158,7 @@ The current workspace targets **`0.3.0-alpha.1`**. The published `0.2.0-alpha.1`
 
 ### Changed
 
-- **Breaking**: Opening projects and restoring backups require SQLite schema 77. Keep older projects and backups intact, and import the original source files into a new project. The app refuses older backups before creating a restore folder.
+- **Breaking**: Opening projects and restoring backups require SQLite schema 78. Keep older projects and backups intact, and import the original source files into a new project. The app refuses older backups before creating a restore folder.
 
 - Saving and reading plugin releases reuse validated build and source data within each operation. Preparing source and artifact checks captures each new checker input once. Reopening projects and reading saved releases verify the original checker input against its reconstructed bytes without decoding a temporary copy. Export verifies the saved files against the preview and registers the pending delivery in one transaction. Saved releases still verify the exact original source, artifacts, and independent check.
 - Source, translation, and artifact checks reuse an already decoded result when its verified input matches exactly. Reading a result from storage still checks the original bytes and digest.
@@ -200,6 +200,7 @@ The current workspace targets **`0.3.0-alpha.1`**. The published `0.2.0-alpha.1`
 - Load pending decisions when their inbox opens, so the entries view leaves the session queue available for delivery history.
 - Load project brief counts without running the full build readiness check.
 - Read large project history with fewer intermediate allocations and compare saved files without copying their stored bytes.
+- Reduce storage and replay allocations for independent source and artifact checks by reconstructing their SDK request from the original evidence.
 - Release verified source frames before opening saved build history, skip source row reconstruction when there are no lineage corrections, and keep saved files out of the database sorter.
 
 - Keep release history and export receipts responsive after saving a build by retiring its live task reads. Read large saved execution frames with fewer copies and qualify independent checks against their original evidence.
