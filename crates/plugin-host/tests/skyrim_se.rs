@@ -1049,8 +1049,8 @@ fn run_capacity_case(directory: &str, records: usize, exact_raw_bytes: Option<us
     if let Some(directory) = &retained {
         std::fs::create_dir(directory).unwrap();
     }
-    let output = retained.as_deref().unwrap_or(root.path());
-    let path = output.join("project");
+    let run_directory = retained.as_deref().unwrap_or(root.path());
+    let path = run_directory.join("project");
     let mut store = ProjectStore::create(
         &path,
         ProjectMetadata::create(
@@ -1227,9 +1227,10 @@ fn run_capacity_case(directory: &str, records: usize, exact_raw_bytes: Option<us
     let release_view = store.release_view(release).unwrap();
     assert!(!store.review_eligibility(project, &["zh-CN".into()]).unwrap().ready);
     assert_eq!(release_view.exceptions.iter().filter(|exception| exception.kind == tsumugi_core::ReleaseExceptionKind::SourceRetained).count(), fields);
-    let staged_bytes = store.release_artifact_by_path(release, "zh-CN", "FormatProbe.esp").unwrap().1;
+    let (staged_artifact, staged_bytes) = store
+        .release_artifact_by_path(release, "zh-CN", "FormatProbe.esp").unwrap();
     let export_started = std::time::Instant::now();
-    let destination_for_export = output.join("exports");
+    let destination_for_export = run_directory.join("exports");
     std::fs::create_dir(&destination_for_export).unwrap();
     let export_action = ExecutionId::new();
     let mut files: Vec<_> = release_view.artifacts.iter().map(|artifact| DeliveryFile {
@@ -1248,13 +1249,12 @@ fn run_capacity_case(directory: &str, records: usize, exact_raw_bytes: Option<us
     assert_eq!(admitted, release_view);
     assert_eq!(files.len(), bytes.len());
     for (file, bytes) in files.iter_mut().zip(bytes) {
-        let directory = destination_for_export.join(&file.locale);
-        std::fs::create_dir_all(&directory).unwrap();
-        let path = directory.join(&file.file_name);
+        let path = destination_for_export.join(&file.file_name);
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
         std::fs::write(&path, &bytes).unwrap();
         let exported = std::fs::read(path).unwrap();
         assert_eq!(exported, bytes);
-        if file.file_name == "FormatProbe.esp" {
+        if file.file_name == staged_artifact.file_name {
             assert_eq!(exported, staged_bytes);
         }
         file.actual_sha256 = Some(sdk::artifact_bytes_digest(&exported));
