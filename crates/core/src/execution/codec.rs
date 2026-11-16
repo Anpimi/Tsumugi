@@ -229,94 +229,6 @@ pub(crate) fn validate_json(bytes: &[u8], limit: usize) -> Result<(), ExecutionE
     read_json::<false>(bytes, limit).map(drop)
 }
 
-/// Compare a raw payload to the strict projection already decoded from its
-/// envelope. Large JSON strings can be compared directly in the visitor.
-pub(crate) fn matches_json(bytes: &[u8], limit: usize, expected: &Value) -> Result<(), ExecutionError> {
-    if bytes.len() > limit {
-        return Err(ExecutionError::new(ErrorCode::LimitExceeded, "decoding"));
-    }
-    let mut decoder = serde_json::Deserializer::from_slice(bytes);
-    JsonComparison { expected, depth: 0 }.deserialize(&mut decoder)
-        .and_then(|()| decoder.end())
-        .map_err(|_| ExecutionError::new(ErrorCode::ResultMismatch, "plugin-output"))
-}
-
-struct JsonComparison<'a> {
-    expected: &'a Value,
-    depth: usize,
-}
-
-impl<'de> DeserializeSeed<'de> for JsonComparison<'_> {
-    type Value = ();
-
-    fn deserialize<D: serde::Deserializer<'de>>(self, decoder: D) -> Result<(), D::Error> {
-        if self.depth > MAX_DEPTH {
-            return Err(serde::de::Error::custom("structure too deep"));
-        }
-        decoder.deserialize_any(self)
-    }
-}
-
-impl JsonComparison<'_> {
-    fn compare<E: serde::de::Error>(matches: bool) -> Result<(), E> {
-        if matches { Ok(()) } else { Err(E::custom("projection mismatch")) }
-    }
-}
-
-impl<'de> Visitor<'de> for JsonComparison<'_> {
-    type Value = ();
-
-    fn expecting(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        formatter.write_str("the exact projected JSON value")
-    }
-
-    fn visit_bool<E: serde::de::Error>(self, value: bool) -> Result<(), E> {
-        Self::compare(self.expected.as_bool() == Some(value))
-    }
-
-    fn visit_i64<E: serde::de::Error>(self, value: i64) -> Result<(), E> {
-        Self::compare(*self.expected == Value::from(value))
-    }
-
-    fn visit_u64<E: serde::de::Error>(self, value: u64) -> Result<(), E> {
-        Self::compare(*self.expected == Value::from(value))
-    }
-
-    fn visit_f64<E: serde::de::Error>(self, value: f64) -> Result<(), E> {
-        Self::compare(serde_json::Number::from_f64(value)
-            .is_some_and(|number| *self.expected == Value::Number(number)))
-    }
-
-    fn visit_str<E: serde::de::Error>(self, value: &str) -> Result<(), E> {
-        Self::compare(self.expected.as_str() == Some(value))
-    }
-
-    fn visit_unit<E: serde::de::Error>(self) -> Result<(), E> {
-        Self::compare(self.expected.is_null())
-    }
-
-    fn visit_seq<A: SeqAccess<'de>>(self, mut seq: A) -> Result<(), A::Error> {
-        let expected = self.expected.as_array().ok_or_else(|| serde::de::Error::custom("expected array"))?;
-        for item in expected {
-            let found = seq.next_element_seed(JsonComparison { expected: item, depth: self.depth + 1 })?;
-            Self::compare(found.is_some())?;
-        }
-        Self::compare(seq.next_element::<serde::de::IgnoredAny>()?.is_none())
-    }
-
-    fn visit_map<A: MapAccess<'de>>(self, mut map: A) -> Result<(), A::Error> {
-        let expected = self.expected.as_object().ok_or_else(|| serde::de::Error::custom("expected object"))?;
-        let mut seen = BTreeSet::new();
-        while let Some(key) = map.next_key::<String>()? {
-            let (key, item) = expected.get_key_value(&key)
-                .ok_or_else(|| serde::de::Error::custom("unexpected key"))?;
-            Self::compare(seen.insert(key))?;
-            map.next_value_seed(JsonComparison { expected: item, depth: self.depth + 1 })?;
-        }
-        Self::compare(seen.len() == expected.len())
-    }
-}
-
 fn read_json<const KEEP: bool>(bytes: &[u8], limit: usize) -> Result<Value, ExecutionError> {
     if bytes.len() > limit {
         return Err(ExecutionError::new(ErrorCode::LimitExceeded, "decoding"));
@@ -443,23 +355,5 @@ mod tests {
         assert!(validate_json(duplicates, duplicates.len()).is_err());
         let deep = format!("{}0{}", "[".repeat(MAX_DEPTH + 1), "]".repeat(MAX_DEPTH + 1));
         assert!(validate_json(deep.as_bytes(), deep.len()).is_err());
-    }
-
-    #[test]
-    fn compares_raw_payload_without_discarding_conflicting_evidence() {
-        let value = serde_json::json!({"artifacts": [{"text": "星", "size": 12}], "valid": true});
-        let reordered = br#"{"valid":true,"artifacts":[{"size":12,"text":"\u661f"}]}"#;
-        assert!(matches_json(reordered, reordered.len(), &value).is_ok());
-        assert!(matches_json(reordered, reordered.len() - 1, &value).is_err());
-
-        for bytes in [
-            br#"{"valid":true,"artifacts":[{"size":12,"text":"\u661f","\u0074ext":"\u661f"}]}"#.as_slice(),
-            br#"{"valid":true,"artifacts":[{"size":12.0,"text":"\u661f"}]}"#,
-            br#"{"valid":true,"artifacts":[{"size":12,"text":"\u661f"},null]}"#,
-            br#"{"valid":true,"artifacts":[{"size":12}]}"#,
-            br#"{"valid":true,"artifacts":[{"size":12,"text":"\u661f"}]} null"#,
-        ] {
-            assert!(matches_json(bytes, bytes.len(), &value).is_err());
-        }
     }
 }

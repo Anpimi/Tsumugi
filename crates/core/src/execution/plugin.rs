@@ -441,11 +441,10 @@ impl PluginResultEvidence {
                 if envelope.outcome != ExecutionState::Succeeded {
                     return Err(mismatch());
                 }
-                if input.envelope().operation == crate::content::BUILD_OPERATION {
-                    codec::matches_json(
-                        output.utf8.as_bytes(), input.envelope().limits.max_result_bytes as usize, expected,
-                    )?;
-                } else if *expected != ledger_output(input, output)? {
+                if stores_output_reference(input) {
+                    codec::validate_json(output.utf8.as_bytes(), input.envelope().limits.max_result_bytes as usize)?;
+                }
+                if *expected != ledger_output(input, output)? {
                     return Err(mismatch());
                 }
             }
@@ -479,7 +478,7 @@ fn check_result_document_size(result: &sdk::InvocationResult, limit: usize) -> R
         };
         codec::check_encoded_size(&doc, limit)
     };
-    // Successful output has already passed the strict JSON comparison above.
+    // Successful output has already passed strict JSON validation above.
     // Its only literal control bytes can be tab, LF and CR. Quoting any
     // byte therefore needs at most two bytes. The empty string counts the
     // quotes in the actual SDK envelope so metadata stays inside the limit.
@@ -501,7 +500,7 @@ fn check_result_document_size(result: &sdk::InvocationResult, limit: usize) -> R
 }
 impl FixedResult {
     /// Called by a trusted adapter after actual-channel validation. This keeps
-    /// opaque errors and the raw JSON proposal alongside its strict projection.
+    /// opaque errors and the raw JSON proposal alongside its ledger projection.
     pub fn capture_plugin(
         input: &FixedInput,
         item: ExecutionId,
@@ -556,17 +555,21 @@ fn ledger_output(
     input: &FixedInput,
     output: &sdk::EncodedPayload,
 ) -> Result<Value, ExecutionError> {
-    let limit = input.envelope().limits.max_result_bytes as usize;
-    if matches!(
-        input.envelope().operation.as_str(),
-        crate::content::OPERATION | crate::content::TRANSLATION_EXTRACTION_OPERATION
-    ) {
-        codec::validate_json(output.utf8.as_bytes(), limit)?;
+    if stores_output_reference(input) {
         serde_json::to_value((&output.schema, &output.sha256))
             .map_err(|_| ExecutionError::new(ErrorCode::OutputInvalid, "plugin-output"))
     } else {
-        codec::decode(output.utf8.as_bytes(), limit)
+        codec::decode(output.utf8.as_bytes(), input.envelope().limits.max_result_bytes as usize)
     }
+}
+
+fn stores_output_reference(input: &FixedInput) -> bool {
+    matches!(
+        input.envelope().operation.as_str(),
+        crate::content::OPERATION
+            | crate::content::BUILD_OPERATION
+            | crate::content::TRANSLATION_EXTRACTION_OPERATION
+    )
 }
 
 #[cfg(test)]

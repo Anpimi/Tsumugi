@@ -734,6 +734,53 @@ impl ResultValidator for ApprovesAnyData {
         Ok(())
     }
 }
+
+#[test]
+fn compact_build_result_keeps_checked_original_bytes_and_rejects_conflicting_projections() {
+    let (_directory, mut store, _generation, input) = fixture_build(&["zh-CN"]);
+    let result = builder_result(&mut store, &input, input.envelope().items[0].item_id);
+    let token = result.envelope().dispatch_token;
+    let evidence = result.envelope().plugin.as_ref().unwrap();
+    let sdk::InvocationOutcome::Succeeded { output } = &evidence.result.outcome else {
+        panic!("expected build success");
+    };
+    assert_eq!(result.envelope().output, Some(serde_json::json!([output.schema, output.sha256])));
+    let plan = ReleasePlan::from_input(&input).unwrap();
+    let restored = FixedResult::restore(result.bytes(), result.digest(), &input, token).unwrap();
+    let original = sdk::parse_artifact_set(output.utf8.as_bytes()).unwrap();
+    assert_eq!(plan.artifact_set(&restored).unwrap(), original);
+
+    for projection in [
+        serde_json::to_value(&original).unwrap(),
+        serde_json::json!([output.schema, "0".repeat(64)]),
+        serde_json::json!([sdk::build_input_contract(), output.sha256]),
+    ] {
+        let mut envelope = result.envelope().clone();
+        envelope.output = Some(projection);
+        let frame = serde_json::to_vec(&envelope).unwrap();
+        let error = FixedResult::restore(&frame, &codec::digest(&frame), &input, token).unwrap_err();
+        assert_eq!(error.code, ErrorCode::ResultMismatch);
+    }
+
+    let mut envelope = result.envelope().clone();
+    let sdk::InvocationOutcome::Succeeded { output } =
+        &mut envelope.plugin.as_mut().unwrap().result.outcome
+    else {
+        unreachable!();
+    };
+    // Both digests and the reference are consistent; a duplicate decoded key
+    // must still be rejected before an artifact reader can use the outcome.
+    let duplicated = output.utf8.replacen("\"targetLanguage\":", "\"target\\u004canguage\":\"zh-CN\",\"targetLanguage\":", 1);
+    assert_ne!(duplicated, &*output.utf8);
+    *output = sdk::EncodedPayload::capture(output.schema.clone(), duplicated).unwrap();
+    envelope.output = Some(serde_json::json!([output.schema, output.sha256]));
+    let frame = serde_json::to_vec(&envelope).unwrap();
+    assert_eq!(
+        FixedResult::restore(&frame, &codec::digest(&frame), &input, token).unwrap_err().stage,
+        "decoding"
+    );
+}
+
 #[test]
 fn generic_validator_and_corrupt_artifact_data_cannot_bypass_required_proof() {
     let (_directory, mut store, _generation, input) = fixture_build(&["zh-CN"]);
@@ -764,7 +811,7 @@ fn generic_validator_and_corrupt_artifact_data_cannot_bypass_required_proof() {
         serde_json::to_string(&artifacts).unwrap(),
     )
     .unwrap();
-    envelope.output = Some(serde_json::to_value(artifacts).unwrap());
+    envelope.output = Some(serde_json::json!([output.schema, output.sha256]));
     let forged = FixedResult::capture(envelope, &input, result.envelope().dispatch_token).unwrap();
     assert!(
         ArtifactValidationCapture::capture(

@@ -166,18 +166,14 @@ impl ReleasePlan {
         if output.schema != self.build.binding.builder.declaration.output_schema {
             return Err(invalid());
         }
-        // The binding validator counts and verifies the decoded artifact set
-        // against the same builder contract. Only the wire byte ceiling must
-        // also be checked before allocating the typed output.
+        // FixedResult checked the original JSON syntax, digest and reference.
+        // Decode directly into the domain type, without a stored JSON tree.
+        // The caller still checks the artifact binding and bytes.
         let bytes = output.utf8.as_bytes();
         if bytes.len() > sdk::MAX_ARTIFACT_SET_BYTES {
             return Err(invalid());
         }
-        // FixedResult already matched the strict stored projection against
-        // these original bytes. Read its typed fields without lexing the
-        // complete artifact JSON a second time.
-        let projected = result.envelope().output.as_ref().ok_or_else(invalid)?;
-        sdk::ArtifactSet::deserialize(projected).map_err(|_| invalid())
+        serde_json::from_slice(bytes).map_err(|_| invalid())
     }
     pub(super) fn release_summary(&self) -> super::record::ManifestSummary {
         let binding = &self.build.binding;

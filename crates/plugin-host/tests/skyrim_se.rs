@@ -1208,6 +1208,14 @@ fn run_capacity_case(directory: &str, records: usize, exact_raw_bytes: Option<us
     let build_lifetime = std::time::Duration::from_secs(20 * 60);
     grants.push(authorize_for(&runtime, &mut store, &build_input, build_lifetime));
     let built = execute(&mut runtime, &mut store, &build_input);
+    let sdk::InvocationOutcome::Succeeded { output } =
+        &built.envelope().plugin.as_ref().unwrap().result.outcome
+    else {
+        panic!("expected saved original build output");
+    };
+    assert_eq!(built.envelope().output, Some(json!([output.schema, output.sha256])));
+    assert!(built.bytes().len() < output.utf8.len() + 16 * 1024);
+    eprintln!("capacity_build_result_frame_bytes={} raw_payload_bytes={}", built.bytes().len(), output.utf8.len());
     eprintln!("capacity_build_seconds={}", build_started.elapsed().as_secs_f64());
     let action = store.prepare_adoption(build_input.envelope().attempt_id, build_input.envelope().units[0].unit_id, vec![built.envelope().result_id], json!({})).unwrap();
     assert!(store.adopt_execution(&action, &ReleaseAdoptionHandler).is_err());
