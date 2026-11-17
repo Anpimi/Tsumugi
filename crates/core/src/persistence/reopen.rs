@@ -20,6 +20,7 @@ pub struct ProjectReopenProof {
     pub(super) directory: PathBuf,
     pub(super) digest: [u8; 32],
     pub(super) releases: ReleaseReadCache,
+    pub(super) source_page: Option<super::content::SourcePageMetadata>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]

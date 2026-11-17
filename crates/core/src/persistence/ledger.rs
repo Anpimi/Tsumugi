@@ -120,6 +120,8 @@ pub(super) struct OpenPluginProofs<'a> {
     pub(super) source_sets: BTreeSet<ExecutionId>,
     source_revisions: BTreeMap<ExecutionId, (u64, bool)>,
     recent_source: Option<OpenSourceSnapshot>,
+    current_source: Option<ExecutionId>,
+    pub(super) source_page: Option<super::content::SourcePageMetadata>,
 }
 
 pub(super) struct OpenSourceSnapshot {
@@ -163,6 +165,11 @@ impl OpenPluginProofs<'_> {
             let (revision, (input, result, output)) =
                 super::content::snapshot_qualification(connection, snapshot, has_lineage)?;
             self.source_revisions.insert(snapshot, (revision, has_lineage));
+            if has_lineage && self.current_source == Some(snapshot) {
+                self.source_page = super::content::SourcePageMetadata::from_qualified(
+                    connection, Some(snapshot), &input, &result, &output,
+                ).ok();
+            }
             latest = Some((snapshot, input.envelope().project_id,
                 input.digest().to_owned(), result.digest().to_owned(), output));
         }
@@ -222,6 +229,8 @@ pub(super) fn validate_for_open<'a>(
         source_sets: BTreeSet::new(),
         source_revisions: BTreeMap::new(),
         recent_source: None,
+        current_source: super::content::scope(connection)?.current_snapshot,
+        source_page: None,
     };
     validate_schema(
         connection,

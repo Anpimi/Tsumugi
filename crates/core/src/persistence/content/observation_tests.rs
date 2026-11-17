@@ -103,14 +103,30 @@ fn source_page_qualification_is_bound_to_the_open_connection_instance() {
     let fixture = super::decision_mappings::tests::plugin_fixture();
     let path = fixture.store.directory().to_path_buf();
     let snapshot = fixture.store.content_scope().unwrap().current_snapshot.unwrap();
+    let expected = fixture.store.source_content(snapshot, 0, 1).unwrap();
     fixture.store.close().unwrap();
     let reopened = ProjectStore::open(&path).unwrap();
-    assert_eq!(reopened.connection().unwrap().total_changes(), 0);
-    assert_eq!(reopened.source_content(snapshot, 0, 1).unwrap().total, 3);
-    reopened.close().unwrap();
+    let connection = reopened.connection().unwrap();
+    assert_eq!(connection.total_changes(), 0);
+    super::super::review::read_snapshot(connection, |connection| {
+        assert!(reopened.source_pages.for_reopen(connection).is_some(),
+            "the open audit seeds pagination before the first page is requested");
+        Ok(())
+    }).unwrap();
+    assert_eq!(reopened.source_content(snapshot, 0, 1).unwrap(), expected);
+    let proof = reopened.close_with_reopen_proof().unwrap().unwrap();
+    let reopened = ProjectStore::open_with_reopen_proof(&path, Some(&proof)).unwrap();
+    super::super::review::read_snapshot(reopened.connection().unwrap(), |connection| {
+        assert!(reopened.source_pages.for_reopen(connection).is_some(),
+            "a verified reopen binds pagination to its new connection");
+        Ok(())
+    }).unwrap();
+    assert_eq!(reopened.source_content(snapshot, 0, 1).unwrap(), expected);
     let writer = Connection::open(path.join("project.sqlite3")).unwrap();
-    writer.execute("UPDATE source_occurrences SET native_key='Damage between opens' WHERE snapshot_id=?1 AND ordinal=2",
+    writer.execute("UPDATE source_occurrences SET native_key='Damage outside this page' WHERE snapshot_id=?1 AND ordinal=2",
         [snapshot.to_string()]).unwrap();
+    assert_eq!(reopened.source_content(snapshot, 0, 1).unwrap_err().code, ErrorCode::CorruptLedger);
+    reopened.close().unwrap();
     drop(writer);
     assert!(ProjectStore::open(&path).is_err());
 }

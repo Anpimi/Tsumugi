@@ -438,6 +438,7 @@ pub struct ProjectStore {
     review_scopes: review::ReadScopes,
     attempt_details: std::cell::RefCell<ledger::AttemptDetailCache>,
     release_reads: std::cell::RefCell<release::ReleaseReadCache>,
+    source_pages: content::SourcePageCache,
     changes: std::sync::Arc<changes::ChangeClock>,
     source_hook_deadlines:
         std::collections::BTreeMap<crate::execution::ExecutionId, std::time::Instant>,
@@ -494,6 +495,7 @@ impl ProjectStore {
             changes: Default::default(),
             attempt_details: Default::default(),
             release_reads: Default::default(),
+            source_pages: Default::default(),
             source_hook_deadlines: Default::default(),
             #[cfg(test)]
             fault: None,
@@ -548,7 +550,7 @@ impl ProjectStore {
             Connection::open_with_flags(&database_path, OpenFlags::SQLITE_OPEN_READ_WRITE)
                 .map_err(|error| map_sqlite(error, PersistenceStage::Open))?;
         let proof = proof.filter(|proof| proof.directory == directory);
-        let (release_reads, open_basis) = validate_database(
+        let (reads, open_basis) = validate_database(
             &mut connection,
             file.as_ref().map(|file| (database_path.as_path(), file)),
             proof,
@@ -569,7 +571,8 @@ impl ProjectStore {
             review_scopes: Default::default(),
             changes: Default::default(),
             attempt_details: Default::default(),
-            release_reads: release_reads.into(),
+            release_reads: reads.releases.into(),
+            source_pages: reads.source_pages,
             source_hook_deadlines: Default::default(),
             #[cfg(test)]
             fault: None,
@@ -693,11 +696,13 @@ impl ProjectStore {
         let digest = opening.verified_digest_for(&current)
             .or_else(|| reopen::database_digest(&path, &database, &file))?;
         let releases = self.release_reads.borrow().for_reopen(&snapshot);
+        let source_page = self.source_pages.for_reopen(&snapshot);
         snapshot.commit().ok()?;
         Some(ProjectReopenProof {
             directory: self.directory.clone(),
             digest,
             releases,
+            source_page,
         })
     }
 
@@ -1073,14 +1078,20 @@ fn require_current_schema(
 fn validate_existing_database(
     connection: &mut Connection,
 ) -> Result<release::ReleaseReadCache, PersistenceError> {
-    validate_database(connection, None, None).map(|(releases, _)| releases)
+    validate_database(connection, None, None).map(|(reads, _)| reads.releases)
+}
+
+#[derive(Debug)]
+struct OpenReadCaches {
+    releases: release::ReleaseReadCache,
+    source_pages: content::SourcePageCache,
 }
 
 fn validate_database(
     connection: &mut Connection,
     file: Option<(&Path, &reopen::FileStamp)>,
     proof: Option<&ProjectReopenProof>,
-) -> Result<(release::ReleaseReadCache, Option<reopen::OpenBasis>), PersistenceError> {
+) -> Result<(OpenReadCaches, Option<reopen::OpenBasis>), PersistenceError> {
     connection
         .pragma_update(None, "foreign_keys", true)
         .map_err(|error| map_sqlite(error, PersistenceStage::Open))?;
@@ -1123,11 +1134,15 @@ fn validate_database(
         .and_then(|((proof, (path, file)), database)| {
             (reopen::database_digest(path, database, file) == Some(proof.digest)).then_some(proof)
         });
-    let releases = if let Some(proof) = verified {
+    let reads = if let Some(proof) = verified {
         if let Some(basis) = &mut open_basis {
             basis.remember_verified_digest(proof.digest);
         }
-        proof.releases.rebind(&snapshot)
+        OpenReadCaches {
+            releases: proof.releases.rebind(&snapshot),
+            source_pages: content::SourcePageCache::for_snapshot(&snapshot, proof.source_page.clone())
+                .unwrap_or_default(),
+        }
     } else {
         validate_schema_shape(&snapshot)?
     };
@@ -1135,7 +1150,7 @@ fn validate_database(
     snapshot
         .commit()
         .map_err(|error| map_sqlite(error, PersistenceStage::Open))?;
-    Ok((releases, open_basis))
+    Ok((reads, open_basis))
 }
 
 
@@ -1147,7 +1162,7 @@ fn validate_foreign_keys(connection: &Connection) -> rusqlite::Result<()> {
     Ok(())
 }
 
-fn validate_schema_shape(connection: &Connection) -> Result<release::ReleaseReadCache, PersistenceError> {
+fn validate_schema_shape(connection: &Connection) -> Result<OpenReadCaches, PersistenceError> {
     // All owners below read this same pinned snapshot. The pragma audits the
     // whole database, so repeating it per owner re-scans unrelated tables.
     validate_foreign_keys(connection).map_err(|_| PersistenceError::CorruptProject {
@@ -1259,7 +1274,11 @@ fn validate_schema_shape(connection: &Connection) -> Result<release::ReleaseRead
             stage: PersistenceStage::Open,
         }
     })?;
-    Ok(release_reads)
+    Ok(OpenReadCaches {
+        releases: release_reads,
+        source_pages: content::SourcePageCache::for_snapshot(connection, open_proofs.source_page)
+            .unwrap_or_default(),
+    })
 }
 
 /// Compare a captured frame to SQLite without materializing the stored BLOB.

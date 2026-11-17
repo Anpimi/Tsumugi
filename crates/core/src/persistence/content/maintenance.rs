@@ -277,8 +277,9 @@ impl ProjectStore {
         super::super::review::read_snapshot(connection, |connection| {
             let (_, (input, result, output)) = snapshot_qualification(connection, snapshot, true)?;
             let (total, rows) = read_snapshot_rows(connection, snapshot, &output, query, after, limit)?;
-            page(connection, Some(snapshot), &input, &result, &output, scope(connection)?, total,
-                rows, None, after, limit)
+            let mut metadata = SourcePageMetadata::from_qualified(connection, Some(snapshot), &input, &result, &output)?;
+            metadata.total = total;
+            page(metadata, scope(connection)?, rows, None, after, limit)
         })
     }
 

@@ -7,6 +7,7 @@ use crate::{
     execution::{codec, *},
 };
 use rusqlite::{Connection, params};
+use super::ledger::{ReadSnapshotStamp, read_snapshot_stamp};
 pub(in crate::persistence) mod decision_mappings;
 #[cfg(test)]
 mod hook_observation_tests;
@@ -1063,45 +1064,158 @@ fn read_snapshot_rows(
     Ok((total, rows))
 }
 
-fn page(
-    connection: &Connection,
+#[derive(Clone, Debug)]
+pub(super) struct SourcePageMetadata {
     snapshot: Option<ExecutionId>,
-    input: &FixedInput,
-    result: &FixedResult,
-    output: &SourceOutput,
-    scope: ContentScope,
+    attempt: ExecutionId,
+    result: ExecutionId,
+    result_digest: String,
+    namespace: String,
+    source_language: String,
+    identity_policy: String,
+    coverage: Vec<FileCoverage>,
+    diagnostics: Vec<String>,
+    summary: Option<tsumugi_plugin_sdk::SourceCaptureSummary>,
     total: u32,
+}
+
+impl SourcePageMetadata {
+    pub(super) fn from_qualified(
+        connection: &Connection,
+        snapshot: Option<ExecutionId>,
+        input: &FixedInput,
+        result: &FixedResult,
+        output: &SourceOutput,
+    ) -> Result<Self, ExecutionError> {
+        let result_id = result.envelope().result_id;
+        Ok(Self {
+            snapshot,
+            attempt: input.envelope().attempt_id,
+            result: result_id,
+            result_digest: result.digest().into(),
+            namespace: output.namespace.clone(),
+            source_language: output.source_language.clone(),
+            identity_policy: output.identity_policy.clone(),
+            coverage: output.coverage.clone(),
+            diagnostics: output.diagnostics.clone(),
+            summary: super::ledger::source_capture_summary(connection, result_id, output)?,
+            total: output.occurrences.len() as u32,
+        })
+    }
+}
+
+#[derive(Debug, Default)]
+pub(super) struct SourcePageCache(Option<(ReadSnapshotStamp, SourcePageMetadata)>);
+
+impl SourcePageCache {
+    pub(super) fn for_snapshot(
+        connection: &Connection,
+        metadata: Option<SourcePageMetadata>,
+    ) -> Result<Self, ExecutionError> {
+        let entry = match metadata {
+            Some(metadata) => read_snapshot_stamp(connection)?.map(|stamp| (stamp, metadata)),
+            None => None,
+        };
+        Ok(Self(entry))
+    }
+
+    fn read(
+        &self,
+        connection: &Connection,
+        snapshot: ExecutionId,
+    ) -> Result<Option<SourcePageMetadata>, ExecutionError> {
+        let Some((stamp, metadata)) = &self.0 else {
+            return Ok(None);
+        };
+        if metadata.snapshot != Some(snapshot) {
+            return Ok(None);
+        }
+        let current = read_snapshot_stamp(connection)?;
+        Ok((current.as_ref() == Some(stamp)).then(|| metadata.clone()))
+    }
+
+    pub(super) fn for_reopen(&self, connection: &Connection) -> Option<SourcePageMetadata> {
+        let (saved, metadata) = self.0.as_ref()?;
+        let current = read_snapshot_stamp(connection).ok().flatten()?;
+        (&current == saved).then(|| metadata.clone())
+    }
+}
+
+fn qualified_page_rows(
+    connection: &Connection,
+    snapshot: ExecutionId,
+    total: u32,
+    after: u32,
+    limit: u32,
+) -> Result<Vec<ContentRow>, ExecutionError> {
+    let expected = total.checked_sub(after)
+        .ok_or_else(|| failure(ErrorCode::InvalidInput, "page"))?.min(limit);
+    let mut statement = connection.prepare_cached(
+        "SELECT occurrence_id,unit_id,revision_id,
+                CASE WHEN length(projection)<=1048576 THEN projection END
+         FROM source_occurrences WHERE snapshot_id=?1 AND ordinal>=?2
+         ORDER BY ordinal LIMIT ?3",
+    ).map_err(sql_error)?;
+    let rows = statement.query_map(params![snapshot.to_string(), after, expected], |row| {
+        Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get::<_, Vec<u8>>(3)?))
+    }).map_err(sql_error)?;
+    let mut page = Vec::with_capacity(expected as usize);
+    for row in rows {
+        let (occurrence_id, unit, revision, projection) = row.map_err(sql_error)?;
+        // The full snapshot audit already compared each BLOB to its canonical
+        // typed occurrence. The caller verified that this is the same read snapshot.
+        let occurrence: SourceOccurrence =
+            serde_json::from_slice(&projection).map_err(|_| corrupt())?;
+        if occurrence.ordinal != after + page.len() as u32 {
+            return Err(corrupt());
+        }
+        page.push(ContentRow {
+            occurrence_id: Some(id(occurrence_id)?),
+            unit_id: Some(id(unit)?),
+            source_revision_id: Some(id(revision)?),
+            occurrence,
+        });
+    }
+    if page.len() != expected as usize {
+        return Err(corrupt());
+    }
+    Ok(page)
+}
+
+fn page(
+    metadata: SourcePageMetadata,
+    scope: ContentScope,
     rows: Vec<ContentRow>,
     mapping_revision: Option<Revision>,
     after: u32,
     limit: u32,
 ) -> Result<ContentPage, ExecutionError> {
-    if limit == 0 || limit > 100 || after > total {
+    if limit == 0 || limit > 100 || after > metadata.total {
         return Err(failure(ErrorCode::InvalidInput, "page"));
     }
     let mut page = ContentPage {
-        capture_summary: super::ledger::source_capture_summary(connection, result.envelope().result_id, output)?,
-        snapshot_id: snapshot,
-        attempt_id: input.envelope().attempt_id,
-        result_id: result.envelope().result_id,
+        capture_summary: metadata.summary,
+        snapshot_id: metadata.snapshot,
+        attempt_id: metadata.attempt,
+        result_id: metadata.result,
         confirmation: SourceConfirmation {
             expected_mapping_revision: mapping_revision,
             maintenance_hook: None,
-            result_digest: result.digest().into(),
-            identity_policy: output.identity_policy.clone(),
+            result_digest: metadata.result_digest,
+            identity_policy: metadata.identity_policy,
             expected_content_revision: scope.revision,
-            source_language: output.source_language.clone(),
+            source_language: metadata.source_language,
             expected_current_snapshot: scope.current_snapshot,
             lineage: Vec::new(),
             actor: None,
             lineage_base_snapshot: None,
         },
         scope,
-        namespace: output.namespace.clone(),
-        coverage: output.coverage.clone(),
-        total,
+        namespace: metadata.namespace,
+        coverage: metadata.coverage,
+        total: metadata.total,
         next_ordinal: None,
-        diagnostics: output.diagnostics.clone(),
+        diagnostics: metadata.diagnostics,
         rows: Vec::new(),
     };
     for row in rows.into_iter().take(limit as usize) {
@@ -1373,10 +1487,8 @@ impl ProjectStore {
             let mapping_revision = scope.current_snapshot
                 .map(|snapshot| lineage_corrections::mapping_revision(connection, snapshot))
                 .transpose()?;
-            page(
-                connection, None, &input, &result, &output, scope, output.occurrences.len() as u32,
-                rows, mapping_revision, after, limit,
-            )
+            let metadata = SourcePageMetadata::from_qualified(connection, None, &input, &result, &output)?;
+            page(metadata, scope, rows, mapping_revision, after, limit)
         })
     }
     pub fn source_content(
@@ -1390,16 +1502,29 @@ impl ProjectStore {
             .map_err(|_| failure(ErrorCode::StorageFailed, "source-read"))?;
         if limit == 0 || limit > 100 { return Err(failure(ErrorCode::InvalidInput, "page")); }
         super::review::read_snapshot(connection, |connection| {
-            let (_, (input, result, output)) = snapshot_qualification(connection, snapshot, true)?;
-            let (total, mut rows) = read_snapshot_rows(connection, snapshot, &output, "", after, limit)?;
             let scope = scope(connection)?;
-            if scope.current_snapshot == Some(snapshot) {
+            let current = scope.current_snapshot == Some(snapshot);
+            let metadata = if current {
+                self.source_pages.read(connection, snapshot)?
+            } else {
+                None
+            };
+            let (metadata, mut rows) = if let Some(metadata) = metadata {
+                let rows = qualified_page_rows(connection, snapshot, metadata.total, after, limit)?;
+                (metadata, rows)
+            } else {
+                let (_, (input, result, output)) = snapshot_qualification(connection, snapshot, true)?;
+                let (_, rows) = read_snapshot_rows(connection, snapshot, &output, "", after, limit)?;
+                let metadata = SourcePageMetadata::from_qualified(connection, Some(snapshot), &input, &result, &output)?;
+                (metadata, rows)
+            };
+            if current {
                 lineage_corrections::effective_rows(connection, &mut rows)?;
             }
             let mapping_revision = scope.current_snapshot
-                .map(|snapshot| lineage_corrections::mapping_revision(connection, snapshot)).transpose()?;
-            page(connection, Some(snapshot), &input, &result, &output, scope, total, rows,
-                mapping_revision, after, limit)
+                .map(|snapshot| lineage_corrections::mapping_revision(connection, snapshot))
+                .transpose()?;
+            page(metadata, scope, rows, mapping_revision, after, limit)
         })
     }
     pub fn source_comparison(
