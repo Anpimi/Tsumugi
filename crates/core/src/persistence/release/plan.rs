@@ -322,7 +322,7 @@ impl ReleasePlan {
                 && source.result_digest == self.source_result_digest
                 && source.exchange == self.source
         } else {
-            let (_, (input, result, output)) =
+            let (revision, (input, result, output)) =
                 super::super::content::snapshot_qualification(connection, self.source_snapshot_id, true)?;
             let matches = input.envelope().project_id == self.project_id
                 && input.digest() == self.source_input_digest
@@ -330,7 +330,7 @@ impl ReleasePlan {
                 && output.exchange == self.source;
             if matches && let Some(pages) = pages {
                 pages.remember_qualified_current(
-                    connection, self.source_snapshot_id, &input, &result, &output,
+                    connection, (self.source_snapshot_id, revision), &input, &result, &output,
                 );
             }
             matches

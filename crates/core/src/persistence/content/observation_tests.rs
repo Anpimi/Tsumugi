@@ -100,10 +100,32 @@ fn source_page_qualification_from_a_write_transaction_does_not_survive_rollback(
 
 #[test]
 fn source_page_qualification_is_bound_to_the_open_connection_instance() {
+    use rusqlite::trace::{TraceEvent, TraceEventCodes};
+    thread_local! {
+        static SOURCE_QUALIFICATIONS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+    }
+    fn assert_cached_history(store: &ProjectStore, expected: &SourceHistory, expected_page: &ContentPage) {
+        let connection = store.connection().unwrap();
+        connection.trace_v2(TraceEventCodes::SQLITE_TRACE_STMT, Some(|event| {
+            if let TraceEvent::Stmt(_, sql) = event
+                && sql.starts_with("SELECT project_id,set_id,attempt_id,result_id,source_language,identity_policy FROM source_snapshots")
+            {
+                SOURCE_QUALIFICATIONS.with(|count| count.set(count.get() + 1));
+            }
+        }));
+        assert_eq!(&store.source_history(0, 1).unwrap(), expected);
+        assert_eq!(&store.source_history_content(expected.snapshots[0].snapshot_id, "", 0, 1).unwrap(), expected_page);
+        assert_eq!(SOURCE_QUALIFICATIONS.with(|count| count.replace(0)), 0,
+            "history should reuse the current source qualification from open");
+        connection.trace_v2(TraceEventCodes::empty(), None);
+    }
+
     let fixture = super::decision_mappings::tests::plugin_fixture();
     let path = fixture.store.directory().to_path_buf();
     let snapshot = fixture.store.content_scope().unwrap().current_snapshot.unwrap();
     let expected = fixture.store.source_content(snapshot, 0, 1).unwrap();
+    let expected_history = fixture.store.source_history(0, 1).unwrap();
+    let expected_history_page = fixture.store.source_history_content(snapshot, "", 0, 1).unwrap();
     fixture.store.close().unwrap();
     let reopened = ProjectStore::open(&path).unwrap();
     let connection = reopened.connection().unwrap();
@@ -113,6 +135,7 @@ fn source_page_qualification_is_bound_to_the_open_connection_instance() {
             "the open audit seeds pagination before the first page is requested");
         Ok(())
     }).unwrap();
+    assert_cached_history(&reopened, &expected_history, &expected_history_page);
     assert_eq!(reopened.source_content(snapshot, 0, 1).unwrap(), expected);
     let proof = reopened.close_with_reopen_proof().unwrap().unwrap();
     let reopened = ProjectStore::open_with_reopen_proof(&path, Some(&proof)).unwrap();
@@ -121,10 +144,13 @@ fn source_page_qualification_is_bound_to_the_open_connection_instance() {
             "a verified reopen binds pagination to its new connection");
         Ok(())
     }).unwrap();
+    assert_cached_history(&reopened, &expected_history, &expected_history_page);
     assert_eq!(reopened.source_content(snapshot, 0, 1).unwrap(), expected);
     let writer = Connection::open(path.join("project.sqlite3")).unwrap();
     writer.execute("UPDATE source_occurrences SET native_key='Damage outside this page' WHERE snapshot_id=?1 AND ordinal=2",
         [snapshot.to_string()]).unwrap();
+    assert_eq!(reopened.source_history(0, 1).unwrap_err().code, ErrorCode::CorruptLedger);
+    assert_eq!(reopened.source_history_content(snapshot, "", 0, 1).unwrap_err().code, ErrorCode::CorruptLedger);
     assert_eq!(reopened.source_content(snapshot, 0, 1).unwrap_err().code, ErrorCode::CorruptLedger);
     reopened.close().unwrap();
     drop(writer);

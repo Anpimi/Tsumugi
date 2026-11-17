@@ -1095,7 +1095,7 @@ fn read_snapshot_rows(
 
 #[derive(Clone, Debug)]
 pub(super) struct SourcePageMetadata {
-    snapshot: Option<ExecutionId>,
+    snapshot: Option<(ExecutionId, u64)>,
     attempt: ExecutionId,
     result: ExecutionId,
     result_digest: String,
@@ -1111,7 +1111,7 @@ pub(super) struct SourcePageMetadata {
 impl SourcePageMetadata {
     pub(super) fn from_qualified(
         connection: &Connection,
-        snapshot: Option<ExecutionId>,
+        snapshot: Option<(ExecutionId, u64)>,
         input: &FixedInput,
         result: &FixedResult,
         output: &SourceOutput,
@@ -1154,13 +1154,13 @@ impl SourcePageCache {
     pub(in crate::persistence) fn remember_qualified_current(
         &self,
         connection: &Connection,
-        snapshot: ExecutionId,
+        snapshot: (ExecutionId, u64),
         input: &FixedInput,
         result: &FixedResult,
         output: &SourceOutput,
     ) {
-        if !matches!(scope(connection), Ok(scope) if scope.current_snapshot == Some(snapshot))
-            || matches!(self.read(connection, snapshot), Ok(Some(_)))
+        if !matches!(scope(connection), Ok(scope) if scope.current_snapshot == Some(snapshot.0))
+            || matches!(self.read(connection, snapshot.0), Ok(Some(_)))
         {
             return;
         }
@@ -1192,7 +1192,7 @@ impl SourcePageCache {
         let Some((guard, metadata)) = entry.as_ref() else {
             return Ok(None);
         };
-        if metadata.snapshot != Some(snapshot) {
+        if metadata.snapshot.map(|(id, _)| id) != Some(snapshot) {
             return Ok(None);
         }
         Ok(Self::current(connection, guard)?.then(|| metadata.clone()))
@@ -1259,7 +1259,7 @@ fn page(
     }
     let mut page = ContentPage {
         capture_summary: metadata.summary,
-        snapshot_id: metadata.snapshot,
+        snapshot_id: metadata.snapshot.map(|(id, _)| id),
         attempt_id: metadata.attempt,
         result_id: metadata.result,
         confirmation: SourceConfirmation {
@@ -1577,9 +1577,12 @@ impl ProjectStore {
                 let rows = qualified_page_rows(connection, snapshot, metadata.total, after, limit)?;
                 (metadata, rows)
             } else {
-                let (_, (input, result, output)) = snapshot_qualification(connection, snapshot, true)?;
+                let (revision, (input, result, output)) =
+                    snapshot_qualification(connection, snapshot, true)?;
                 let (_, rows) = read_snapshot_rows(connection, snapshot, &output, "", after, limit)?;
-                let metadata = SourcePageMetadata::from_qualified(connection, Some(snapshot), &input, &result, &output)?;
+                let metadata = SourcePageMetadata::from_qualified(
+                    connection, Some((snapshot, revision)), &input, &result, &output,
+                )?;
                 (metadata, rows)
             };
             if current {

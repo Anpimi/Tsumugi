@@ -224,23 +224,35 @@ impl ProjectStore {
                 .map_err(sql_error)?
             {
                 let snapshot = id(raw.map_err(sql_error)?)?;
-                let (revision, (input, result, output)) =
-                    snapshot_qualification(connection, snapshot, true)?;
+                let current = current == Some(snapshot);
+                let (revision, attempt, total, result_digest, coverage) = if current
+                    && let Some(metadata) = self.source_pages.read(connection, snapshot)?
+                    && let Some((_, revision)) = metadata.snapshot
+                {
+                    (revision, metadata.attempt, metadata.total, metadata.result_digest, metadata.coverage)
+                } else {
+                    let (revision, (input, result, output)) =
+                        snapshot_qualification(connection, snapshot, true)?;
+                    (
+                        revision, input.envelope().attempt_id, output.occurrences.len() as u32,
+                        result.digest().into(), output.coverage.clone(),
+                    )
+                };
                 let action: String = connection
                     .query_row(
                         "SELECT action_id FROM adoption_receipts WHERE attempt_id=?1",
-                        [input.envelope().attempt_id.to_string()],
+                        [attempt.to_string()],
                         |r| r.get(0),
                     )
                     .map_err(sql_error)?;
                 entries.push(SourceHistoryEntry {
                     snapshot_id: snapshot,
                     revision,
-                    current: current == Some(snapshot),
-                    total: output.occurrences.len() as u32,
+                    current,
+                    total,
                     action_id: id(action)?,
-                    result_digest: result.digest().into(),
-                    coverage: output.coverage.clone(),
+                    result_digest,
+                    coverage,
                 });
             }
             entries.sort_by_key(|entry| std::cmp::Reverse(entry.revision));
@@ -275,11 +287,22 @@ impl ProjectStore {
             .connection()
             .map_err(|_| failure(ErrorCode::StorageFailed, "source-read"))?;
         super::super::review::read_snapshot(connection, |connection| {
-            let (_, (input, result, output)) = snapshot_qualification(connection, snapshot, true)?;
+            let scope = scope(connection)?;
+            if query.is_empty()
+                && scope.current_snapshot == Some(snapshot)
+                && let Some(metadata) = self.source_pages.read(connection, snapshot)?
+            {
+                let rows = qualified_page_rows(connection, snapshot, metadata.total, after, limit)?;
+                return page(metadata, scope, rows, None, after, limit);
+            }
+            let (revision, (input, result, output)) =
+                snapshot_qualification(connection, snapshot, true)?;
             let (total, rows) = read_snapshot_rows(connection, snapshot, &output, query, after, limit)?;
-            let mut metadata = SourcePageMetadata::from_qualified(connection, Some(snapshot), &input, &result, &output)?;
+            let mut metadata = SourcePageMetadata::from_qualified(
+                connection, Some((snapshot, revision)), &input, &result, &output,
+            )?;
             metadata.total = total;
-            page(metadata, scope(connection)?, rows, None, after, limit)
+            page(metadata, scope, rows, None, after, limit)
         })
     }
 

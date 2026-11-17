@@ -167,7 +167,7 @@ impl OpenPluginProofs<'_> {
             self.source_revisions.insert(snapshot, (revision, has_lineage));
             if has_lineage && self.current_source == Some(snapshot) {
                 self.source_page = super::content::SourcePageMetadata::from_qualified(
-                    connection, Some(snapshot), &input, &result, &output,
+                    connection, Some((snapshot, revision)), &input, &result, &output,
                 ).ok();
             }
             latest = Some((snapshot, input.envelope().project_id,
