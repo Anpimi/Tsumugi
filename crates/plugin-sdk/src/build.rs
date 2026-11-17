@@ -117,6 +117,10 @@ impl BuildInput {
 
     fn validate_structure(&self) -> Result<(), ContractError> {
         self.source.validate()?;
+        self.validate_structure_for_validated_source()
+    }
+
+    fn validate_structure_for_validated_source(&self) -> Result<(), ContractError> {
         language(&self.target_language)?;
         self.output_limits.validate()?;
         validate_build_output_paths(self.output_paths.iter().map(String::as_str))?;
@@ -423,7 +427,28 @@ impl BuildBinding {
     /// builder's complete payload limit. Discard partial output on error.
     pub fn write_input(&self, input: &BuildInput, writer: impl std::io::Write) -> Result<(), ContractError> {
         self.validate()?;
-        input.validate_structure()?;
+        input.source.validate()?;
+        self.write_validated_source_input(input, writer)
+    }
+
+    /// The caller must have completely validated this exact immutable source
+    /// with `ContentExchange::validate`. All other build constraints and the
+    /// complete encoded size are still checked. Discard partial output on error.
+    pub fn write_input_for_validated_source(
+        &self,
+        input: &BuildInput,
+        writer: impl std::io::Write,
+    ) -> Result<(), ContractError> {
+        self.validate()?;
+        self.write_validated_source_input(input, writer)
+    }
+
+    fn write_validated_source_input(
+        &self,
+        input: &BuildInput,
+        writer: impl std::io::Write,
+    ) -> Result<(), ContractError> {
+        input.validate_structure_for_validated_source()?;
         self.declaration
             .validate_configuration(&input.configuration)?;
         if self.builder.declaration.input_schema.schema_version == 1 {

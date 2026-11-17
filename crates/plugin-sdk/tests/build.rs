@@ -69,6 +69,10 @@ fn build_write_matches_canonical_bytes_and_enforces_the_declared_limit() {
     binding.write_input(&input, &mut actual).unwrap();
     assert_eq!(actual, expected);
     binding.validate_input(&input).unwrap();
+    input.source.validate().unwrap();
+    actual.clear();
+    binding.write_input_for_validated_source(&input, &mut actual).unwrap();
+    assert_eq!(actual, expected);
 
     binding.builder.declaration.limits.max_input_bytes -= 1;
     actual.clear();
@@ -77,11 +81,18 @@ fn build_write_matches_canonical_bytes_and_enforces_the_declared_limit() {
         ContractError { code: ContractErrorCode::LimitExceeded, field: "buildInput".into() },
     );
     assert!(actual.len() < expected.len());
+    actual.clear();
+    assert_eq!(
+        binding.write_input_for_validated_source(&input, &mut actual).unwrap_err(),
+        ContractError { code: ContractErrorCode::LimitExceeded, field: "buildInput".into() },
+    );
 
     binding.builder.declaration.limits.max_input_bytes = expected.len() as u32;
     input.targets[0].source_revision_id.push('x');
     actual.clear();
     assert!(binding.write_input(&input, &mut actual).is_err());
+    assert!(actual.is_empty());
+    assert!(binding.write_input_for_validated_source(&input, &mut actual).is_err());
     assert!(actual.is_empty());
 }
 

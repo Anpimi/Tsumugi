@@ -202,6 +202,7 @@ The current workspace targets **`0.3.0-alpha.1`**. The published `0.2.0-alpha.1`
 - Load pending decisions when their inbox opens, so the entries view leaves the session queue available for delivery history.
 - Load project brief counts without running the full build readiness check.
 - Read large project history with fewer intermediate allocations and compare saved files without copying their stored bytes. Audit foreign keys once during complete project validation and enforce the build request size limit while producing its bytes or digest.
+- Reuse the source already checked in a saved build plan when restoring its request and reduce temporary JSON key allocations while validating saved plugin results.
 - Check source revision ownership through its index on cold open, avoiding a separate scan of source revision text pages.
 - Keep verified source pagination available after saving a build and recording its export receipt, so viewing the source again does not replay its full history.
 - Share saved plugin result text with its original result frame during capture and reopen, reducing memory for large imports and builds. The experimental Rust SDK exposes that UTF-8 value as `PayloadText`; use `into()` for owned or borrowed text and `as_ref()` to read it.

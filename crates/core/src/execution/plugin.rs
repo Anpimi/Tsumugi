@@ -385,7 +385,9 @@ mod erased_payload {
 
     impl BuildPayload<'_> {
         fn write(&self, writer: impl std::io::Write) -> Result<(), ExecutionError> {
-            self.binding.write_input(&self.input, writer)
+            // Both paths creating this payload use ReleasePlan::from_input,
+            // which has already checked the exact source copied by projection.
+            self.binding.write_input_for_validated_source(&self.input, writer)
                 .map_err(|_| ExecutionError::new(ErrorCode::InvalidInput, "release-plan"))
         }
     }

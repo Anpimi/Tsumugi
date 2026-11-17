@@ -1,4 +1,4 @@
-use std::{collections::BTreeSet, fmt, io::{Read, Write}};
+use std::{borrow::Cow, collections::BTreeSet, fmt, io::{Read, Write}};
 
 use aws_lc_rs::digest::{Digest, SHA256, digest as compute_digest};
 use serde::{
@@ -310,8 +310,11 @@ impl<'de, const KEEP: bool> Visitor<'de> for StrictValue<KEEP> {
             }
             Ok(Value::Object(values))
         } else {
+            #[derive(serde::Deserialize)]
+            struct ObjectKey<'a>(#[serde(borrow)] Cow<'a, str>);
+
             let mut keys = BTreeSet::new();
-            while let Some(key) = map.next_key::<String>()? {
+            while let Some(ObjectKey(key)) = map.next_key()? {
                 if !keys.insert(key) {
                     return Err(serde::de::Error::custom("duplicate member"));
                 }
