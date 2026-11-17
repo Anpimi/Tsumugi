@@ -1156,20 +1156,33 @@ fn validate_database(
 
 fn validate_foreign_keys(connection: &Connection) -> rusqlite::Result<()> {
     let enabled: i64 = connection.pragma_query_value(None, "foreign_keys", |row| row.get(0))?;
-    if enabled != 1 || connection.prepare("PRAGMA foreign_key_check")?.exists([])? {
+    if enabled != 1 || connection.prepare("PRAGMA main.foreign_key_check")?.exists([])? {
         return Err(rusqlite::Error::InvalidQuery);
     }
     Ok(())
 }
 
+fn validate_open_foreign_keys(connection: &Connection, tables: &[String]) -> rusqlite::Result<()> {
+    if !content::check_revision_foreign_key_by_index(connection)? {
+        return validate_foreign_keys(connection);
+    }
+    let enabled: i64 = connection.pragma_query_value(None, "foreign_keys", |row| row.get(0))?;
+    if enabled != 1 {
+        return Err(rusqlite::Error::InvalidQuery);
+    }
+    for table in tables.iter().filter(|table| *table != "source_revisions") {
+        // Names have already been checked against the project table registry.
+        let pragma = format!("PRAGMA main.foreign_key_check(\"{table}\")");
+        if connection.prepare(&pragma)?.exists([])? {
+            return Err(rusqlite::Error::InvalidQuery);
+        }
+    }
+    Ok(())
+}
+
 fn validate_schema_shape(connection: &Connection) -> Result<OpenReadCaches, PersistenceError> {
-    // All owners below read this same pinned snapshot. The pragma audits the
-    // whole database, so repeating it per owner re-scans unrelated tables.
-    validate_foreign_keys(connection).map_err(|_| PersistenceError::CorruptProject {
-        stage: PersistenceStage::Open,
-    })?;
     let table_names: Vec<String> = connection
-        .prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%' ORDER BY name")
+        .prepare("SELECT name FROM main.sqlite_schema WHERE type = 'table' AND name NOT GLOB 'sqlite_*' ORDER BY name")
         .map_err(|error| map_sqlite(error, PersistenceStage::Open))?
         .query_map([], |row| row.get(0))
         .map_err(|error| map_sqlite(error, PersistenceStage::Open))?
@@ -1195,6 +1208,10 @@ fn validate_schema_shape(connection: &Connection) -> Result<OpenReadCaches, Pers
             stage: PersistenceStage::Open,
         });
     }
+    // All owners below read the same pinned snapshot and share its FK audit.
+    validate_open_foreign_keys(connection, &table_names).map_err(|_| PersistenceError::CorruptProject {
+        stage: PersistenceStage::Open,
+    })?;
 
     let column_names: Vec<String> = connection
         .prepare("PRAGMA table_info(project_metadata)")

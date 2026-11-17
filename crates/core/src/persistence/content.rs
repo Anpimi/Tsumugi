@@ -44,6 +44,13 @@ impl SourcePositions<'_> {
     }
 }
 
+const SOURCE_UNITS_TABLE: &str = "CREATE TABLE source_units (
+        unit_id TEXT PRIMARY KEY NOT NULL, project_id TEXT NOT NULL)";
+const SOURCE_REVISIONS_TABLE: &str = "CREATE TABLE source_revisions (
+        revision_id TEXT PRIMARY KEY NOT NULL, unit_id TEXT NOT NULL REFERENCES source_units(unit_id),
+        revision INTEGER NOT NULL CHECK(revision>0), text TEXT NOT NULL,
+        UNIQUE(unit_id,revision), UNIQUE(unit_id,revision_id))";
+
 pub(super) const TABLES:&[(&str,&str)]=&[
     ("source_sets","CREATE TABLE source_sets (
         set_id TEXT PRIMARY KEY NOT NULL, project_id TEXT NOT NULL,
@@ -59,12 +66,8 @@ pub(super) const TABLES:&[(&str,&str)]=&[
         attempt_id TEXT NOT NULL REFERENCES execution_attempts(attempt_id), result_id TEXT NOT NULL REFERENCES execution_results(result_id),
         source_language TEXT NOT NULL, identity_policy TEXT NOT NULL,
         FOREIGN KEY(set_id,project_id) REFERENCES source_sets(set_id,project_id))"),
-    ("source_units","CREATE TABLE source_units (
-        unit_id TEXT PRIMARY KEY NOT NULL, project_id TEXT NOT NULL)"),
-    ("source_revisions","CREATE TABLE source_revisions (
-        revision_id TEXT PRIMARY KEY NOT NULL, unit_id TEXT NOT NULL REFERENCES source_units(unit_id),
-        revision INTEGER NOT NULL CHECK(revision>0), text TEXT NOT NULL,
-        UNIQUE(unit_id,revision), UNIQUE(unit_id,revision_id))"),
+    ("source_units", SOURCE_UNITS_TABLE),
+    ("source_revisions", SOURCE_REVISIONS_TABLE),
     ("source_occurrences","CREATE TABLE source_occurrences (
         occurrence_id TEXT PRIMARY KEY NOT NULL, snapshot_id TEXT NOT NULL REFERENCES source_snapshots(snapshot_id),
         ordinal INTEGER NOT NULL CHECK(ordinal>=0), artifact_id TEXT NOT NULL REFERENCES source_files(artifact_id),
@@ -140,6 +143,32 @@ pub(super) fn initialize(connection: &Connection) -> rusqlite::Result<()> {
         connection.execute_batch(sql)?;
     }
     Ok(())
+}
+
+pub(super) fn check_revision_foreign_key_by_index(connection: &Connection) -> rusqlite::Result<bool> {
+    let canonical: bool = connection.query_row(
+        "SELECT COUNT(*)=2 FROM main.sqlite_schema
+         WHERE type='table'
+           AND ((name='source_revisions' AND sql=?1) OR (name='source_units' AND sql=?2))",
+        [SOURCE_REVISIONS_TABLE, SOURCE_UNITS_TABLE],
+        |row| row.get(0),
+    )?;
+    if !canonical {
+        return Ok(false);
+    }
+    // The canonical table has one non-null child key with binary TEXT
+    // collation. Its (unit_id, revision) index covers the entire child scan
+    // without pulling the revision text pages into the pager.
+    let mut statement = connection.prepare(
+        "SELECT 1 FROM main.source_revisions AS revision INDEXED BY sqlite_autoindex_source_revisions_2
+         WHERE NOT EXISTS (
+             SELECT 1 FROM main.source_units AS unit WHERE unit.unit_id=revision.unit_id
+         ) LIMIT 1",
+    )?;
+    if statement.exists([])? {
+        return Err(rusqlite::Error::InvalidQuery);
+    }
+    Ok(true)
 }
 
 /// Durable ownership remains valid when a unit leaves the current source scope.

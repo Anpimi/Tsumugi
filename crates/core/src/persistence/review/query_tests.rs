@@ -733,10 +733,25 @@ fn project_open_audits_foreign_keys_once_and_rejects_an_orphaned_review_referenc
         }).unwrap()
     });
     audit.unwrap();
+    let revision_audits = statements
+        .iter()
+        .filter(|sql| sql.contains("INDEXED BY sqlite_autoindex_source_revisions_2"))
+        .count();
+    assert_eq!(revision_audits, 1);
+    let pragmas: Vec<_> = statements
+        .iter()
+        .filter(|sql| sql.starts_with("PRAGMA main.foreign_key_check"))
+        .collect();
     assert_eq!(
-        statements.iter().filter(|sql| sql.as_str() == "PRAGMA foreign_key_check").count(),
-        1,
+        pragmas.len(),
+        pragmas.iter().collect::<std::collections::BTreeSet<_>>().len(),
     );
+    assert!(pragmas.iter().any(|sql| {
+        sql.as_str() == "PRAGMA main.foreign_key_check(\"review_waivers\")"
+    }));
+    assert!(pragmas.iter().all(|sql| {
+        sql.as_str() != "PRAGMA main.foreign_key_check" && !sql.contains("source_revisions")
+    }));
 
     let path = store.directory().to_owned();
     store.close().unwrap();
@@ -754,6 +769,37 @@ fn project_open_audits_foreign_keys_once_and_rejects_an_orphaned_review_referenc
         ProjectStore::open(&path).unwrap_err().code(),
         crate::PersistenceErrorCode::CorruptProject,
     );
+}
+
+#[test]
+fn project_open_rejects_orphaned_source_revisions_with_either_foreign_key_audit() {
+    for altered in [false, true] {
+        let (_directory, store, _) = large_fixture(4);
+        let path = store.directory().to_owned();
+        store.close().unwrap();
+        let external = Connection::open(path.join("project.sqlite3")).unwrap();
+        external.pragma_update(None, "foreign_keys", false).unwrap();
+        if altered {
+            external.execute_batch(
+                "ALTER TABLE source_revisions ADD COLUMN related_unit TEXT REFERENCES source_units(unit_id);
+                 UPDATE source_revisions SET related_unit='missing-unit'",
+            ).unwrap();
+        } else {
+            external
+                .execute(
+                    "UPDATE source_revisions SET unit_id='missing-unit'
+                     WHERE rowid=(SELECT MIN(rowid) FROM source_revisions)",
+                    [],
+                )
+                .unwrap();
+            assert!(crate::persistence::content::check_revision_foreign_key_by_index(&external).is_err());
+        }
+        drop(external);
+        assert_eq!(
+            ProjectStore::open(&path).unwrap_err().code(),
+            crate::PersistenceErrorCode::CorruptProject,
+        );
+    }
 }
 
 #[test]
