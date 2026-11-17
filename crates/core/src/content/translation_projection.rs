@@ -210,11 +210,7 @@ impl TranslationProjection {
             let index = *artifact_indexes
                 .get(imported.source.artifact_id.as_str())
                 .ok_or_else(invalid)?;
-            let artifact = &proposal.artifacts[index];
-            let range = imported
-                .source
-                .range
-                .byte_range(artifact)
+            let range = project_validated_range(&proposal.artifacts[index], imported.source.range)
                 .map_err(|_| invalid())?;
             let key_source = imported
                 .native_identity
@@ -230,9 +226,7 @@ impl TranslationProjection {
                     }
                     Ok((
                         key_index as u32,
-                        source
-                            .range
-                            .byte_range(&proposal.artifacts[key_index])
+                        project_validated_range(&proposal.artifacts[key_index], source.range)
                             .map_err(|_| invalid())?,
                     ))
                 })
