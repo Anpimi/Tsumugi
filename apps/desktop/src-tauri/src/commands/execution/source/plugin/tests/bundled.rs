@@ -230,6 +230,20 @@ fn journey(material: Materials, reopen_before_publication: bool) {
     denied["unsandboxedExecution"] = json!(false);
     assert!(call(&window, "start_plugin_source", denied).is_err());
     let started = call(&window, "start_plugin_source", start.clone()).unwrap();
+    let mut original_start = start.clone();
+    original_start.as_object_mut().unwrap().remove("sessionToken");
+    let observe_start = json!({
+        "sessionToken": context["sessionToken"],
+        "key": {"projectId": context["projectId"]},
+        "target": {"kind": "primary", "pending": {
+            "kind": "start", "request": original_start, "submittedSeq": "1", "submittedMappingSeq": "1"
+        }}
+    });
+    let start_observation =
+        call(&window, "observe_local_source_action", observe_start.clone()).unwrap();
+    assert_eq!(start_observation["observation"]["kind"], "started");
+    assert_eq!(start_observation["observation"]["view"]["attemptId"], started);
+    assert_eq!(start_observation["observation"]["view"]["inputDigest"], start["inputDigest"]);
     assert_eq!(call(&window, "start_plugin_source", start.clone()).unwrap(), started);
     let produced = completed(&window, &context, &started);
     assert_eq!(fs::read(&first_material).unwrap(), b"replacement outside the captured source");
@@ -273,6 +287,9 @@ fn journey(material: Materials, reopen_before_publication: bool) {
         call(&window, "close_project", json!({"sessionToken":context["sessionToken"]})).unwrap();
         let reopened = call(&window, "open_project", json!({"locator":project_path})).unwrap();
         let context = json!({"sessionToken":reopened["sessionToken"],"projectId":context["projectId"]});
+        let mut observe_start = observe_start;
+        observe_start["sessionToken"] = context["sessionToken"].clone();
+        assert_eq!(call(&window, "observe_local_source_action", observe_start).unwrap(), start_observation);
         let mut original_adoption = original_adoption;
         original_adoption["adoption"]["sessionToken"] = context["sessionToken"].clone();
         let observation = json!({"action":prepared_adoption,"receipt":null});
@@ -285,8 +302,15 @@ fn journey(material: Materials, reopen_before_publication: bool) {
         call(&window, "finish_source_check", finish).unwrap();
         assert_eq!(completed(&window, &context, &started)["items"][0]["status"]["validation"], "valid");
         let action = scoped(&context, json!({"actionId":adoption["actionId"]}));
-        assert_eq!(call(&window, "adopt_execution", action).unwrap_err()["reason"], "plugin-authority");
-        assert_eq!(call(&window, "read_source_adoption_action", original_adoption).unwrap(), observation);
+        let receipt = call(&window, "adopt_execution", action.clone()).unwrap();
+        assert_eq!(
+            call(&window, "read_source_adoption_action", original_adoption).unwrap(),
+            json!({"action":prepared_adoption,"receipt":receipt})
+        );
+        assert_eq!(call(&window, "adopt_execution", action).unwrap(), receipt);
+        let history = call(&window, "read_source_history", scoped(&context, json!({"offset":0,"limit":10}))).unwrap();
+        assert_eq!(history["total"], 1);
+        assert_eq!(history["snapshots"][0]["actionId"], adoption["actionId"]);
         call(&window, "close_project", json!({"sessionToken":context["sessionToken"]})).unwrap();
         state.plugins.close();
         drop(state);
