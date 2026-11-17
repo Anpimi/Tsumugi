@@ -14,7 +14,7 @@
 |---|---|---|
 | 桌面壳、已保存内容的人工编辑 | 已有 macOS 源码路径 | 保留 Windows x64、Intel Mac 源码路径；当前完整包未验 |
 | SMAPI／WebVTT 导入、检查与导出 | 需要固定插件包、已批准的 Node／Host，以及逐次执行许可 | 尚无选定的完整资源包；源码编译不自动附带格式插件 |
-| Skyrim SE 开发集成 | [独立候选包与匹配的原生 Host](integrations.md#skyrim-se-development-package)，已有本机合成流程证据 | Windows 桌面处理与 Skyrim SE 实际游戏加载仍待验证 |
+| Skyrim SE 开发集成 | [独立候选包与匹配的原生 Host](integrations.md#skyrim-se-development-package)，已验证本机合成维护流程，Core 和 Worker 已测试 50,000 字段的 64 MiB ESP | Windows 桌面处理与 Skyrim SE 实际游戏加载仍待验证 |
 | OpenAI 兼容 API Key 直接请求 | 已有 Core transport；macOS Keychain 或明确选择的环境变量 | 存在 transport 源码，不代表完整平台验收 |
 | Pi 成员与动态团队 | 需要成员产物和已安装、批准的随附 Node，以及明确请求许可 | Windows 成员执行返回不支持平台，尚无完整 Windows Agent 包；未选定 Intel／Linux 完整包 |
 | ChatGPT 订阅登录 | macOS Keychain 实现；账号与外发许可另行确认 | 当前桌面凭据实现不支持 |

@@ -139,23 +139,42 @@ With the prebuilt SMAPI plugin package selected in `TSUMUGI_TEST_PLUGIN_PACKAGE`
 - `--test release_validation`: verifies plugin QA and independent artifact check proof across all output locales before saving a release.
 
 
-For the prebuilt Skyrim SE candidate, use the same isolated workspace with a release-built Native worker and its paired self-contained codec. Generate the synthetic fixture directory using the official plugin's format probe; no plugin source is linked into the Host tests:
+#### Skyrim SE conformance
+
+For the prebuilt Skyrim SE candidate, use the same isolated workspace with a release-built Native worker and its paired self-contained codec. Prepare the dependencies from the compatibility workspace's own lockfile before running offline. Generate the standard synthetic fixtures with the official plugin's format probe, then run the standard cases. The Host tests load the prepared Worker package.
 
 ```sh
 TSUMUGI_TEST_PLUGIN_PACKAGE=/absolute/prebuilt/skyrim-se \
 TSUMUGI_TEST_PLUGIN_DIGEST=independently-inspected-package-digest \
 TSUMUGI_TEST_SKYRIM_FIXTURES=/absolute/synthetic/format-probe-output \
   cargo test --manifest-path crates/plugin-host/compatibility/Cargo.toml \
-  --features core-adapter --test skyrim_se --locked -- --include-ignored --test-threads=1
+  --features core-adapter --test skyrim_se --locked --offline \
+  -- --include-ignored --test-threads=1 \
+  --skip skyrim_normal_core_handles_large_plugin_capture_build_and_reopen \
+  --skip skyrim_large_paired_projection_preserves_selection_scope_across_source_updates
 ```
 
-For paired translation reuse, select a package with the SDK8 `translation-profile` resource (`2/1`) and paired input/check family (`3/1`). The `skyrim_paired_core_keeps_multifile_candidates_and_manual_selection_on_reopen` case uses normal Core dependencies and the installed Native worker to check both record-field and MCM scopes, independent producer/checker grants, six-file value/label provenance, shared-value candidate grouping, unmatched entries, manual-selection conflicts, candidate-only adoption and project reopen. It does not grant translation approval or run QA. The same command above includes this explicitly ignored external-package case; add its test name before `--` to select it alone. This does not establish GUI pairing, source maintenance or game acceptance.
+For paired translation reuse, select a package with the `translation-profile` resource (`2/1`) and paired input/check family (`3/1`). The `skyrim_paired_core_keeps_multifile_candidates_and_manual_selection_on_reopen` case uses normal Core dependencies and the installed Native worker to check both record-field and MCM scopes, independent producer/checker grants, six-file value/label provenance, shared-value candidate grouping, unmatched entries, manual-selection conflicts, candidate-only adoption and project reopen. It does not grant translation approval or run QA. The standard command includes this case. Add its test name before `--` to select it alone. GUI pairing, source maintenance and game acceptance have separate coverage.
 
 The `skyrim_j2_repeated_capture_keeps_source_semantics_and_manual_work` case requires the candidate's MCM/record semantic bases `2/1`. It independently captures the same five source files again, checks MCM coordinate shifts and StringID renumbering, adopts the renumbered snapshot, and verifies unchanged Core units/revisions, manual selection and historical content after reopen. Full context provenance is still checked; the domain basis carries stable meaning. This is the recapture/identity foundation for maintenance, not coverage of changed, added, removed or ambiguous entries or a second release.
 
 The `skyrim_j2_two_versions_preserve_work_review_ambiguity_and_both_releases` case extends that foundation through paired record/MCM import, a manual revision, source changes/additions/removals and two same-text mapping ambiguities. Unresolved identity blocks even a source-retained stage; explicit human edge rejection and continuation resolve the fixture's renames without approving translations. Stable work and human approval survive the update; file QA must be rerun, while changed text requires renewed human approval. Both versions use explicit staged translation scopes, Native builds and independent artifact checks. Every native field is extracted again from each saved output, and both releases, historical work, mapping decisions and receipts survive project reopen. This is normal Core and Native package integration coverage; desktop file selection, bulk-adoption UI, filesystem delivery and game loading remain separate acceptance work.
 
 These cases install and reopen the immutable package, run all five Native operations on mixed materials and a 476-field escaped-text capture, and verify missing-table errors and rejected altered output. The 476-field capture also passes Core grants, extraction, independent source checks and adoption; every field and the exact original bytes are read before and after project reopen. A separate tiny binary fixture exercises human translation and approval, independent artifact checks, saved release bytes, and project reopen. These tests do not establish a native GUI or game-loading result. Local dev/test builds optimize SHA-256 while retaining complete package-byte checks and the existing deadlines; delivery workers use their release profile.
+
+Generate the large fixture directory separately with `FormatProbe --capacity-large /path/to/new/large-output`. Run the 50,000-field import-to-export case against that directory.
+
+```sh
+TSUMUGI_TEST_PLUGIN_PACKAGE=/absolute/prebuilt/skyrim-se \
+TSUMUGI_TEST_PLUGIN_DIGEST=independently-inspected-package-digest \
+TSUMUGI_TEST_SKYRIM_FIXTURES=/absolute/synthetic/large-output \
+  cargo test --manifest-path crates/plugin-host/compatibility/Cargo.toml \
+  --features core-adapter --test skyrim_se --locked --offline \
+  skyrim_normal_core_handles_large_plugin_capture_build_and_reopen \
+  -- --ignored --exact --nocapture --test-threads=1
+```
+
+The test checks the original captured ESP, all 50,000 fields, both exported files and the original receipt after reopen. To test large paired translation reuse and a source update with the same fixtures, substitute `paired::skyrim_large_paired_projection_preserves_selection_scope_across_source_updates` for the test name.
 
 To retain a current-format project backup for desktop restoration and export checks, select the capacity case and set `TSUMUGI_TEST_SKYRIM_BACKUP` to a new file in an existing directory:
 
