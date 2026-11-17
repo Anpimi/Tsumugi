@@ -2454,6 +2454,69 @@ fn complete_translation_projection(
     Ok(())
 }
 
+fn execution_result_bytes(
+    connection: &Connection,
+    input: &FixedInput,
+) -> Result<usize, ExecutionError> {
+    let used: i64 = connection
+        .query_row(
+            "SELECT COALESCE(SUM(length(bytes)),0) FROM execution_results WHERE attempt_id=?1",
+            [input.envelope().attempt_id.to_string()],
+            |row| row.get(0),
+        )
+        .map_err(sql_error)?;
+    input.envelope().reused_results.iter().try_fold(used as usize, |total, reference| {
+        load_result(connection, input, reference.result_id)
+            .map(|result| total + result.bytes().len())
+    })
+}
+
+fn record_execution_result(
+    connection: &Connection,
+    result: &FixedResult,
+    validation: &str,
+) -> Result<(), ExecutionError> {
+    let envelope = result.envelope();
+    connection.execute(
+        "INSERT INTO execution_results VALUES (?1,?2,?3,?4,?5,?6)",
+        params![
+            envelope.result_id.to_string(),
+            envelope.attempt_id.to_string(),
+            envelope.item_id.to_string(),
+            envelope.dispatch_token.to_string(),
+            result.bytes(),
+            result.digest(),
+        ],
+    ).map_err(sql_error)?;
+    connection.execute(
+        "UPDATE execution_items SET execution=?3,validation=?4,current_result_id=?5,
+         retry_safe=?6,diagnostic=?7,adoption='unapplied' WHERE attempt_id=?1 AND item_id=?2",
+        params![
+            envelope.attempt_id.to_string(),
+            envelope.item_id.to_string(),
+            encode_enum(envelope.outcome)?,
+            validation,
+            envelope.result_id.to_string(),
+            envelope.diagnostic.as_ref().is_some_and(|diagnostic| diagnostic.retry_safe),
+            envelope.diagnostic.as_ref().map(|diagnostic| diagnostic.code.as_str()),
+        ],
+    ).map_err(sql_error)?;
+    Ok(())
+}
+
+fn stop_queued_projection(
+    connection: &Connection,
+    attempt: ExecutionId,
+    diagnostic: &str,
+) -> Result<(), ExecutionError> {
+    connection.execute(
+        "UPDATE execution_items SET execution='cancelled-before-dispatch',diagnostic=?2
+         WHERE attempt_id=?1 AND execution='queued'",
+        params![attempt.to_string(), diagnostic],
+    ).map_err(sql_error)?;
+    Ok(())
+}
+
 impl ProjectStore {
     /// Read original enqueue evidence without current scope, plugin grants or a runtime.
     /// Only a complete successful read reconciles the in-memory recovery guard.
@@ -4213,6 +4276,94 @@ impl ProjectStore {
         })
     }
 
+    /// Run one bounded slice of the built-in, read-only paired projection.
+    /// Dispatch and exact result bytes commit together because no worker or
+    /// external effect observes the dispatch.
+    pub(crate) fn run_paired_translation_projection_batch(
+        &mut self,
+        attempt: ExecutionId,
+    ) -> Result<(), ExecutionError> {
+        const BATCH_ITEMS: u32 = 256;
+        let tx = self.execution_write()?;
+        let input = load_input_cached(&tx, attempt)?;
+        if !crate::content::is_paired_projection(input.envelope())
+            || provider::recovery_policy(&tx, attempt)? != RecoveryPolicy::ReadOnly
+        {
+            return Err(error(ErrorCode::Unauthorized, "translation-projection-batch"));
+        }
+        let projection = crate::content::TranslationProjection::from_input(&input)?;
+        let allowed = (|| {
+            super::plugin_execution::check_input_in(&tx, &input, &self.plugin_authority)?;
+            super::application::check_input(&tx, &input)?;
+            super::application::check_service_input(&tx, &input, &self.plugin_authority)?;
+            check_translation_projection(&tx, &input, Some(&self.plugin_authority))?;
+            let captured: i64 = tx.query_row(
+                "SELECT cancellation_revision FROM execution_attempts WHERE attempt_id=?1",
+                [attempt.to_string()],
+                |row| row.get(0),
+            ).map_err(sql_error)?;
+            if cancel_revision(&tx, input.envelope().task_id)?.get() > captured as u64 {
+                return Err(error(ErrorCode::Cancelled, "dispatch"));
+            }
+            let metadata = super::read_metadata_from(&tx)
+                .map_err(|_| error(ErrorCode::CorruptLedger, "scope"))?;
+            if !metadata.target_locales().iter().any(|target| target.as_str() == projection.target_locale) {
+                return Err(error(ErrorCode::Unauthorized, "locale-scope"));
+            }
+            Ok(())
+        })();
+        if let Err(failure) = allowed {
+            if !matches!(failure.code, ErrorCode::Unauthorized | ErrorCode::Cancelled) {
+                return Err(failure);
+            }
+            stop_queued_projection(&tx, attempt, &failure.stage)?;
+            return commit(tx);
+        }
+
+        // Updating the parent dispatch key must not scan every prior result
+        // or provider request. Install the optional indexes in this writer so
+        // older stores can benefit without a schema migration on open.
+        tx.execute_batch(
+            "CREATE INDEX IF NOT EXISTS execution_results_dispatch_fk
+             ON execution_results(attempt_id,item_id,dispatch_token);
+             CREATE INDEX IF NOT EXISTS execution_provider_requests_dispatch_fk
+             ON execution_provider_requests(attempt_id,item_id,dispatch_token);",
+        ).map_err(sql_error)?;
+        let queued = tx.prepare_cached(
+            "SELECT item_id FROM execution_items WHERE attempt_id=?1 AND execution='queued'
+             ORDER BY rowid LIMIT ?2",
+        ).map_err(sql_error)?
+            .query_map(params![attempt.to_string(), BATCH_ITEMS], |row| row.get::<_, String>(0))
+            .map_err(sql_error)?
+            .map(|row| parse_id(row.map_err(sql_error)?))
+            .collect::<Result<Vec<_>, _>>()?;
+        let mut used = execution_result_bytes(&tx, &input)?;
+        for item in queued {
+            let token = ExecutionId::new();
+            let result = crate::content::TranslationProjectionRunner::project_result(
+                &projection, &input, item, token,
+            )?;
+            used += result.bytes().len();
+            if used > input.envelope().limits.max_attempt_result_bytes as usize {
+                stop_queued_projection(&tx, attempt, "attempt-output")?;
+                break;
+            }
+            let validation = if result.envelope().outcome == ExecutionState::Succeeded {
+                crate::content::validate_projected_translation_output(&input, &result)?;
+                "valid"
+            } else {
+                "absent"
+            };
+            tx.execute(
+                "UPDATE execution_items SET execution='dispatched',dispatch_token=?3
+                 WHERE attempt_id=?1 AND item_id=?2",
+                params![attempt.to_string(), item.to_string(), token.to_string()],
+            ).map_err(sql_error)?;
+            record_execution_result(&tx, &result, validation)?;
+        }
+        commit(tx)
+    }
+
     pub fn save_execution_result(&mut self, result: &FixedResult) -> Result<bool, ExecutionError> {
         let authority = self.plugin_authority.clone();
         let tx = self.execution_write()?;
@@ -4256,23 +4407,7 @@ impl ProjectStore {
         } else if envelope.supersedes.is_some() {
             return Err(error(ErrorCode::ResultMismatch, "result-replacement"));
         }
-        let used: i64 = tx
-            .query_row(
-                "SELECT COALESCE(SUM(length(bytes)),0) FROM execution_results WHERE attempt_id=?1",
-                [envelope.attempt_id.to_string()],
-                |r| r.get(0),
-            )
-            .map_err(sql_error)?;
-        let reused_bytes =
-            input
-                .envelope()
-                .reused_results
-                .iter()
-                .try_fold(0usize, |total, reference| {
-                    load_result(&tx, &input, reference.result_id)
-                        .map(|result| total + result.bytes().len())
-                })?;
-        if used as usize + reused_bytes + result.bytes().len()
+        if execution_result_bytes(&tx, &input)? + result.bytes().len()
             > input.envelope().limits.max_attempt_result_bytes as usize
         {
             return Err(error(ErrorCode::LimitExceeded, "attempt-output"));
@@ -4293,20 +4428,7 @@ impl ProjectStore {
         } else {
             "absent"
         };
-        tx.execute(
-            "INSERT INTO execution_results VALUES (?1,?2,?3,?4,?5,?6)",
-            params![
-                envelope.result_id.to_string(),
-                envelope.attempt_id.to_string(),
-                envelope.item_id.to_string(),
-                token.to_string(),
-                checked.bytes(),
-                checked.digest()
-            ],
-        )
-        .map_err(sql_error)?;
-        tx.execute("UPDATE execution_items SET execution=?3,validation=?4,current_result_id=?5,retry_safe=?6,diagnostic=?7,adoption='unapplied' WHERE attempt_id=?1 AND item_id=?2",
-            params![envelope.attempt_id.to_string(),envelope.item_id.to_string(),encode_enum(envelope.outcome)?,validation,envelope.result_id.to_string(),envelope.diagnostic.as_ref().is_some_and(|d|d.retry_safe),envelope.diagnostic.as_ref().map(|d|d.code.clone())]).map_err(sql_error)?;
+        record_execution_result(&tx, &checked, validation)?;
         commit(tx)?;
         #[cfg(test)]
         crash_hook("after-output");

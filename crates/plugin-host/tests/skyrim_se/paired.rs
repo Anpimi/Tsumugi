@@ -141,7 +141,9 @@ fn checked_projection(
         runtime.submit(store, input).unwrap_err().code,
         ErrorCode::Unauthorized
     );
-    let grant = authorize(runtime, store, input);
+    // Match the desktop translation import consent window for both workers.
+    let consent_window = std::time::Duration::from_secs(600);
+    let grant = core_execution::authorize_for(runtime, store, input, consent_window);
     let result = execute(runtime, store, input);
     let proposal = validate_plugin_translation_output(input, &result).unwrap();
     assert_eq!(
@@ -168,7 +170,7 @@ fn checked_projection(
         runtime.submit(store, &check).unwrap_err().code,
         ErrorCode::Unauthorized
     );
-    let checker_grant = authorize(runtime, store, &check);
+    let checker_grant = core_execution::authorize_for(runtime, store, &check, consent_window);
     assert_ne!(checker_grant, grant);
     let checked = execute(runtime, store, &check);
     store

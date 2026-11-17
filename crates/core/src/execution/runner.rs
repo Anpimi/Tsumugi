@@ -115,7 +115,7 @@ pub enum QueryOutcome {
 
 /// An in-process producer receives data and a bounded result channel, never a
 /// ProjectStore or a transaction. Returning from run does not adopt its results.
-pub trait Runner: Send + Sync + 'static {
+pub trait Runner: std::any::Any + Send + Sync {
     fn capability_id(&self) -> &str;
     fn capability_version(&self) -> &str;
     fn plugin_provider(&self) -> Option<&tsumugi_plugin_sdk::ProviderSelectionBinding> {

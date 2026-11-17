@@ -366,7 +366,15 @@ fn paired_projection_store_preserves_file_provenance_proof_and_manual_selection(
         .unwrap();
     assert_eq!(preview.rows[1].current_text.as_deref(), Some("人工保留"));
     assert_eq!(preview.rows[1].current_selection.as_ref(), Some(&manual));
+    let pending = store
+        .capture_translation_projection(input.envelope().attempt_id, result.envelope().result_id)
+        .unwrap();
+    runtime.submit(&mut store, &pending).unwrap();
     runtime.revoke_plugin(&mut store, result.envelope().plugin.as_ref().unwrap().authorization_id).unwrap();
+    runtime.tick(&mut store).unwrap();
+    let pending = store.execution_attempt(pending.envelope().attempt_id, false).unwrap();
+    assert_eq!(pending.progress.cancelled, 2);
+    assert_eq!(pending.progress.succeeded, 0);
     assert!(store.capture_translation_projection(input.envelope().attempt_id, result.envelope().result_id).is_err());
     // Saved historical preview is still readable; revocation cannot renew execution.
     assert_eq!(store.translation_preview(projected.envelope().attempt_id, 0, 100, None).unwrap(), preview);

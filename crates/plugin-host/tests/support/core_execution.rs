@@ -62,9 +62,12 @@ pub fn execute_all(
         + Duration::from_millis((input.envelope().items.len() as u64).saturating_sub(1) * 20)
         + Duration::from_secs(10);
     let deadline = Instant::now() + attempt_budget.min(Duration::from_secs(1800));
+    let attempt = input.envelope().attempt_id;
     loop {
         runtime.tick(store).unwrap();
-        if !runtime.is_active(input.envelope().attempt_id) {
+        if !runtime.is_active(attempt)
+            && !store.queued_execution_attempts(Revision::new(0).unwrap()).unwrap().contains(&attempt)
+        {
             return input
                 .envelope()
                 .items
@@ -74,9 +77,11 @@ pub fn execute_all(
                         .execution_current_result(input.envelope().attempt_id, item.item_id)
                         .unwrap()
                         .unwrap_or_else(|| {
+                            let view = store.execution_attempt(attempt, false).unwrap();
+                            let status = view.items.iter().find(|status| status.item_id == item.item_id);
                             panic!(
-                                "captured execution ended without a result: {:?}",
-                                store.execution_attempt(input.envelope().attempt_id, true)
+                                "captured execution ended without a result: item={status:?} progress={:?}",
+                                view.progress,
                             )
                         });
                     let result = store

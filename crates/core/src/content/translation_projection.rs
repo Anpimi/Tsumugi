@@ -533,35 +533,31 @@ pub(crate) fn validate_projected_translation_output(
 /// This Core runner only copies checked entries; it never interprets domain files.
 /// Store mutation boundaries independently restore the original checker proof.
 pub struct TranslationProjectionRunner;
-impl Runner for TranslationProjectionRunner {
-    fn capability_id(&self) -> &str {
-        TRANSLATION_PROJECTION_CAPABILITY
+impl TranslationProjectionRunner {
+    pub(crate) fn project_result(
+        projection: &TranslationProjection,
+        input: &FixedInput,
+        item: ExecutionId,
+        token: ExecutionId,
+    ) -> Result<FixedResult, ExecutionError> {
+        let output = projection.output(input, item).and_then(|output| value(&output));
+        Self::capture_result(input, item, token, output)
     }
-    fn capability_version(&self) -> &str {
-        VERSION
-    }
-    fn run(
-        &self,
-        request: DispatchRequest,
-        cancellation: Cancellation,
-        sender: ResultSender,
-    ) -> Result<(), ExecutionError> {
-        let input = &request.input;
-        let output = if cancellation.is_requested() {
-            Err(ExecutionError::new(ErrorCode::Cancelled, "cancelled"))
-        } else {
-            TranslationProjection::from_input(input)?
-                .output(input, request.item_id)
-                .and_then(|output| value(&output))
-        };
+
+    fn capture_result(
+        input: &FixedInput,
+        item: ExecutionId,
+        token: ExecutionId,
+        output: Result<serde_json::Value, ExecutionError>,
+    ) -> Result<FixedResult, ExecutionError> {
         let mut envelope = ResultEnvelope {
             plugin: None,
             project_id: input.envelope().project_id,
             attempt_id: input.envelope().attempt_id,
-            item_id: request.item_id,
+            item_id: item,
             result_id: ExecutionId::new(),
             supersedes: None,
-            dispatch_token: request.dispatch_token,
+            dispatch_token: token,
             capability_id: TRANSLATION_PROJECTION_CAPABILITY.into(),
             capability_version: VERSION.into(),
             outcome: ExecutionState::Succeeded,
@@ -582,11 +578,36 @@ impl Runner for TranslationProjectionRunner {
                 });
             }
         }
-        sender.send(FixedResult::capture(
-            envelope,
-            input,
-            request.dispatch_token,
-        )?)
+        FixedResult::capture(envelope, input, token)
+    }
+}
+
+impl Runner for TranslationProjectionRunner {
+    fn capability_id(&self) -> &str {
+        TRANSLATION_PROJECTION_CAPABILITY
+    }
+    fn capability_version(&self) -> &str {
+        VERSION
+    }
+    fn run(
+        &self,
+        request: DispatchRequest,
+        cancellation: Cancellation,
+        sender: ResultSender,
+    ) -> Result<(), ExecutionError> {
+        let input = &request.input;
+        let result = if cancellation.is_requested() {
+            Self::capture_result(
+                input,
+                request.item_id,
+                request.dispatch_token,
+                Err(ExecutionError::new(ErrorCode::Cancelled, "cancelled")),
+            )?
+        } else {
+            let projection = TranslationProjection::from_input(input)?;
+            Self::project_result(&projection, input, request.item_id, request.dispatch_token)?
+        };
+        sender.send(result)
     }
 }
 

@@ -1308,6 +1308,14 @@ impl ExecutionRuntime {
             {
                 continue;
             }
+            if crate::content::is_paired_projection(input.envelope())
+                && runner.as_ref().type_id()
+                    == std::any::TypeId::of::<crate::content::TranslationProjectionRunner>()
+                && self.policies.get(&input_key(&input)?) == Some(&RecoveryPolicy::ReadOnly)
+            {
+                store.run_paired_translation_projection_batch(attempt)?;
+                continue;
+            }
             let Some(item) = store.next_queued_execution_item(attempt)? else {
                 continue;
             };
