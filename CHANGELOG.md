@@ -203,6 +203,7 @@ The current workspace targets **`0.3.0-alpha.1`**. The published `0.2.0-alpha.1`
 - Load project brief counts without running the full build readiness check.
 - Read large project history with fewer intermediate allocations and compare saved files without copying their stored bytes. Audit foreign keys once during complete project validation and enforce the build request size limit while producing its bytes or digest.
 - Check source revision ownership through its index on cold open, avoiding a separate scan of source revision text pages.
+- Keep verified source pagination available after saving a build and recording its export receipt, so viewing the source again does not replay its full history.
 - Share saved plugin result text with its original result frame during capture and reopen, reducing memory for large imports and builds. The experimental Rust SDK exposes that UTF-8 value as `PayloadText`; use `into()` for owned or borrowed text and `as_ref()` to read it.
 - Reduce storage and replay allocations for independent source and artifact checks by reconstructing their SDK requests from the original evidence. Reuse the validated builder input and check the encoded request size during the same pass that computes its digest.
 - Release verified source frames before opening saved build history, skip source row reconstruction when there are no lineage corrections, and keep saved files out of the database sorter.

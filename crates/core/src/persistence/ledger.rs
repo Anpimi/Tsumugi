@@ -5,7 +5,7 @@ use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet};
 mod activity;
 mod frame_read_guard;
-pub(super) use frame_read_guard::ReleaseEvidenceStamp;
+pub(super) use frame_read_guard::{FrameReadGuard, ReleaseEvidenceStamp, watch_source_page};
 mod input_storage;
 pub use activity::{TaskActivity, TaskActivityPhase, TaskActivityRow};
 pub(crate) mod provider;
@@ -5132,7 +5132,9 @@ impl ProjectStore {
             return Err(error(ErrorCode::DependencyConflict, "adoption-transaction"));
         }
         let transaction = connection.unchecked_transaction().map_err(sql_error)?;
-        let capture = capture_adoption_in(&transaction, action, &self.plugin_authority)?;
+        let capture = capture_adoption_in(
+            &transaction, action, &self.plugin_authority, Some(&self.source_pages),
+        )?;
         transaction.commit().map_err(sql_error)?;
         Ok(capture)
     }
@@ -5159,7 +5161,7 @@ impl ProjectStore {
         let current = match &prepared.capture.release_proof {
             Some(proof) if proof.current(&tx)? => &prepared.capture,
             _ => {
-                rechecked = capture_adoption_in(&tx, action, &authority)?;
+                rechecked = capture_adoption_in(&tx, action, &authority, None)?;
                 &rechecked
             }
         };
@@ -5371,6 +5373,7 @@ fn capture_adoption_in(
     connection: &Connection,
     action: &AdoptionAction,
     authority: &crate::execution::plugin_authority::PluginAuthority,
+    source_pages: Option<&super::content::SourcePageCache>,
 ) -> Result<AdoptionCapture, ExecutionError> {
     let mut input = load_input_cached(connection, action.attempt_id)?;
     check_planning_candidate_action(&input, &action.parameters)?;
@@ -5418,7 +5421,12 @@ fn capture_adoption_in(
     };
     if plugin_build {
         input.cache_open_build_plan()?;
-        input.open_build_plan().expect("cached build plan").validate_source_reference(connection)?;
+        let plan = input.open_build_plan().expect("cached build plan");
+        if let Some(pages) = source_pages {
+            plan.validate_source_reference_for_save(connection, pages)?;
+        } else {
+            plan.validate_source_reference(connection)?;
+        }
     }
     // Explicit Source adoption publishes completed evidence. It does not start
     // a worker, so process permit expiry or a new store epoch is immaterial.

@@ -279,14 +279,23 @@ impl ReleasePlan {
         proofs: Option<&super::super::ledger::OpenPluginProofs<'_>>,
     ) -> Result<(), ExecutionError> {
         super::super::review::read_snapshot(connection, |connection| {
-            self.validate_source_reference_in(connection, proofs)
+            self.validate_source_reference_in(connection, proofs, None)
         })
+    }
+
+    pub(in crate::persistence) fn validate_source_reference_for_save(
+        &self,
+        connection: &Connection,
+        pages: &crate::persistence::content::SourcePageCache,
+    ) -> Result<(), ExecutionError> {
+        self.validate_source_reference_in(connection, None, Some(pages))
     }
 
     fn validate_source_reference_in(
         &self,
         connection: &Connection,
         proofs: Option<&super::super::ledger::OpenPluginProofs<'_>>,
+        pages: Option<&crate::persistence::content::SourcePageCache>,
     ) -> Result<(), ExecutionError> {
         let invalid = || failure(ErrorCode::CorruptLedger, "release-source-reference");
         let associated: (String, String, String) = connection
@@ -315,10 +324,16 @@ impl ReleasePlan {
         } else {
             let (_, (input, result, output)) =
                 super::super::content::snapshot_qualification(connection, self.source_snapshot_id, true)?;
-            input.envelope().project_id == self.project_id
+            let matches = input.envelope().project_id == self.project_id
                 && input.digest() == self.source_input_digest
                 && result.digest() == self.source_result_digest
-                && output.exchange == self.source
+                && output.exchange == self.source;
+            if matches && let Some(pages) = pages {
+                pages.remember_qualified_current(
+                    connection, self.source_snapshot_id, &input, &result, &output,
+                );
+            }
+            matches
         };
         if !matches_source {
             return Err(invalid());

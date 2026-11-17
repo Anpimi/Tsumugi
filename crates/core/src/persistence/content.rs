@@ -7,7 +7,7 @@ use crate::{
     execution::{codec, *},
 };
 use rusqlite::{Connection, params};
-use super::ledger::{ReadSnapshotStamp, read_snapshot_stamp};
+use super::ledger::{FrameReadGuard, watch_source_page};
 pub(in crate::persistence) mod decision_mappings;
 #[cfg(test)]
 mod hook_observation_tests;
@@ -1134,7 +1134,9 @@ impl SourcePageMetadata {
 }
 
 #[derive(Debug, Default)]
-pub(super) struct SourcePageCache(Option<(ReadSnapshotStamp, SourcePageMetadata)>);
+pub(in crate::persistence) struct SourcePageCache(
+    std::cell::RefCell<Option<(FrameReadGuard, SourcePageMetadata)>>,
+);
 
 impl SourcePageCache {
     pub(super) fn for_snapshot(
@@ -1142,10 +1144,43 @@ impl SourcePageCache {
         metadata: Option<SourcePageMetadata>,
     ) -> Result<Self, ExecutionError> {
         let entry = match metadata {
-            Some(metadata) => read_snapshot_stamp(connection)?.map(|stamp| (stamp, metadata)),
+            Some(metadata) => watch_source_page(connection, metadata.attempt.to_string())?
+                .map(|guard| (guard, metadata)),
             None => None,
         };
-        Ok(Self(entry))
+        Ok(Self(std::cell::RefCell::new(entry)))
+    }
+
+    pub(in crate::persistence) fn remember_qualified_current(
+        &self,
+        connection: &Connection,
+        snapshot: ExecutionId,
+        input: &FixedInput,
+        result: &FixedResult,
+        output: &SourceOutput,
+    ) {
+        if !matches!(scope(connection), Ok(scope) if scope.current_snapshot == Some(snapshot))
+            || matches!(self.read(connection, snapshot), Ok(Some(_)))
+        {
+            return;
+        }
+        if let Ok(metadata) =
+            SourcePageMetadata::from_qualified(connection, Some(snapshot), input, result, output)
+        {
+            self.remember(connection, &metadata);
+        }
+    }
+
+    fn remember(&self, connection: &Connection, metadata: &SourcePageMetadata) {
+        if let Ok(Some(guard)) = watch_source_page(connection, metadata.attempt.to_string()) {
+            *self.0.borrow_mut() = Some((guard, metadata.clone()));
+        }
+    }
+
+    fn current(connection: &Connection, guard: &FrameReadGuard) -> Result<bool, ExecutionError> {
+        Ok(guard.current(connection)?
+            && connection.transaction_state(Some(rusqlite::MAIN_DB)).map_err(sql_error)?
+                == rusqlite::TransactionState::Read)
     }
 
     fn read(
@@ -1153,20 +1188,20 @@ impl SourcePageCache {
         connection: &Connection,
         snapshot: ExecutionId,
     ) -> Result<Option<SourcePageMetadata>, ExecutionError> {
-        let Some((stamp, metadata)) = &self.0 else {
+        let entry = self.0.borrow();
+        let Some((guard, metadata)) = entry.as_ref() else {
             return Ok(None);
         };
         if metadata.snapshot != Some(snapshot) {
             return Ok(None);
         }
-        let current = read_snapshot_stamp(connection)?;
-        Ok((current.as_ref() == Some(stamp)).then(|| metadata.clone()))
+        Ok(Self::current(connection, guard)?.then(|| metadata.clone()))
     }
 
     pub(super) fn for_reopen(&self, connection: &Connection) -> Option<SourcePageMetadata> {
-        let (saved, metadata) = self.0.as_ref()?;
-        let current = read_snapshot_stamp(connection).ok().flatten()?;
-        (&current == saved).then(|| metadata.clone())
+        let entry = self.0.borrow();
+        let (guard, metadata) = entry.as_ref()?;
+        Self::current(connection, guard).ok()?.then(|| metadata.clone())
     }
 }
 

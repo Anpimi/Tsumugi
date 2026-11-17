@@ -37,7 +37,50 @@ type Row = (Table, i64);
 struct Observer {
     rows: BTreeMap<Row, Vec<Weak<AtomicBool>>>,
     release_evidence: u64,
+    source_page: Option<SourcePageWatch>,
 }
+
+struct SourcePageWatch {
+    attempt: String,
+    valid: Weak<AtomicBool>,
+}
+
+impl SourcePageWatch {
+    fn survives(&self, table: &str, case: &PreUpdateCase) -> bool {
+        match (table, case) {
+            (_, PreUpdateCase::Unknown) => false,
+            ("release_records" | "release_artifacts" | "release_deliveries", _) => true,
+            ("adoption_receipts", PreUpdateCase::Insert(row)) => {
+                // A new receipt for the source attempt could change which
+                // receipt validates the snapshot. Release saves use their own attempt.
+                row.get_new_column_value(1)
+                    .ok()
+                    .and_then(|value| value.as_str().ok())
+                    .is_some_and(|attempt| attempt != self.attempt)
+            }
+            ("execution_items", PreUpdateCase::Update {
+                old_value_accessor: old,
+                new_value_accessor: new,
+            }) => {
+                // Release adoption changes only the adoption state of its item.
+                old.get_old_column_value(0)
+                    .ok()
+                    .and_then(|value| value.as_str().ok())
+                    .is_some_and(|attempt| attempt != self.attempt)
+                    && old.get_column_count() == 9
+                    && new.get_column_count() == 9
+                    && (0..9).filter(|&column| column != 4).all(|column| {
+                        match (old.get_old_column_value(column), new.get_new_column_value(column)) {
+                            (Ok(before), Ok(after)) => before == after,
+                            _ => false,
+                        }
+                    })
+            }
+            _ => false,
+        }
+    }
+}
+
 impl Observer {
     fn invalidate(&mut self, row: Row) {
         if let Some(tokens) = self.rows.remove(&row) {
@@ -78,21 +121,22 @@ pub(super) fn register(connection: &Connection, identity: &str) -> rusqlite::Res
     drop(states);
     connection.preupdate_hook(Some(
         move |_, database: &str, table: &str, case: &PreUpdateCase| {
-            if database != "main" {
-                return;
-            }
-            let invalidates_release = super::super::release::invalidates_evidence(table, case);
-            let table = Table::named(table);
-            if table.is_none() && !invalidates_release {
-                return;
-            }
             let mut observer = state
                 .lock()
                 .unwrap_or_else(std::sync::PoisonError::into_inner);
-            if invalidates_release {
+            if observer.source_page.as_ref().is_some_and(|watch| {
+                database != "main" || !watch.survives(table, case)
+            }) && let Some(token) = observer.source_page.take().and_then(|watch| watch.valid.upgrade())
+            {
+                token.store(false, Ordering::Release);
+            }
+            if database != "main" {
+                return;
+            }
+            if super::super::release::invalidates_evidence(table, case) {
                 observer.release_evidence += 1;
             }
-            let Some(table) = table else { return; };
+            let Some(table) = Table::named(table) else { return; };
             match case {
                 PreUpdateCase::Insert(value) => {
                     observer.invalidate((table, value.get_new_row_id()))
@@ -118,6 +162,22 @@ pub(super) fn register(connection: &Connection, identity: &str) -> rusqlite::Res
             }
         },
     ))
+}
+
+/// Keep the current page projection only while its checked source is unchanged.
+pub(in crate::persistence) fn watch_source_page(
+    connection: &Connection,
+    attempt: String,
+) -> Result<Option<FrameReadGuard>, ExecutionError> {
+    let Some(read) = ReadObservation::begin(connection)? else { return Ok(None); };
+    let Some(state) = read.state.upgrade() else { return Ok(None); };
+    let valid = Arc::new(AtomicBool::new(true));
+    let previous = state.lock().unwrap_or_else(std::sync::PoisonError::into_inner)
+        .source_page.replace(SourcePageWatch { attempt, valid: Arc::downgrade(&valid) });
+    if let Some(token) = previous.and_then(|watch| watch.valid.upgrade()) {
+        token.store(false, Ordering::Release);
+    }
+    Ok(Some(FrameReadGuard { stamp: read.stamp, state: read.state, valid }))
 }
 
 #[derive(Clone, PartialEq, Eq)]
@@ -295,8 +355,8 @@ impl ReadObservation {
     }
 }
 
-#[derive(Clone)]
-pub(super) struct FrameReadGuard {
+#[derive(Clone, Debug)]
+pub(in crate::persistence) struct FrameReadGuard {
     stamp: Stamp,
     state: Weak<State>,
     valid: Arc<AtomicBool>,
@@ -304,7 +364,7 @@ pub(super) struct FrameReadGuard {
 impl FrameReadGuard {
     /// Existing READ proofs remain usable in a writer transaction until one of
     /// their actual rows changes. Unrelated result inserts do not invalidate.
-    pub(super) fn current(&self, connection: &Connection) -> Result<bool, ExecutionError> {
+    pub(in crate::persistence) fn current(&self, connection: &Connection) -> Result<bool, ExecutionError> {
         if connection.is_autocommit()
             || !self.valid.load(Ordering::Acquire)
             || self.state.strong_count() == 0

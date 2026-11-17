@@ -792,6 +792,8 @@ fn release_commit_reuses_unchanged_qualification_without_loading_result_frames()
     use rusqlite::trace::{TraceEvent, TraceEventCodes};
     thread_local! { static FRAME_READS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) }; }
     let (_directory, mut store, generation, input) = fixture_build(&["zh-CN"]);
+    let snapshot = store.content_scope().unwrap().current_snapshot.unwrap();
+    let first_page = store.source_content(snapshot, 0, 1).unwrap();
     let result = builder_result(&mut store, &input, input.envelope().items[0].item_id);
     prove(&mut store, generation, &input, &result);
     let action = action(&mut store, &input, &[result]);
@@ -807,7 +809,33 @@ fn release_commit_reuses_unchanged_qualification_without_loading_result_frames()
     }));
     let receipt = store.commit_execution_adoption(prepared).unwrap();
     assert_eq!(FRAME_READS.with(|count| count.replace(0)), 0);
-    assert_eq!(store.adoption_receipt(action.action_id).unwrap(), Some(receipt));
+    assert_eq!(store.adoption_receipt(action.action_id).unwrap(), Some(receipt.clone()));
+
+    let release = ExecutionId::parse(&receipt.changes[0].id).unwrap();
+    let delivery_action = ExecutionId::new();
+    let pending = store.begin_delivery(delivery_action, release, "isolated-destination", false).unwrap();
+    let files = pending.files.into_iter().map(|mut file| {
+        file.state = DeliveryFileState::Succeeded;
+        file.actual_sha256 = Some(file.expected_sha256.clone());
+        file
+    }).collect();
+    let finalized = store.finish_delivery(delivery_action, files).unwrap();
+    assert_eq!(store.delivery_by_action(delivery_action).unwrap(), Some(finalized));
+
+    FRAME_READS.with(|count| count.set(0));
+    assert_eq!(store.source_content(snapshot, 0, 1).unwrap(), first_page);
+    assert_eq!(FRAME_READS.with(|count| count.replace(0)), 0,
+        "saving and exporting a release should preserve checked source pagination");
+
+    store.connection().unwrap().execute(
+        "UPDATE adoption_receipts SET digest=?1
+         WHERE attempt_id=(SELECT attempt_id FROM source_snapshots WHERE snapshot_id=?2)",
+        params!["0".repeat(64), snapshot.to_string()],
+    ).unwrap();
+    assert_eq!(
+        store.source_content(snapshot, 0, 1).unwrap_err().code, ErrorCode::CorruptLedger,
+        "a change to the original source receipt must invalidate checked pagination",
+    );
 }
 
 #[test]
