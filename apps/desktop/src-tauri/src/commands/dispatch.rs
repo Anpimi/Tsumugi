@@ -57,7 +57,7 @@ struct Job {
     work: Work,
     operation: &'static str,
     queued: Instant,
-    _review_read: Option<ReviewReadRegistration>,
+    _review_read: Option<Arc<ReviewReadRegistration>>,
     _permit: Arc<Permit>,
 }
 
@@ -72,6 +72,18 @@ type ReviewReads = Arc<Mutex<Vec<(ExecutionId, ReviewReadScope, Cancellation)>>>
 struct ReviewReadRegistration {
     reads: ReviewReads,
     id: ExecutionId,
+}
+
+pub(super) struct DetachedReviewRead {
+    _registration: Arc<ReviewReadRegistration>,
+    _permit: Arc<Permit>,
+    cancellation: Cancellation,
+}
+
+impl Drop for DetachedReviewRead {
+    fn drop(&mut self) {
+        self.cancellation.request();
+    }
 }
 impl Drop for ReviewReadRegistration {
     fn drop(&mut self) {
@@ -403,7 +415,7 @@ impl SessionLease {
         stage: CommandStage,
         work: Work,
     ) -> Result<(), CommandError> {
-        self.enqueue_review(operation, stage, ReviewAdmission::Ordinary, work)
+        self.enqueue_review(operation, stage, ReviewAdmission::Ordinary, work).map(drop)
     }
 
     fn enqueue_review(
@@ -412,7 +424,7 @@ impl SessionLease {
         stage: CommandStage,
         admission: ReviewAdmission,
         work: Work,
-    ) -> Result<(), CommandError> {
+    ) -> Result<Option<Arc<ReviewReadRegistration>>, CommandError> {
         // Only the two interruptible Review reads register here. Their original
         // normal permits bound this metadata to PROJECT_CAPACITY entries.
         let mut reads = if matches!(&admission, ReviewAdmission::Ordinary) {
@@ -433,10 +445,10 @@ impl SessionLease {
                     .as_mut()
                     .expect("read lock")
                     .push((id, scope, cancellation));
-                registration = Some(ReviewReadRegistration {
+                registration = Some(Arc::new(ReviewReadRegistration {
                     reads: self.review_reads.clone(),
                     id,
-                });
+                }));
             }
             ReviewAdmission::Control(scope) => control = Some(scope),
             ReviewAdmission::Ordinary => {}
@@ -446,7 +458,7 @@ impl SessionLease {
             operation,
             queued: Instant::now(),
             _permit: Arc::clone(&self.permit),
-            _review_read: registration,
+            _review_read: registration.clone(),
         });
         if sent.is_ok() {
             if let Some(scope) = control {
@@ -462,7 +474,7 @@ impl SessionLease {
         // A failed send owns the Job, whose registration also locks this map.
         // Unlock before dropping it; rejected controls must signal nothing.
         drop(reads);
-        sent.map_err(|_| CommandError::unknown(stage))
+        sent.map(|()| registration).map_err(|_| CommandError::unknown(stage))
     }
 
     pub(super) fn submit_review_read<T, F>(
@@ -511,6 +523,37 @@ impl SessionLease {
         )
     }
 
+    /// Keep the original control scope registered through the off-owner read.
+    pub(super) fn submit_detached_review_read<T, F>(
+        &self,
+        operation: &'static str,
+        session: String,
+        project: ExecutionId,
+        work: F,
+    ) -> Result<
+        impl std::future::Future<Output = Result<(T, DetachedReviewRead), CommandError>>
+            + Send + 'static + use<T, F>,
+        CommandError,
+    >
+    where
+        T: Send + 'static,
+        F: FnOnce(&mut SessionManager, &Cancellation) -> Result<T, CommandError> + Send + 'static,
+    {
+        let cancellation = Cancellation::default();
+        let signal = cancellation.clone();
+        let (response, registration) = self.submit_registered(
+            operation, CommandStage::ExecutionRead,
+            ReviewAdmission::Read(ReviewReadScope { session, project }, signal.clone()),
+            move |sessions| work(sessions, &cancellation),
+        )?;
+        let read = DetachedReviewRead {
+            _registration: registration.expect("detached review read registered before enqueue"),
+            _permit: Arc::clone(&self.permit),
+            cancellation: signal,
+        };
+        Ok(async move { Ok((response.await?, read)) })
+    }
+
     pub(super) async fn run<T: Send + 'static>(
         &self,
         operation: &'static str,
@@ -552,9 +595,30 @@ impl SessionLease {
         T: Send + 'static,
         F: FnOnce(&mut SessionManager) -> Result<T, CommandError> + Send + 'static,
     {
+        self.submit_registered(operation, stage, admission, work)
+            .map(|(response, _)| response)
+    }
+
+    fn submit_registered<T, F>(
+        &self,
+        operation: &'static str,
+        stage: CommandStage,
+        admission: ReviewAdmission,
+        work: F,
+    ) -> Result<
+        (
+            impl std::future::Future<Output = Result<T, CommandError>> + Send + 'static + use<T, F>,
+            Option<Arc<ReviewReadRegistration>>,
+        ),
+        CommandError,
+    >
+    where
+        T: Send + 'static,
+        F: FnOnce(&mut SessionManager) -> Result<T, CommandError> + Send + 'static,
+    {
         let (sender, mut receiver) = tauri::async_runtime::channel(1);
         let diagnostic_id = tsumugi_core::execution::ExecutionId::new();
-        self.enqueue_review(
+        let registration = self.enqueue_review(
             operation,
             stage,
             admission,
@@ -564,12 +628,12 @@ impl SessionLease {
             }),
         )
         .map_err(|error| error.report(operation, diagnostic_id))?;
-        Ok(async move {
+        Ok((async move {
             receiver
                 .recv()
                 .await
                 .ok_or_else(|| CommandError::unknown(stage).report(operation, diagnostic_id))?
-        })
+        }, registration))
     }
 }
 

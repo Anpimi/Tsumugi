@@ -77,6 +77,10 @@ pub(super) struct OpenBasis {
 }
 
 impl OpenBasis {
+    pub(super) fn owns_file(&self, file: &FileStamp) -> bool {
+        self.file.same_file(file)
+    }
+
     pub(super) fn read(connection: &Connection, file: FileStamp) -> Option<Self> {
         Some(Self {
             file,

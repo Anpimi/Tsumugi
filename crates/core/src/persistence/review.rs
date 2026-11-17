@@ -12,6 +12,8 @@ use std::collections::{BTreeMap, BTreeSet};
 #[cfg(any(test, feature = "execution-test-host", feature = "legacy-desktop-domain"))]
 use crate::review::CHECK_VERSION;
 mod checks;
+mod eligibility_read;
+pub use eligibility_read::{CompletedReviewEligibility, PreparedReviewEligibility};
 #[cfg(any(test, feature = "execution-test-host", feature = "legacy-desktop-domain"))]
 pub use checks::ComputedReviewCheck;
 #[cfg(any(test, feature = "execution-test-host"))]
@@ -880,8 +882,10 @@ impl ProjectStore {
         queries::read_snapshot(connection, |connection| {
             check_project(connection, project_id, locale)?;
             let (snapshot, units) = all_units(connection, project_id)?;
-            let unresolved=super::content::maintenance::unresolved_occurrences_in(connection,snapshot,MAX_SCOPE+1)?.into_iter().map(|(_,unit)|unit).collect::<BTreeSet<_>>();
-            let impacts = self.impact_map(project_id, locale)?;
+            let unresolved = super::content::maintenance::unresolved_occurrences_with_cancel(
+                connection, snapshot, MAX_SCOPE + 1, cancellation,
+            )?.into_iter().map(|(_, unit)| unit).collect::<BTreeSet<_>>();
+            let impacts = Self::impact_map(connection, project_id, locale, cancellation)?;
             let targets = queries::targets_in_with_cancel(
                 connection,
                 project_id,
@@ -1826,24 +1830,18 @@ impl ProjectStore {
     }
 
     fn impact_map(
-        &self,
+        connection: &Connection,
         project_id: ExecutionId,
         locale: &str,
+        cancellation: &Cancellation,
     ) -> Result<BTreeMap<ExecutionId, Vec<ExecutionId>>, ExecutionError> {
-        let mut offset = 0;
         let mut map: BTreeMap<ExecutionId, Vec<ExecutionId>> = BTreeMap::new();
-        loop {
-            let page = self.resource_impacts(project_id, locale, offset, 100)?;
-            for item in page.items {
-                map.entry(item.unit_id)
-                    .or_default()
-                    .extend(item.reasons.into_iter().map(|reason| reason.change_id));
-            }
-            match page.next_offset {
-                Some(next) if next <= MAX_SCOPE as u32 => offset = next,
-                Some(_) => return Err(failure(ErrorCode::LimitExceeded, "review-impact-coverage")),
-                None => break,
-            }
+        for item in Self::capture_resource_impacts_from(connection, project_id, locale, None, None)?
+            .evaluate_with_cancel(cancellation)?
+        {
+            map.entry(item.unit_id)
+                .or_default()
+                .extend(item.reasons.into_iter().map(|reason| reason.change_id));
         }
         Ok(map)
     }
@@ -1944,6 +1942,24 @@ impl ProjectStore {
         locales: &[String],
         translation_scopes: &BTreeMap<String, Vec<ExecutionId>>,
         cancellation: &Cancellation,
+        capture: impl FnMut(&str, Vec<ReviewTarget>),
+    ) -> Result<Eligibility, ExecutionError> {
+        let connection = self
+            .connection()
+            .map_err(|_| failure(ErrorCode::StorageFailed, "review-read"))?;
+        Self::review_build_targets_from(
+            connection, self.changes_since(Revision::new(0)?), project_id, locales,
+            translation_scopes, cancellation, capture,
+        )
+    }
+
+    fn review_build_targets_from(
+        connection: &Connection,
+        observation: super::ChangeSnapshot,
+        project_id: ExecutionId,
+        locales: &[String],
+        translation_scopes: &BTreeMap<String, Vec<ExecutionId>>,
+        cancellation: &Cancellation,
         mut capture: impl FnMut(&str, Vec<ReviewTarget>),
     ) -> Result<Eligibility, ExecutionError> {
         let requested = review_locales(locales)?;
@@ -1959,17 +1975,15 @@ impl ProjectStore {
             }
         }
         let policy = if scopes.is_empty() { POLICY_VERSION } else { STAGED_POLICY_VERSION };
-        let connection = self
-            .connection()
-            .map_err(|_| failure(ErrorCode::StorageFailed, "review-read"))?;
         queries::read_snapshot(connection, |connection| {
             for &locale in &requested {
                 check_project(connection, project_id, locale)?;
             }
             let (source_snapshot_id, units) = all_units(connection, project_id)?;
             let source_units: BTreeSet<_> = units.iter().copied().collect();
-            let observation = self.changes_since(Revision::new(0)?);
-            let unresolved=super::content::maintenance::unresolved_occurrences_in(connection,source_snapshot_id,MAX_SCOPE+1)?.into_iter().map(|(_,unit)|unit).collect::<BTreeSet<_>>();
+            let unresolved = super::content::maintenance::unresolved_occurrences_with_cancel(
+                connection, source_snapshot_id, MAX_SCOPE + 1, cancellation,
+            )?.into_iter().map(|(_, unit)| unit).collect::<BTreeSet<_>>();
             let mut outcomes = Vec::new();
             let mut bases = Vec::new();
             for locale in requested {
@@ -1978,7 +1992,7 @@ impl ProjectStore {
                 if translated.as_ref().is_some_and(|selected| !selected.is_subset(&source_units)) {
                     return Err(failure(ErrorCode::InvalidInput, "build-translation-scope"));
                 }
-                let impacts = self.impact_map(project_id, locale)?;
+                let impacts = Self::impact_map(connection, project_id, locale, cancellation)?;
                 let mut retained_source_units = 0;
                 let mut blockers = Vec::new();
                 let mut exceptions = Vec::new();
@@ -1990,6 +2004,7 @@ impl ProjectStore {
                     connection, project_id, &units, locale, cancellation,
                 )?;
                 for target in &targets {
+                    queries::check_read_cancel(cancellation)?;
                     let unit_id = target.unit_id;
                     let (mut unit_blockers, unit_exceptions) =
                         assess_build_scope(target, impacts.contains_key(&unit_id), translated.as_ref());

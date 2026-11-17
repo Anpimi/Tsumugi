@@ -196,6 +196,7 @@ The current workspace targets **`0.3.0-alpha.1`**. The published `0.2.0-alpha.1`
 - Render saved-build exceptions only when technical details are opened, and show them in pages in the delivery history.
 - Reuse the verified current source when opening source history and its unfiltered details, avoiding a second read of large import results.
 - Scan current source correspondence in one pass when checking build readiness and pending decisions.
+- Keep desktop status and delivery responsive while checking build readiness. A concurrent project write can interrupt the check so the next result reflects the current project.
 - Keep export folder checks responsive by pausing background review reads on the delivery workbench. Reuse unchanged evidence when saving a verified build, and reduce history decoding and material allocations when opening large projects.
 - Keep independent artifact check results responsive by pausing builder detail refreshes until the verdict is recorded. Reuse the captured checker input for progress reads and reduce duplicate work when validating large source proposals.
 - Show the save action promptly after recording an independent file check. Reuse the committed build qualification and reduce repeated artifact validation on open and whole-file verification time on warm reopen for large projects.

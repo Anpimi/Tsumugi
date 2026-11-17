@@ -5,7 +5,9 @@ use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet};
 mod activity;
 mod frame_read_guard;
-pub(super) use frame_read_guard::{FrameReadGuard, ReleaseEvidenceStamp, watch_source_page};
+pub(super) use frame_read_guard::{
+    FrameReadGuard, ReleaseEvidenceStamp, cancel_review_reader, watch_review_reader, watch_source_page,
+};
 mod input_storage;
 pub use activity::{TaskActivity, TaskActivityPhase, TaskActivityRow};
 pub(crate) mod provider;

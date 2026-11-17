@@ -10,11 +10,20 @@ pub(in crate::persistence) fn unresolved_occurrences_in(
     snapshot: ExecutionId,
     limit: usize,
 ) -> Result<Vec<(ExecutionId, ExecutionId)>, ExecutionError> {
+    unresolved_occurrences_with_cancel(connection, snapshot, limit, &crate::execution::Cancellation::default())
+}
+
+pub(in crate::persistence) fn unresolved_occurrences_with_cancel(
+    connection: &Connection,
+    snapshot: ExecutionId,
+    limit: usize,
+    cancellation: &crate::execution::Cancellation,
+) -> Result<Vec<(ExecutionId, ExecutionId)>, ExecutionError> {
     if limit == 0 {
         return Err(failure(ErrorCode::InvalidInput, "source-mapping-limit"));
     }
     i64::try_from(limit).map_err(|_|failure(ErrorCode::LimitExceeded,"source-mapping-limit"))?;
-    lineage_corrections::OriginRead::new(connection)?.unresolved_in(snapshot, limit)
+    lineage_corrections::OriginRead::new(connection)?.unresolved_in(snapshot, limit, cancellation)
 }
 
 /// Keep capture, receipt, and lineage validation in the existing source owner.

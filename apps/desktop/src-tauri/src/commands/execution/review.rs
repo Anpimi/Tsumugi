@@ -976,25 +976,47 @@ pub async fn read_review_eligibility(
     state: State<'_, AppState>,
     request: EligibilityRequest,
 ) -> Result<Eligibility, CommandError> {
-    state
+    enum Work {
+        Prepared(tsumugi_core::PreparedReviewEligibility, EligibilityRequest),
+        Completed(Eligibility),
+    }
+
+    let stage = CommandStage::ExecutionRead;
+    let session_token = request.session_token.clone();
+    let project = request.project_id;
+    let (work, _registration) = state
         .sessions
-        .lease(CommandStage::ExecutionRead)?
-        .submit_review_read(
-            "read_review_eligibility",
+        .lease(stage)?
+        .submit_detached_review_read(
+            "read_review_eligibility.prepare",
             request.session_token.clone(),
-            request.project_id,
+            project,
             move |sessions, cancellation| {
-                authorized(
-                    sessions,
-                    &request.session_token,
-                    request.project_id,
-                    CommandStage::ExecutionRead,
-                )?
-                .store
-                .review_eligibility_for_build(request.project_id, &request.locales, &request.translation_scopes, cancellation)
-                .map_err(|error| mapped(error, CommandStage::ExecutionRead))
+                let store = &authorized(sessions, &request.session_token, project, stage)?.store;
+                match store.prepare_review_eligibility_read(project, cancellation)
+                    .map_err(|error| mapped(error, stage))?
+                {
+                    Some(prepared) => Ok(Work::Prepared(prepared, request)),
+                    None => store.review_eligibility_for_build(
+                        project, &request.locales, &request.translation_scopes, cancellation,
+                    ).map(Work::Completed).map_err(|error| mapped(error, stage)),
+                }
             },
         )?
+        .await?;
+    let (prepared, request) = match work {
+        Work::Prepared(prepared, request) => (prepared, request),
+        Work::Completed(eligibility) => return Ok(eligibility),
+    };
+    let completed = state.io.run(stage, move || {
+        prepared.calculate(&request.locales, &request.translation_scopes)
+            .map_err(|error| mapped(error, stage))
+    }).await?;
+    state.sessions.run("read_review_eligibility.finish", stage, move |sessions| {
+        authorized(sessions, &session_token, project, stage)?.store
+            .finish_review_eligibility_read(completed)
+            .map_err(|error| mapped(error, stage))
+    })
         .await
 }
 

@@ -10,6 +10,7 @@ pub mod content;
 pub mod execution;
 pub use execution::{AttemptDetail, ItemView};
 pub use persistence::McpTermQueryAdoptionHandler;
+pub use persistence::{CompletedReviewEligibility, PreparedReviewEligibility};
 pub use persistence::validate_mcp_term_query_result;
 pub use persistence::{
     CaptureContextStrategy, CaptureStrategyEvaluation, CaptureStrategySuite,

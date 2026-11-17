@@ -1964,6 +1964,19 @@ impl ProjectStore {
         units: Option<&[ExecutionId]>,
         positions: Option<SourcePositions<'_>>,
     ) -> Result<CapturedResourceImpacts, ExecutionError> {
+        let connection = self
+            .connection()
+            .map_err(|_| failure(ErrorCode::StorageFailed, "impact-read"))?;
+        Self::capture_resource_impacts_from(connection, project_id, locale, units, positions)
+    }
+
+    pub(super) fn capture_resource_impacts_from(
+        connection: &Connection,
+        project_id: ExecutionId,
+        locale: &str,
+        units: Option<&[ExecutionId]>,
+        positions: Option<SourcePositions<'_>>,
+    ) -> Result<CapturedResourceImpacts, ExecutionError> {
         if units
             .is_some_and(|u| u.len() > 100 || u.iter().collect::<BTreeSet<_>>().len() != u.len())
         {
@@ -1987,9 +2000,6 @@ impl ProjectStore {
                 None,
             ),
         };
-        let connection = self
-            .connection()
-            .map_err(|_| failure(ErrorCode::StorageFailed, "impact-read"))?;
         check_project(connection, project_id, locale)?;
         let mut changes_statement = connection
             .prepare(
@@ -2135,6 +2145,12 @@ pub(in crate::persistence) struct CapturedResourceImpacts {
 }
 impl CapturedResourceImpacts {
     pub(in crate::persistence) fn evaluate(self) -> Result<Vec<ImpactItem>, ExecutionError> {
+        self.evaluate_with_cancel(&crate::execution::Cancellation::default())
+    }
+
+    pub(super) fn evaluate_with_cancel(
+        self, cancellation: &crate::execution::Cancellation,
+    ) -> Result<Vec<ImpactItem>, ExecutionError> {
         let Self {
             locale,
             changes,
@@ -2169,6 +2185,9 @@ impl CapturedResourceImpacts {
                 new_removed,
             ) in &changes
             {
+                if cancellation.is_requested() {
+                    return Err(failure(ErrorCode::Cancelled, "review-read-cancelled"));
+                }
                 if *rowid <= baseline {
                     continue;
                 }

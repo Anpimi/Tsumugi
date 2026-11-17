@@ -104,6 +104,7 @@ pub use resources::{
 pub use review::ComputedReviewCheck;
 pub(crate) use review::validate_choices;
 pub use review::{
+    CompletedReviewEligibility, PreparedReviewEligibility,
     AdvisoryFinding, AdvisoryReviewCheck, CapturedReviewCheckExecution, CheckFinding,
     CheckRuleResult, CheckRun, ComputedReviewEvidence, Eligibility, EligibilityLocale,
     EligibilityReason, FallbackDecision, FallbackWrite, PreparedReviewCheck, ReviewBasis,
@@ -672,6 +673,9 @@ impl ProjectStore {
     /// Fingerprint a settled, owned database before releasing its connection.
     /// Any external SQLite commit since admission disqualifies the proof.
     pub fn close_with_reopen_proof(mut self) -> Result<Option<ProjectReopenProof>, PersistenceError> {
+        if let Some(connection) = &self.connection {
+            ledger::cancel_review_reader(connection);
+        }
         let proof = (!self.is_reconciling())
             .then(|| self.reopen_proof())
             .flatten();
@@ -714,6 +718,9 @@ impl ProjectStore {
             return Err(PersistenceError::OutcomeUnknown {
                 stage: PersistenceStage::Close,
             });
+        }
+        if let Some(connection) = &self.connection {
+            ledger::cancel_review_reader(connection);
         }
         self.connection.take();
         self.lock.take();
@@ -835,6 +842,9 @@ impl ProjectStore {
 
 impl Drop for ProjectStore {
     fn drop(&mut self) {
+        if let Some(connection) = &self.connection {
+            ledger::cancel_review_reader(connection);
+        }
         self.mcp_query_liveness
             .store(false, std::sync::atomic::Ordering::Release);
         self.plugin_authority.revoke_all();

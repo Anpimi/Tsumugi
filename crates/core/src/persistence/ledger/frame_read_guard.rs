@@ -3,6 +3,7 @@
 //! notifications irreversibly invalidate it before any dependent row changes;
 //! external commits and schema changes are checked at each use.
 use super::{ExecutionError, FixedInput, FixedResult, MAX_FIXED_INPUT_BYTES, sql_error};
+use crate::execution::{Cancellation, ErrorCode};
 use rusqlite::{Connection, TransactionState, hooks::PreUpdateCase, params};
 use std::{
     collections::{BTreeMap, BTreeSet},
@@ -38,6 +39,7 @@ struct Observer {
     rows: BTreeMap<Row, Vec<Weak<AtomicBool>>>,
     release_evidence: u64,
     source_page: Option<SourcePageWatch>,
+    review_reader: Option<Weak<Cancellation>>,
 }
 
 struct SourcePageWatch {
@@ -133,6 +135,11 @@ pub(super) fn register(connection: &Connection, identity: &str) -> rusqlite::Res
             if database != "main" {
                 return;
             }
+            if let Some(read) = observer.review_reader.as_ref().and_then(Weak::upgrade) {
+                // DELETE journaling requires readers to yield before the writer
+                // needs its exclusive commit lock.
+                read.request();
+            }
             if super::super::release::invalidates_evidence(table, case) {
                 observer.release_evidence += 1;
             }
@@ -162,6 +169,36 @@ pub(super) fn register(connection: &Connection, identity: &str) -> rusqlite::Res
             }
         },
     ))
+}
+
+fn connection_observer(connection: &Connection) -> Result<Option<Arc<State>>, ExecutionError> {
+    let identity: String = connection
+        .query_row("SELECT tsumugi_connection_identity()", [], |row| row.get(0))
+        .map_err(sql_error)?;
+    Ok(registry().lock().unwrap_or_else(std::sync::PoisonError::into_inner)
+        .get(&identity).and_then(Weak::upgrade))
+}
+
+pub(in crate::persistence) fn watch_review_reader(
+    connection: &Connection, cancellation: Cancellation,
+) -> Result<Option<Arc<Cancellation>>, ExecutionError> {
+    let Some(state) = connection_observer(connection)? else { return Ok(None); };
+    let mut state = state.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+    if state.review_reader.as_ref().and_then(Weak::upgrade).is_some() {
+        return Err(ExecutionError::new(ErrorCode::Busy, "review-read-active"));
+    }
+    let cancellation = Arc::new(cancellation);
+    state.review_reader = Some(Arc::downgrade(&cancellation));
+    Ok(Some(cancellation))
+}
+
+pub(in crate::persistence) fn cancel_review_reader(connection: &Connection) {
+    if let Ok(Some(state)) = connection_observer(connection)
+        && let Some(read) = state.lock().unwrap_or_else(std::sync::PoisonError::into_inner)
+            .review_reader.as_ref().and_then(Weak::upgrade)
+    {
+        read.request();
+    }
 }
 
 /// Keep the current page projection only while its checked source is unchanged.

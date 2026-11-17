@@ -179,12 +179,16 @@ impl<'a> OriginRead<'a> {
         &mut self,
         snapshot: ExecutionId,
         limit: usize,
+        cancellation: &crate::execution::Cancellation,
     ) -> Result<Vec<(ExecutionId, ExecutionId)>, ExecutionError> {
         let version = mapping_revision(self.connection, snapshot)?;
         let mut unresolved = Vec::new();
         // Start with ordinal-ordered bindings. Only ancestor lookups need the
         // per-snapshot map used for traversal.
         for row in self.rows_at(snapshot, version)? {
+            if cancellation.is_requested() {
+                return Err(failure(ErrorCode::Cancelled, "review-read-cancelled"));
+            }
             let ids = (row.binding.occurrence_id, row.binding.unit_id);
             if self.unresolved_from(row)?.is_some() {
                 unresolved.push(ids);
