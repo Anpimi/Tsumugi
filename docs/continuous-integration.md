@@ -17,7 +17,7 @@ approvals and local project data are not cached.
 | Job | Environment | Scope |
 | --- | --- | --- |
 | Frontend build and behavior | Ubuntu 24.04 | TypeScript/Vite build and focused workbench, editing, import, source, review, release, conversation and IPC tests |
-| Rust, process channels and generated contracts | macOS 15 arm64 | SDK contract tests with schema support, Core library tests, Host library and actual conformance subprocess tests, all four contract generators in check mode, SDK JavaScript receivers, and both JavaScript runtime builds/tests |
+| Rust, process channels and generated contracts | macOS 15 arm64 | SDK contract tests with schema support, Core library and project storage compatibility tests, Host library and actual conformance subprocess tests, all four contract generators in check mode, SDK JavaScript receivers, and both JavaScript runtime builds/tests |
 
 Each command is an ordinary workflow step. A failed command fails its job;
 generated files are checked rather than regenerated into a passing checkout.
@@ -66,8 +66,8 @@ pnpm --dir apps/desktop test --maxWorkers=2 \
 The Rust/contract job runs:
 
 ```sh
-cargo test -p tsumugi-plugin-sdk --tests --features schema --locked
-cargo test -p tsumugi-core --lib --locked -- --test-threads=2
+cargo test -p tsumugi-plugin-sdk --tests --features schema --locked -- --test-threads=1
+cargo test -p tsumugi-core --lib --test capture_storage_compatibility --locked -- --test-threads=2
 cargo test -p tsumugi-plugin-host --features conformance-worker --lib --test process --locked -- --test-threads=2
 pnpm --dir crates/plugin-sdk check:contracts
 pnpm --dir runtimes/javascript-host check:contracts
