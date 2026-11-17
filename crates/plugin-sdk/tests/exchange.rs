@@ -407,6 +407,23 @@ fn strict_envelopes_preserve_unknown_payload_bytes_but_reject_bad_frames_and_lim
 }
 
 #[test]
+fn shared_payload_suffix_preserves_the_utf8_wire_string() {
+    let header = "\u{00e9}:";
+    let text = "{\"text\":\"\u{661f}\"}\r\n";
+    let frame = std::sync::Arc::new(format!("{header}{text}"));
+    let mut shared = EncodedPayload::capture(contract("example.opaque"), text.into()).unwrap();
+    let ordinary = shared.clone();
+    shared.utf8 = PayloadText::from_suffix(frame.clone(), header.len()).unwrap();
+    assert!(PayloadText::from_suffix(frame.clone(), 1).is_none());
+    assert!(PayloadText::from_suffix(frame.clone(), frame.len() + 1).is_none());
+    assert!(std::ptr::eq(shared.utf8.as_ref(), &frame[header.len()..]));
+    let wire = serde_json::to_vec(&shared).unwrap();
+    assert_eq!(shared, ordinary);
+    assert_eq!(wire, serde_json::to_vec(&ordinary).unwrap());
+    assert_eq!(serde_json::from_slice::<EncodedPayload>(&wire).unwrap(), ordinary);
+}
+
+#[test]
 fn captured_union_keeps_core_rules_and_domain_cannot_replace_or_weaken_them() {
     let core = requirement(false);
     let domain = requirement(true);

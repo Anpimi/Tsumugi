@@ -4,6 +4,7 @@ use crate::{
     *,
 };
 use serde::{Deserialize, Serialize};
+use std::{fmt, ops::Deref, sync::Arc};
 
 /// A claimed wire binding. Only the trusted host can compare it to the actual
 /// verified package and channel; constructing this value proves no authority.
@@ -103,6 +104,83 @@ impl InvocationContext {
     }
 }
 
+/// Immutable UTF-8 payload text, optionally held in a larger UTF-8 frame.
+#[derive(Clone, Default)]
+pub struct PayloadText {
+    storage: Arc<String>,
+    start: usize,
+}
+
+impl PayloadText {
+    /// Share the suffix beginning at a UTF-8 boundary in an owned frame.
+    pub fn from_suffix(storage: Arc<String>, start: usize) -> Option<Self> {
+        storage
+            .is_char_boundary(start)
+            .then_some(Self { storage, start })
+    }
+}
+
+impl From<String> for PayloadText {
+    fn from(text: String) -> Self {
+        Self {
+            storage: Arc::new(text),
+            start: 0,
+        }
+    }
+}
+
+impl From<&str> for PayloadText {
+    fn from(text: &str) -> Self {
+        text.to_owned().into()
+    }
+}
+
+impl AsRef<str> for PayloadText {
+    fn as_ref(&self) -> &str {
+        &self.storage[self.start..]
+    }
+}
+
+impl Deref for PayloadText {
+    type Target = str;
+
+    fn deref(&self) -> &str {
+        self.as_ref()
+    }
+}
+
+impl PartialEq for PayloadText {
+    fn eq(&self, other: &Self) -> bool {
+        self.as_ref() == other.as_ref()
+    }
+}
+
+impl Eq for PayloadText {}
+
+impl fmt::Debug for PayloadText {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        fmt::Debug::fmt(self.as_ref(), f)
+    }
+}
+
+impl fmt::Display for PayloadText {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        fmt::Display::fmt(self.as_ref(), f)
+    }
+}
+
+impl Serialize for PayloadText {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        serializer.serialize_str(self.as_ref())
+    }
+}
+
+impl<'de> Deserialize<'de> for PayloadText {
+    fn deserialize<D: serde::Deserializer<'de>>(decoder: D) -> Result<Self, D::Error> {
+        String::deserialize(decoder).map(Self::from)
+    }
+}
+
 /// Exact UTF-8 schema payload. The SDK verifies its byte digest but does not
 /// substitute a generic parser for that schema's actual semantic validator.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -110,8 +188,8 @@ impl InvocationContext {
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 pub struct EncodedPayload {
     pub schema: ContractRef,
-    #[serde(deserialize_with = "deserialize_payload_text")]
-    pub utf8: std::sync::Arc<str>,
+    #[cfg_attr(feature = "schema", schemars(with = "String"))]
+    pub utf8: PayloadText,
     pub sha256: String,
 }
 pub(crate) fn deserialize_payload_text<'de, D: serde::Deserializer<'de>>(

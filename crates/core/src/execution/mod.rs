@@ -1109,23 +1109,23 @@ impl ResultEnvelope {
 #[derive(Clone, Debug)]
 pub struct FixedResult {
     envelope: Arc<ResultEnvelope>,
-    bytes: Arc<Vec<u8>>,
+    frame: result_frame::Frame,
     digest: String,
     validated_input_digest: Arc<str>,
     pub(crate) semantic_validation: Option<validation::ValidationProof>,
 }
 impl FixedResult {
     pub fn capture(
-        envelope: ResultEnvelope,
+        mut envelope: ResultEnvelope,
         input: &FixedInput,
         token: ExecutionId,
     ) -> Result<Self, ExecutionError> {
         envelope.validate(input, token)?;
-        let bytes = result_frame::encode(&envelope, input)?;
-        let digest = codec::digest(&bytes);
+        let frame = result_frame::encode(&mut envelope, input)?;
+        let digest = codec::digest(frame.bytes());
         Ok(Self {
             envelope: Arc::new(envelope),
-            bytes: Arc::new(bytes),
+            frame,
             digest,
             validated_input_digest: Arc::from(input.digest()),
             semantic_validation: None,
@@ -1145,12 +1145,12 @@ impl FixedResult {
         token: ExecutionId,
         verified_digest: Option<String>,
     ) -> Result<Self, ExecutionError> {
-        let envelope = result_frame::decode(&bytes, input)?;
+        let (envelope, frame) = result_frame::decode(bytes, input)?;
         envelope.validate(input, token)?;
-        let digest = verified_digest.unwrap_or_else(|| codec::digest(&bytes));
+        let digest = verified_digest.unwrap_or_else(|| codec::digest(frame.bytes()));
         Ok(Self {
             envelope: Arc::new(envelope),
-            bytes: Arc::new(bytes.into_owned()),
+            frame,
             digest,
             validated_input_digest: Arc::from(input.digest()),
             semantic_validation: None,
@@ -1225,7 +1225,7 @@ impl FixedResult {
         &self.envelope
     }
     pub fn bytes(&self) -> &[u8] {
-        &self.bytes
+        self.frame.bytes()
     }
     pub fn digest(&self) -> &str {
         &self.digest
@@ -1234,7 +1234,7 @@ impl FixedResult {
         if self.envelope.result_id != previous.envelope.result_id {
             return Ok(false);
         }
-        if self.bytes != previous.bytes {
+        if self.bytes() != previous.bytes() {
             return Err(ExecutionError::new(
                 ErrorCode::ResultMismatch,
                 "result-identity",

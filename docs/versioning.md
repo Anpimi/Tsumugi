@@ -49,6 +49,8 @@ When preparing an official release, move the `Unreleased` entries under `## [VER
 
 Consumers pin SDK artifacts by exact commit and SHA-256 digest rather than relying on mutable version labels. Before distributing a new SDK archive, review all contract changes since the previous archive (such as new platform enum variants that affect exhaustive Rust matches) and advance the SDK prerelease version.
 
+`EncodedPayload::utf8` uses `PayloadText` in this development batch. Rust consumers that supplied an explicit `Arc<str>` can construct the field from `String` or `&str` using `into()`. The serialized field is the original UTF-8 string and retains its existing digest and wire schema.
+
 ### Standalone Plugin Host (`crates/plugin-host`)
 
 `tsumugi-plugin-host` inherits the workspace version. By default it builds without `tsumugi-core`, providing package/runtime inspection, local Store and TUF trust management, and headless SDK process channels. Enabling the optional `core-adapter` feature connects those channels and the internal Pi member runtime to Core's execution, grant, and process-lifecycle tracking without introducing a separate database store.

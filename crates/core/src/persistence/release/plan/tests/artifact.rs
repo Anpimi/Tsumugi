@@ -746,12 +746,25 @@ fn compact_build_result_keeps_checked_original_bytes_and_rejects_conflicting_pro
     };
     assert_eq!(result.envelope().output, Some(serde_json::json!([output.schema, output.sha256])));
     let plan = ReleasePlan::from_input(&input).unwrap();
-    let restored = FixedResult::restore(result.bytes(), result.digest(), &input, token).unwrap();
-    let original = sdk::parse_artifact_set(output.utf8.as_bytes()).unwrap();
+    let stored = result.bytes().to_vec();
+    let allocation = stored.as_ptr();
+    let restored = FixedResult::restore_owned(stored, result.digest(), &input, token).unwrap();
+    assert_eq!(restored.bytes().as_ptr(), allocation);
+    let restored_evidence = restored.envelope().plugin.as_ref().unwrap();
+    let sdk::InvocationOutcome::Succeeded { output: restored_output } =
+        &restored_evidence.result.outcome
+    else {
+        panic!("expected restored build success");
+    };
+    let raw = output.utf8.as_bytes();
+    let restored_raw = restored_output.utf8.as_bytes();
+    let start = result.bytes().len() - raw.len();
+    assert!(std::ptr::eq(raw, &result.bytes()[start..]));
+    assert!(std::ptr::eq(restored_raw, &restored.bytes()[start..]));
+    let original = sdk::parse_artifact_set(raw).unwrap();
     assert_eq!(plan.artifact_set(&restored).unwrap(), original);
 
     let restore = |frame: &[u8]| FixedResult::restore(frame, &codec::digest(frame), &input, token);
-    let raw = output.utf8.as_bytes();
     assert!(result.bytes().ends_with(raw));
     let header_end = result.bytes().len() - raw.len() - 1;
     let header_start = result.bytes().iter().position(|&byte| byte == b'{').unwrap();
