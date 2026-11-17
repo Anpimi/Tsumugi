@@ -97,6 +97,38 @@ beforeEach(async () => {
 });
 afterEach(() => { cleanup(); gate.dispose(); });
 
+it("renders saved exceptions only when expanded and keeps large lists paged", async () => {
+  releases = [{
+    ...release,
+    exceptions: Array.from({ length: 101 }, (_, index) => ({
+      ...release.exceptions[0],
+      nativeKey: `capacity-field-${String(index + 1).padStart(3, "0")}`,
+    })),
+  }];
+  const user = userEvent.setup();
+  render(<Harness project={project}/>);
+  const history = await screen.findByRole("button", { name: w("history") });
+  await waitFor(() => expect(history).toBeEnabled());
+  await user.click(history);
+  const choose = await screen.findByRole("button", { name: recordName() });
+  const record = choose.closest("li");
+  if (!record) throw new Error("Saved release row required");
+  const details = within(record);
+  const summary = details.getByText(w("diagnostics"), { selector: "summary" });
+  expect(details.queryByText(/capacity-field-001/)).not.toBeInTheDocument();
+
+  await user.click(summary);
+  await details.findByText(/capacity-field-001/);
+  expect(details.queryByText(/capacity-field-101/)).not.toBeInTheDocument();
+  await user.click(details.getByRole("button", { name: "Next page" }));
+  expect(details.getByText(/capacity-field-101/)).toBeVisible();
+  expect(details.queryByText(/capacity-field-001/)).not.toBeInTheDocument();
+  await user.click(details.getByRole("button", { name: "Previous page" }));
+  expect(details.getByText(/capacity-field-001/)).toBeVisible();
+  await user.click(summary);
+  await waitFor(() => expect(details.queryByText(/capacity-field-001/)).not.toBeInTheDocument());
+});
+
 it.each([
   { locale: "en-US", title: "Delivery", steps: ["Readiness", "Build", "Verification", "Export", "History"], settings: "Build settings" },
   { locale: "zh-CN", title: "交付", steps: ["就绪检查", "构建", "验证", "导出", "历史"], settings: "构建设置" },

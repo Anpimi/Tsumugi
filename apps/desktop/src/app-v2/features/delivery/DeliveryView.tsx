@@ -35,6 +35,37 @@ export interface DeliveryViewProps {
 }
 type Step = "readiness" | "build" | "verification" | "export" | "history";
 const steps: Step[] = ["readiness", "build", "verification", "export", "history"];
+const savedExceptionPageSize = 100;
+
+function SavedReleaseDetails({ record }: { record: ReleaseView }) {
+  const { t } = useTranslation(undefined, { keyPrefix: "deliveryWorkbench" });
+  const { t: global } = useTranslation();
+  const [open, setOpen] = useState(false);
+  const [offset, setOffset] = useState(0);
+  const total = record.exceptions.length;
+  const end = Math.min(offset + savedExceptionPageSize, total);
+
+  return <Disclosure title={t("diagnostics")} onToggle={event => setOpen(event.currentTarget.open)}>
+    {open ? <>
+      <p>{t("snapshot")}: <code>{record.sourceSnapshotId}</code></p>
+      <p>{t("version")}: {record.builderVersion} · {record.validatorVersion}</p>
+      <code>{record.manifestSha256}</code>
+      <p>{t("exceptions")}</p>
+      {total ? <ul>{record.exceptions.slice(offset, end).map((item, index) =>
+        <li key={offset + index}>{item.locale} · {item.nativeKey} · {global(`release.exceptionKind.${item.kind}`)}</li>
+      )}</ul> : <p>{t("noExceptions")}</p>}
+      {total > savedExceptionPageSize ? <nav className={styles.actions} aria-label={t("exceptions")}>
+        <Button variant="secondary" disabled={offset === 0} onClick={() => setOffset(offset - savedExceptionPageSize)}>
+          {t("previousExceptionPage")}
+        </Button>
+        <span aria-live="polite">{t("exceptionPageRange", { first: offset + 1, last: end, total })}</span>
+        <Button variant="secondary" disabled={end === total} onClick={() => setOffset(end)}>
+          {t("nextExceptionPage")}
+        </Button>
+      </nav> : null}
+    </> : null}
+  </Disclosure>;
+}
 
 /** A delivery surface over the retained Release owner. Opening a step never
  * starts work; every mutation goes through its original registered command. */
@@ -151,7 +182,7 @@ export function DeliveryView(props: DeliveryViewProps) {
         onClick={() => { if (canInteract() && commands.dispatch("release.open-saved-build", commandScope, delivery.recordPayload(record))) reveal("history"); }}>{t("viewRecord", { date: formatDate(record.createdAt) })}</Button>
       {record.exceptions.some(item => item.kind === "source-retained") ? <p>{global("releaseScope.retainedCount", { count: record.exceptions.filter(item => item.kind === "source-retained").length })}</p> : null}
       <p>{record.artifacts.map(file => `${file.locale} → ${file.fileName}`).join(" · ")}</p>
-      <Disclosure title={<>{t("diagnostics")}</>}><p>{t("snapshot")}: <code>{record.sourceSnapshotId}</code></p><p>{t("version")}: {record.builderVersion} · {record.validatorVersion}</p><code>{record.manifestSha256}</code><p>{t("exceptions")}</p>{record.exceptions.length ? <ul>{record.exceptions.map((item, index) => <li key={index}>{item.locale} · {item.nativeKey} · {global(`release.exceptionKind.${item.kind}`)}</li>)}</ul> : <p>{t("noExceptions")}</p>}</Disclosure>
+      <SavedReleaseDetails record={record}/>
     </li>)}</ul>
   </>;
   const exportContent = <>

@@ -18,6 +18,7 @@ export const deliveryWorkbenchEn = {
   exportSourceCurrent: "This build uses the current saved source.", exportSourceDifferent: "This build uses a different version of the source. Export uses the files saved with this build.",
   files: "Files", folder: "Export folder", chooseFolder: "Choose folder", previewFolder: "Check folder", overwrite: "I allow replacing the existing files shown here.", exportUnknown: "The export may already have written files. Check this same action before trying another export.", reauthorize: "Choose the original folder to check", missingBytes: "The saved files are unavailable. Check this saved build; nothing will be rebuilt automatically.",
   diagnostics: "Technical details", snapshot: "Source snapshot", version: "Build tools", exceptions: "Saved exceptions", noExceptions: "No saved exceptions", deliveries: "Export attempts", noDeliveries: "No export attempts recorded", checkAttempt: "Check this export", refreshExport: "Refresh export attempts", currentOutcome: "Latest export result",
+  previousExceptionPage: "Previous page", nextExceptionPage: "Next page", exceptionPageRange: "{{first, number}}–{{last, number}} of {{total, number}}",
   otherIssues: "Other project issues", openDecisions: "Open decisions", openExtensions: "Open extensions", activeDelivery: "A delivery operation is still active. Check its original result.",
   fixedHelp: "This build uses the saved input shown here. Newer project edits are kept separately.", permissionHelp: "Review the requested access before starting. Preparing a build does not authorize execution.", buildDetails: "Build details", verificationDetails: "Verification details", refreshBuild: "Refresh build results", policy: "Saved readiness evidence", waitingForPermission: "Review and allow this exact operation to continue.",
 };
@@ -41,6 +42,7 @@ export const deliveryWorkbenchZh = {
   exportSourceCurrent: "此构建使用当前已保存源文。", exportSourceDifferent: "此构建使用的源文版本与当前项目不同。导出将使用此构建已保存的文件。",
   files: "文件", folder: "导出文件夹", chooseFolder: "选择文件夹", previewFolder: "检查文件夹", overwrite: "我允许替换此处显示的已有文件。", exportUnknown: "这次导出可能已经写入文件，请先核对原操作，再决定是否重新导出。", reauthorize: "选择原文件夹进行核对", missingBytes: "已保存文件暂不可用，请核对此构建；不会自动重新构建。",
   diagnostics: "技术详情", snapshot: "源快照", version: "构建工具", exceptions: "已保存例外", noExceptions: "没有已保存例外", deliveries: "导出尝试", noDeliveries: "尚无导出尝试记录", checkAttempt: "核对此次导出", refreshExport: "刷新导出记录", currentOutcome: "最近一次导出结果",
+  previousExceptionPage: "上一页", nextExceptionPage: "下一页", exceptionPageRange: "第 {{first, number}}–{{last, number}} 条，共 {{total, number}} 条",
   otherIssues: "其他项目问题", openDecisions: "打开待你决定", openExtensions: "打开扩展", activeDelivery: "仍有交付操作正在进行，请核对原操作结果。",
   fixedHelp: "此构建使用这里显示的已保存输入，之后的项目修改会分别保留。", permissionHelp: "运行前请核对申请的权限。准备构建不会授予运行许可。", buildDetails: "构建详情", verificationDetails: "验证详情", refreshBuild: "刷新构建结果", policy: "已保存就绪依据", waitingForPermission: "请核对并允许这次准确操作，才能继续。",
 };
