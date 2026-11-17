@@ -59,60 +59,9 @@ impl<'a> OriginRead<'a> {
         let snapshot = self.snapshot(occurrence)?;
         let key = (snapshot, cap.get());
         if !self.rows.contains_key(&key) {
-            let query = if self.corrections {
-                "SELECT o.occurrence_id,COALESCE(b.unit_id,o.unit_id),COALESCE(b.revision_id,o.revision_id),
-                 CASE WHEN b.action_id IS NULL THEN l.predecessor_id ELSE b.predecessor_id END,
-                 COALESCE(b.relation,l.relation),COALESCE(c.mapping_revision,0),
-                 EXISTS(SELECT 1 FROM source_lineage_evidence e WHERE e.new_occurrence_id=o.occurrence_id)
-                 FROM source_occurrences o LEFT JOIN source_lineage l ON l.occurrence_id=o.occurrence_id
-                 LEFT JOIN source_lineage_correction_bindings b ON b.occurrence_id=o.occurrence_id
-                 AND b.action_id=(SELECT a.action_id FROM source_lineage_corrections a
-                   JOIN source_lineage_correction_bindings x ON x.action_id=a.action_id
-                   WHERE x.occurrence_id=o.occurrence_id AND a.mapping_revision<=?2
-                   ORDER BY a.mapping_revision DESC LIMIT 1)
-                 LEFT JOIN source_lineage_corrections c ON c.action_id=b.action_id
-                 WHERE o.snapshot_id=?1"
-            } else {
-                "SELECT o.occurrence_id,o.unit_id,o.revision_id,l.predecessor_id,l.relation,0,
-                 EXISTS(SELECT 1 FROM source_lineage_evidence e WHERE e.new_occurrence_id=o.occurrence_id)
-                 FROM source_occurrences o LEFT JOIN source_lineage l ON l.occurrence_id=o.occurrence_id
-                 WHERE o.snapshot_id=?1 AND ?2>=0"
-            };
-            let mut statement = self.connection.prepare(query).map_err(sql_error)?;
-            let rows = statement
-                .query_map(params![snapshot.to_string(), cap.get() as i64], |row| {
-                    Ok((
-                        row.get::<_, String>(0)?,
-                        row.get::<_, String>(1)?,
-                        row.get::<_, String>(2)?,
-                        row.get::<_, Option<String>>(3)?,
-                        row.get::<_, String>(4)?,
-                        row.get::<_, i64>(5)?,
-                        row.get::<_, bool>(6)?,
-                    ))
-                })
-                .map_err(sql_error)?
-                .map(|row| {
-                    let (occurrence, unit, source, predecessor, relation, version, evidence) =
-                        row.map_err(sql_error)?;
-                    let occurrence = id(occurrence)?;
-                    Ok((
-                        occurrence,
-                        OriginRow {
-                            snapshot,
-                            version: Revision::new(u64::try_from(version).map_err(|_| corrupt())?)?,
-                            binding: SourceLineageBinding {
-                                occurrence_id: occurrence,
-                                unit_id: id(unit)?,
-                                source_revision_id: id(source)?,
-                                predecessor_id: predecessor.map(id).transpose()?,
-                                relation,
-                            },
-                            evidence,
-                        },
-                    ))
-                })
-                .collect::<Result<BTreeMap<_, _>, ExecutionError>>()?;
+            let rows: BTreeMap<_, _> = self.rows_at(snapshot, cap)?.into_iter()
+                .map(|row| (row.binding.occurrence_id, row))
+                .collect();
             self.locations
                 .extend(rows.keys().map(|occurrence| (*occurrence, snapshot)));
             self.rows.insert(key, rows);
@@ -121,6 +70,63 @@ impl<'a> OriginRead<'a> {
             .get(&occurrence)
             .cloned()
             .ok_or_else(|| sql_error(rusqlite::Error::QueryReturnedNoRows))
+    }
+
+    fn rows_at(&self, snapshot: ExecutionId, cap: Revision) -> Result<Vec<OriginRow>, ExecutionError> {
+        let query = if self.corrections && cap.get() != 0 {
+            "SELECT o.occurrence_id,COALESCE(b.unit_id,o.unit_id),COALESCE(b.revision_id,o.revision_id),
+                 CASE WHEN b.action_id IS NULL THEN l.predecessor_id ELSE b.predecessor_id END,
+                 COALESCE(b.relation,l.relation),COALESCE(c.mapping_revision,0),
+                 CASE WHEN COALESCE(b.relation,l.relation) IN ('new','unresolved')
+                      THEN EXISTS(SELECT 1 FROM source_lineage_evidence e WHERE e.new_occurrence_id=o.occurrence_id)
+                      ELSE 0 END
+                 FROM source_occurrences o LEFT JOIN source_lineage l ON l.occurrence_id=o.occurrence_id
+                 LEFT JOIN source_lineage_correction_bindings b ON b.occurrence_id=o.occurrence_id
+                 AND b.action_id=(SELECT a.action_id FROM source_lineage_corrections a
+                   JOIN source_lineage_correction_bindings x ON x.action_id=a.action_id
+                   WHERE x.occurrence_id=o.occurrence_id AND a.mapping_revision<=?2
+                   ORDER BY a.mapping_revision DESC LIMIT 1)
+                 LEFT JOIN source_lineage_corrections c ON c.action_id=b.action_id
+                 WHERE o.snapshot_id=?1 ORDER BY o.ordinal"
+        } else {
+            "SELECT o.occurrence_id,o.unit_id,o.revision_id,l.predecessor_id,l.relation,0,
+                 CASE WHEN l.relation IN ('new','unresolved')
+                      THEN EXISTS(SELECT 1 FROM source_lineage_evidence e WHERE e.new_occurrence_id=o.occurrence_id)
+                      ELSE 0 END
+                 FROM source_occurrences o LEFT JOIN source_lineage l ON l.occurrence_id=o.occurrence_id
+                 WHERE o.snapshot_id=?1 AND ?2>=0 ORDER BY o.ordinal"
+        };
+        let mut statement = self.connection.prepare(query).map_err(sql_error)?;
+        statement
+            .query_map(params![snapshot.to_string(), cap.get() as i64], |row| {
+                Ok((
+                    row.get::<_, String>(0)?,
+                    row.get::<_, String>(1)?,
+                    row.get::<_, String>(2)?,
+                    row.get::<_, Option<String>>(3)?,
+                    row.get::<_, String>(4)?,
+                    row.get::<_, i64>(5)?,
+                    row.get::<_, bool>(6)?,
+                ))
+            })
+            .map_err(sql_error)?
+            .map(|row| {
+                let (occurrence, unit, source, predecessor, relation, version, evidence) =
+                    row.map_err(sql_error)?;
+                Ok(OriginRow {
+                    snapshot,
+                    version: Revision::new(u64::try_from(version).map_err(|_| corrupt())?)?,
+                    binding: SourceLineageBinding {
+                        occurrence_id: id(occurrence)?,
+                        unit_id: id(unit)?,
+                        source_revision_id: id(source)?,
+                        predecessor_id: predecessor.map(id).transpose()?,
+                        relation,
+                    },
+                    evidence,
+                })
+            })
+            .collect()
     }
 
     fn predecessor_version(
@@ -162,16 +168,52 @@ impl<'a> OriginRead<'a> {
 
     pub(in crate::persistence) fn unresolved_origin(
         &mut self,
-        mut occurrence: ExecutionId,
-        mut version: Revision,
+        occurrence: ExecutionId,
+        version: Revision,
     ) -> Result<Option<Vec<SourceLineageOrigin>>, ExecutionError> {
+        let current = self.row(occurrence, version)?;
+        self.unresolved_from(current)
+    }
+
+    pub(in crate::persistence) fn unresolved_in(
+        &mut self,
+        snapshot: ExecutionId,
+        limit: usize,
+    ) -> Result<Vec<(ExecutionId, ExecutionId)>, ExecutionError> {
+        let version = mapping_revision(self.connection, snapshot)?;
+        let mut unresolved = Vec::new();
+        // Start with ordinal-ordered bindings. Only ancestor lookups need the
+        // per-snapshot map used for traversal.
+        for row in self.rows_at(snapshot, version)? {
+            let ids = (row.binding.occurrence_id, row.binding.unit_id);
+            if self.unresolved_from(row)?.is_some() {
+                unresolved.push(ids);
+                if unresolved.len() == limit {
+                    break;
+                }
+            }
+        }
+        Ok(unresolved)
+    }
+
+    fn unresolved_from(
+        &mut self,
+        mut current: OriginRow,
+    ) -> Result<Option<Vec<SourceLineageOrigin>>, ExecutionError> {
+        let relation = current.binding.relation.as_str();
+        if !matches!(relation, "unchanged" | "changed")
+            && !(matches!(relation, "new" | "unresolved")
+                && (current.evidence || current.version.get() > 0))
+        {
+            return Ok(None);
+        }
         let mut seen = BTreeSet::new();
         let mut chain = Vec::new();
         loop {
+            let occurrence = current.binding.occurrence_id;
             if !seen.insert(occurrence) {
                 return Err(corrupt());
             }
-            let current = self.row(occurrence, version)?;
             chain.push(SourceLineageOrigin {
                 snapshot_id: current.snapshot,
                 occurrence_id: occurrence,
@@ -186,14 +228,14 @@ impl<'a> OriginRead<'a> {
             let old = current.binding.predecessor_id.ok_or_else(corrupt)?;
             let old_snapshot = self.snapshot(old)?;
             let old_version = self.predecessor_version(current.snapshot, old_snapshot)?;
-            if self.row(old, old_version)?.binding.unit_id != current.binding.unit_id {
+            let previous = self.row(old, old_version)?;
+            if previous.binding.unit_id != current.binding.unit_id {
                 return Err(corrupt());
             }
-            occurrence = old;
-            version = old_version;
             if chain.len() > MAX_OCCURRENCES {
                 return Err(failure(ErrorCode::LimitExceeded, "source-lineage-depth"));
             }
+            current = previous;
         }
     }
 }

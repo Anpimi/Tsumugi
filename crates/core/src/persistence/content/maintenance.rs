@@ -10,26 +10,11 @@ pub(in crate::persistence) fn unresolved_occurrences_in(
     snapshot: ExecutionId,
     limit: usize,
 ) -> Result<Vec<(ExecutionId, ExecutionId)>, ExecutionError> {
-    if limit==0 {return Err(failure(ErrorCode::InvalidInput,"source-mapping-limit"));}
-    i64::try_from(limit).map_err(|_|failure(ErrorCode::LimitExceeded,"source-mapping-limit"))?;
-    let mut statement = connection.prepare(
-        "SELECT o.occurrence_id,o.unit_id FROM source_effective_occurrences o
-         WHERE o.snapshot_id=?1 ORDER BY o.ordinal",
-    ).map_err(sql_error)?;
-    let rows=statement.query_map([snapshot.to_string()], |row| {
-        Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
-    }).map_err(sql_error)?
-        .map(|row| {
-            let (occurrence, unit) = row.map_err(sql_error)?;
-            Ok((id(occurrence)?, id(unit)?))
-        }).collect::<Result<Vec<_>,ExecutionError>>()?;
-    let version=lineage_corrections::mapping_revision(connection,snapshot)?;
-    let mut origins=lineage_corrections::OriginRead::new(connection)?;
-    let mut unresolved=Vec::new();
-    for (occurrence,unit) in rows {
-        if origins.unresolved_origin(occurrence,version)?.is_some(){unresolved.push((occurrence,unit));if unresolved.len()==limit{break;}}
+    if limit == 0 {
+        return Err(failure(ErrorCode::InvalidInput, "source-mapping-limit"));
     }
-    Ok(unresolved)
+    i64::try_from(limit).map_err(|_|failure(ErrorCode::LimitExceeded,"source-mapping-limit"))?;
+    lineage_corrections::OriginRead::new(connection)?.unresolved_in(snapshot, limit)
 }
 
 /// Keep capture, receipt, and lineage validation in the existing source owner.

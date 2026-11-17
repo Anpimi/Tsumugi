@@ -9,16 +9,23 @@ fn correction_receipt_precedes_unknown_session_and_preserves_b_approval_without_
     let a=approve(&mut store,project,units[0],"zh-CN");
     let s1=store.content_scope().unwrap().current_snapshot.unwrap();
     let old=store.source_content(s1,0,10).unwrap().rows[0].clone();
+    let unresolved = |store: &ProjectStore, snapshot| {
+        super::super::maintenance::unresolved_occurrences_in(store.connection().unwrap(), snapshot, 10)
+            .unwrap()
+    };
+    assert!(unresolved(&store, s1).is_empty());
     adopt_source(&mut store,br#"{"hello":"Changed {{name}}","plain":"Plain"}"#);
     let s2=store.content_scope().unwrap().current_snapshot.unwrap();
     let b_row=store.source_content(s2,0,10).unwrap().rows.remove(0);
     let b_unit=b_row.unit_id.unwrap();
+    assert_eq!(unresolved(&store, s2), vec![(b_row.occurrence_id.unwrap(), b_unit)]);
     translate(&mut store,project,b_unit,"zh-CN","B {{name}}");
     let b=approve(&mut store,project,b_unit,"zh-CN");
     check(&mut store,project,b_unit,"zh-CN");
     let request=CorrectSourceLineage {project_id:project,action_id:ExecutionId::new(),basis:store.source_lineage_correction_basis(project,s2,0).unwrap(),
         old_occurrence_id:old.occurrence_id.unwrap(),decision:SourceLineageCorrectionDecision::Continue,actor:"Maintainer".into(),reason:"Explicit identity correction".into()};
     let receipt=store.correct_source_lineage(&request).unwrap();
+    assert!(unresolved(&store, s2).is_empty());
     let c = store.connection().unwrap();
     let local = &b_row.occurrence.operation_unit_id;
     for (revision, expected_unit) in [(Revision::new(0).unwrap(), b_unit), (receipt.mapping_revision, units[0])] {
