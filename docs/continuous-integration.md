@@ -56,6 +56,7 @@ pnpm --dir apps/desktop test --maxWorkers=2 \
   src/ReleaseDraftSession.test.tsx \
   src/app-v2/features/delivery/DeliveryView.test.tsx \
   src/app-v2/features/delivery/DeliveryOwnerHost.test.tsx \
+  src/app-v2/features/assistant/ConversationCommands.test.tsx \
   src/app-v2/features/assistant/ConversationPanel.test.tsx \
   src/app-v2/features/assistant/ConversationSend.test.tsx \
   src/app-v2/features/assistant/ConversationRevisionCandidate.test.tsx \
