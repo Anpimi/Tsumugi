@@ -52,6 +52,10 @@ impl SourcePageWatch {
         match (table, case) {
             (_, PreUpdateCase::Unknown) => false,
             ("release_records" | "release_artifacts" | "release_deliveries", _) => true,
+            // Ordinary conversation creation and message append write only the
+            // local conversation log and its receipts, outside the source proof.
+            ("application_conversations" | "application_conversation_messages" | "application_conversation_actions",
+                PreUpdateCase::Insert(_)) => true,
             ("adoption_receipts", PreUpdateCase::Insert(row)) => {
                 // A new receipt for the source attempt could change which
                 // receipt validates the snapshot. Release saves use their own attempt.

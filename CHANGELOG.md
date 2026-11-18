@@ -193,6 +193,7 @@ The current workspace targets **`0.3.0-alpha.1`**. The published `0.2.0-alpha.1`
 
 ### Fixed
 
+- Creating a local assistant conversation waits for confirmation before loading its messages. Saving a conversation or message keeps verified source pages available when returning to Entries.
 - Returning to Entries keeps the current page while its captured list is valid. When the list has been recaptured, navigation starts from its new first page. Opening an unfiltered list no longer groups and sorts every occurrence in a source whose unit mapping has never been corrected.
 - The assistant pane pauses background source-impact counts while the delivery workspace is active. Returning to source maintenance refreshes the counts after relevant changes. Impact reads load detailed review evidence for the current page and units with recorded work, while preserving the project-wide totals.
 - Delivery history reuses verified details for recent saved builds. Returning from a folder chooser or receiving live execution updates no longer reloads the open history details.

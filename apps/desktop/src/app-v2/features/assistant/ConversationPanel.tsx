@@ -130,6 +130,8 @@ export default function ConversationPanel({ projectBrief, showWorkPlans = true, 
   const state = useSyncExternalStore(owner.subscribe, owner.getSnapshot, owner.getSnapshot);
   useSyncExternalStore(gate.subscribe, gate.getSnapshot, gate.getSnapshot);
   const activeId = state.activeId, input = activeId ? state.inputs.get(activeId) : undefined;
+  const pending = input?.value.pending;
+  const exists = !!input && (pending?.kind !== "create" || input.outcome === "recorded");
   const composer = useRef<HTMLTextAreaElement>(null), composing = useRef(false);
   const [memberRoutes, setMemberRoutes] = useState<ReadonlyMap<string, readonly ConversationMemberRoute[]>>(() => new Map());
   const planningRegion = useRef<HTMLElement>(null);
@@ -156,7 +158,7 @@ export default function ConversationPanel({ projectBrief, showWorkPlans = true, 
   const threads = useSessionInfiniteQuery({ key: ["conversations"], scopes: ["project"], enabled: visible,
     initialPageParam: null as string | null, nextPage: noNext,
     read: after => conversationCommands.list({ ...owner.context, after, limit: 50 }) });
-  const briefMessages = useSessionInfiniteQuery({ key: ["conversation", activeId, "messages"], scopes: ["project"], enabled: visible && !!activeId && !!projectBrief,
+  const briefMessages = useSessionInfiniteQuery({ key: ["conversation", activeId, "messages"], scopes: ["project"], enabled: visible && exists && !!projectBrief,
     initialPageParam: null as string | null, nextPage: noNext,
     read: after => { if (!activeId) throw new Error("A project brief requires a conversation"); return conversationCommands.messages({ ...owner.context, conversationId: activeId, after, limit: 50 }); } });
   const saved = threads.data?.pages.flatMap(page => page.rows) ?? [];
@@ -245,10 +247,8 @@ export default function ConversationPanel({ projectBrief, showWorkPlans = true, 
   }
   const createDisabled = !canCreateThread({ visible, blocked, activeId, viewId, parentDialogId });
   const byteLength = new TextEncoder().encode(input?.value.text ?? "").length;
-  const pending = input?.value.pending;
   const runPending = isRunPending(pending);
   const replayable = locallyReplayableConversationRequest(pending) || !!activeId && (owner.canRetryRun(activeId) || owner.canRetryTeam(activeId) || owner.canRetryQuestion(activeId));
-  const exists = pending?.kind !== "create" || input?.outcome === "recorded";
   const primaryRecovery = !!recoveryTarget && recoveryTarget.conversationId === activeId && recoveryTarget.slot === "primary" && pendingAction(pending) === recoveryTarget.actionId;
   const revocationRecovery = recoveryTarget && recoveryTarget.conversationId === activeId && recoveryTarget.slot === "revocation"
     ? input?.value.revocations?.find(slot => slot.request.actionId === recoveryTarget.actionId) : undefined;
@@ -307,7 +307,7 @@ export default function ConversationPanel({ projectBrief, showWorkPlans = true, 
       {state.next ? <Button size="sm" pending={state.hydration === "loading"} onClick={() => void owner.initialize(true)}>{t("moreDrafts")}</Button> : null}
     </div>
     <div className={styles.messages}>
-      {projectBrief?.(!activeId ? threads.isSuccess && saved.length === 0 : briefMessages.isSuccess && briefMessages.data.pages.every(page => page.rows.length === 0))}
+      {projectBrief?.(!activeId ? threads.isSuccess && saved.length === 0 : exists && briefMessages.isSuccess && briefMessages.data.pages.every(page => page.rows.length === 0))}
       {maintenanceBrief}
       {proposalTarget && proposalTarget.conversationId !== activeId ? <Banner tone="warning" role="status">{t("proposalTargetConversationChanged")}</Banner> : null}
       {threads.isError ? <Banner tone="error" action={<Button size="sm" onClick={() => void threads.refetch()}>{t("retryRead")}</Button>}>{t("threadsReadFailed")}</Banner> : null}

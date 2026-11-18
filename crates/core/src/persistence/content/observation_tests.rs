@@ -46,6 +46,37 @@ fn source_pages_recheck_off_page_mappings_after_local_and_external_writes() {
 }
 
 #[test]
+fn conversation_inserts_preserve_source_page_qualification_for_impact_reads() {
+    use crate::application::{AppendProjectConversationMessage, CreateProjectConversation};
+
+    let fixture = super::decision_mappings::tests::plugin_fixture();
+    let path = fixture.store.directory().to_path_buf();
+    let project_id = fixture.input.envelope().project_id;
+    let snapshot = fixture.store.content_scope().unwrap().current_snapshot.unwrap();
+    fixture.store.close().unwrap();
+    let store = ProjectStore::open(&path).unwrap();
+    let expected = store.source_impact(snapshot, "zh-CN", 0, 1).unwrap();
+    let conversation_id = ExecutionId::new();
+    store.create_project_conversation(&CreateProjectConversation {
+        project_id, action_id: ExecutionId::new(), conversation_id, title: None,
+    }).unwrap();
+    store.append_project_conversation_message(&AppendProjectConversationMessage {
+        project_id, action_id: ExecutionId::new(), conversation_id,
+        message_id: ExecutionId::new(), body: "A project note".into(),
+    }).unwrap();
+
+    let connection = store.connection().unwrap();
+    super::super::review::read_snapshot(connection, |connection| {
+        assert!(store.source_pages.read(connection, snapshot)?.is_some());
+        Ok(())
+    }).unwrap();
+    assert_eq!(store.source_impact(snapshot, "zh-CN", 0, 1).unwrap(), expected);
+    connection.execute("UPDATE source_occurrences SET native_key='Changed source' WHERE snapshot_id=?1 AND ordinal=2",
+        [snapshot.to_string()]).unwrap();
+    assert_eq!(store.source_impact(snapshot, "zh-CN", 0, 1).unwrap_err().code, ErrorCode::CorruptLedger);
+}
+
+#[test]
 fn source_preview_rechecks_checker_frames_after_local_and_external_writes() {
     for external in [false, true] {
         let fixture = super::decision_mappings::tests::plugin_fixture();

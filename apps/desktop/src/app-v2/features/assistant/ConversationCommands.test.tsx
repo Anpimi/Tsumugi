@@ -57,7 +57,8 @@ async function harness(held = false) {
   const bindings = new CommandBindings(workspaceCommandCatalog), commands = new WorkbenchCommands(bindings), scope = { ...context, area: "translation" as const };
   let visible = true, disabled = false, parentDialogId: string | undefined;
   const tree = () => <StrictMode><ApplicationReadProvider><SessionReadProvider context={context} reads={reads} bridge={false}>
-    <ConversationPanel owner={owner} commands={commands} visible={visible} disabled={disabled} gate={gate} viewId={viewId} parentDialogId={parentDialogId}/>
+    <ConversationPanel owner={owner} commands={commands} visible={visible} disabled={disabled} gate={gate} viewId={viewId} parentDialogId={parentDialogId}
+      projectBrief={eligible => eligible ? <p>Project brief</p> : null}/>
   </SessionReadProvider></ApplicationReadProvider></StrictMode>;
   const rendered = render(tree());
   const dispatcher = createWorkspaceCommandDispatcher({ gate, modifier: "meta", getContext: () => ({ viewId, scope, commands }) });
@@ -82,7 +83,14 @@ it("creates once through the shared command, blocks another creation in flight, 
   expect(blockedButton).toHaveAttribute("aria-disabled", "true");
   expect(within(blockedButton).getByRole("button", { hidden: true })).toBeDisabled();
   fireEvent.click(blockedButton); expect(h.create).toHaveBeenCalledTimes(1);
+  expect(screen.getByText(i18n.t("conversation.creatingThread"))).toBeVisible();
+  expect(invoke.mock.calls.some(([command]) => command === "read_project_conversation_messages")).toBe(false);
   await act(async () => { h.release(); }); await h.settled();
+  expect(await screen.findByText(i18n.t("conversation.emptyThread"))).toBeVisible();
+  expect(screen.getByText("Project brief")).toBeVisible();
+  expect(invoke).toHaveBeenCalledWith("read_project_conversation_messages", { request: {
+    ...context, conversationId: h.create.mock.calls[0][0].conversationId, after: null, limit: 50,
+  } });
   expect(h.bindings.set("conversation.new-thread", "Mod+Alt+N")).toEqual({ kind: "saved" });
   expect(new CommandBindings(workspaceCommandCatalog).resolve("conversation.new-thread", "Mod+N")).toBe("Mod+Alt+N");
   expect(h.dispatcher.handleKeyDown(h.key(), viewId)).toBe(false);
