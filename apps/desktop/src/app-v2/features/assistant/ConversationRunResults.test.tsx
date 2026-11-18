@@ -73,7 +73,7 @@ it("captures the whole original batch, shows three examples, and opens compariso
   expect(batch).not.toHaveBeenCalled(); await expand();
   const card = screen.getByRole("region", { name: t("runResultsBatchTitle", { count: 4 }) });
   expect(within(card).getAllByRole("listitem")).toHaveLength(3);
-  for (const name of ["runResultsViewBatch", "runResultsStageBatch"]) {
+  for (const name of ["runResultsViewBatch", "runResultsStageBatch"] as const) {
     fireEvent.click(within(card).getByRole("button", { name: t(name) }));
     await waitFor(() => expect(batch).toHaveBeenCalledTimes(name === "runResultsViewBatch" ? 1 : 2));
     expect(batch.mock.lastCall?.[0]).toEqual(runCandidateBatchTarget(h.link, h.plan, h.start, h.view.rows));
