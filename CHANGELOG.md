@@ -193,6 +193,8 @@ The current workspace targets **`0.3.0-alpha.1`**. The published `0.2.0-alpha.1`
 
 ### Fixed
 
+- Delivery history reuses verified details for recent saved builds. Returning from a folder chooser or receiving live execution updates no longer reloads the open history details.
+
 - Render saved-build exceptions only when technical details are opened, and show them in pages in the delivery history.
 - Reuse the verified current source when opening source history and its unfiltered details, avoiding a second read of large import results.
 - Scan current source correspondence in one pass when checking build readiness and pending decisions.

@@ -215,6 +215,7 @@ impl OpenPluginProofs<'_> {
 
 pub(super) fn validate_for_open<'a>(
     connection: &'a Connection,
+    retained_builds: &BTreeSet<ExecutionId>,
     mut validate_associations: impl FnMut(
         &Connection,
         &FixedInput,
@@ -238,12 +239,15 @@ pub(super) fn validate_for_open<'a>(
         connection,
         true,
         |connection, input, results, links| {
-            validate_attempt_input(
+            let status = validate_attempt_input(
                 connection,
                 input,
                 |result| results.load(result),
                 |result| require_open_valid_plugin_link(connection, result.envelope().result_id),
             )?;
+            if retained_builds.contains(&input.envelope().attempt_id) {
+                results.status = Some(status);
+            }
             super::plugin_execution::validate_associated_input(connection, input, results)?;
             let source = if input.envelope().operation == crate::content::OPERATION {
                 let (bundle, settings) = crate::content::SourceBundle::from_input_with_settings(input)?;
@@ -304,8 +308,8 @@ fn validate_attempt_input(
     input: &FixedInput,
     load_result: impl FnMut(ExecutionId) -> Result<FixedResult, ExecutionError>,
     validate_link: impl FnMut(&FixedResult) -> Result<(), ExecutionError>,
-) -> Result<(), ExecutionError> {
-    let _ = read_attempt_with_results(connection, input, false, load_result, validate_link)?;
+) -> Result<AttemptView, ExecutionError> {
+    let status = read_attempt_with_results(connection, input, false, load_result, validate_link)?;
     if is_conversation_planning(input) {
         crate::ai::conversation_planning::settings(input)?;
     }
@@ -314,7 +318,7 @@ fn validate_attempt_input(
     {
         super::mcp::validate_ledger_input(connection, input)?;
     }
-    Ok(())
+    Ok(status)
 }
 
 fn validate_schema(
@@ -1017,7 +1021,7 @@ pub(super) fn load_input_cached(
     Ok(input)
 }
 /// A reused result remains bound to its original fixed input and permission.
-fn result_input<'a>(
+pub(super) fn result_input<'a>(
     connection: &Connection,
     input: &'a FixedInput,
     result: ExecutionId,
@@ -1166,6 +1170,7 @@ impl OpenBuildArtifact {
 struct OpenLinkValidation<'a> {
     checker: &'a mut OpenCheckerFrames,
     build: &'a mut Option<OpenBuildEvidence>,
+    parts: Option<&'a mut super::release::saved::SavedBuildParts>,
     source: Option<&'a (crate::content::SourceBundle, crate::content::SourceSettings)>,
 }
 
@@ -1178,6 +1183,8 @@ pub(super) struct OpenResultReader<'a> {
     verified: Option<FixedResult>,
     checker: Option<&'a mut OpenCheckerFrames>,
     build: Option<OpenBuildEvidence>,
+    pub(super) build_parts: super::release::saved::SavedBuildParts,
+    pub(super) status: Option<AttemptView>,
 }
 
 impl<'a> OpenResultReader<'a> {
@@ -1188,6 +1195,8 @@ impl<'a> OpenResultReader<'a> {
             verified: None,
             checker: None,
             build: None,
+            build_parts: BTreeMap::new(),
+            status: None,
         }
     }
 
@@ -1210,6 +1219,7 @@ impl<'a> OpenResultReader<'a> {
             let open = self.checker.as_deref_mut().map(|checker| OpenLinkValidation {
                 checker,
                 build: &mut self.build,
+                parts: self.status.is_some().then_some(&mut self.build_parts),
                 source,
             });
             let link = validate_plugin_link_with_open_evidence(
@@ -1439,6 +1449,20 @@ fn read_attempt_with_results(
     mut load_result: impl FnMut(ExecutionId) -> Result<FixedResult, ExecutionError>,
     mut validate_link: impl FnMut(&FixedResult) -> Result<(), ExecutionError>,
 ) -> Result<AttemptView, ExecutionError> {
+    read_attempt_results_in(connection, input, active, &mut load_result, |output, linked| {
+        if linked { validate_link(output)?; }
+        Ok(())
+    }, false)
+}
+
+pub(super) fn read_attempt_results_in(
+    connection: &Connection,
+    input: &FixedInput,
+    active: bool,
+    mut load_result: impl FnMut(ExecutionId) -> Result<FixedResult, ExecutionError>,
+    mut observe: impl FnMut(&FixedResult, bool) -> Result<(), ExecutionError>,
+    require_result: bool,
+) -> Result<AttemptView, ExecutionError> {
     let attempt = input.envelope().attempt_id;
     check_translation_projection(connection, input, None)?;
     let envelope = input.envelope();
@@ -1498,24 +1522,18 @@ fn read_attempt_with_results(
         }
         if let Some(result) = result {
             match load_result(parse_id(result)?) {
-                Ok(output)
-                    if output.envelope().item_id == item_id
-                        && output.envelope().outcome == state
-                        && output
-                            .envelope()
-                            .diagnostic
-                            .as_ref()
-                            .is_some_and(|value| value.retry_safe)
-                            == retry_safe =>
-                {
-                    if validation == ValidationState::Valid && requires_semantic_check(input) {
-                        validate_link(&output)?;
+                Ok(output) if output.envelope().item_id == item_id && output.envelope().outcome == state => {
+                    if output.envelope().diagnostic.as_ref().is_some_and(|value| value.retry_safe) != retry_safe {
+                        validation = ValidationState::Invalid;
                     }
+                    observe(&output, validation == ValidationState::Valid && requires_semantic_check(input))?;
                     if validation == ValidationState::Valid
                         && input.envelope().operation == crate::ai::conversation_planning::OPERATION {
                         crate::ai::conversation_planning::validate_output(input, &output)?;
                     }
                 }
+                Err(e) if require_result => return Err(e),
+                Ok(_) if require_result => return Err(error(ErrorCode::ResultMismatch, "saved-build-result")),
                 _ => validation = ValidationState::Invalid,
             }
         } else if validation != ValidationState::Absent || state == ExecutionState::Succeeded {
@@ -1667,6 +1685,18 @@ pub(super) fn artifact_check_proof_in(
     let original = result_input(connection, input, result.envelope().result_id)?;
     let plan = crate::ReleasePlan::from_input(original.as_ref())?;
     plan.validate_source_reference(connection)?;
+    Ok(checked_build_artifacts(connection, original.as_ref(), result, &plan)?
+        .map(|(proof, _)| proof))
+}
+
+/// The caller has validated the input plan and its source in this read
+/// snapshot. Reused results remain bound to their original attempt.
+pub(super) fn checked_build_artifacts(
+    connection: &Connection,
+    original: &FixedInput,
+    result: &FixedResult,
+    plan: &crate::ReleasePlan,
+) -> Result<Option<(super::release::SavedArtifactCheckProof, tsumugi_plugin_sdk::ArtifactSet)>, ExecutionError> {
     let link: Option<(String, bool)> = connection.query_row(
         "SELECT checker_result_id,valid FROM plugin_validation_links WHERE producer_result_id=?1",
         [result.envelope().result_id.to_string()], |row| Ok((row.get(0)?, row.get(1)?)),
@@ -1675,21 +1705,28 @@ pub(super) fn artifact_check_proof_in(
         return Ok(None);
     };
     let check_input = load_check_input(connection, &checker_id)?;
-    let (capture, _) = ArtifactValidationCapture::restore_with_plan(
+    let (capture, output) = ArtifactValidationCapture::restore_with_plan(
         ResultValidationCapture {
-            input: original.as_ref().clone(),
+            input: original.clone(),
             result: result.clone(),
         },
         check_input,
-        &plan,
+        plan,
     )?;
     let check_result = load_check_result(connection, &capture.check_input, &checker_id)?;
     let prepared = capture.prepare(check_result)?;
-    let check_input = &prepared.capture.check_input;
-    let check_result = &prepared.check_result;
     if prepared.valid() != saved_valid {
         return Err(error(ErrorCode::CorruptLedger, "semantic-validation-proof"));
     }
+    Ok(Some((saved_artifact_check(&prepared)?, output)))
+}
+
+fn saved_artifact_check(
+    prepared: &PreparedArtifactValidation,
+) -> Result<super::release::SavedArtifactCheckProof, ExecutionError> {
+    let check_input = &prepared.capture.check_input;
+    let check_result = &prepared.check_result;
+    let saved_valid = prepared.valid();
     let checker = check_input
         .envelope()
         .plugin
@@ -1713,7 +1750,7 @@ pub(super) fn artifact_check_proof_in(
         _ if !saved_valid => None,
         _ => return Err(error(ErrorCode::CorruptLedger, "artifact-check-report")),
     };
-    Ok(Some(super::release::SavedArtifactCheckProof {
+    Ok(super::release::SavedArtifactCheckProof {
         checker_attempt_id: check_input.envelope().attempt_id,
         checker_input_digest: check_input.digest().into(),
         checker_result_id: check_result.envelope().result_id,
@@ -1721,7 +1758,7 @@ pub(super) fn artifact_check_proof_in(
         checker,
         valid: saved_valid,
         checks,
-    }))
+    })
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -2121,6 +2158,7 @@ fn validate_plugin_link_with_open_evidence(
         input: input.clone(),
         result: result.clone(),
     };
+    let retain_summary = open.as_ref().is_some_and(|read| read.parts.is_some());
     let build = open.as_mut().filter(|_| same_attempt).map(|open| &mut *open.build);
     let (capture, artifact) = if let Some(build) = build {
         let evidence = match build {
@@ -2155,10 +2193,18 @@ fn validate_plugin_link_with_open_evidence(
             authority,
         )?);
     }
+    let mut summary = None;
     if let Some((slot, output)) = artifact.filter(|_| saved_valid) {
+        if retain_summary {
+            summary = Some((super::release::saved::summarize_result(input, result, Some(&output))?,
+                            Some(saved_artifact_check(&prepared)?)));
+        }
         *slot = Some(OpenBuildArtifact { result: result.clone(), output });
     }
     if let Some(open) = open {
+        if let (Some(parts), Some(summary)) = (open.parts, summary) {
+            parts.insert(result.envelope().item_id, summary);
+        }
         open.checker.remember(&prepared.capture.check_input, &prepared.check_result);
     }
     Ok(CheckedPluginLink::Artifact {

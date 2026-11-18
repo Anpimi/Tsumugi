@@ -370,6 +370,10 @@ impl ReleasePlan {
         }
         Ok(())
     }
+    pub(super) fn saved_locales(&self) -> impl Iterator<Item = (&PluginBuildLocaleChoice, usize)> {
+        self.locales.iter().map(|entry| (&entry.choice, entry.targets.len()))
+    }
+
     pub fn choices(&self) -> Vec<PluginBuildLocaleChoice> {
         self.locales.iter().map(|l| l.choice.clone()).collect()
     }

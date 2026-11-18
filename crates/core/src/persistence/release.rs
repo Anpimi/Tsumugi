@@ -22,7 +22,7 @@ use std::sync::Arc;
 mod plan;
 mod record;
 pub(crate) use record::VerifiedRelease;
-mod saved;
+pub(super) mod saved;
 mod delivery;
 pub(super) use delivery::project_observations_in as project_delivery_observations_in;
 pub use plan::{PluginBuildLocaleChoice, ReleaseBuildEnvironment, ReleasePlan};
@@ -189,6 +189,7 @@ pub(super) struct OpenReleaseValidation {
     pending: BTreeMap<ExecutionId, Vec<ExecutionId>>,
     newest: BTreeSet<ExecutionId>,
     verified: Vec<Arc<VerifiedRelease>>,
+    builds: Vec<Arc<SavedPluginBuildView>>,
 }
 
 pub(super) fn prepare_open(connection: &Connection) -> Result<OpenReleaseValidation, ExecutionError> {
@@ -208,10 +209,16 @@ pub(super) fn prepare_open(connection: &Connection) -> Result<OpenReleaseValidat
         if index < RETAINED_RELEASES { newest.insert(release); }
         pending.entry(parse_id(attempt)?).or_default().push(release);
     }
-    Ok(OpenReleaseValidation { pending, newest, verified: Vec::new() })
+    Ok(OpenReleaseValidation { pending, newest, verified: Vec::new(), builds: Vec::new() })
 }
 
 impl OpenReleaseValidation {
+    pub(super) fn retained_attempts(&self) -> BTreeSet<ExecutionId> {
+        self.pending.iter().filter_map(|(&attempt, releases)| {
+            releases.iter().any(|id| self.newest.contains(id)).then_some(attempt)
+        }).collect()
+    }
+
     pub(super) fn validate_attempt(
         &mut self,
         connection: &Connection,
@@ -224,6 +231,30 @@ impl OpenReleaseValidation {
             if self.newest.contains(&id)
                 && let Some(verified) = VerifiedRelease::capture(connection, &record)?
             {
+                // The release read above checked the original build plan, source,
+                // result set and adoption. Reuse only compact parts whose IDs
+                // still describe every current execution item in this snapshot.
+                if let Some(plan) = results.input().open_build_plan()
+                    && let Some(status) = results.status.take()
+                    && status.items.len() == results.build_parts.len()
+                    && status.items.iter().all(|item| item.adoption == crate::execution::AdoptionState::Committed)
+                {
+                    let parts = std::mem::take(&mut results.build_parts);
+                    let mut current = true;
+                    for (item, (result, _)) in &parts {
+                        let stored: Option<String> = connection.query_row(
+                            "SELECT current_result_id FROM execution_items WHERE attempt_id=?1 AND item_id=?2",
+                            rusqlite::params![attempt.to_string(), item.to_string()], |row| row.get(0),
+                        ).map_err(sql)?;
+                        if stored.as_deref() != Some(result.result_id.to_string().as_str()) { current = false; break; }
+                    }
+                    if current {
+                        let view = saved::build_view(results.input(), plan, status, parts)?;
+                        if codec::check_encoded_size(&view, 1024 * 1024).is_ok() {
+                            self.builds.push(Arc::new(view));
+                        }
+                    }
+                }
                 self.verified.push(Arc::new(verified));
             }
         }
@@ -235,14 +266,19 @@ impl OpenReleaseValidation {
             return Err(failure(ErrorCode::CorruptLedger, "release-attempt"));
         }
         delivery::validate(connection)?;
-        ReleaseReadCache::from_verified(connection, self.verified)
+        let mut cache = ReleaseReadCache::from_verified(connection, self.verified)?;
+        cache.remember_builds(connection, self.builds)?;
+        Ok(cache)
     }
 }
 
 /// Retain bounded release projections from one fully validated snapshot. The
 /// original frames and artifacts are released before the store becomes usable.
 #[derive(Clone, Debug, Default)]
-pub(super) struct ReleaseReadCache(Option<(ReleaseEvidenceStamp, Vec<Arc<VerifiedRelease>>)>);
+pub(super) struct ReleaseReadCache {
+    releases: Option<(ReleaseEvidenceStamp, Vec<Arc<VerifiedRelease>>)>,
+    builds: Option<(super::ledger::ReadSnapshotStamp, Vec<Arc<SavedPluginBuildView>>)>,
+}
 
 impl ReleaseReadCache {
     /// Capture after the last write while the writer still holds the snapshot.
@@ -257,7 +293,7 @@ impl ReleaseReadCache {
         ).ok()?;
         if has_triggers { return None; }
         let stamp = ReleaseEvidenceStamp::capture(connection).ok()??;
-        Some(Self(Some((stamp, releases))))
+        Some(Self { releases: Some((stamp, releases)), builds: None })
     }
 
     pub(super) fn after_adoption(&self, connection: &Connection, release: VerifiedRelease) -> Option<Self> {
@@ -267,7 +303,7 @@ impl ReleaseReadCache {
     }
 
     fn verified_at(&self, connection: &Connection) -> Result<&[Arc<VerifiedRelease>], ExecutionError> {
-        match &self.0 {
+        match &self.releases {
             Some((stamp, releases)) if ReleaseEvidenceStamp::capture(connection)?.as_ref() == Some(stamp) => Ok(releases),
             _ => Ok(&[]),
         }
@@ -278,14 +314,36 @@ impl ReleaseReadCache {
         let still_current = verified.iter()
             .filter(|release| release.evidence_unchanged(connection).unwrap_or(false))
             .cloned().collect();
-        Self::from_verified(connection, still_current).unwrap_or_default()
+        let mut cache = Self::from_verified(connection, still_current).unwrap_or_default();
+        if let Ok(builds) = self.builds_at(connection) {
+            let _ = cache.remember_builds(connection, builds.to_vec());
+        }
+        cache
     }
 
     pub(super) fn rebind(&self, connection: &Connection) -> Self {
-        match &self.0 {
+        let mut rebound = match &self.releases {
             Some((_, releases)) => Self::from_verified(connection, releases.clone()).unwrap_or_default(),
             None => Self::default(),
+        };
+        if let Some((_, builds)) = &self.builds {
+            let _ = rebound.remember_builds(connection, builds.clone());
         }
+        rebound
+    }
+
+    fn builds_at(&self, connection: &Connection) -> Result<&[Arc<SavedPluginBuildView>], ExecutionError> {
+        match &self.builds {
+            Some((stamp, views)) if super::ledger::read_snapshot_stamp(connection)?.as_ref() == Some(stamp) => Ok(views),
+            _ => Ok(&[]),
+        }
+    }
+
+    fn remember_builds(&mut self, connection: &Connection, builds: Vec<Arc<SavedPluginBuildView>>) -> Result<(), ExecutionError> {
+        if !builds.is_empty() {
+            self.builds = super::ledger::read_snapshot_stamp(connection)?.map(|stamp| (stamp, builds));
+        }
+        Ok(())
     }
 
     fn from_verified(
@@ -299,7 +357,7 @@ impl ReleaseReadCache {
             return Ok(Self::default());
         }
         let entry = ReleaseEvidenceStamp::capture(connection)?.map(|stamp| (stamp, verified));
-        Ok(Self(entry))
+        Ok(Self { releases: entry, builds: None })
     }
 
     fn get(

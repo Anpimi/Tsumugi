@@ -11,6 +11,43 @@ fn call(view: &tauri::WebviewWindow<tauri::test::MockRuntime>, command: &str, re
         headers: Default::default(), invoke_key: tauri::test::INVOKE_KEY.into(),
     }).map(|value| value.deserialize().unwrap())
 }
+/// The optional fixture is a closed synthetic project with one checked,
+/// committed 50,000-entry release. Keep measurements on the registered IPC.
+#[test]
+#[ignore = "requires a disposable 50,000-entry release project"]
+fn saved_build_capacity_through_registered_commands() {
+    let path = std::env::var_os("TSUMUGI_SAVED_BUILD_PROJECT").expect("synthetic release project");
+    let mut context = tauri::test::mock_context(tauri::test::noop_assets());
+    context.config_mut().identifier = "com.tsumugi.saved-build-test".into();
+    let app = crate::commands::register_commands(tauri::test::mock_builder()).build(context).unwrap();
+    let view = tauri::WebviewWindowBuilder::new(&app, "main", tauri::WebviewUrl::App("index.html".into()))
+        .build().unwrap();
+    let started = Instant::now();
+    let opened = call(&view, "open_project", json!({"locator":std::path::PathBuf::from(path)})).unwrap();
+    eprintln!("open_ms={}", started.elapsed().as_millis());
+    let session = &opened["sessionToken"];
+    let project = &opened["metadata"]["projectId"];
+    let releases = call(&view, "list_releases", json!({"sessionToken":session,"projectId":project})).unwrap();
+    assert_eq!(releases.as_array().unwrap().len(), 1);
+    let request = json!({"sessionToken":session,"projectId":project,"attemptId":releases[0]["attemptId"]});
+    let read = || {
+        let started = Instant::now();
+        let result = call(&view, "read_saved_plugin_build", request.clone()).unwrap();
+        eprintln!("saved_build_us={}", started.elapsed().as_micros());
+        assert_eq!(result["sourceSnapshotId"], releases[0]["sourceSnapshotId"]);
+        assert_eq!(result["locales"][0]["targetCount"], 50_000);
+        assert_eq!(result["locales"][0]["artifactCheck"]["valid"], true);
+        result
+    };
+    let first = read();
+    assert_eq!(first, read());
+    if let Some(capture) = std::env::var_os("TSUMUGI_SAVED_BUILD_CAPTURE") {
+        let file = fs::OpenOptions::new().write(true).create_new(true).open(capture).unwrap();
+        serde_json::to_writer(file, &first).unwrap();
+    }
+    call(&view, "close_project", json!({"sessionToken":session})).unwrap();
+}
+
 fn run(store: &mut ProjectStore, runtime: &mut ExecutionRuntime, input: &FixedInput) -> ExecutionId {
     runtime.submit(store, input).unwrap();
     let deadline = Instant::now() + Duration::from_secs(5);

@@ -361,6 +361,24 @@ it.each(["en-US", "zh-CN"])("opens the full saved build evidence through History
   expect(owner.current().savedAttempt).toBeNull();
 });
 
+it("keeps saved build evidence while selecting it for export and checking live execution", async () => {
+  const user = userEvent.setup();
+  render(<Harness project={project}/>);
+  await user.click(await screen.findByRole("button", { name: w("history") }));
+  await user.click(await screen.findByRole("button", { name: w("viewRecord", { date: releaseDate() }) }));
+  const evidence = await screen.findByRole("heading", { name: i18n.t("releasePlugin.savedTitle") });
+  await user.click(screen.getByRole("button", { name: recordName() }));
+  expect(owner.current().chosen?.releaseId).toBe(release.releaseId);
+
+  // Returning from a native chooser reconciles focus and live runtime state.
+  await act(async () => { reads.invalidate(["execution"], true, "focus"); });
+  const evidenceReads = () => invoke.mock.calls.filter(([command]) => command === "read_saved_plugin_build");
+  expect(evidence).toBeVisible();
+  expect(evidenceReads()).toHaveLength(1);
+  await user.click(screen.getByRole("button", { name: i18n.t("releasePlugin.savedRefresh") }));
+  await waitFor(() => expect(evidenceReads()).toHaveLength(2));
+});
+
 it("retries the same saved evidence read locally and rejects a substituted release payload", async () => {
   const original = invoke.getMockImplementation()!; let reads = 0;
   invoke.mockImplementation(async (command, args) => {

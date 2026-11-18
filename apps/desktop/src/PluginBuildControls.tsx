@@ -115,7 +115,8 @@ export function PluginBuildControls({ project, open, settingsOpen, disabled, onR
     read:()=>attempt ? readCompleteAttempt(context,attempt,"locale-build") : Promise.resolve(null) });
   const checkRead = useSessionQuery({ key:checkKey,scopes:["execution"],enabled:setupOpen && !!checkAttempt && !busy,
     read:()=>checkAttempt ? readCompleteAttempt(context,checkAttempt,"artifact-semantic-check") : Promise.resolve(null) });
-  const savedRead = useSessionQuery({ key:["saved-plugin-build",savedAttempt],scopes:["execution","release"],enabled:open && !!savedAttempt,
+  // History opens a committed release. Live execution and window focus cannot change its evidence.
+  const savedRead = useSessionQuery({ key:["saved-plugin-build",savedAttempt],scopes:["release"],refreshOnFocus:false,enabled:open && !!savedAttempt,
     read:()=>{if(!savedAttempt)throw new Error("No saved build selected");return releaseCommands.savedBuild({...context,attemptId:savedAttempt});} });
   const detail = buildSaved ? null : buildRead.data, checkDetail = checkRead.data, checkItem = checkDetail?.items[0];
   const buildActive = !buildSaved && !!attempt && (!detail || detail.items.some(item=>["queued","dispatched"].includes(item.status.execution)));

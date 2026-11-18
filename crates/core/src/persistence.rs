@@ -1260,7 +1260,8 @@ fn validate_schema_shape(connection: &Connection) -> Result<OpenReadCaches, Pers
             stage: PersistenceStage::Open,
         })?;
     let mut planning_attempts = 0;
-    let open_proofs = ledger::validate_for_open(connection, |connection, input, results, proofs| {
+    let retained_builds = release_open.retained_attempts();
+    let open_proofs = ledger::validate_for_open(connection, &retained_builds, |connection, input, results, proofs| {
         review_open.validate_input(connection, input, results)?;
         if application::conversations::planning::history::validate_input(connection, input)? {
             planning_attempts += 1;

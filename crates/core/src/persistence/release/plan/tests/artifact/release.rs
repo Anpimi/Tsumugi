@@ -141,9 +141,20 @@ fn corrected_release_and_source_context_keep_the_exact_frozen_mapping_after_late
     assert_eq!(store.release_artifact_by_path(release,"zh-CN",&choices()[0].output_paths[0]).unwrap(),artifact);
     drop(store);
     let reopened=ProjectStore::open(directory.path().join("project")).unwrap();
+    let connection = reopened.connection().unwrap();
+    crate::persistence::review::read_snapshot(connection, |connection| {
+        let cache = reopened.release_reads.borrow();
+        assert_eq!(cache.builds_at(connection)?[0].as_ref(), &saved);
+        Ok(())
+    }).unwrap();
     assert_eq!(reopened.read_saved_plugin_build(project,input.envelope().attempt_id,false).unwrap(),saved);
     assert_eq!(reopened.release_view(release).unwrap(),view);
     assert_eq!(reopened.release_artifact_by_path(release,"zh-CN",&choices()[0].output_paths[0]).unwrap(),artifact);
+    let writer = rusqlite::Connection::open(reopened.directory().join("project.sqlite3")).unwrap();
+    writer.execute("UPDATE execution_results SET digest=printf('%064d',0) WHERE attempt_id=?1",
+        [input.envelope().attempt_id.to_string()]).unwrap();
+    assert!(reopened.read_saved_plugin_build(project, input.envelope().attempt_id, false).is_err());
+
 }
 
 #[test]
