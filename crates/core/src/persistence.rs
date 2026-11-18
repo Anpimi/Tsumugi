@@ -723,7 +723,14 @@ impl ProjectStore {
             ledger::cancel_review_reader(connection);
         }
         self.connection.take();
-        self.lock.take();
+        self.release_lock()
+    }
+
+    fn release_lock(&mut self) -> Result<(), PersistenceError> {
+        if let Some(lock) = self.lock.take() {
+            // Closing our descriptor alone can leave the lock on an inherited duplicate.
+            lock.unlock().map_err(|error| map_io(error, PersistenceStage::Close))?;
+        }
         Ok(())
     }
 
@@ -849,7 +856,7 @@ impl Drop for ProjectStore {
             .store(false, std::sync::atomic::Ordering::Release);
         self.plugin_authority.revoke_all();
         self.connection.take();
-        self.lock.take();
+        let _ = self.release_lock();
     }
 }
 
@@ -1563,8 +1570,15 @@ mod tests {
             ProjectStore::open(&project_path).unwrap_err().code(),
             PersistenceErrorCode::ProjectInUse
         );
+        // A duplicated descriptor can outlive this owner during a concurrent process spawn.
+        let duplicate = store.lock.as_ref().unwrap().try_clone().unwrap();
         store.close().unwrap();
         let reopened = ProjectStore::open(&project_path).unwrap();
+        drop(duplicate);
+        assert_eq!(
+            ProjectStore::open(&project_path).unwrap_err().code(),
+            PersistenceErrorCode::ProjectInUse
+        );
         reopened.close().unwrap();
     }
 
