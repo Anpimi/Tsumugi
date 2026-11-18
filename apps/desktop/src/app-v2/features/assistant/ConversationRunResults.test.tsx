@@ -3,6 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import wire from "../../../../test/fixtures/aiCommands.contract.json";
 import { validateResponseView, validateResponseWorkPlan, validateResponseWorkPlanStartAction } from "../../../generated/ai.validators";
 import { i18n } from "../../../i18n";
+import type { conversationRunResultsEn } from "../../../i18n/conversationRunResults";
 import { SessionReadProvider } from "../../../SessionReadProvider";
 import { SessionReads } from "../../../sessionReads";
 import { conversationWorkPlanFixture } from "../../../testSupport/conversationWorkPlanFixture";
@@ -14,7 +15,7 @@ import { runCandidateBatchTarget, type OpenRunCandidateBatch } from "../candidat
 
 const invoke = vi.hoisted(() => vi.fn());
 vi.mock("@tauri-apps/api/core", () => ({ invoke }));
-const t = (key: string, values = {}) => i18n.t(`conversation.${key}`, values);
+const t = (key: keyof typeof conversationRunResultsEn, values = {}) => i18n.t(`conversation.${key}`, values);
 const disposals: (() => void)[] = [];
 function deferred<T>() { let resolve!: (value: T) => void, reject!: (value: unknown) => void; const promise = new Promise<T>((yes, no) => { resolve = yes; reject = no; }); return { promise, resolve, reject }; }
 function fixture(count = 100) {
