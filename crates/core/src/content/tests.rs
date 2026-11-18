@@ -180,6 +180,9 @@ fn adopted_lineage_correction_preserves_original_payload_and_both_human_historie
     let current=store.source_content(s2,0,10).unwrap().rows;
     assert_eq!(current[0].occurrence_id,new[0].occurrence_id);
     assert_eq!(current[0].unit_id,old[0].unit_id);
+    let summary = store.review_summary_page(project, "zh-CN", 0, 10, "", None).unwrap();
+    assert_eq!(summary.rows.iter().map(|row| row.unit_id).collect::<Vec<_>>(),
+        current.iter().map(|row| row.unit_id.unwrap()).collect::<Vec<_>>());
     assert_ne!(current[0].source_revision_id,old[0].source_revision_id);
     assert_ne!(current[0].source_revision_id,new[0].source_revision_id);
     assert_eq!(receipt.previous_bindings[0].unit_id,new[0].unit_id.unwrap());

@@ -1,6 +1,6 @@
 //! Session-local read scopes fix membership and order without persisting business data.
 use super::*;
-use std::{cell::RefCell, collections::VecDeque};
+use std::{cell::RefCell, collections::{HashSet, VecDeque}};
 mod segments;
 pub use segments::{SegmentSourceComparison, SegmentPage, SegmentQuery, SegmentQueueWindow, SegmentRow, SegmentScopeCapture, SegmentSelectionFilter, SegmentStatusFilter,
     SegmentApplicability, SegmentImpactChange, SegmentQualification, SegmentReason, SegmentResourceImpact, SegmentTermRef, SegmentTermSummary};
@@ -358,25 +358,27 @@ impl ProjectStore {
             snapshot.ok_or_else(|| failure(ErrorCode::DependencyConflict, "review-source"))?,
         )?;
         let units = if query.is_empty() {
-            // Fix identity/order across pages without reading every unit's text.
-            let mut statement = connection
-                .prepare(
-                    "SELECT o.unit_id,MIN(o.ordinal) FROM source_effective_occurrences o
+            // Ordinals are unique within a snapshot. The first occurrence in
+            // index order is the canonical position for each effective unit.
+            let occurrences = occurrence_table(connection, snapshot_id)?;
+            let mut statement = connection.prepare(&format!(
+                "SELECT o.unit_id,o.ordinal FROM {occurrences} o
                  JOIN source_units u ON u.unit_id=o.unit_id
-                 WHERE o.snapshot_id=?1 AND u.project_id=?2 GROUP BY o.unit_id ORDER BY MIN(o.ordinal),o.unit_id LIMIT ?3",
-                )
-                .map_err(sql)?;
-            statement
-                .query_map(
-                    params![snapshot_id.to_string(), project_id.to_string(), (MAX_SCOPE + 1) as i64],
-                    |row| Ok((row.get::<_, String>(0)?, row.get::<_, u32>(1)?)),
-                )
-                .map_err(sql)?
-                .map(|row| {
-                    let (unit, ordinal) = row.map_err(sql)?;
-                    Ok((parse_id(unit)?, ordinal))
-                })
-                .collect::<Result<Vec<_>, ExecutionError>>()?
+                 WHERE o.snapshot_id=?1 AND u.project_id=?2 ORDER BY o.ordinal",
+            )).map_err(sql)?;
+            let mut rows = statement.query(params![snapshot_id.to_string(), project_id.to_string()]).map_err(sql)?;
+            let mut seen = HashSet::new();
+            let mut units = Vec::new();
+            while let Some(row) = rows.next().map_err(sql)? {
+                let unit = parse_id(row.get(0).map_err(sql)?)?;
+                if seen.insert(unit) {
+                    units.push((unit, row.get(1).map_err(sql)?));
+                    if units.len() > MAX_SCOPE {
+                        break;
+                    }
+                }
+            }
+            units
         } else {
             let mut statement = connection
                 .prepare(

@@ -453,8 +453,35 @@ it("restores focus to the same textarea and selection across a focus mode round 
   } finally { vi.unstubAllGlobals(); }
 });
 
+it("restores a later page only while its issuing scope is current", async () => {
+  const selection = { kind: "ids" as const, locale: "zh-CN", sourceSnapshotId: "snapshot", unitIds: [unitA] };
+  const h = await harness({ selection });
+  fireEvent.click(await screen.findByRole("button", { name: w("nextPage") }));
+  const rowName = (unit: string) => i18n.t("workbenchV2.entryEdit", { key: `key.${unit}` });
+  expect(await screen.findByRole("button", { name: rowName("unit-c") })).toHaveTextContent("3");
+
+  const leave = () => act(() => { h.store.setState({ activeViewId: null }); });
+  const reopen = () => act(() => { h.store.getState().activate("view-one"); });
+  leave();
+  reopen();
+  expect(await screen.findByRole("button", { name: rowName("unit-c") })).toHaveTextContent("3");
+  expect(h.page).toHaveBeenCalledTimes(2);
+
+  leave();
+  h.reads.invalidate(["translation"], false);
+  const read = h.page.getMockImplementation()!;
+  h.page.mockClear().mockImplementation(async request => {
+    if (request.cursor !== null) throw new Error("Cursor belongs to the previous scope");
+    return { ...await read(request), scopeId: "replacement", nextCursor: "replacement-page-two" };
+  });
+  reopen();
+  expect(await screen.findByRole("button", { name: rowName(unitA) })).toHaveTextContent("1");
+  expect(h.view()).toMatchObject({ cursor: null, afterOrdinal: 0, selection });
+  expect(h.page.mock.calls.map(([{ scopeId, cursor }]) => [scopeId, cursor])).toEqual([[null, null]]);
+});
+
 it("opens a row from a nonzero page at that row's fixed queue position", async () => {
-  const h = await harness({ cursor: "page-two", afterOrdinal: 2 });
+  const h = await harness({ cursor: { scopeId: "fixed-scope", token: "page-two" }, afterOrdinal: 2 });
   const edit = await screen.findByRole("button", { name: i18n.t("workbenchV2.entryEdit", { key: "key.unit-c" }) }); expect(edit).toHaveTextContent("3");
   fireEvent.click(edit);
   expect(await screen.findByRole("textbox", { name: i18n.t("workbenchV2.editorLabel", { key: "key.unit-c" }) })).toBeVisible();

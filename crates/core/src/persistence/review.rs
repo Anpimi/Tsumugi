@@ -873,11 +873,7 @@ impl ProjectStore {
         check_project(connection, project, locale)?;
         // Only corrections can change an adopted unit's identity. Resolve the
         // canonical first occurrence once, for both review and resource reads.
-        let occurrences = if super::content::lineage_corrections::mapping_revision(connection, snapshot)?.get() == 0 {
-            "source_occurrences"
-        } else {
-            "source_effective_occurrences"
-        };
+        let occurrences = occurrence_table(connection, snapshot)?;
         let query = format!(
             "WITH current AS (
                 SELECT unit_id, MIN(ordinal) AS first_ordinal FROM {occurrences}
@@ -1655,6 +1651,14 @@ impl ProjectStore {
         .map(|item| item.0)
         .ok_or_else(|| failure(ErrorCode::CorruptLedger, "review-fallback-receipt"))
     }
+}
+
+fn occurrence_table(connection: &Connection, snapshot: ExecutionId) -> Result<&'static str, ExecutionError> {
+    Ok(if super::content::lineage_corrections::mapping_revision(connection, snapshot)?.get() == 0 {
+        "source_occurrences"
+    } else {
+        "source_effective_occurrences"
+    })
 }
 
 fn all_units(
@@ -4500,6 +4504,8 @@ pub(super) mod tests {
             }
         }
         transaction.commit().unwrap();
+        assert_eq!(store.review_summary_page(project, "zh-CN", 0, 50, "", None).unwrap_err().code,
+            ErrorCode::LimitExceeded);
         assert_eq!(
             store.review_page(project, "zh-CN", 0, 50).unwrap_err().code,
             ErrorCode::LimitExceeded

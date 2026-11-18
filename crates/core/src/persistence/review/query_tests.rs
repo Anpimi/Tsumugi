@@ -683,6 +683,27 @@ fn source_impact_reads_one_projected_work_set_for_two_thousand_units() {
 }
 
 #[test]
+fn default_segment_membership_keeps_the_first_of_multiple_occurrences() {
+    let directory = tempfile::tempdir().unwrap();
+    let mut store = ProjectStore::create(
+        directory.path().join("project"),
+        crate::ProjectMetadata::create("Shared units", "en", ["zh-CN"]).unwrap(),
+    ).unwrap();
+    crate::content::tests::adopt_shared_source_fixture(&mut store);
+    let project = parse_id(store.metadata().unwrap().project_id().to_string()).unwrap();
+    let snapshot = store.content_scope().unwrap().current_snapshot.unwrap();
+    let content = store.source_content(snapshot, 0, 3).unwrap();
+    assert_eq!(content.rows[0].unit_id, content.rows[1].unit_id);
+    let query = SegmentQuery { text: String::new(), selection: SegmentSelectionFilter::All, status: SegmentStatusFilter::All };
+    let first = store.read_segment_page(project, "zh-CN", &query, None, None, 1).unwrap();
+    assert_eq!(first.total, 2);
+    assert_eq!(first.rows[0].content.native_key, content.rows[0].occurrence.key);
+    let second = store.read_segment_page(project, "zh-CN", &query, Some(first.scope_id), first.next_cursor, 1).unwrap();
+    assert_eq!(second.rows[0].content.unit_id, content.rows[2].unit_id.unwrap());
+    assert!(second.next_cursor.is_none());
+}
+
+#[test]
 fn untranslated_membership_does_not_project_the_whole_source_scope() {
     let (_directory, mut store, project) = large_fixture(205);
     let first = store.read_segment_page(project, "zh-CN", &SegmentQuery {
@@ -845,8 +866,9 @@ fn status_filter_batches_share_source_proofs_but_a_new_read_revalidates_them() {
         let (_, statements, _) = measure(&store, || store.read_segment_page(project, "zh-CN", &query, None, None, 50).unwrap());
         let proofs = statements.iter().filter(|sql| sql.contains("SELECT attempt_id FROM source_snapshots WHERE snapshot_id=")).count();
         assert_eq!(proofs, 1, "each bounded filter batch repeated the same frozen source proof: {status:?}");
-        let position_scans = statements.iter().filter(|sql| sql.contains("MIN(o.ordinal)")).count();
+        let position_scans = statements.iter().filter(|sql| sql.contains("SELECT o.unit_id,o.ordinal FROM source_occurrences o")).count();
         assert_eq!(position_scans, 1, "only scope capture should scan for canonical positions: {status:?}");
+        assert!(!statements.iter().any(|sql| sql.contains("MIN(o.ordinal)")), "positioned batches must not regroup the source: {status:?}");
     }
     let attempt = store.source_content(snapshot, 0, 1).unwrap().attempt_id;
     let original = store.execution_input(attempt).unwrap();

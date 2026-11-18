@@ -60,7 +60,7 @@ export interface WorkspaceView {
   dockOpen: boolean;
   dockSize: number | null;
   afterOrdinal: number;
-  cursor: string | null;
+  cursor: { readonly scopeId: string; readonly token: string } | null;
   pinned: boolean;
   translationMemory?: TranslationMemoryPresentation;
 }
@@ -136,7 +136,7 @@ export function makeWorkspaceView(input: NewWorkspaceView, id: string): Workspac
     dockOpen: input.dockOpen ?? true,
     dockSize: input.dockSize ?? null,
     afterOrdinal: input.afterOrdinal ?? 0,
-    cursor: input.cursor ?? null,
+    cursor: input.cursor ? { ...input.cursor } : null,
     pinned: input.pinned ?? false,
     ...(input.translationMemory ? { translationMemory: { ...input.translationMemory, filter: { ...input.translationMemory.filter }, donor: input.translationMemory.donor ? { ...input.translationMemory.donor } : null } } : {}),
   };
@@ -205,6 +205,7 @@ export function createWorkspaceStore({ initialLocale, initialViews, createId = (
         ...(patch.deliveryTarget !== undefined ? { deliveryTarget: patch.deliveryTarget ? { ...patch.deliveryTarget } : null } : {}),
         ...(patch.translationMemory ? { translationMemory: { ...patch.translationMemory, filter: { ...patch.translationMemory.filter }, donor: patch.translationMemory.donor ? { ...patch.translationMemory.donor } : null } } : {}),
         ...(patch.decisionCursor !== undefined ? { decisionCursor: patch.decisionCursor ? { ...patch.decisionCursor } : null } : {}),
+        ...(patch.cursor ? { cursor: { ...patch.cursor } } : {}),
         ...(patch.decisionPrevious ? { decisionPrevious: patch.decisionPrevious.map(cursor => cursor ? { ...cursor } : null) } : {}),
         ...(patch.candidateCompareRefs ? { candidateCompareRefs: Object.freeze([...patch.candidateCompareRefs]) } : {}), ...(patch.selection !== undefined ? { selection: copyWorkspaceSelection(patch.selection) } : {}), ...(patch.scroll ? { scroll: { ...patch.scroll } } : {}),
         ...(changedTarget || changedScope ? { reviewNavigation: patch.reviewNavigation ?? null, decisionFinding: patch.decisionFinding ?? null } : {}),

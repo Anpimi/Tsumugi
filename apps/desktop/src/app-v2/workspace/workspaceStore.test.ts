@@ -7,7 +7,7 @@ const selected = (id: string, locale = "zh-CN") => ({ kind: "ids" as const, loca
 describe("workspace view state", () => {
   it("retains conversation layout per view without changing its query, selection or return position", () => {
     const store = createWorkspaceStore({ initialLocale: "zh-CN", initialViews: [{ id: "one", kind: "entries", locale: "zh-CN", query: "harvest", searchInput: "harvest festival",
-      focus: "unit-a", selection: selected("unit-a"), scroll: { top: 640, left: 12 }, afterOrdinal: 80, cursor: "original-cursor", dockSize: 380 }] });
+      focus: "unit-a", selection: selected("unit-a"), scroll: { top: 640, left: 12 }, afterOrdinal: 80, cursor: { scopeId: "original-scope", token: "original-cursor" }, dockSize: 380 }] });
     const original = store.getState().views.one;
     store.getState().patch("one", { conversationMode: true, conversationViewSize: 360 });
     store.getState().open({ id: "two", kind: "entries", locale: "ja" });
@@ -138,7 +138,7 @@ describe("workspace view state", () => {
   it("keeps editing and the fixed queue in a view, and clears their scope when its query context changes", () => {
     const store = createWorkspaceStore({ initialLocale: "zh-CN", initialViews: [{ id: "one", kind: "entries", locale: "zh-CN", focus: "unit-a" }] });
     expect(store.getState().views.one).toMatchObject({ editing: true, queueActive: true, queueAnchor: "unit-a", queueScopeId: null, focusMode: false });
-    store.getState().patch("one", { queueScopeId: "original-scope", cursor: "original-cursor", focusMode: true });
+    store.getState().patch("one", { queueScopeId: "original-scope", cursor: { scopeId: "original-scope", token: "original-cursor" }, focusMode: true });
     store.getState().patch("one", { preset: "unselected" });
     expect(store.getState().views.one).toMatchObject({ focus: "unit-a", editing: false, queueActive: false, queueScopeId: null, cursor: null, queueAnchor: "unit-a", focusMode: false });
     store.getState().patch("one", { locale: "ja", focus: "unit-b", editing: true, queueActive: true });

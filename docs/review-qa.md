@@ -18,6 +18,8 @@ Pages retain their read basis. If the underlying list changes, return to the lat
 
 ## Reviewing entries and recording decisions
 
+Returning to an Entries tab restores its page while the saved list is current. If Tsumugi has refreshed the list, the tab opens its first page.
+
 Open a project with an imported source snapshot and target language, then select an entry and open its details or **Issues** tab:
 
 - **Entry details and issues**: Inspect the current source, selected translation, prior review decisions and check results. Open a saved candidate or finding in its entry to continue reviewing it.

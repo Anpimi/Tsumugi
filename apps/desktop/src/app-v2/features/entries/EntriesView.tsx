@@ -119,10 +119,17 @@ export default function EntriesView({ project, view, disabled, patch, navigate, 
 
   const emptyCapture = { scopeId: "", snapshotId: "", queryFingerprint: "", readVersion: "" };
   const enabled = !disabled && availableLocale && !!configuredQuery && !!capture;
-  const page = useSessionQuery({ key: entryPageKey(view.locale, query, capture ?? emptyCapture, view.cursor),
+  const cursor = view.cursor && view.cursor.scopeId === capture?.scopeId ? view.cursor.token : null;
+  const afterOrdinal = cursor === null ? 0 : view.afterOrdinal;
+  useEffect(() => {
+    if (capture && !view.queueActive && view.cursor && view.cursor.scopeId !== capture.scopeId) {
+      patch({ cursor: null, afterOrdinal: 0, scroll: { top: 0, left: 0 } });
+    }
+  }, [capture, view.queueActive, view.cursor, patch]);
+  const page = useSessionQuery({ key: entryPageKey(view.locale, query, capture ?? emptyCapture, cursor),
     scopes: ["source", "translation", "review", "resources"], enabled: enabled && !view.queueActive,
     refetchOnMount: query => query.state.isInvalidated,
-    read: () => { if (!capture) throw new Error("No entry read scope"); return readEntryPage(reads, view.locale, query, capture, view.cursor); } });
+    read: () => { if (!capture) throw new Error("No entry read scope"); return readEntryPage(reads, view.locale, query, capture, cursor); } });
   const queue = useSessionQuery({ key: ["workbench-entry-queue", view.locale, capture?.scopeId ?? "", view.queueAnchor],
     scopes: ["source", "translation", "review", "resources"], enabled: enabled && view.queueActive,
     refetchOnMount: true,
@@ -310,13 +317,14 @@ export default function EntriesView({ project, view, disabled, patch, navigate, 
   const presetNames = { all: "allEntries", selected: "selectedEntries", unselected: "unselectedEntries", untranslated: "entryPresetUntranslated",
     "needs-review": "entryPresetReview", issues: "entryPresetIssues", affected: "entryPresetAffected", blocking: "entryPresetBlocking", "ai-pending": "entryPresetAi" } as const;
   const selectedPreset = entryPresets.find(value => value === view.preset);
+  const nextCursor = page.data?.nextCursor == null ? null : { scopeId: page.data.scopeId, token: page.data.nextCursor };
   const footer = <div className={styles.actions}>
     {view.queueActive ? <>
       {queue.data?.previousUnitId ? <Button disabled={disabled} onClick={() => { void navigate({ queueAnchor: null, focus: null, editing: false, focusMode: false, scroll: { top: 0, left: 0 } }); }}>{t("firstPage")}</Button> : null}
       {queue.data?.nextUnitId ? <Button disabled={disabled} onClick={() => { const next = queue.data?.nextUnitId; if (next) void navigate({ queueAnchor: next, focus: next, editing: false, scroll: { top: 0, left: 0 } }).then(ok => { if (ok) setRowFocus(next); }); }}>{t("nextPage")}</Button> : null}
     </> : <>
-      {view.cursor !== null ? <Button disabled={disabled} onClick={() => { void navigate({ afterOrdinal: 0, cursor: null, focus: null, scroll: { top: 0, left: 0 } }); }}>{t("firstPage")}</Button> : null}
-      {page.data?.nextCursor != null ? <Button disabled={disabled} onClick={() => { void navigate({ afterOrdinal: view.afterOrdinal + (current?.rows.length ?? 0), cursor: page.data?.nextCursor ?? null, focus: null, scroll: { top: 0, left: 0 } }); }}>{t("nextPage")}</Button> : null}
+      {cursor !== null ? <Button disabled={disabled} onClick={() => { void navigate({ afterOrdinal: 0, cursor: null, focus: null, scroll: { top: 0, left: 0 } }); }}>{t("firstPage")}</Button> : null}
+      {nextCursor ? <Button disabled={disabled} onClick={() => { void navigate({ afterOrdinal: afterOrdinal + (current?.rows.length ?? 0), cursor: nextCursor, focus: null, scroll: { top: 0, left: 0 } }); }}>{t("nextPage")}</Button> : null}
     </>}
   </div>;
 
@@ -377,7 +385,7 @@ export default function EntriesView({ project, view, disabled, patch, navigate, 
     {view.compareSource && current?.rows.length ? comparison.isError ? <Banner tone="error" role="alert" action={<Button disabled={disabled || comparison.isFetching} onClick={() => { void comparison.refetch(); }}>{t("sourceComparisonRetry")}</Button>}>{t("sourceComparisonFailed")}</Banner>
       : comparison.isPending || comparison.isFetching ? <Banner role="status">{t("sourceComparisonLoading")}</Banner>
         : currentComparison?.baseSnapshotId === null ? <Banner role="status">{t("sourceComparisonFirstVersion")}</Banner> : null : null}
-    {!configuredQuery ? <ErrorState title={t("filterMissing")} description={t("chooseFilter")} /> : !availableLocale ? <ErrorState title={t("languageMissing")} description={t("chooseLanguage")} action={key ? <Button onClick={() => onRevealDraft(key)}>{t("draftRecoveryOpen")}</Button> : undefined} /> : failed ? <ErrorState title={t("readFailed")} description={t(stalePage ? "viewChanged" : "readFailedHelp")} action={<div className={styles.actions}><Button onClick={() => { void refresh(); }}>{t("refresh")}</Button>{key ? <Button onClick={() => onRevealDraft(key)}>{t("draftRecoveryOpen")}</Button> : null}</div>} /> : empty ? <EmptyState icon={<Layers />} title={t("noSource")} description={t("noSourceHelp")} action={onImportSource ? <EntryActionButton gate={gate} viewId={view.id} disabled={disabled} onClick={() => { if (!disabled && gate.canDispatch({ viewId: view.id, source: "button" })) onImportSource(); }}>{t("noSourceImport")}</EntryActionButton> : undefined} /> : loading || !current ? <LoadingState label={t("loadingEntries")} /> : current.rows.length === 0 ? <EmptyState icon={<Search />} title={t("noMatches")} description={t("noMatchesHelp")} /> : <EntriesTable ref={table} rows={current.rows} firstPosition={view.queueActive ? queue.data?.firstPosition ?? 0 : view.afterOrdinal} total={current.total}
+    {!configuredQuery ? <ErrorState title={t("filterMissing")} description={t("chooseFilter")} /> : !availableLocale ? <ErrorState title={t("languageMissing")} description={t("chooseLanguage")} action={key ? <Button onClick={() => onRevealDraft(key)}>{t("draftRecoveryOpen")}</Button> : undefined} /> : failed ? <ErrorState title={t("readFailed")} description={t(stalePage ? "viewChanged" : "readFailedHelp")} action={<div className={styles.actions}><Button onClick={() => { void refresh(); }}>{t("refresh")}</Button>{key ? <Button onClick={() => onRevealDraft(key)}>{t("draftRecoveryOpen")}</Button> : null}</div>} /> : empty ? <EmptyState icon={<Layers />} title={t("noSource")} description={t("noSourceHelp")} action={onImportSource ? <EntryActionButton gate={gate} viewId={view.id} disabled={disabled} onClick={() => { if (!disabled && gate.canDispatch({ viewId: view.id, source: "button" })) onImportSource(); }}>{t("noSourceImport")}</EntryActionButton> : undefined} /> : loading || !current ? <LoadingState label={t("loadingEntries")} /> : current.rows.length === 0 ? <EmptyState icon={<Search />} title={t("noMatches")} description={t("noMatchesHelp")} /> : <EntriesTable ref={table} rows={current.rows} firstPosition={view.queueActive ? queue.data?.firstPosition ?? 0 : afterOrdinal} total={current.total}
       projectId={reads.context.projectId} sourceLocale={project.metadata.sourceLocale} view={view} drafts={drafts} gate={gate} disabled={disabled} dispatch={dispatch} scroll={view.scroll}
       selectedIds={selectionMatches ? selectedIds : []} canSelect={canSelect} onScroll={position => patch({ scroll: position })} onEdit={openEditor}
       sourceComparison={currentComparison} renderCandidate={renderCandidate}
