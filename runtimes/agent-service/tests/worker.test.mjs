@@ -83,6 +83,34 @@ const knownUsage = (promptTokens, completionTokens, cacheReadTokens = null, cach
   promptTokens, completionTokens, cacheReadTokens, cacheWriteTokens, reasoningTokens,
 });
 
+test("Luna tool requests on OpenAI Chat Completions explicitly disable reasoning", async t => {
+  const openai = "https://api.openai.com/v1/chat/completions";
+  const tool = { name: "inspect_source", description: "Inspect the selected source", parameters: { type: "object", properties: {} } };
+  for (const [label, endpoint, model, tools, effort] of [
+    ["Luna with tools", openai, "gpt-6-luna", [tool], "none"],
+    ["Luna without tools", openai, "gpt-6-luna", [], undefined],
+    ["other model with tools", openai, "synthetic-model", [tool], undefined],
+    ["other endpoint with tools", "https://controlled.invalid/v1/chat/completions", "gpt-6-luna", [tool], undefined],
+  ]) {
+    await t.test(label, async t => {
+      const state = { requests: [], http: [] };
+      const parent = fixture(t, (frame, { reply }) => {
+        if (frame.body.kind === "request") ordinaryReply(frame, reply, state);
+      });
+      const request = start({ tools, maxTurns: 1 });
+      parent.send({ ...request, profile: { ...request.profile, endpoint, model } });
+      await parent.wait(frames => frames.some(frame => frame.body.kind === "result"));
+      assert.equal(state.http.length, 1);
+      const call = state.http[0], body = JSON.parse(call.body);
+      assert.equal(call.endpoint, endpoint);
+      assert.equal(body.model, model);
+      assert.deepEqual((body.tools ?? []).map(entry => entry.function.name), tools.map(entry => entry.name));
+      assert.equal(body.reasoning_effort, effort);
+      parent.send({ kind: "close" }); assert.equal((await parent.ended).code, 0);
+    });
+  }
+});
+
 test("subscription worker preserves actual terminal usage without output-cap or pricing claims", async t => {
   for (const [terminal, usage, expected, refusal = false] of [
     ["completed", { input_tokens: 100, output_tokens: 20000, input_tokens_details: { cached_tokens: 30 }, output_tokens_details: { reasoning_tokens: 400 } }, knownUsage(100, 20000, "30", null, "400")],

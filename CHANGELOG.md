@@ -193,6 +193,7 @@ The current workspace targets **`0.3.0-alpha.1`**. The published `0.2.0-alpha.1`
 
 ### Fixed
 
+- Team members can correct a delegation rejected for an invalid recipient or target and continue the original translation. Tool calls to OpenAI Chat Completions with `gpt-6-luna` now send the explicit reasoning setting required by that model.
 - Closing a project releases its ownership lock immediately, so it can reopen while another process still holds a duplicate file descriptor.
 - Creating a local assistant conversation waits for confirmation before loading its messages. Saving a conversation or message keeps verified source pages available when returning to Entries.
 - Returning to Entries keeps the current page while its captured list is valid. When the list has been recaptured, navigation starts from its new first page. Opening an unfiltered list no longer groups and sorts every occurrence in a source whose unit mapping has never been corrected.

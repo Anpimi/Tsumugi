@@ -877,7 +877,15 @@ impl Handler {
                             TeamToolRequest::RequestWork(work) => {
                                 let plan = store.work_plan(captured.scope.lease().plan_id).map_err(map_recover)?;
                                 let checker = current_checker_consent(host, store, &plan, captured.scope.lease())?;
-                                let prepared = store.prepare_team_work(&author, &work).map_err(map_recover)?;
+                                let prepared = match store.prepare_team_work(&author, &work) {
+                                    Ok(prepared) => prepared,
+                                    // The member may correct a rejected delegation. Return it through
+                                    // the admitted tool call before any child is submitted.
+                                    Err(error) if matches!(error.code, ErrorCode::Unauthorized | ErrorCode::InvalidInput | ErrorCode::ResultMismatch) => {
+                                        return Ok(Err(error));
+                                    }
+                                    Err(error) => return Err(map_recover(error)),
+                                };
                                 let accepted = host.runtime.submit_team_work(store, &prepared).map_err(map_recover)?;
                                 host.ai.track(store, prepared.input(), checker).map_err(map_recover)?;
                                 Ok(serde_json::to_value(accepted))

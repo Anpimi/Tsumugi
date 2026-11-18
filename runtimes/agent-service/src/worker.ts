@@ -249,6 +249,9 @@ class Worker {
       compat: { supportsDeveloperRole: false, supportsMaxOutputTokens: false },
     } : {
       ...common, api: "openai-completions", provider: "controlled",
+      // Luna's Chat Completions tool requests require an explicit wire value for Pi's off level.
+      ...(endpoint.href === "https://api.openai.com/v1/chat/completions" && start.profile.model === "gpt-6-luna" && start.tools.length > 0
+        ? { reasoning: true, thinkingLevelMap: { off: "none" } } : {}),
       baseUrl: endpoint.href.slice(0, -"/chat/completions".length),
       compat: { maxTokensField: start.profile.tokenField as "max_tokens" | "max_completion_tokens", supportsDeveloperRole: false, supportsStore: false },
     };

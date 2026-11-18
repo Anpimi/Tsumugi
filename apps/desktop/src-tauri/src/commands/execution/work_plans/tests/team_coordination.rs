@@ -716,6 +716,29 @@ fn pi_team_dynamically_reviews_requests_evidence_and_revises_real_candidates() {
 }
 
 #[test]
+fn refused_delegation_returns_to_the_original_member_without_scheduling_a_child() {
+    let fixture = TeamFixture::create();
+    let [a, b, c] = peers();
+    let ids = std::array::from_fn(|_| ExecutionId::new());
+    let (plan, _) = team_plan(&fixture, &[&a, &b, &c], &ids);
+    let first = admitted(&fixture, &a, ids[0]);
+    let target = work_view(&first).1["discussion"]["target"].clone();
+    first.tool(
+        "unknown-recipient",
+        "request_team_work",
+        request(ExecutionId::new(), ExecutionId::new(), &target, "review", &[], Value::Null),
+    );
+
+    let next = admitted(&fixture, &a, ids[0]);
+    assert_eq!(tool_result(&next.body, "unknown-recipient")["code"], "unauthorized");
+    next.outcome(translation(&fixture, "Original member candidate"));
+    wait_work(&fixture, &plan, &plan["attemptId"], true);
+    let view = execution(&fixture, &plan);
+    assert_eq!(view["works"].as_array().unwrap().len(), 1);
+    assert_eq!(view["budget"]["dispatched"], 2);
+}
+
+#[test]
 fn pi_team_can_choose_evidence_before_review_without_a_fixed_pipeline() {
     let fixture = TeamFixture::create();
     let [a, b, c] = peers();
