@@ -38,7 +38,7 @@ function props(): Props {
   state.comparisonRef = { attemptId: receipt.attemptId, resultId: receipt.resultId, previousSnapshotId: base,
     expectedContentRevision: "2", expectedCurrentSnapshot: base };
   state.actor = "Newer reviewer B"; state.lineage = { 0: { newOrdinal: 0, oldOccurrenceId: id(907), decision: "continue", reason: "Newer reason B 👩🏽‍💻\n人工理由" } };
-  return { project, owner: { state, hasDraft: () => true, hasPending: () => false }, visible: true, disabled: false, locale: "zh-CN",
+  return { project, owner: { state, hasDraft: () => true, hasPending: () => false }, visible: true, disabled: false, locale: "zh-CN", observeImpact: true,
     onOpen: vi.fn(), onSaved: vi.fn(), onAffected: vi.fn() };
 }
 function open(value: Props) {
@@ -62,6 +62,28 @@ it.each(["en-US", "zh-CN"] as const)("keeps applied A and newer human B distinct
   await user.click(screen.getByRole("button", { name: i18n.t("sourceMaintenance.openAffected") }));
   expect(value.onOpen).toHaveBeenCalledOnce(); expect(value.onSaved).toHaveBeenCalledExactlyOnceWith(receipt.snapshotId);
   expect(value.onAffected).toHaveBeenCalledExactlyOnceWith(receipt.snapshotId); expect(value.owner.state).toEqual(before);
+});
+
+it("keeps receipt actions during delivery and reads impact on return without repeating it on focus", async () => {
+  const value = props();
+  const brief = (observeImpact: boolean) => <SessionReadProvider context={session} reads={reads} bridge={false}>
+    <SourceMaintenanceBrief {...value} observeImpact={observeImpact}/>
+  </SessionReadProvider>;
+  const view = render(brief(false));
+  const affected = await screen.findByRole("button", { name: i18n.t("sourceMaintenance.openAffected") });
+  await userEvent.setup().click(affected);
+  expect(value.onAffected).toHaveBeenCalledExactlyOnceWith(receipt.snapshotId);
+  await act(async () => { reads.invalidate(["review"]); });
+  expect(sourceCommands.impact).not.toHaveBeenCalled();
+
+  view.rerender(brief(true));
+  const summary = i18n.t("source.impactSummary", { locale: "zh-CN", preserved: "1", reassess: "1", unresolved: "0", total: "2" });
+  expect(await screen.findByText(summary)).toBeVisible();
+  await act(async () => { reads.invalidate([], false, "focus"); });
+  await waitFor(() => expect(screen.getByText(summary)).toBeVisible());
+  expect(sourceCommands.impact).toHaveBeenCalledOnce();
+  await act(async () => { reads.invalidate(["translation"]); });
+  await waitFor(() => expect(sourceCommands.impact).toHaveBeenCalledTimes(2));
 });
 
 it("shows historical A without borrowing the newer B comparison base or inventing A counts", async () => {

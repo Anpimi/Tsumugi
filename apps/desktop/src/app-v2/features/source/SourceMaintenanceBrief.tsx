@@ -9,8 +9,8 @@ import type { ProjectView } from "../../../projectCommands";
 import type { SourceOwner } from "./sourceTypes";
 import styles from "./SourceMaintenance.module.css";
 
-export default function SourceMaintenanceBrief({ project, owner, visible, disabled, locale, onOpen, onSaved, onAffected }: {
-  project: ProjectView; owner: Pick<SourceOwner, "state" | "hasDraft" | "hasPending">; visible: boolean; disabled: boolean; locale: string;
+export default function SourceMaintenanceBrief({ project, owner, visible, disabled, locale, observeImpact, onOpen, onSaved, onAffected }: {
+  project: ProjectView; owner: Pick<SourceOwner, "state" | "hasDraft" | "hasPending">; visible: boolean; disabled: boolean; locale: string; observeImpact: boolean;
   onOpen: () => void; onSaved: (snapshotId: string) => void; onAffected: (snapshotId: string) => void;
 }) {
   const { t } = useTranslation(undefined, { keyPrefix: "sourceMaintenance" }), { t: old } = useTranslation();
@@ -33,8 +33,12 @@ export default function SourceMaintenanceBrief({ project, owner, visible, disabl
       if (page.attemptId !== receipt.attemptId || page.resultId !== receipt.resultId || page.previousSnapshotId !== savedReference.previousSnapshotId) throw new Error("Saved source comparison changed");
       return page;
     } });
-  const impactOptions = sourceReads.impact(context, receipt?.snapshotId ?? "", locale, 0);
-  const impact = useSessionQuery({ ...impactOptions, enabled: visible && currentSource && !!receipt && project.metadata.targetLocales.includes(locale) });
+  // Rechecking the scope on focus does not change the snapshot of a pending impact read.
+  // Only show its summary and enable navigation once the current scope is confirmed.
+  const readImpact = observeImpact && visible && !reads.retired && !!receipt && !scope.error
+    && scope.data?.currentSnapshot === receipt.snapshotId && project.metadata.targetLocales.includes(locale);
+  const impact = useSessionQuery({ ...sourceReads.impact(context, receipt?.snapshotId ?? "", locale, 0), refetchOnMount: true, refreshOnFocus: false, enabled: readImpact });
+  const summary = readImpact && currentSource && impact.isSuccess && !impact.isStale ? impact.data.summary : null;
   const comparison = savedReference && !savedComparison.error ? savedComparison.data : null;
   const draftComparison = value.comparison && (!receipt || value.comparison.attemptId !== receipt.attemptId || value.comparison.resultId !== receipt.resultId) ? value.comparison : null;
   const draftResult = !!value.attempt && (!receipt || value.attempt !== receipt.attemptId
@@ -57,9 +61,9 @@ export default function SourceMaintenanceBrief({ project, owner, visible, disabl
     {hasDraft || !receipt ? <section className={styles.body} aria-label={t("draftVersion")}><h3>{t("draftVersion")}</h3>
       <p>{t(receipt ? "draftNotApplied" : "notApplied")}</p>{draftComparison ? counts(draftComparison) : null}</section> : null}
     {owner.hasPending() ? <Banner tone="warning">{t("recoveryPending")}</Banner> : null}
-    {currentSource && impact.data ? <p>{old("source.impactSummary", { locale: impact.data.summary.locale, preserved: String(impact.data.summary.preserved),
-      reassess: String(impact.data.summary.reassess), unresolved: String(impact.data.summary.unresolved), total: String(impact.data.summary.total) })}</p> : null}
-    {currentSource && impact.error ? <Banner tone="warning" action={<Button onClick={() => void impact.refetch()}>{t("retryRead")}</Button>}>{t("impactFailed")}</Banner> : null}
+    {summary ? <p>{old("source.impactSummary", { locale: summary.locale, preserved: String(summary.preserved),
+      reassess: String(summary.reassess), unresolved: String(summary.unresolved), total: String(summary.total) })}</p> : null}
+    {readImpact && currentSource && impact.error ? <Banner tone="warning" action={<Button onClick={() => void impact.refetch()}>{t("retryRead")}</Button>}>{t("impactFailed")}</Banner> : null}
     <div className={styles.actions}>{receipt ? <Button disabled={disabled} onClick={() => onSaved(receipt.snapshotId)}>{t("viewSaved")}</Button> : null}
       {hasDraft || owner.hasPending() || !receipt ? <Button disabled={disabled} onClick={onOpen}>{t("preview")}</Button> : null}
       {currentSource && receipt ? <Button disabled={disabled} onClick={() => { if (!disabled && currentReceipt()) onAffected(receipt.snapshotId); }}>{t("openAffected")}</Button> : null}</div>

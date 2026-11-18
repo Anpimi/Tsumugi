@@ -1176,7 +1176,7 @@ function WorkspaceShell() {
   }
   function sourceBrief() {
     const dialogId = narrow && drawer ? "workspace-dock" : undefined;
-    return sourceOwner ? <Suspense fallback={null}><SourceMaintenanceBrief project={session.project} owner={sourceOwner} locale={activeLocale}
+    return sourceOwner ? <Suspense fallback={null}><SourceMaintenanceBrief project={session.project} owner={sourceOwner} locale={activeLocale} observeImpact={!deliveryInFocus}
       visible={(view?.dock ?? "agent") === "agent" && (!narrow || drawer)} disabled={disabled || !gate.canDispatch({ viewId: currentId, source: "button", dialogId })}
       onOpen={() => openSource(dialogId)} onSaved={snapshotId => {
         if (disabled || !gate.canDispatch({ viewId: currentId, source: "button", dialogId })) return;

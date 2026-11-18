@@ -535,48 +535,46 @@ impl ProjectStore {
             .collect::<std::collections::BTreeSet<_>>()
             .into_iter()
             .collect::<Vec<_>>();
-        let wanted = if global {
-            self.review_work_set(project, locale)?
+        let (total, wanted) = if global {
+            Self::source_impact_work_set(connection, project, snapshot, locale, &units)?
         } else {
-            super::super::review::targets_in(connection, project, &units, locale)?
+            let unresolved = unresolved_occurrences_in(connection, snapshot, tsumugi_plugin_sdk::MAX_CONTENT_ITEMS + 1)?
+                .into_iter().map(|(_, unit)| unit).collect::<std::collections::BTreeSet<_>>();
+            let wanted = super::super::review::targets_in(connection, project, &units, locale)?
                 .into_iter()
                 .map(|target| {
-                    let reasons = super::super::review::assess(&target, false).0;
+                    let mut reasons = super::super::review::assess(&target, false).0;
+                    if unresolved.contains(&target.unit_id) {
+                        reasons.push("correspondence-unresolved".into());
+                    }
                     (target, reasons)
                 })
-                .collect()
+                .collect();
+            (units.len() as u32, wanted)
         };
-        for (target, reasons) in wanted {
-            if !reasons.is_empty() {
-                work.insert(target.unit_id, reasons);
-            }
-            targets.insert(target.unit_id, target);
-        }
-        let unresolved = unresolved_occurrences_in(connection, snapshot, tsumugi_plugin_sdk::MAX_CONTENT_ITEMS + 1)?;
-        for (_, unit) in unresolved {
-            if targets.contains_key(&unit) {
-                let reasons = work.entry(unit).or_default();
-                reasons.push("correspondence-unresolved".into());
+        let mut summary = SourceImpactSummary {
+            locale: locale.into(),
+            preserved: 0,
+            reassess: 0,
+            unresolved: total - wanted.len() as u32,
+            total,
+        };
+        for (target, mut reasons) in wanted {
+            if reasons.iter().any(|reason| reason == "correspondence-unresolved") {
                 reasons.sort();
                 reasons.dedup();
             }
-        }
-        let summary = SourceImpactSummary {
-            locale: locale.into(),
-            preserved: targets.len() as u32 - work.len() as u32,
-            reassess: 0,
-            unresolved: 0,
-            total: targets.len() as u32,
-        };
-        let mut summary = summary;
-        for target in targets.values() {
-            if work.contains_key(&target.unit_id) {
-                if target.selection_id.is_none() || work[&target.unit_id].iter().any(|reason| reason == "correspondence-unresolved") {
+            if reasons.is_empty() {
+                summary.preserved += 1;
+            } else {
+                if target.selection_id.is_none() || reasons.iter().any(|reason| reason == "correspondence-unresolved") {
                     summary.unresolved += 1;
                 } else {
                     summary.reassess += 1;
                 }
+                work.insert(target.unit_id, reasons);
             }
+            targets.insert(target.unit_id, target);
         }
         let mut rows = Vec::new();
         let mut lineage_snapshots = BTreeMap::new();

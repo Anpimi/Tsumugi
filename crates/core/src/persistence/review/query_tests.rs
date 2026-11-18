@@ -602,7 +602,7 @@ fn filtered_membership_does_not_expand_or_disappear_after_translation_edits() {
 }
 
 #[test]
-fn source_impact_reads_one_work_set_for_two_thousand_units() {
+fn source_impact_reads_one_projected_work_set_for_two_thousand_units() {
     let directory = tempfile::tempdir().unwrap();
     let mut store = ProjectStore::create(
         directory.path().join("project"),
@@ -648,7 +648,7 @@ fn source_impact_reads_one_work_set_for_two_thousand_units() {
             assert_eq!(statements.iter().filter(|sql| sql.contains(
                 "SELECT o.unit_id,o.snapshot_id,o.revision_id,o.native_key,r.text,"
             )).count(), 1,
-                "the complete work set must use one batched target read");
+                "page and recorded evidence must share one batched target read");
             // A cold qualification checks the read stamp at most five times
             // (capture, mapping, bundle, and their memo updates); the page
             // summary checks it once more. These metadata probes are constant
@@ -909,6 +909,17 @@ fn maintenance_reads_only_window_targets_while_preserving_original_impact_reason
         })
         .unwrap();
     let original = store.source_impact(snapshot, "zh-CN", 0, 100).unwrap();
+    let tail = store.source_impact(snapshot, "zh-CN", 119, 1).unwrap();
+    assert_eq!(original.summary, tail.summary);
+    assert_eq!((tail.summary.total, tail.summary.reassess, tail.summary.unresolved), (120, 1, 119));
+    let visible = tail.rows[0].current.unit_id.unwrap();
+    let (_, wanted) = ProjectStore::source_impact_work_set(
+        store.connection().unwrap(), project, snapshot, "zh-CN", &[visible],
+    ).unwrap();
+    let by_unit = wanted.into_iter().map(|(target, reasons)| (target.unit_id, reasons)).collect::<BTreeMap<_, _>>();
+    assert_eq!(by_unit.len(), 2, "only the visible and previously selected units need review evidence");
+    assert!(by_unit.contains_key(&visible));
+    assert!(by_unit[&first.unit_id.unwrap()].iter().any(|reason| reason.starts_with("resource-change:")));
     let (assessment, statements, _) = measure(&store, || {
         store
             .maintenance_assessment(project, snapshot, "zh-CN", 0, 100)

@@ -11,11 +11,7 @@ fn call(view: &tauri::WebviewWindow<tauri::test::MockRuntime>, command: &str, re
         headers: Default::default(), invoke_key: tauri::test::INVOKE_KEY.into(),
     }).map(|value| value.deserialize().unwrap())
 }
-/// The optional fixture is a closed synthetic project with one checked,
-/// committed 50,000-entry release. Keep measurements on the registered IPC.
-#[test]
-#[ignore = "requires a disposable 50,000-entry release project"]
-fn saved_build_capacity_through_registered_commands() {
+fn open_capacity_fixture() -> (tauri::App<tauri::test::MockRuntime>, tauri::WebviewWindow<tauri::test::MockRuntime>, Value) {
     let path = std::env::var_os("TSUMUGI_SAVED_BUILD_PROJECT").expect("synthetic release project");
     let mut context = tauri::test::mock_context(tauri::test::noop_assets());
     context.config_mut().identifier = "com.tsumugi.saved-build-test".into();
@@ -25,6 +21,15 @@ fn saved_build_capacity_through_registered_commands() {
     let started = Instant::now();
     let opened = call(&view, "open_project", json!({"locator":std::path::PathBuf::from(path)})).unwrap();
     eprintln!("open_ms={}", started.elapsed().as_millis());
+    (app, view, opened)
+}
+
+/// The optional fixture is a closed synthetic project with one checked,
+/// committed 50,000-entry release. Keep measurements on the registered IPC.
+#[test]
+#[ignore = "requires a disposable 50,000-entry release project"]
+fn saved_build_capacity_through_registered_commands() {
+    let (_app, view, opened) = open_capacity_fixture();
     let session = &opened["sessionToken"];
     let project = &opened["metadata"]["projectId"];
     let releases = call(&view, "list_releases", json!({"sessionToken":session,"projectId":project})).unwrap();
@@ -46,6 +51,53 @@ fn saved_build_capacity_through_registered_commands() {
         serde_json::to_writer(file, &first).unwrap();
     }
     call(&view, "close_project", json!({"sessionToken":session})).unwrap();
+}
+
+/// Run on a disposable copy of the checked 50,000-field source-retained release.
+/// Timings include queueing and serialization through the registered desktop commands.
+#[test]
+#[ignore = "requires a disposable 50,000-entry release project"]
+fn source_impact_and_directory_preview_capacity() {
+    let (app, view, opened) = open_capacity_fixture();
+    let request = |mut fields: Value| {
+        fields["sessionToken"] = opened["sessionToken"].clone();
+        fields["projectId"] = opened["metadata"]["projectId"].clone();
+        fields
+    };
+    let releases = call(&view, "list_releases", request(json!({}))).unwrap();
+    assert_eq!(releases.as_array().unwrap().len(), 1);
+    let release = &releases[0];
+    let folder = tempfile::tempdir().unwrap();
+    let selection = ExecutionId::new();
+    let destination = Arc::new(source::capture::Selection::authorize(folder.path().canonicalize().unwrap()).unwrap());
+    app.state::<AppState>().sessions.with(move |sessions| {
+        sessions.active.as_mut().unwrap().execution_parts().unwrap().0.release.selection = Some((selection, destination));
+    });
+    let impact = request(json!({"snapshotId":release["sourceSnapshotId"], "locale":"zh-CN", "after":0, "limit":10}));
+    let preview = request(json!({"releaseId":release["releaseId"], "selectionId":selection}));
+    let measured = |command, input| {
+        let start = Instant::now();
+        let result = call(&view, command, input).unwrap();
+        eprintln!("{command}_ms={:.3}", start.elapsed().as_secs_f64() * 1000.0);
+        result
+    };
+    std::thread::scope(|scope| {
+        let first = scope.spawn(|| measured("read_source_impact", impact.clone()));
+        std::thread::sleep(Duration::from_millis(10));
+        let second = scope.spawn(|| measured("read_source_impact", impact.clone()));
+        std::thread::sleep(Duration::from_millis(10));
+        let directory = measured("preview_delivery", preview);
+        let files = directory["files"].as_array().unwrap();
+        assert_eq!(files.len(), 2);
+        assert!(files.iter().all(|file| file["state"] == "absent"));
+        let page = first.join().unwrap();
+        assert_eq!(page["summary"]["total"], 50_000);
+        assert_eq!(page["summary"]["unresolved"], 50_000);
+        assert_eq!(page["rows"].as_array().unwrap().len(), 10);
+        assert_eq!(page, second.join().unwrap());
+    });
+    assert_eq!(fs::read_dir(folder.path()).unwrap().count(), 0);
+    call(&view, "close_project", json!({"sessionToken":opened["sessionToken"]})).unwrap();
 }
 
 fn run(store: &mut ProjectStore, runtime: &mut ExecutionRuntime, input: &FixedInput) -> ExecutionId {

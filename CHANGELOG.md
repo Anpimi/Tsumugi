@@ -193,6 +193,7 @@ The current workspace targets **`0.3.0-alpha.1`**. The published `0.2.0-alpha.1`
 
 ### Fixed
 
+- The assistant pane pauses background source-impact counts while the delivery workspace is active. Returning to source maintenance refreshes the counts after relevant changes. Impact reads load detailed review evidence for the current page and units with recorded work, while preserving the project-wide totals.
 - Delivery history reuses verified details for recent saved builds. Returning from a folder chooser or receiving live execution updates no longer reloads the open history details.
 
 - Render saved-build exceptions only when technical details are opened, and show them in pages in the delivery history.

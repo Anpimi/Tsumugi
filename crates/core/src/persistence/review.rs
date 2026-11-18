@@ -860,13 +860,54 @@ impl ProjectStore {
         })
     }
 
-    /// One bounded traversal reused by work pagination and source impact summaries.
-    pub(super) fn review_work_set(
-        &self,
-        project_id: ExecutionId,
+    /// Untouched off-page units have neither a selection nor QA, so their impact
+    /// is always unresolved. Keep every unit with stored review evidence in the
+    /// normal target reader, including its current-basis and origin validation.
+    pub(super) fn source_impact_work_set(
+        connection: &Connection,
+        project: ExecutionId,
+        snapshot: ExecutionId,
         locale: &str,
-    ) -> Result<Vec<(ReviewTarget, Vec<String>)>, ExecutionError> {
-        self.review_work_set_with_cancel(project_id, locale, &Cancellation::default())
+        page: &[ExecutionId],
+    ) -> Result<(u32, Vec<(ReviewTarget, Vec<String>)>), ExecutionError> {
+        check_project(connection, project, locale)?;
+        // Only corrections can change an adopted unit's identity. Resolve the
+        // canonical first occurrence once, for both review and resource reads.
+        let occurrences = if super::content::lineage_corrections::mapping_revision(connection, snapshot)?.get() == 0 {
+            "source_occurrences"
+        } else {
+            "source_effective_occurrences"
+        };
+        let query = format!(
+            "WITH current AS (
+                SELECT unit_id, MIN(ordinal) AS first_ordinal FROM {occurrences}
+                WHERE snapshot_id=?1 AND unit_id IN (SELECT unit_id FROM source_units WHERE project_id=?2)
+                GROUP BY unit_id LIMIT ?4
+             ), wanted(unit_id) AS (
+                SELECT value FROM json_each(?5)
+                UNION ALL SELECT unit_id FROM translation_selections WHERE project_id=?2 AND locale=?3
+                UNION ALL SELECT unit_id FROM review_checks WHERE project_id=?2 AND locale=?3 AND purpose='qa'
+                UNION ALL SELECT unit_id FROM review_decisions WHERE project_id=?2 AND locale=?3
+                UNION ALL SELECT unit_id FROM review_waivers WHERE project_id=?2 AND locale=?3
+                UNION ALL SELECT unit_id FROM review_fallbacks WHERE project_id=?2 AND locale=?3
+                UNION ALL SELECT unit_id FROM context_current WHERE locale=?3 AND unit_id IS NOT NULL
+             )
+             SELECT COUNT(*), json_group_array(json_array(unit_id, first_ordinal))
+                    FILTER (WHERE unit_id IN (SELECT unit_id FROM wanted)) FROM current"
+        );
+        let page = serde_json::to_string(page).map_err(|_| failure(ErrorCode::InvalidInput, "review-units"))?;
+        let (total, wanted): (u32, String) = connection.query_row(
+            &query, params![snapshot.to_string(), project.to_string(), locale, (MAX_SCOPE + 1) as i64, page],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        ).map_err(sql)?;
+        if total == 0 || total as usize > MAX_SCOPE {
+            return Err(failure(ErrorCode::LimitExceeded, "review-scope"));
+        }
+        let members: Vec<(ExecutionId, u32)> = serde_json::from_str(&wanted)
+            .map_err(|_| failure(ErrorCode::CorruptLedger, "review-units"))?;
+        let positions = super::content::SourcePositions { snapshot_id: snapshot, members: &members };
+        let targets = Self::assessed_work_set(connection, project, snapshot, &positions.units(), Some(positions), locale, &Cancellation::default())?;
+        Ok((total, targets))
     }
 
     fn review_work_set_with_cancel(
@@ -876,42 +917,48 @@ impl ProjectStore {
         cancellation: &Cancellation,
     ) -> Result<Vec<(ReviewTarget, Vec<String>)>, ExecutionError> {
         queries::check_read_cancel(cancellation)?;
-        let connection = self
-            .connection()
-            .map_err(|_| failure(ErrorCode::StorageFailed, "review-read"))?;
+        let connection = self.connection().map_err(|_| failure(ErrorCode::StorageFailed, "review-read"))?;
         queries::read_snapshot(connection, |connection| {
             check_project(connection, project_id, locale)?;
             let (snapshot, units) = all_units(connection, project_id)?;
-            let unresolved = super::content::maintenance::unresolved_occurrences_with_cancel(
-                connection, snapshot, MAX_SCOPE + 1, cancellation,
-            )?.into_iter().map(|(_, unit)| unit).collect::<BTreeSet<_>>();
-            let impacts = Self::impact_map(connection, project_id, locale, cancellation)?;
-            let targets = queries::targets_in_with_cancel(
-                connection,
-                project_id,
-                &units,
-                locale,
-                cancellation,
-            )?;
-            queries::check_read_cancel(cancellation)?;
-            Ok(targets
-                .into_iter()
-                .map(|target| {
-                    let (mut reasons, _) = assess(&target, impacts.contains_key(&target.unit_id));
-                    if unresolved.contains(&target.unit_id) {reasons.push("correspondence-unresolved".into());}
-                    if let Some(changes) = impacts.get(&target.unit_id) {
-                        if reasons
-                            .iter()
-                            .any(|reason| reason == "resource-impact-unresolved")
-                        {
-                            reasons
-                                .extend(changes.iter().map(|id| format!("resource-change:{id}")));
-                        }
-                    }
-                    (target, reasons)
-                })
-                .collect())
+            Self::assessed_work_set(connection, project_id, snapshot, &units, None, locale, cancellation)
         })
+    }
+
+    fn assessed_work_set(
+        connection: &Connection,
+        project_id: ExecutionId,
+        snapshot: ExecutionId,
+        units: &[ExecutionId],
+        positions: Option<super::content::SourcePositions<'_>>,
+        locale: &str,
+        cancellation: &Cancellation,
+    ) -> Result<Vec<(ReviewTarget, Vec<String>)>, ExecutionError> {
+        let unresolved = super::content::maintenance::unresolved_occurrences_with_cancel(
+            connection, snapshot, MAX_SCOPE + 1, cancellation,
+        )?.into_iter().map(|(_, unit)| unit).collect::<BTreeSet<_>>();
+        let impacts = Self::impact_map(connection, project_id, locale, positions, cancellation)?;
+        let targets = queries::targets_and_terms_in(
+            &mut TargetRead::new(connection), project_id, units, locale, positions, cancellation,
+        )?.0;
+        queries::check_read_cancel(cancellation)?;
+        Ok(targets
+            .into_iter()
+            .map(|target| {
+                let (mut reasons, _) = assess(&target, impacts.contains_key(&target.unit_id));
+                if unresolved.contains(&target.unit_id) {reasons.push("correspondence-unresolved".into());}
+                if let Some(changes) = impacts.get(&target.unit_id) {
+                    if reasons
+                        .iter()
+                        .any(|reason| reason == "resource-impact-unresolved")
+                    {
+                        reasons
+                            .extend(changes.iter().map(|id| format!("resource-change:{id}")));
+                    }
+                }
+                (target, reasons)
+            })
+            .collect())
     }
 
     /// Bounded current targets share one project snapshot. Historical recovery
@@ -1833,10 +1880,11 @@ impl ProjectStore {
         connection: &Connection,
         project_id: ExecutionId,
         locale: &str,
+        positions: Option<super::content::SourcePositions<'_>>,
         cancellation: &Cancellation,
     ) -> Result<BTreeMap<ExecutionId, Vec<ExecutionId>>, ExecutionError> {
         let mut map: BTreeMap<ExecutionId, Vec<ExecutionId>> = BTreeMap::new();
-        for item in Self::capture_resource_impacts_from(connection, project_id, locale, None, None)?
+        for item in Self::capture_resource_impacts_from(connection, project_id, locale, None, positions)?
             .evaluate_with_cancel(cancellation)?
         {
             map.entry(item.unit_id)
@@ -1992,7 +2040,7 @@ impl ProjectStore {
                 if translated.as_ref().is_some_and(|selected| !selected.is_subset(&source_units)) {
                     return Err(failure(ErrorCode::InvalidInput, "build-translation-scope"));
                 }
-                let impacts = Self::impact_map(connection, project_id, locale, cancellation)?;
+                let impacts = Self::impact_map(connection, project_id, locale, None, cancellation)?;
                 let mut retained_source_units = 0;
                 let mut blockers = Vec::new();
                 let mut exceptions = Vec::new();
