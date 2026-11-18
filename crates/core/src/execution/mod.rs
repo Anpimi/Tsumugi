@@ -1048,6 +1048,8 @@ pub struct ResultEnvelope {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub plugin: Option<PluginResultEvidence>,
     pub outcome: ExecutionState,
+    // The read default handles omitted ledger input. Returned output can be any JSON value.
+    #[cfg_attr(feature = "wire-schema", schemars(!default))]
     #[serde(default, deserialize_with = "codec::strict_optional_value")]
     pub output: Option<Value>,
     pub diagnostic: Option<Diagnostic>,
