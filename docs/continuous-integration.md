@@ -1,7 +1,7 @@
 # Continuous Integration
 
 [The workflow](../.github/workflows/ci.yml) runs for pull requests and pushes to
-`main` that change application, crate, runtime, vendored dependency or lockfile
+`main` or `codex/ci-acceptance` that change application, crate, runtime, vendored dependency or lockfile
 inputs. It can also be started manually. Documentation-only changes do not
 schedule these code checks.
 
