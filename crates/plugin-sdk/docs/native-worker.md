@@ -1,6 +1,6 @@
 # Rust Native Components (`native-worker`)
 
-Enabling the optional `native-worker` Cargo feature on `tsumugi-plugin-sdk` exposes a standard-library stdio runner (`NativeComponent` and `serve_native_component`) for implementing single-capability native Rust plugin workers over [process protocol 3](process.md).
+Enabling the optional `native-worker` Cargo feature on `tsumugi-plugin-sdk` exposes a standard-library stdio runner (`NativeComponent` and `serve_native_component`) for implementing single-capability native Rust plugin workers over [process protocol 4](process.md).
 
 ## Implementing a Native Worker
 
@@ -21,7 +21,7 @@ impl NativeComponent for Component {
     ) -> NativeCapabilityOutput {
         // Check cooperative cancellation during long-running work.
         let _cancelled = metadata.cancellation.is_cancelled();
-        NativeCapabilityOutput::Succeeded(input.utf8.clone())
+        NativeCapabilityOutput::Succeeded(input.utf8.to_string())
     }
 }
 
@@ -42,7 +42,7 @@ cargo build -p tsumugi-plugin-sdk --example native-worker --features native-work
 
 ## Activation, Invocation, and Scope Rules
 
-- **Singleton Roster Only**: `serve_native_component` speaks process protocol 3, but accepts only activations with a single capability in `capabilities` and an empty `services` list (matching the `Project`, `Attempt`, and read-only Native `Application` tool singleton profiles). Activations requesting multiple capabilities or project service bindings are rejected before `activate` is called or `ready` is sent.
+- **Singleton Roster Only**: `serve_native_component` accepts activations with a single capability in `capabilities` and an empty `services` list (matching the `Project`, `Attempt`, and read-only Native `Application` tool singleton profiles). Activations requesting multiple capabilities or project service bindings are rejected before `activate` is called or `ready` is sent.
 - **Typed Envelopes**: `invoke` receives the validated `EncodedPayload` and `NativeInvocationMetadata` (which provides the capability profile, invocation context, and cooperative cancellation tokens) and returns `NativeCapabilityOutput::Succeeded(utf8)`, `Failed(utf8)`, or `Unknown(utf8)`. The SDK constructs the outer `result` frame, attaches the SHA-256 digest and `ProviderBinding`, and preserves the full dispatch ID (up to 128 ASCII bytes).
 - **Error Payloads**: `Failed` and `Unknown` outputs must serialize a valid JSON payload matching the capability's declared error schema rather than arbitrary exception text.
 
@@ -56,6 +56,6 @@ cargo build -p tsumugi-plugin-sdk --example native-worker --features native-work
 
 ## Wire and Stream Constraints
 
-- **Stdio Separation**: `stdout` is used exclusively for length-prefixed protocol frames; any diagnostic logging must go to `stderr` (which the Host captures and bounds separately).
+- **Stdio Separation**: `stdout` is used exclusively for chunked protocol messages; any diagnostic logging must go to `stderr` (which the Host captures and bounds separately).
 - **Frame & Aggregate Budgets**: The codec enforces both the capability's declared `maxInputBytes` / `maxOutputBytes` and the request's `maxResultBytes`, with an 8 GiB aggregate transport budget in each direction and 64 KiB chunks. Partial frames, unknown or duplicate JSON fields, duplicate dispatch IDs, and unexpected frame directions terminate the session.
 - **Environment Descriptor**: When launching a native worker, the Host records a [`NativeHostEnvironmentDescriptor`](environment.md#native-application-host-profile) (`native-application-host-v1`) alongside the plugin package's `PackageImage` digest.

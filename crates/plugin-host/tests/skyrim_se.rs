@@ -281,6 +281,37 @@ fn check_output(
 
 #[tokio::test]
 #[ignore = "requires an inspected prebuilt Skyrim SE package and synthetic fixtures"]
+async fn installed_skyrim_package_identifies_an_unsupported_source_form_version() {
+    let root = tempfile::tempdir().unwrap();
+    let image = installed(root.path());
+    let environment = runtime();
+    let source_binding = image.source_import("source-profile").unwrap();
+    let mut source = fixture("coverage-embedded", false, false);
+    let plugin = &source.artifacts[0];
+    let mut bytes = plugin.validated_bytes().unwrap().into_owned();
+    assert_eq!(&bytes[..4], b"TES4");
+    assert_eq!(&bytes[20..22], &44_u16.to_le_bytes());
+    bytes[20..22].copy_from_slice(&43_u16.to_le_bytes());
+    source.artifacts[0] = sdk::CapturedArtifact::from_bytes(
+        plugin.id().into(),
+        plugin.logical_path().into(),
+        plugin.role().into(),
+        &bytes,
+    )
+    .unwrap();
+    let outcome = call(&image, &source_binding.extractor, json!(source), &environment).await;
+    let sdk::InvocationOutcome::Failed { error } = outcome else {
+        panic!("the extractor accepted an unsupported TES4 form version")
+    };
+    let failure = sdk::parse_source_extraction_error(error.utf8.as_bytes()).unwrap();
+    assert_eq!(failure.code, sdk::SourceExtractionErrorCode::InvalidSource);
+    assert_eq!(failure.artifact_id.as_deref(), Some(source.artifacts[0].id()));
+    assert!(failure.detail.contains("FormatProbe.esp") && failure.detail.contains("form version 43"));
+    assert!(failure.detail.contains("Select the Skyrim Special Edition plugin with form version 44"));
+}
+
+#[tokio::test]
+#[ignore = "requires an inspected prebuilt Skyrim SE package and synthetic fixtures"]
 async fn installed_skyrim_package_runs_mixed_and_capacity_material_through_all_five_operations() {
     let root = tempfile::tempdir().unwrap();
     let image = installed(root.path());
