@@ -12244,6 +12244,12 @@
               }
             ]
           },
+          "diagnostic": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
           "execution": {
             "$ref": "#/definitions/ExecutionState"
           },

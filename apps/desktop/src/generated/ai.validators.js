@@ -66633,7 +66633,7 @@ validate945.errors = vErrors;
 return errors === 0;
 }
 
-const schema1280 = {"additionalProperties":false,"properties":{"author":{"anyOf":[{"$ref":"#/definitions/TeamMemberAuthor"},{"type":"null"}]},"candidateRevisionId":{"anyOf":[{"$ref":"#/definitions/ExecutionId"},{"type":"null"}]},"execution":{"$ref":"#/definitions/ExecutionState"},"origin":{"$ref":"#/definitions/TeamWorkOrigin"},"output":{"anyOf":[{"$ref":"#/definitions/TeamWorkOutput"},{"type":"null"}]},"receipt":{"$ref":"#/definitions/TeamWorkReceipt"},"request":{"anyOf":[{"$ref":"#/definitions/RequestTeamWork"},{"type":"null"}]},"resultId":{"anyOf":[{"$ref":"#/definitions/ExecutionId"},{"type":"null"}]},"sequence":{"$ref":"#/definitions/Revision"},"target":{"$ref":"#/definitions/TeamDiscussionTarget"},"validation":{"$ref":"#/definitions/ValidationState"}},"required":["origin","sequence","receipt","author","request","target","execution","validation","output","candidateRevisionId"],"type":"object"};
+const schema1280 = {"additionalProperties":false,"properties":{"author":{"anyOf":[{"$ref":"#/definitions/TeamMemberAuthor"},{"type":"null"}]},"candidateRevisionId":{"anyOf":[{"$ref":"#/definitions/ExecutionId"},{"type":"null"}]},"diagnostic":{"type":["string","null"]},"execution":{"$ref":"#/definitions/ExecutionState"},"origin":{"$ref":"#/definitions/TeamWorkOrigin"},"output":{"anyOf":[{"$ref":"#/definitions/TeamWorkOutput"},{"type":"null"}]},"receipt":{"$ref":"#/definitions/TeamWorkReceipt"},"request":{"anyOf":[{"$ref":"#/definitions/RequestTeamWork"},{"type":"null"}]},"resultId":{"anyOf":[{"$ref":"#/definitions/ExecutionId"},{"type":"null"}]},"sequence":{"$ref":"#/definitions/Revision"},"target":{"$ref":"#/definitions/TeamDiscussionTarget"},"validation":{"$ref":"#/definitions/ValidationState"}},"required":["origin","sequence","receipt","author","request","target","execution","validation","output","candidateRevisionId"],"type":"object"};
 const schema1283 = {"oneOf":[{"additionalProperties":false,"properties":{"actionId":{"$ref":"#/definitions/ExecutionId"},"kind":{"const":"start","type":"string"}},"required":["kind","actionId"],"type":"object"},{"additionalProperties":false,"properties":{"kind":{"const":"member","type":"string"}},"required":["kind"],"type":"object"},{"additionalProperties":false,"properties":{"actionId":{"$ref":"#/definitions/ExecutionId"},"kind":{"const":"human-continuation","type":"string"},"work":{"$ref":"#/definitions/TeamHumanWork"}},"required":["kind","actionId","work"],"type":"object"}]};
 
 function validate961(data, {instancePath="", parentData, parentDataProperty, rootData=data}={}){
@@ -69756,15 +69756,11 @@ else {
 var valid0 = true;
 }
 if(valid0){
-if(data.execution !== undefined){
-let data2 = data.execution;
+if(data.diagnostic !== undefined){
+let data2 = data.diagnostic;
 const _errs14 = errors;
-if(typeof data2 !== "string"){
-validate959.errors = [{instancePath:instancePath+"/execution",schemaPath:"#/definitions/ExecutionState/type",keyword:"type",params:{type: "string"},message:"must be string"}];
-return false;
-}
-if(!((((((data2 === "queued") || (data2 === "dispatched")) || (data2 === "succeeded")) || (data2 === "failed")) || (data2 === "cancelled-before-dispatch")) || (data2 === "unknown"))){
-validate959.errors = [{instancePath:instancePath+"/execution",schemaPath:"#/definitions/ExecutionState/enum",keyword:"enum",params:{allowedValues: schema951.enum},message:"must be equal to one of the allowed values"}];
+if((typeof data2 !== "string") && (data2 !== null)){
+validate959.errors = [{instancePath:instancePath+"/diagnostic",schemaPath:"#/properties/diagnostic/type",keyword:"type",params:{type: schema1280.properties.diagnostic.type},message:"must be string,null"}];
 return false;
 }
 var valid0 = _errs14 === errors;
@@ -69773,33 +69769,50 @@ else {
 var valid0 = true;
 }
 if(valid0){
+if(data.execution !== undefined){
+let data3 = data.execution;
+const _errs16 = errors;
+if(typeof data3 !== "string"){
+validate959.errors = [{instancePath:instancePath+"/execution",schemaPath:"#/definitions/ExecutionState/type",keyword:"type",params:{type: "string"},message:"must be string"}];
+return false;
+}
+if(!((((((data3 === "queued") || (data3 === "dispatched")) || (data3 === "succeeded")) || (data3 === "failed")) || (data3 === "cancelled-before-dispatch")) || (data3 === "unknown"))){
+validate959.errors = [{instancePath:instancePath+"/execution",schemaPath:"#/definitions/ExecutionState/enum",keyword:"enum",params:{allowedValues: schema951.enum},message:"must be equal to one of the allowed values"}];
+return false;
+}
+var valid0 = _errs16 === errors;
+}
+else {
+var valid0 = true;
+}
+if(valid0){
 if(data.origin !== undefined){
-const _errs17 = errors;
+const _errs19 = errors;
 if(!(validate961(data.origin, {instancePath:instancePath+"/origin",parentData:data,parentDataProperty:"origin",rootData}))){
 vErrors = vErrors === null ? validate961.errors : vErrors.concat(validate961.errors);
 errors = vErrors.length;
 }
-var valid0 = _errs17 === errors;
+var valid0 = _errs19 === errors;
 }
 else {
 var valid0 = true;
 }
 if(valid0){
 if(data.output !== undefined){
-let data4 = data.output;
-const _errs18 = errors;
-const _errs19 = errors;
-let valid5 = false;
+let data5 = data.output;
 const _errs20 = errors;
-if(!(validate964(data4, {instancePath:instancePath+"/output",parentData:data,parentDataProperty:"output",rootData}))){
+const _errs21 = errors;
+let valid5 = false;
+const _errs22 = errors;
+if(!(validate964(data5, {instancePath:instancePath+"/output",parentData:data,parentDataProperty:"output",rootData}))){
 vErrors = vErrors === null ? validate964.errors : vErrors.concat(validate964.errors);
 errors = vErrors.length;
 }
-var _valid2 = _errs20 === errors;
+var _valid2 = _errs22 === errors;
 valid5 = valid5 || _valid2;
 if(!valid5){
-const _errs21 = errors;
-if(data4 !== null){
+const _errs23 = errors;
+if(data5 !== null){
 const err6 = {instancePath:instancePath+"/output",schemaPath:"#/properties/output/anyOf/1/type",keyword:"type",params:{type: "null"},message:"must be null"};
 if(vErrors === null){
 vErrors = [err6];
@@ -69809,7 +69822,7 @@ vErrors.push(err6);
 }
 errors++;
 }
-var _valid2 = _errs21 === errors;
+var _valid2 = _errs23 === errors;
 valid5 = valid5 || _valid2;
 }
 if(!valid5){
@@ -69825,49 +69838,49 @@ validate959.errors = vErrors;
 return false;
 }
 else {
-errors = _errs19;
+errors = _errs21;
 if(vErrors !== null){
-if(_errs19){
-vErrors.length = _errs19;
+if(_errs21){
+vErrors.length = _errs21;
 }
 else {
 vErrors = null;
 }
 }
 }
-var valid0 = _errs18 === errors;
+var valid0 = _errs20 === errors;
 }
 else {
 var valid0 = true;
 }
 if(valid0){
 if(data.receipt !== undefined){
-const _errs23 = errors;
+const _errs25 = errors;
 if(!(validate981(data.receipt, {instancePath:instancePath+"/receipt",parentData:data,parentDataProperty:"receipt",rootData}))){
 vErrors = vErrors === null ? validate981.errors : vErrors.concat(validate981.errors);
 errors = vErrors.length;
 }
-var valid0 = _errs23 === errors;
+var valid0 = _errs25 === errors;
 }
 else {
 var valid0 = true;
 }
 if(valid0){
 if(data.request !== undefined){
-let data6 = data.request;
-const _errs24 = errors;
-const _errs25 = errors;
-let valid6 = false;
+let data7 = data.request;
 const _errs26 = errors;
-if(!(validate983(data6, {instancePath:instancePath+"/request",parentData:data,parentDataProperty:"request",rootData}))){
+const _errs27 = errors;
+let valid6 = false;
+const _errs28 = errors;
+if(!(validate983(data7, {instancePath:instancePath+"/request",parentData:data,parentDataProperty:"request",rootData}))){
 vErrors = vErrors === null ? validate983.errors : vErrors.concat(validate983.errors);
 errors = vErrors.length;
 }
-var _valid3 = _errs26 === errors;
+var _valid3 = _errs28 === errors;
 valid6 = valid6 || _valid3;
 if(!valid6){
-const _errs27 = errors;
-if(data6 !== null){
+const _errs29 = errors;
+if(data7 !== null){
 const err8 = {instancePath:instancePath+"/request",schemaPath:"#/properties/request/anyOf/1/type",keyword:"type",params:{type: "null"},message:"must be null"};
 if(vErrors === null){
 vErrors = [err8];
@@ -69877,7 +69890,7 @@ vErrors.push(err8);
 }
 errors++;
 }
-var _valid3 = _errs27 === errors;
+var _valid3 = _errs29 === errors;
 valid6 = valid6 || _valid3;
 }
 if(!valid6){
@@ -69893,32 +69906,32 @@ validate959.errors = vErrors;
 return false;
 }
 else {
-errors = _errs25;
+errors = _errs27;
 if(vErrors !== null){
-if(_errs25){
-vErrors.length = _errs25;
+if(_errs27){
+vErrors.length = _errs27;
 }
 else {
 vErrors = null;
 }
 }
 }
-var valid0 = _errs24 === errors;
+var valid0 = _errs26 === errors;
 }
 else {
 var valid0 = true;
 }
 if(valid0){
 if(data.resultId !== undefined){
-let data7 = data.resultId;
-const _errs29 = errors;
-const _errs30 = errors;
-let valid7 = false;
+let data8 = data.resultId;
 const _errs31 = errors;
 const _errs32 = errors;
-if(errors === _errs32){
-if(typeof data7 === "string"){
-if(!pattern60.test(data7)){
+let valid7 = false;
+const _errs33 = errors;
+const _errs34 = errors;
+if(errors === _errs34){
+if(typeof data8 === "string"){
+if(!pattern60.test(data8)){
 const err10 = {instancePath:instancePath+"/resultId",schemaPath:"#/definitions/ExecutionId/pattern",keyword:"pattern",params:{pattern: "^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$"},message:"must match pattern \""+"^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$"+"\""};
 if(vErrors === null){
 vErrors = [err10];
@@ -69940,11 +69953,11 @@ vErrors.push(err11);
 errors++;
 }
 }
-var _valid4 = _errs31 === errors;
+var _valid4 = _errs33 === errors;
 valid7 = valid7 || _valid4;
 if(!valid7){
-const _errs34 = errors;
-if(data7 !== null){
+const _errs36 = errors;
+if(data8 !== null){
 const err12 = {instancePath:instancePath+"/resultId",schemaPath:"#/properties/resultId/anyOf/1/type",keyword:"type",params:{type: "null"},message:"must be null"};
 if(vErrors === null){
 vErrors = [err12];
@@ -69954,7 +69967,7 @@ vErrors.push(err12);
 }
 errors++;
 }
-var _valid4 = _errs34 === errors;
+var _valid4 = _errs36 === errors;
 valid7 = valid7 || _valid4;
 }
 if(!valid7){
@@ -69970,29 +69983,29 @@ validate959.errors = vErrors;
 return false;
 }
 else {
-errors = _errs30;
+errors = _errs32;
 if(vErrors !== null){
-if(_errs30){
-vErrors.length = _errs30;
+if(_errs32){
+vErrors.length = _errs32;
 }
 else {
 vErrors = null;
 }
 }
 }
-var valid0 = _errs29 === errors;
+var valid0 = _errs31 === errors;
 }
 else {
 var valid0 = true;
 }
 if(valid0){
 if(data.sequence !== undefined){
-let data8 = data.sequence;
-const _errs36 = errors;
-const _errs37 = errors;
-if(errors === _errs37){
-if(typeof data8 === "string"){
-if(!pattern3.test(data8)){
+let data9 = data.sequence;
+const _errs38 = errors;
+const _errs39 = errors;
+if(errors === _errs39){
+if(typeof data9 === "string"){
+if(!pattern3.test(data9)){
 validate959.errors = [{instancePath:instancePath+"/sequence",schemaPath:"#/definitions/Revision/pattern",keyword:"pattern",params:{pattern: "^(0|[1-9][0-9]{0,17}|[1-8][0-9]{18}|9[0-1][0-9]{17}|92[0-1][0-9]{16}|922[0-2][0-9]{15}|9223[0-2][0-9]{14}|92233[0-6][0-9]{13}|922337[0-1][0-9]{12}|92233720[0-2][0-9]{10}|922337203[0-5][0-9]{9}|9223372036[0-7][0-9]{8}|92233720368[0-4][0-9]{7}|922337203685[0-3][0-9]{6}|9223372036854[0-6][0-9]{5}|92233720368547[0-6][0-9]{4}|922337203685477[0-4][0-9]{3}|9223372036854775[0-7][0-9]{2}|922337203685477580[0-6][0-9]{0}|9223372036854775807)$"},message:"must match pattern \""+"^(0|[1-9][0-9]{0,17}|[1-8][0-9]{18}|9[0-1][0-9]{17}|92[0-1][0-9]{16}|922[0-2][0-9]{15}|9223[0-2][0-9]{14}|92233[0-6][0-9]{13}|922337[0-1][0-9]{12}|92233720[0-2][0-9]{10}|922337203[0-5][0-9]{9}|9223372036[0-7][0-9]{8}|92233720368[0-4][0-9]{7}|922337203685[0-3][0-9]{6}|9223372036854[0-6][0-9]{5}|92233720368547[0-6][0-9]{4}|922337203685477[0-4][0-9]{3}|9223372036854775[0-7][0-9]{2}|922337203685477580[0-6][0-9]{0}|9223372036854775807)$"+"\""}];
 return false;
 }
@@ -70002,39 +70015,40 @@ validate959.errors = [{instancePath:instancePath+"/sequence",schemaPath:"#/defin
 return false;
 }
 }
-var valid0 = _errs36 === errors;
+var valid0 = _errs38 === errors;
 }
 else {
 var valid0 = true;
 }
 if(valid0){
 if(data.target !== undefined){
-const _errs39 = errors;
+const _errs41 = errors;
 if(!(validate903(data.target, {instancePath:instancePath+"/target",parentData:data,parentDataProperty:"target",rootData}))){
 vErrors = vErrors === null ? validate903.errors : vErrors.concat(validate903.errors);
 errors = vErrors.length;
 }
-var valid0 = _errs39 === errors;
+var valid0 = _errs41 === errors;
 }
 else {
 var valid0 = true;
 }
 if(valid0){
 if(data.validation !== undefined){
-let data10 = data.validation;
-const _errs40 = errors;
-if(typeof data10 !== "string"){
+let data11 = data.validation;
+const _errs42 = errors;
+if(typeof data11 !== "string"){
 validate959.errors = [{instancePath:instancePath+"/validation",schemaPath:"#/definitions/ValidationState/type",keyword:"type",params:{type: "string"},message:"must be string"}];
 return false;
 }
-if(!((((data10 === "absent") || (data10 === "pending")) || (data10 === "valid")) || (data10 === "invalid"))){
+if(!((((data11 === "absent") || (data11 === "pending")) || (data11 === "valid")) || (data11 === "invalid"))){
 validate959.errors = [{instancePath:instancePath+"/validation",schemaPath:"#/definitions/ValidationState/enum",keyword:"enum",params:{allowedValues: schema953.enum},message:"must be equal to one of the allowed values"}];
 return false;
 }
-var valid0 = _errs40 === errors;
+var valid0 = _errs42 === errors;
 }
 else {
 var valid0 = true;
+}
 }
 }
 }

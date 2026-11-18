@@ -2816,6 +2816,7 @@ export interface WorkPlanAgentExecutionBinding {
 export interface TeamWorkView {
   author: TeamMemberAuthor | null;
   candidateRevisionId: ExecutionId | null;
+  diagnostic?: string | null;
   execution: ExecutionState;
   origin: TeamWorkOrigin;
   output: TeamWorkOutput | null;

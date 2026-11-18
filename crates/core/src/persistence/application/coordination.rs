@@ -417,15 +417,10 @@ pub(crate) fn check_input(c: &Connection, input: &FixedInput) -> Result<(), Exec
     if source.current_snapshot != Some(target.source_snapshot_id) {
         return Err(denied());
     }
-    if matches!(
-        stop_reason(c, &plan)?,
-        Some(
-            TeamStopReason::NoProgress
-                | TeamStopReason::Expired
-                | TeamStopReason::NeedsReconciliation
-        )
-    ) {
-        return Err(fail(ErrorCode::Cancelled, "team-stopped"));
+    if let Some(reason @ (TeamStopReason::NoProgress | TeamStopReason::Expired | TeamStopReason::NeedsReconciliation)) =
+        stop_reason(c, &plan)?
+    {
+        return Err(fail(ErrorCode::Cancelled, work_stop_stage(reason)));
     }
     // A full budget closes new admission, while its last admitted request may finish.
     Ok(())
@@ -607,14 +602,7 @@ impl ProjectStore {
             )?;
             validate_request(c, &plan, author, request)?;
             if let Some(reason) = stop_reason(c, &plan)? {
-                return Err(fail(
-                    if reason == TeamStopReason::NeedsReconciliation {
-                        ErrorCode::OutcomeUnknown
-                    } else {
-                        ErrorCode::LimitExceeded
-                    },
-                    "team-stopped",
-                ));
+                return Err(work_admission_error(reason));
             }
             let selected = member(&plan, request.recipient_member_id)?;
             let task = ExecutionId::new();
@@ -742,6 +730,48 @@ fn validate_request(
             return Err(denied());
         }
     }
+    if request.kind == TeamWorkKind::Translation {
+        check_translation_assignment(c, plan, author, request)?;
+    }
+    Ok(())
+}
+
+fn check_translation_assignment(
+    c: &Connection,
+    plan: &WorkPlan,
+    author: &CapturedTeamAuthor,
+    request: &RequestTeamWork,
+) -> Result<(), ExecutionError> {
+    // Each activation retains the frozen plan's item ID. The work ledger is
+    // rechecked inside enqueue's write transaction before consuming an activation.
+    let unit = request.target.unit_id.to_string();
+    let item = plan.execution_input()?.items.iter().find(|item| item.scope.id == unit).ok_or_else(denied)?;
+    let mut query = c.prepare(
+        "SELECT w.intent_id FROM application_team_work w
+         JOIN application_executions e USING(attempt_id) JOIN execution_items i USING(attempt_id)
+         WHERE w.plan_id=?1 AND e.generation=?2 AND i.item_id=?3",
+    ).map_err(sql)?;
+    let initial = by_attempt(c, author.author.attempt_id)?.author.is_none();
+    let ids = query.query_map(params![plan.plan_id.to_string(), author.author.binding.lease.generation.get() as i64, item.item_id.to_string()], |row| row.get::<_, String>(0)).map_err(sql)?;
+    for id in ids {
+        let prior = work(c, ExecutionId::parse(&id.map_err(sql)?)?)?.ok_or_else(corrupt)?;
+        // An initial or human-directed assignment may deliberately enlist
+        // parallel translators. A delegated task needs a new basis to reroute it.
+        if initial && prior.receipt.member_id != request.recipient_member_id { continue; }
+        let (kind, posts, cause) = if let Some(prior) = prior.request {
+            (prior.kind, prior.post_ids, prior.cause_message_id)
+        } else {
+            let input = super::super::ledger::load_input(c, prior.receipt.attempt_id)?;
+            let settings = ai::team::settings(&input)?;
+            (settings.kind, settings.post_ids, settings.cause_message_id)
+        };
+        if kind == TeamWorkKind::Translation
+            && request.post_ids.iter().all(|id| posts.contains(id))
+            && request.cause_message_id.is_none_or(|id| Some(id) == cause)
+        {
+            return Err(fail(ErrorCode::ResultMismatch, "team-work-already-assigned"));
+        }
+    }
     Ok(())
 }
 fn routing_target(
@@ -766,6 +796,25 @@ fn routing_target(
         return Err(denied());
     }
     Ok(())
+}
+
+fn work_stop_stage(reason: TeamStopReason) -> &'static str {
+    match reason {
+        TeamStopReason::ActivationLimit => "team-activation-limit",
+        TeamStopReason::BudgetExhausted => "team-budget-exhausted",
+        TeamStopReason::Expired => "team-expired",
+        TeamStopReason::NoProgress => "team-no-progress",
+        TeamStopReason::NeedsReconciliation => "team-needs-reconciliation",
+    }
+}
+
+fn work_admission_error(reason: TeamStopReason) -> ExecutionError {
+    let code = if reason == TeamStopReason::NeedsReconciliation {
+        ErrorCode::OutcomeUnknown
+    } else {
+        ErrorCode::LimitExceeded
+    };
+    fail(code, work_stop_stage(reason))
 }
 
 pub(crate) fn check_prepared(
@@ -829,14 +878,7 @@ pub(crate) fn check_prepared(
         }
     }
     if let Some(reason) = stop_reason(c, &plan)? {
-        return Err(fail(
-            if reason == TeamStopReason::NeedsReconciliation {
-                ErrorCode::OutcomeUnknown
-            } else {
-                ErrorCode::LimitExceeded
-            },
-            "team-stopped",
-        ));
+        return Err(work_admission_error(reason));
     }
     Ok(())
 }
@@ -1300,7 +1342,7 @@ impl ProjectStore {
                     c,
                     author.author.binding.lease.plan_id,
                     author.author.binding.lease.generation,
-                )?)?,
+                )?, Some((author.author.member_id, author.target.unit_id)))?,
             };
             let bytes = codec::encode(
                 &view,
@@ -1336,12 +1378,15 @@ pub(crate) fn validate_provider_view_history_in(
     {
         return Err(corrupt());
     }
+    // Earlier captures contained the full role directory. Validate those
+    // exact historical bytes against their own frozen roster.
+    let scoped_directory = !view.recipients.iter().any(|row| row.role.is_some());
     if view.recipients
         != recipients(&recovery::plan_in(
             c,
             record.receipt.plan_id,
             view.author.binding.lease.generation,
-        )?)?
+        )?, scoped_directory.then_some((view.author.member_id, view.discussion.target.unit_id)))?
     {
         return Err(corrupt());
     }
@@ -1368,7 +1413,7 @@ pub(crate) fn validate_provider_view_in(
 ) -> Result<(), ExecutionError> {
     validate_provider_view_history_in(c, &request.input, request.item_id, view)?;
     if let Some(view) = view {
-        if view.author.dispatch_token != request.dispatch_token {
+        if view.author.dispatch_token != request.dispatch_token || view.recipients.iter().any(|row| row.role.is_some()) {
             return Err(denied());
         }
         check_input(c, &request.input)?;
@@ -1455,7 +1500,8 @@ fn stop_reason(c: &Connection, plan: &WorkPlan) -> Result<Option<TeamStopReason>
     Ok(None)
 }
 
-fn recipients(plan: &WorkPlan) -> Result<Vec<TeamWorkRecipient>, ExecutionError> {
+fn recipients(plan: &WorkPlan, scope: Option<(ExecutionId, ExecutionId)>) -> Result<Vec<TeamWorkRecipient>, ExecutionError> {
+    let sender = scope.map(|(id, _)| member(plan, id)).transpose()?;
     Ok(plan
         .options
         .team_execution
@@ -1463,11 +1509,12 @@ fn recipients(plan: &WorkPlan) -> Result<Vec<TeamWorkRecipient>, ExecutionError>
         .ok_or_else(denied)?
         .members()
         .iter()
+        .filter(|m| scope.is_none_or(|(_, origin)| m.unit_ids.contains(&origin)))
         .map(|m| TeamWorkRecipient {
             member_id: m.member_id,
             display_name: m.display_name.clone(),
-            role: m.role.clone(),
-            unit_ids: m.unit_ids.clone(),
+            role: scope.is_none().then(|| m.role.clone()),
+            unit_ids: m.unit_ids.iter().copied().filter(|id| sender.is_none_or(|s| s.unit_ids.contains(id))).collect(),
             kinds: m.kinds.clone(),
         })
         .collect())
@@ -1613,7 +1660,13 @@ impl ProjectStore {
             for (id, sequence) in ids.into_iter().take(request.limit as usize) {
                 let record = work(c, ExecutionId::parse(&id)?)?.ok_or_else(corrupt)?;
                 let input = super::super::ledger::load_input(c, record.receipt.attempt_id)?;
-                let (state,validation,result):(String,String,Option<String>)=c.query_row("SELECT execution,validation,current_result_id FROM execution_items WHERE attempt_id=?1",[record.receipt.attempt_id.to_string()],|r|Ok((r.get(0)?,r.get(1)?,r.get(2)?))).map_err(sql)?;
+                let (state, validation, result, diagnostic): (String, String, Option<String>, Option<String>) = c
+                    .query_row(
+                        "SELECT execution, validation, current_result_id, diagnostic FROM execution_items WHERE attempt_id=?1 AND item_id=?2",
+                        params![record.receipt.attempt_id.to_string(), input.envelope().items[0].item_id.to_string()],
+                        |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
+                    )
+                    .map_err(sql)?;
                 let execution: ExecutionState =
                     serde_json::from_value(serde_json::Value::String(state))
                         .map_err(|_| corrupt())?;
@@ -1670,6 +1723,7 @@ impl ProjectStore {
                     request: record.request,
                     execution,
                     validation,
+                    diagnostic,
                     result_id,
                     output,
                 });

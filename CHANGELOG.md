@@ -193,6 +193,7 @@ The current workspace targets **`0.3.0-alpha.1`**. The published `0.2.0-alpha.1`
 
 ### Fixed
 
+- Delegated translators see their own assignment and choose recipients from a scoped directory. The member tool `request_team_work` now requires `unitId` in place of the full `target` object. Update scripted member calls accordingly. Tsumugi resolves its frozen source revision, rejects duplicate assignments without new evidence, and lets active members finish when the activation limit is reached. Each failed work record shows its own reason and attempt ID.
 - Team members can correct a delegation rejected for an invalid recipient or target and continue the original translation. Tool calls to OpenAI Chat Completions with `gpt-6-luna` now send the explicit reasoning setting required by that model.
 - Closing a project releases its ownership lock immediately, so it can reopen while another process still holds a duplicate file descriptor.
 - Creating a local assistant conversation waits for confirmation before loading its messages. Saving a conversation or message keeps verified source pages available when returning to Entries.

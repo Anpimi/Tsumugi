@@ -242,6 +242,18 @@ fn team_plan_with_configs(
     kinds: [&[&str]; 3],
     tool_selection: Option<&Value>,
 ) -> (Value, Value) {
+    team_plan_with_limits(fixture, configs, ids, kinds, tool_selection, 12, 40)
+}
+
+fn team_plan_with_limits(
+    fixture: &Fixture,
+    configs: &[&AiConfig; 3],
+    ids: &[ExecutionId; 3],
+    kinds: [&[&str]; 3],
+    tool_selection: Option<&Value>,
+    activations: u32,
+    requests: u32,
+) -> (Value, Value) {
     let handles: Vec<_> = tool_selection.into_iter().flat_map(|selection| {
         selection["entries"].as_array().unwrap().iter().map(|entry| entry["handle"].clone())
     }).collect();
@@ -255,9 +267,9 @@ fn team_plan_with_configs(
     options["teamDiscussions"] = json!({"profile":"current-plan-2"});
     options["teamExecution"] = json!({"profile":"bounded-team-1","initialMemberId":ids[0],
         "initialUnitId":fixture.unit,"members":members,
-        "limits":{"maxActivations":12,"maxConcurrency":2,"maxNoProgress":8}});
+        "limits":{"maxActivations":activations,"maxConcurrency":2.min(activations),"maxNoProgress":8.min(activations)}});
     let mut root = (*configs[0]).clone();
-    root.max_requests = 40;
+    root.max_requests = requests;
     let plan = fixture
         .call(
             "prepare_work_plan",
@@ -335,7 +347,7 @@ fn request(
     posts: &[ExecutionId],
     cause: Value,
 ) -> Value {
-    json!({"intentId":id,"recipientMemberId":recipient,"target":target,"kind":kind,
+    json!({"intentId":id,"recipientMemberId":recipient,"unitId":target["unitId"],"kind":kind,
         "instructions":"Read the original cited reasons and perform the captured work.","postIds":posts,"causeMessageId":cause})
 }
 fn message(
@@ -736,6 +748,81 @@ fn refused_delegation_returns_to_the_original_member_without_scheduling_a_child(
     let view = execution(&fixture, &plan);
     assert_eq!(view["works"].as_array().unwrap().len(), 1);
     assert_eq!(view["budget"]["dispatched"], 2);
+}
+
+#[test]
+fn activation_limit_refuses_new_work_and_allows_the_admitted_member_to_finish() {
+    let fixture = TeamFixture::create();
+    let [mut a, b, c] = peers();
+    // The root keeps its second response open while the admitted child finishes.
+    a.config.timeout_seconds = 120;
+    let ids = std::array::from_fn(|_| ExecutionId::new());
+    let (plan, _) = team_plan_with_limits(
+        &fixture, &[&a.config, &b.config, &c.config], &ids,
+        [&["translation"], &["translation"], &["evidence"]], None, 2, 8,
+    );
+    let root = admitted(&fixture, &a, ids[0]);
+    let target = work_view(&root).1["discussion"]["target"].clone();
+    let intent = ExecutionId::new();
+    root.tool("accepted-child", "request_team_work",
+        request(intent, ids[1], &target, "translation", &[], Value::Null));
+    let root = admitted(&fixture, &a, ids[0]);
+    let child = tool_result(&root.body, "accepted-child")["attemptId"].clone();
+
+    let admitted_child = admitted(&fixture, &b, ids[1]);
+    admitted_child.tool("refused-grandchild", "request_team_work",
+        request(ExecutionId::new(), ids[2], &target, "evidence", &[], Value::Null));
+    let resumed = admitted(&fixture, &b, ids[1]);
+    let refusal = tool_result(&resumed.body, "refused-grandchild");
+    assert_eq!(refusal["code"], "limit-exceeded");
+    assert_eq!(refusal["stage"], "team-activation-limit");
+    resumed.outcome(translation(&fixture, "Child candidate"));
+    let saved = wait_work(&fixture, &plan, &child, true);
+    assert_eq!(saved["output"]["outcome"]["text"], "Child candidate");
+    assert_eq!(execution(&fixture, &plan)["stopReason"], "activation-limit");
+    root.outcome(json!({"kind":"waiting","requestedIntentIds":[intent]}));
+    wait_work(&fixture, &plan, &plan["attemptId"], false);
+    let view = execution(&fixture, &plan);
+    assert_eq!(view["works"].as_array().unwrap().len(), 2);
+    assert_eq!(view["stopReason"], "no-progress");
+    assert_eq!(view["budget"]["dispatched"], 4);
+}
+
+#[test]
+fn exhausted_team_budget_preserves_the_original_failure_without_another_dispatch() {
+    let fixture = TeamFixture::create();
+    let mut providers = peers();
+    for peer in &mut providers {
+        peer.config.max_requests = 1;
+    }
+    let [a, b, c] = providers;
+    let ids = std::array::from_fn(|_| ExecutionId::new());
+    let (plan, _) = team_plan_with_limits(
+        &fixture, &[&a.config, &b.config, &c.config], &ids,
+        [&["translation"], &["review"], &["evidence"]], None, 1, 1,
+    );
+    let root = admitted(&fixture, &a, ids[0]);
+    let target = work_view(&root).1["discussion"]["target"].clone();
+    root.tool("budget-closed", "request_team_work",
+        request(ExecutionId::new(), ids[1], &target, "review", &[], Value::Null));
+    let deadline = Instant::now() + Duration::from_secs(30);
+    let diagnostic = loop {
+        let attempt = fixture.call("read_execution_attempt",
+            json!({"attemptId":plan["attemptId"],"offset":0,"limit":1})).unwrap();
+        let status = &attempt["items"][0]["status"];
+        if status["execution"] == "failed" {
+            assert_eq!(status["diagnostic"], "team-budget-exhausted");
+            break status["diagnostic"].clone();
+        }
+        assert!(Instant::now() < deadline, "{attempt}");
+        std::thread::sleep(Duration::from_millis(10));
+    };
+    let view = execution(&fixture, &plan);
+    assert_eq!(view["works"].as_array().unwrap().len(), 1);
+    assert_eq!(view["works"][0]["receipt"]["attemptId"], plan["attemptId"]);
+    assert_eq!(view["works"][0]["diagnostic"], diagnostic);
+    assert_eq!(view["stopReason"], "budget-exhausted");
+    assert_eq!(view["budget"]["dispatched"], 1);
 }
 
 #[test]

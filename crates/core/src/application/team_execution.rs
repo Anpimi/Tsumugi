@@ -342,7 +342,10 @@ pub struct TeamWorkRequestView {
 pub struct TeamWorkRecipient {
     pub member_id: ExecutionId,
     pub display_name: String,
-    pub role: String,
+    /// Present only in historical request captures. New model input carries
+    /// the current author's own role in the discussion view.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) role: Option<String>,
     pub unit_ids: Vec<ExecutionId>,
     pub kinds: Vec<TeamWorkKind>,
 }
@@ -376,6 +379,40 @@ pub struct RequestTeamWork {
     pub instructions: String,
     pub post_ids: Vec<ExecutionId>,
     pub cause_message_id: Option<ExecutionId>,
+}
+
+/// The member selects an authorized unit. Core supplies its frozen source identity.
+#[derive(Clone, Debug, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct MemberWorkRequest {
+    pub intent_id: ExecutionId,
+    pub recipient_member_id: ExecutionId,
+    pub unit_id: ExecutionId,
+    pub kind: TeamWorkKind,
+    pub instructions: String,
+    pub post_ids: Vec<ExecutionId>,
+    pub cause_message_id: Option<ExecutionId>,
+}
+
+impl MemberWorkRequest {
+    pub fn resolve(self, plan: &super::WorkPlan) -> Result<RequestTeamWork, crate::execution::ExecutionError> {
+        let basis = plan.selection_basis.iter().find(|basis| basis.unit_id == self.unit_id)
+            .ok_or_else(|| crate::execution::ExecutionError::new(crate::execution::ErrorCode::Unauthorized, "team-work-scope"))?;
+        Ok(RequestTeamWork {
+            intent_id: self.intent_id,
+            recipient_member_id: self.recipient_member_id,
+            target: TeamDiscussionTarget {
+                unit_id: self.unit_id,
+                locale: plan.locale.clone(),
+                source_snapshot_id: basis.source_snapshot_id,
+                source_revision_id: basis.source_revision_id,
+            },
+            kind: self.kind,
+            instructions: self.instructions,
+            post_ids: self.post_ids,
+            cause_message_id: self.cause_message_id,
+        })
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -544,6 +581,8 @@ pub struct TeamWorkView {
     pub execution: ExecutionState,
     pub validation: ValidationState,
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub diagnostic: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub result_id: Option<ExecutionId>,
     pub output: Option<TeamWorkOutput>,
     pub candidate_revision_id: Option<ExecutionId>,
@@ -602,13 +641,13 @@ pub fn team_execution_tools() -> Vec<super::TeamDiscussionToolSpec> {
     let id = serde_json::json!({"type":"string","format":"uuid"});
     let target = serde_json::json!({"type":"object","properties":{"unitId":id,"locale":{"type":"string"},"sourceSnapshotId":id,"sourceRevisionId":id},"required":["unitId","locale","sourceSnapshotId","sourceRevisionId"],"additionalProperties":false});
     let ids = serde_json::json!({"type":"array","items":id,"maxItems":16,"uniqueItems":true});
-    let mut properties = serde_json::json!({"recipientMemberId":id,"target":target,"postIds":ids,"causeMessageId":{"anyOf":[id,{"type":"null"}]}});
+    let mut properties = serde_json::json!({"recipientMemberId":id,"unitId":id,"postIds":ids,"causeMessageId":{"anyOf":[id,{"type":"null"}]}});
     properties["intentId"] = id.clone();
     properties["kind"] =
         serde_json::json!({"type":"string","enum":["translation","review","evidence"]});
     properties["instructions"] =
         serde_json::json!({"type":"string","minLength":1,"maxLength":8192});
-    let work=super::TeamDiscussionToolSpec{name:"request_team_work".into(),description:"Request one bounded work activation for a preauthorized member. Returns a durable queue receipt immediately; never waits for another member. Later work may return to this member after its producer drains.".into(),input_schema:serde_json::json!({"type":"object","properties":properties,"required":["intentId","recipientMemberId","target","kind","instructions","postIds","causeMessageId"],"additionalProperties":false})};
+    let work=super::TeamDiscussionToolSpec{name:"request_team_work".into(),description:"Delegate only work needed for your own assignment. Choose a member and unitId from recipients; the directory is not an assignment list. Return your own result. Only a successful receipt queues work. Correct a rejected route if still needed. For translation rework cite the new discussion post or cause message.".into(),input_schema:serde_json::json!({"type":"object","properties":properties,"required":["intentId","recipientMemberId","unitId","kind","instructions","postIds","causeMessageId"],"additionalProperties":false})};
     let mut properties = serde_json::json!({"messageId":id,"recipientMemberId":id,"target":target,"body":{"type":"string","minLength":1,"maxLength":TeamMessageLimits::current_team().max_body_bytes},"postIds":ids,"causeMessageId":{"anyOf":[id,{"type":"null"}]}});
     // Sending records the message only; a work request explicitly starts an activation.
     properties["messageId"] = id;

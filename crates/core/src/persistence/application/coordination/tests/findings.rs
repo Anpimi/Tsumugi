@@ -325,7 +325,7 @@ fn team_findings_legacy_seed_keeps_original_prompt_and_system_without_report_cap
                 .keys()
                 .cloned()
                 .collect::<std::collections::BTreeSet<_>>(),
-            ["work", "instructions", "postIds", "causeMessageId", "input"]
+            ["assignment", "work", "instructions", "postIds", "causeMessageId", "input"]
                 .into_iter()
                 .map(String::from)
                 .collect()

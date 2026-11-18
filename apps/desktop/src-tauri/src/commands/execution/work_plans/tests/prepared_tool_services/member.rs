@@ -678,7 +678,8 @@ fn pi_member_application_default_node_missing_or_unapproved_rejects_before_membe
             terminal["items"][0]["status"]["execution"], "failed",
             "{terminal}"
         );
-        assert_eq!(terminal["items"][0]["status"]["diagnostic"], "member-owner");
+        let expected_diagnostic = if remove_approval { "member-owner" } else { "member-runtime-unavailable" };
+        assert_eq!(terminal["items"][0]["status"]["diagnostic"], expected_diagnostic);
         assert!(tool_attempts(&setup).is_empty());
         assert_eq!(provider.join().unwrap().0.len(), 1);
         let task: ExecutionId = serde_json::from_value(scope["parentTask"].clone()).unwrap();

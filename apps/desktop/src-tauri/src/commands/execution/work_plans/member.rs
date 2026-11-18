@@ -31,7 +31,7 @@ use tsumugi_core::{
     application::{
         AgentToolRequest, AskHumanQuestion, CapturedTeamAuthor, CapturedTeamDiscussionView,
         CapturedTeamWorkView, PublishTeamDiscussion, ReadTeamArtifact, ReadTeamDiscussion,
-        RequestTeamWork, SendTeamMessage, TeamDiscussionPolicy, TeamQuestionPolicy, ToolGuidancePolicy,
+        MemberWorkRequest, SendTeamMessage, TeamDiscussionPolicy, TeamQuestionPolicy, ToolGuidancePolicy,
         WorkPlanAgentExecutionBinding, WorkPlanToolSpec,
         team_discussion_tools, team_execution_tools, team_question_tool,
     },
@@ -44,6 +44,13 @@ use tsumugi_plugin_host::{
 fn fail(code: ErrorCode, stage: &str) -> ExecutionError {
     ExecutionError::new(code, stage)
 }
+fn refused_before_enqueue(error: &ExecutionError) -> bool {
+    matches!(
+        (error.code, error.stage.as_str()),
+        (ErrorCode::LimitExceeded, "team-activation-limit")
+            | (ErrorCode::ResultMismatch, "team-work-already-assigned")
+    )
+}
 fn command_error(error: CommandError) -> ExecutionError {
     let code = match error.code {
         CommandErrorCode::Busy => ErrorCode::Busy,
@@ -53,15 +60,51 @@ fn command_error(error: CommandError) -> ExecutionError {
         CommandErrorCode::Cancelled => ErrorCode::Cancelled,
         CommandErrorCode::InvalidInput => ErrorCode::InvalidInput,
         CommandErrorCode::ResultMismatch => ErrorCode::ResultMismatch,
+        CommandErrorCode::OutputInvalid => ErrorCode::OutputInvalid,
+        CommandErrorCode::CorruptProject => ErrorCode::CorruptLedger,
         CommandErrorCode::DependencyConflict => ErrorCode::DependencyConflict,
         _ => ErrorCode::Unauthorized,
     };
-    fail(code, "member-owner")
+    let mut original = fail(code, "member-owner");
+    if error.stage == CommandStage::ExecutionRecover && let Some(reason) = error.reason {
+        original.stage = reason;
+        original.item_ids = error.item_ids;
+        original.conflict = error.conflict;
+    }
+    original
 }
 fn host_error(error: HostError, observation: &MemberRunObservation) -> ExecutionError {
     let stage = observation
         .failure_category(&error)
-        .unwrap_or("member-process");
+        .unwrap_or(match error {
+            HostError::Cancelled => "member-cancelled",
+            HostError::AuthorityRevoked => "member-authority-revoked",
+            HostError::OutputLimit => "member-output-limit",
+            HostError::RequestMismatch => "member-request-mismatch",
+            HostError::ResultMismatch => "member-result-mismatch",
+            HostError::InvalidFrame => "member-invalid-frame",
+            HostError::UnexpectedFrame => "member-unexpected-frame",
+            HostError::InvalidContract => "member-invalid-contract",
+            HostError::PackageLimit => "member-package-limit",
+            HostError::PackagePath => "member-package-path",
+            HostError::PackageMismatch => "member-package-mismatch",
+            HostError::RuntimeMismatch => "member-runtime-mismatch",
+            HostError::PackageChanged => "member-package-changed",
+            HostError::CaptureFailed => "member-capture-failed",
+            HostError::MissingArtifact => "member-missing-artifact",
+            HostError::StageFailed => "member-stage-failed",
+            HostError::ExecutionNotAuthorized => "member-execution-not-authorized",
+            HostError::UnsupportedPlatform => "member-unsupported-platform",
+            HostError::UnsupportedRuntime => "member-unsupported-runtime",
+            HostError::DependencyUnavailable => "member-dependency-unavailable",
+            HostError::InvalidLimits => "member-invalid-limits",
+            HostError::SpawnFailed => "member-spawn-failed",
+            HostError::HandshakeMismatch => "member-handshake-mismatch",
+            HostError::Closed => "member-closed",
+            HostError::Crashed => "member-crashed",
+            HostError::ChannelFailed => "member-channel-failed",
+            HostError::Timeout => "member-timeout",
+        });
     fail(
         match error {
             HostError::Cancelled | HostError::AuthorityRevoked => ErrorCode::Cancelled,
@@ -464,7 +507,7 @@ impl MemberFactory {
             provider: Arc::new(Mutex::new(provider)),
             pending: None,
             pending_provider: false,
-            provider_failure: None,
+            operation_failure: None,
             join_failure: None,
             usage: BTreeMap::new(),
             tool_results: BTreeMap::new(),
@@ -501,7 +544,7 @@ impl MemberFactory {
         let failure = handler
             .join_failure
             .take()
-            .or_else(|| handler.provider_failure.take());
+            .or_else(|| handler.operation_failure.take());
         let receipt = finish_run(result, cleanup, failure, &observation)?;
         if receipt.turn_limit_reached {
             return Err(fail(ErrorCode::LimitExceeded, "member-turn-limit"));
@@ -624,7 +667,7 @@ enum TeamToolRequest {
     Publish(PublishTeamDiscussion),
     Read(ReadTeamDiscussion),
     ReadArtifact(ReadTeamArtifact),
-    RequestWork(RequestTeamWork),
+    RequestWork(MemberWorkRequest),
     SendMessage(SendTeamMessage),
 }
 
@@ -670,7 +713,7 @@ struct Handler {
     provider: Arc<Mutex<MemberProviderSession>>,
     pending: Option<tokio::task::JoinHandle<Result<MemberReply, ExecutionError>>>,
     pending_provider: bool,
-    provider_failure: Option<ExecutionError>,
+    operation_failure: Option<ExecutionError>,
     join_failure: Option<ExecutionError>,
     usage: BTreeMap<ExecutionId, Option<Usage>>,
     tool_results: BTreeMap<String, (Value, bool)>,
@@ -705,7 +748,7 @@ impl Handler {
             match self.capture_view().await {
                 Ok(view) => view,
                 Err(error) => {
-                    self.provider_failure.get_or_insert_with(|| error.clone());
+                    self.operation_failure.get_or_insert_with(|| error.clone());
                     return Err(error);
                 }
             }
@@ -761,7 +804,7 @@ impl Handler {
             self.join_failure.get_or_insert_with(|| error.clone());
             error
         })?;
-        self.record_provider_failure(&result);
+        self.record_operation_failure(&result);
         result
     }
     async fn capture_view(&self) -> Result<Option<RequestView>, ExecutionError> {
@@ -792,11 +835,10 @@ impl Handler {
             }
         }).await?.map(Some)
     }
-    fn record_provider_failure(&mut self, result: &Result<MemberReply, ExecutionError>) {
+    fn record_operation_failure<T>(&mut self, result: &Result<T, ExecutionError>) {
         if let Err(error) = result {
-            // Only this trusted Core boundary supplies authoritative failures.
-            // A child error string or an ordinary domain tool error cannot.
-            self.provider_failure.get_or_insert_with(|| error.clone());
+            // Keep the first owner-side failure when the worker subsequently rejects a frame.
+            self.operation_failure.get_or_insert_with(|| error.clone());
         }
     }
     fn selected_tool(
@@ -877,16 +919,21 @@ impl Handler {
                             TeamToolRequest::RequestWork(work) => {
                                 let plan = store.work_plan(captured.scope.lease().plan_id).map_err(map_recover)?;
                                 let checker = current_checker_consent(host, store, &plan, captured.scope.lease())?;
-                                let prepared = match store.prepare_team_work(&author, &work) {
+                                let prepared = match work.resolve(&plan).and_then(|work| store.prepare_team_work(&author, &work)) {
                                     Ok(prepared) => prepared,
                                     // The member may correct a rejected delegation. Return it through
                                     // the admitted tool call before any child is submitted.
-                                    Err(error) if matches!(error.code, ErrorCode::Unauthorized | ErrorCode::InvalidInput | ErrorCode::ResultMismatch) => {
+                                    Err(error) if matches!(error.code, ErrorCode::Unauthorized | ErrorCode::InvalidInput | ErrorCode::ResultMismatch)
+                                        || refused_before_enqueue(&error) => {
                                         return Ok(Err(error));
                                     }
                                     Err(error) => return Err(map_recover(error)),
                                 };
-                                let accepted = host.runtime.submit_team_work(store, &prepared).map_err(map_recover)?;
+                                let accepted = match host.runtime.submit_team_work(store, &prepared) {
+                                    Ok(accepted) => accepted,
+                                    Err(error) if refused_before_enqueue(&error) => return Ok(Err(error)),
+                                    Err(error) => return Err(map_recover(error)),
+                                };
                                 host.ai.track(store, prepared.input(), checker).map_err(map_recover)?;
                                 Ok(serde_json::to_value(accepted))
                             },
@@ -918,10 +965,10 @@ impl Handler {
             error
         })?
     }
-    async fn check_scope(&self) -> Result<(), ExecutionError> {
+    async fn check_scope(&mut self) -> Result<(), ExecutionError> {
         let revision = self.runtime_revision;
         let admission = self.environment_admission()?;
-        admission.wait(|| self.request.check_service_dispatch(), || {
+        let result = admission.wait(|| self.request.check_service_dispatch(), || {
             let owner = self.owner.clone();
             let captured = self.captured.clone();
             let request = self.request.clone();
@@ -933,7 +980,9 @@ impl Handler {
                         || request.check_service_dispatch(), |_| owner.check_scope(sessions, &captured)))
                 })?.await
             }
-        }).await
+        }).await;
+        self.record_operation_failure(&result);
+        result
     }
     async fn execute_tool(
         &mut self,
@@ -980,7 +1029,7 @@ impl Handler {
                 .await
                 .map_err(|_| fail(ErrorCode::OutcomeUnknown, "member-provider-drain"))?;
             if self.pending_provider {
-                self.record_provider_failure(&result);
+                self.record_operation_failure(&result);
             }
         }
         self.drain_mcp().await?;
@@ -1465,7 +1514,9 @@ impl MemberHandler for Handler {
                     ..
                 } => {
                     let key = format!("{request_id}:{call_id}");
-                    let reply = self.execute_tool(key.clone(), name, arguments).await?;
+                    let result = self.execute_tool(key.clone(), name, arguments).await;
+                    self.record_operation_failure(&result);
+                    let reply = result?;
                     if let MemberReply::ToolResult {
                         content, is_error, ..
                     } = &reply
@@ -1638,7 +1689,7 @@ mod tests {
         .err()
         .unwrap();
         assert_eq!(error.code, ErrorCode::Cancelled);
-        assert_eq!(error.stage, "member-process");
+        assert_eq!(error.stage, "member-cancelled");
 
         let mut provider = fail(ErrorCode::LimitExceeded, "ai-budget");
         provider.item_ids.push(ExecutionId::new());
@@ -1656,6 +1707,23 @@ mod tests {
     }
 
     #[test]
+    fn work_admission_preserves_terminal_errors_and_recovers_only_known_enqueue_refusals() {
+        assert!(refused_before_enqueue(&fail(ErrorCode::LimitExceeded, "team-activation-limit")));
+        assert!(refused_before_enqueue(&fail(ErrorCode::ResultMismatch, "team-work-already-assigned")));
+        for (code, stage) in [
+            (ErrorCode::LimitExceeded, "team-budget-exhausted"),
+            (ErrorCode::ResultMismatch, "team-work-receipt"),
+            (ErrorCode::OutcomeUnknown, "team-needs-reconciliation"),
+            (ErrorCode::Cancelled, "team-stopped"),
+        ] {
+            let mut error = fail(code, stage);
+            error.item_ids.push(ExecutionId::new());
+            assert!(!refused_before_enqueue(&error));
+            assert_eq!(command_error(map_recover(error.clone())), error);
+        }
+    }
+
+    #[test]
     fn member_process_failures_keep_fixed_categories_and_uncertain_outcomes() {
         for (error, stage) in [
             (HostError::Timeout, "member-timeout-admission"),
@@ -1670,6 +1738,7 @@ mod tests {
         }
         let error = host_error(HostError::OutputLimit, &MemberRunObservation::default());
         assert_eq!(error.code, ErrorCode::LimitExceeded);
-        assert_eq!(error.stage, "member-process");
+        assert_eq!(error.stage, "member-output-limit");
+        assert_eq!(host_error(HostError::SpawnFailed, &MemberRunObservation::default()).stage, "member-spawn-failed");
     }
 }

@@ -691,6 +691,73 @@ fn team_coordination_invalid_output_and_exhausted_budget_preserve_history() {
 }
 
 #[test]
+fn historical_role_directory_is_verifiable_but_cannot_author_new_requests() {
+    let (_temp, store, _plan, _grant, _prepared, request, author, members) = setup(8);
+    let mut old = store.capture_team_work_view(&author).unwrap().view().clone();
+    for (row, member) in old.recipients.iter_mut().zip(&members) {
+        row.role = Some(member.role.clone());
+        row.unit_ids = member.unit_ids.clone();
+    }
+    let c = store.connection().unwrap();
+    validate_provider_view_history_in(c, &request.input, request.item_id, Some(&old)).unwrap();
+    assert_eq!(validate_provider_view_in(c, &request, Some(&old)).unwrap_err().code, ErrorCode::Unauthorized);
+    old.recipients[1].role = Some("An invented role.".into());
+    assert_eq!(validate_provider_view_history_in(c, &request.input, request.item_id, Some(&old)).unwrap_err().code, ErrorCode::CorruptLedger);
+}
+
+#[test]
+fn team_translation_admission_rechecks_equivalent_intents_and_keeps_cited_rework() {
+    let (_temp, mut store, plan, _grant, _prepared, root, author, members) = setup(8);
+    let receive = |store: &ProjectStore, author: &CapturedTeamAuthor, intent| {
+        store.prepare_team_work(author, &intent).unwrap_err().stage
+    };
+    let tool_request = |unit_id| MemberWorkRequest {
+        intent_id: ExecutionId::new(),
+        recipient_member_id: members[0].member_id,
+        unit_id,
+        kind: TeamWorkKind::Translation,
+        instructions: "Translate this item.".into(),
+        post_ids: vec![],
+        cause_message_id: None,
+    };
+    assert_eq!(tool_request(ExecutionId::new()).resolve(&plan).unwrap_err().stage, "team-work-scope");
+    let mut rewrite = tool_request(author.target().unit_id).resolve(&plan).unwrap();
+    assert_eq!(rewrite.target, *author.target());
+    assert_eq!(receive(&store, &author, rewrite.clone()), "team-work-already-assigned");
+
+    let review = store.prepare_team_work(&author, &work_request(&author, members[1].member_id)).unwrap();
+    store.enqueue_team_work(&review, RecoveryPolicy::ExternalUnknown).unwrap();
+    let dispatched = store.dispatch_execution_item(review.receipt().attempt_id, review.input().envelope().items[0].item_id).unwrap();
+    let reviewer = store.capture_team_work_author(&dispatched).unwrap();
+    assert_eq!(receive(&store, &reviewer, rewrite.clone()), "team-work-already-assigned");
+    let view = store.capture_team_work_view(&reviewer).unwrap();
+    assert_eq!(view.view().discussion.role.request.role, members[1].role);
+    assert!(!view.utf8().contains(&members[0].role));
+    assert!(view.view().recipients.iter().any(|row| row.display_name == members[0].display_name && row.unit_ids.contains(&rewrite.target.unit_id)));
+    for (request, assignment) in [(&root, "initial"), (&dispatched, "delegated")] {
+        let seed = ai::team::TeamWorkSeed::capture(request).unwrap();
+        let prompt: serde_json::Value = serde_json::from_str(seed.input()).unwrap();
+        assert_eq!(prompt["assignment"], assignment);
+    }
+    let post = store.publish_team_discussion(&reviewer, &PublishTeamDiscussion {
+        post_id: ExecutionId::new(), target: reviewer.target().clone(), kind: TeamDiscussionKind::Note,
+        body: "Revise the name in the first sentence.".into(), references: vec![],
+        reply_to: None, supersedes: None, question: None,
+    }).unwrap();
+    rewrite.post_ids.push(post.publication.post_id);
+    let first = store.prepare_team_work(&reviewer, &rewrite).unwrap();
+    let mut repeat = rewrite.clone();
+    repeat.intent_id = ExecutionId::new();
+    repeat.instructions = "Use a revised name.".into();
+    let racing = store.prepare_team_work(&reviewer, &repeat).unwrap();
+    store.enqueue_team_work(&first, RecoveryPolicy::ExternalUnknown).unwrap();
+    assert_eq!(store.enqueue_team_work(&racing, RecoveryPolicy::ExternalUnknown).unwrap_err().stage, "team-work-already-assigned");
+    assert_eq!(receive(&store, &reviewer, repeat), "team-work-already-assigned");
+    assert_eq!(store.prepare_team_work(&reviewer, &rewrite).unwrap().receipt(), first.receipt());
+    assert!(store.team_work_receipt(racing.receipt().intent_id).unwrap().is_none());
+}
+
+#[test]
 fn team_coordination_new_text_and_reference_ids_do_not_reset_unconfirmed_completions() {
     let dispatch = |store: &mut ProjectStore, author: &CapturedTeamAuthor, recipient, kind| {
         let mut request = work_request(author, recipient);
@@ -728,6 +795,12 @@ fn team_coordination_new_text_and_reference_ids_do_not_reset_unconfirmed_complet
     );
     let mut request = work_request(&reviewer, members[0].member_id);
     request.kind = TeamWorkKind::Translation;
+    let note = store.publish_team_discussion(&reviewer, &PublishTeamDiscussion {
+        post_id: ExecutionId::new(), target: reviewer.target().clone(), kind: TeamDiscussionKind::Note,
+        body: "Revise the punctuation.".into(), references: vec![],
+        reply_to: None, supersedes: None, question: None,
+    }).unwrap();
+    request.post_ids.push(note.publication.post_id);
     let revision = store.prepare_team_work(&reviewer, &request).unwrap();
     store
         .enqueue_team_work(&revision, RecoveryPolicy::ExternalUnknown)
@@ -769,7 +842,7 @@ fn team_coordination_new_text_and_reference_ids_do_not_reset_unconfirmed_complet
     );
     let failure = store.check_team_work_author(&reviewer).unwrap_err();
     assert_eq!(failure.code, ErrorCode::Cancelled);
-    assert_eq!(failure.stage, "team-stopped");
+    assert_eq!(failure.stage, "team-no-progress");
 
     let (_temp, mut store, plan, _receipt, _prepared, _root, translator, members) = setup(2);
     let mut revisions = Vec::new();

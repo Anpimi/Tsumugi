@@ -73,7 +73,12 @@ impl TeamWorkSeed {
     fn from_input(input: &FixedInput, item_id: ExecutionId) -> Result<Self, ExecutionError> {
         let settings = settings(input)?;
         let item = item_payload(input, item_id)?;
-        let mut content=serde_json::json!({"work":settings.kind,"instructions":settings.instructions,"postIds":settings.post_ids,"causeMessageId":settings.cause_message_id,"input":serde_json::from_str::<serde_json::Value>(&prompt_content(&settings.config,&item)?).map_err(|_|error(ErrorCode::InvalidInput,"team-work-prompt"))?});
+        let assignment = match &settings.binding {
+            TeamWorkBinding::Root { .. } => "initial",
+            TeamWorkBinding::Child { .. } => "delegated",
+            TeamWorkBinding::HumanContinuation { .. } => "human-continuation",
+        };
+        let mut content=serde_json::json!({"assignment":assignment,"work":settings.kind,"instructions":settings.instructions,"postIds":settings.post_ids,"causeMessageId":settings.cause_message_id,"input":serde_json::from_str::<serde_json::Value>(&prompt_content(&settings.config,&item)?).map_err(|_|error(ErrorCode::InvalidInput,"team-work-prompt"))?});
         if let Some(review)=&settings.review {
             content["reviewTranslation"]=serde_json::json!({"revisionId":review.translation_revision_id,"text":review.translation_text,"rules":["meaning","style"]});
         }
