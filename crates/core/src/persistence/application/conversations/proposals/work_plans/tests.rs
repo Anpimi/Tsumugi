@@ -105,9 +105,17 @@ fn confirmed_link_is_atomic_small_exact_and_uses_original_authority() {
         .unwrap();
     assert_eq!(store.connection().unwrap().total_changes(), before);
     assert_eq!(count(store.connection().unwrap(), "application_plans"), 0);
+    let changes_before = store.changes_since(Revision::new(0).unwrap());
     let link = store
         .authorize_conversation_proposal_work_plan(&prepared, &r)
         .unwrap();
+    let changes = store.changes_since(changes_before.sequence);
+    assert_eq!(changes.sequence, changes_before.sequence);
+    assert!(changes.scopes.is_empty());
+    assert_eq!(
+        changes.progress_sequence.get(),
+        changes_before.progress_sequence.get() + 1
+    );
     assert_eq!(link.plan_id, r.plan_id);
     assert_eq!(link.revision_id, r.proposal.revision_id);
     assert_eq!(link.ordinal.get(), 1);

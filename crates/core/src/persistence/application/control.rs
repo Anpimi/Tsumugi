@@ -1056,6 +1056,7 @@ impl ProjectStore {
         let request = Request::Authorize { plan_id: plan.plan_id, request: authorization.clone() };
         if let Some(receipt) = existing(&tx, &request)? { return Ok(receipt); }
         let receipt = authorize_in(self, &mut tx, plan, authorization)?;
+        tx.observer.add_scope(super::super::ChangeScope::Project);
         super::super::ledger::commit(tx)?;
         Ok(receipt)
     }
@@ -1232,7 +1233,6 @@ pub(super) fn authorize_in(
         parent_task: None,
     };
     save(tx, &request, &receipt)?;
-    tx.observer.add_scope(super::super::ChangeScope::Project);
     Ok(receipt)
 }
 

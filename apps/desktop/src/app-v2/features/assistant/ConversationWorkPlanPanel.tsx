@@ -106,13 +106,13 @@ export function ConversationWorkPlanPanel({ owner, input, visible, disabled, gat
   };
   const review = useWorkPlanExecutionReview({ context: owner.context, plan, generation: "prepared", open,
     value: workPlan.executionConsent, onChange: change => { if (allowed()) owner.setWorkPlanExecutionConsent(conversationId, change); } });
-  const history = useSessionInfiniteQuery<PlanPage, string | null>({ key: ["conversation", conversationId, "work-plans"], scopes: ["project"], enabled: visible,
+  const history = useSessionInfiniteQuery<PlanPage, string | null>({ key: ["conversation", conversationId, "work-plans"], scopes: ["project", "execution"], enabled: visible,
     initialPageParam: null as string | null, nextPage: last => last.nextAfter ?? undefined,
     read: after => conversationCommands.proposalWorkPlans({ ...owner.context, conversationId, after, limit: 50 }) });
   const links = history.data?.pages.flatMap(page => page.rows) ?? [];
   const questionPlan = questionTarget?.conversationId === conversationId ? questionTarget : null;
   const exactPlan = useSessionQuery({ key: ["conversation", conversationId, "question-plan", questionPlan?.planId, questionPlan?.questionPostId],
-    scopes: ["project"], enabled: visible && questionPlan !== null,
+    scopes: ["project", "execution"], enabled: visible && questionPlan !== null,
     read: async () => {
       if (!questionPlan) throw new Error("No original question plan selected");
       const link = await conversationCommands.readProposalWorkPlan({ ...owner.context, conversationId, planId: questionPlan.planId });
@@ -199,7 +199,7 @@ export function ConversationWorkPlanPanel({ owner, input, visible, disabled, gat
     const captured = proof.current;
     if (!allowed() || !current() || !review.current() || !captured?.current() || confirming.current) return;
     confirming.current = true; focus.current = { origin: button, preview: false };
-    const startCurrent = () => canRead() && live.current.open && owner.getSnapshot().activeId === conversationId
+    const startCurrent = () => canRead() && live.current.open && !reads.retired && owner.getSnapshot().activeId === conversationId
       && proof.current === captured && captured.current()
       && connectionConfigCurrent(facts.current(), owner.getSnapshot().inputs.get(conversationId)?.workPlan.config ?? workPlan.config);
     try {

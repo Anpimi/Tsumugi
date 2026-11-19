@@ -385,7 +385,10 @@ impl ProjectStore {
         r: &AuthorizeConversationProposalWorkPlan,
     ) -> Result<ConversationProposalWorkPlanLink, ExecutionError> {
         let request = summary(r)?;
-        let mut tx = self.execution_write_scoped(ChangeScope::Project)?;
+        // Confirmation records execution authority and its proposal link.
+        // Invalidating project materials here would discard the review that
+        // the desktop still needs to start this exact plan.
+        let mut tx = self.execution_write()?;
         owned(&tx, r.proposal.project_id)?;
         if let Some(link) = original_link(&tx, r)? {
             return Ok(link);

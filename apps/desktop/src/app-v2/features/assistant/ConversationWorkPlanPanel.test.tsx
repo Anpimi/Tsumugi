@@ -45,11 +45,12 @@ function harness({ questions = false, unknown = false } = {}) {
     revisions: ConversationProposalRevision[];
     links: Responses["proposalWorkPlanLink"][];
     authorizations: Requests["authorizeProposalWorkPlan"]["authorization"][];
+    onConfirmation: () => void;
     recovery: "pending" | "recorded";
     validationFailure: CommandError | null;
   } = {
     head: { key, revision: "0", writerId: null, value: null },
-    revisions: [structuredClone(fixture.revision)], links: [], authorizations: [], recovery: "pending", validationFailure: null,
+    revisions: [structuredClone(fixture.revision)], links: [], authorizations: [], onConfirmation: () => {}, recovery: "pending", validationFailure: null,
   };
   function link(authorization: Requests["authorizeProposalWorkPlan"]["authorization"]): Responses["proposalWorkPlanLink"] {
     return { ...key, proposalId: authorization.proposal.proposalId, revisionId: authorization.proposal.revisionId,
@@ -102,6 +103,7 @@ function harness({ questions = false, unknown = false } = {}) {
       state.authorizations.push(structuredClone(request.authorization));
       if (unknown) throw { outcome: "unknown", code: "storage-failed", reason: "synthetic-acknowledgement-lost" };
       const recorded = link(request.authorization); state.links = [recorded];
+      state.onConfirmation();
       return { link: recorded, receipt: { actionId: recorded.actionId, lease: { planId: recorded.planId, generation: "1" }, state: "active",
         attemptId: fixture.prepared.plan.attemptId, parentTask: null } };
     }
@@ -158,6 +160,7 @@ async function prepare(panel: ReturnType<typeof within>) {
 
 it("reviews saved scope, material, budget and effects before recording one confirmation and the same original start", async () => {
   const h = harness(), session = await h.open(), { panel, region } = await reviewSavedPlan();
+  h.state.onConfirmation = () => session.reads.invalidate(["execution"]);
   await chooseConnection(panel);
   const prepareButton = panel.getByRole("button", { name: i18n.t("conversation.planPrepare") });
   fireEvent.compositionStart(region); fireEvent.click(prepareButton);
@@ -194,6 +197,18 @@ it("reviews saved scope, material, budget and effects before recording one confi
   expect(expires).toBeLessThanOrEqual(Math.floor(Date.now() / 1000) + 300);
   expect(h.state.head.value?.pending).toBeNull();
   expect(within(await screen.findByRole("region", { name: i18n.t("conversation.planHistory") })).getByText("根据第 1 版提议确认")).toBeInTheDocument();
+  expectKnownWorkPlanCommands();
+});
+
+it("keeps the recorded confirmation but skips automatic start if source changes before the receipt returns", async () => {
+  const h = harness(), session = await h.open(), { panel } = await reviewSavedPlan();
+  h.state.onConfirmation = () => session.reads.invalidate(["source"]);
+  await chooseConnection(panel); await prepare(panel); fireEvent.click(finalConsent(panel));
+  fireEvent.click(panel.getByRole("button", { name: i18n.t("conversation.planConfirmAndStart") }));
+  await screen.findByText(i18n.t("conversation.workPlanRecorded")); await session.flush();
+  expect(h.state.authorizations).toHaveLength(1);
+  expect(h.state.head.value?.pending).toBeNull();
+  expect(calls("start_work_plan")).toHaveLength(0);
   expectKnownWorkPlanCommands();
 });
 
