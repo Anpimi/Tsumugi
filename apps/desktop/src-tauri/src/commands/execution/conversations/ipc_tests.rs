@@ -1507,10 +1507,27 @@ fn proposal_work_plan_flow(
         project,
         json!({"kind":"proposal-work-plan","request":authorization}),
     );
+    let before_confirmation = call(
+        window,
+        "read_project_changes",
+        in_session(project, json!({"afterSequence":"0"})),
+    );
     let accepted = call(
         window,
         "authorize_conversation_proposal_work_plan",
         approve.clone(),
+    );
+    let confirmation_changes = call(
+        window,
+        "read_project_changes",
+        in_session(project, json!({"afterSequence":before_confirmation["sequence"]})),
+    );
+    assert_eq!(confirmation_changes["sequence"], before_confirmation["sequence"]);
+    assert_eq!(confirmation_changes["scopes"], json!([]));
+    assert_ne!(
+        confirmation_changes["progressSequence"],
+        before_confirmation["progressSequence"],
+        "confirmation refreshes execution reads before the original plan starts"
     );
     let journal_receipt = journal_after_action(window, &authorization_journal);
     assert_eq!(accepted["link"]["revisionId"], revised["revisionId"]);
