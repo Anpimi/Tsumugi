@@ -480,6 +480,52 @@ it("restores a later page only while its issuing scope is current", async () => 
   expect(h.page.mock.calls.map(([{ scopeId, cursor }]) => [scopeId, cursor])).toEqual([[null, null]]);
 });
 
+it("recaptures a stale browsing page without expanding the existing selection", async () => {
+  const capture = vi.spyOn(segmentCommands, "captureScope").mockResolvedValue(selectionCapture());
+  const h = await harness({ cursor: { scopeId: "fixed-scope", token: "page-two" }, afterOrdinal: 2 });
+  await screen.findByRole("button", { name: "Edit key.unit-c" });
+  await selectionMenu(w("entrySelectMatches"));
+  await waitFor(() => expect(h.view()?.selection?.kind).toBe("scope"));
+  const selection = h.view()?.selection;
+  const previousRead = h.page.getMockImplementation()!;
+  h.page.mockImplementation(async request => {
+    if (request.scopeId === "fixed-scope") throw {
+      code: "dependency-conflict", stage: "execution-read", outcome: "rejected",
+      recoveryRequired: false, reason: "segment-read-changed",
+    };
+    const page = await previousRead(request);
+    return { ...page, scopeId: "fresh-scope", sequence: "2", readVersion: "2" };
+  });
+
+  act(() => h.reads.invalidate(["project"]));
+
+  expect(await screen.findByRole("button", { name: `Edit key.${unitA}` })).toBeVisible();
+  expect(screen.queryByText(w("viewChanged"))).not.toBeInTheDocument();
+  expect(h.view()).toMatchObject({ preset: "unselected", cursor: null, afterOrdinal: 0 });
+  expect(h.view()?.selection).toBe(selection);
+  expect(h.page.mock.calls.filter(([request]) => request.scopeId === null)).toHaveLength(2);
+  expect(capture).toHaveBeenCalledOnce();
+  expect(h.navigate).not.toHaveBeenCalled();
+});
+
+it("offers manual refresh when recapturing a stale browsing page fails", async () => {
+  const h = await harness();
+  await screen.findByRole("button", { name: `Edit key.${unitA}` });
+  h.page.mockImplementation(async request => {
+    if (!request.scopeId) throw new Error("Could not read a new page");
+    throw { code: "dependency-conflict", stage: "execution-read", outcome: "rejected",
+      recoveryRequired: false, reason: "review-scope-expired" };
+  });
+
+  act(() => h.reads.invalidate(["translation"]));
+
+  await waitFor(() => expect(h.page.mock.calls.filter(([request]) => request.scopeId === null)).toHaveLength(2));
+  expect(await screen.findByText(w("viewChanged"))).toBeVisible();
+  act(() => h.reads.invalidate(["translation"]));
+  await waitFor(() => expect(h.reads.client.isFetching()).toBe(0));
+  expect(h.page.mock.calls.filter(([request]) => request.scopeId === null)).toHaveLength(2);
+});
+
 it("opens a row from a nonzero page at that row's fixed queue position", async () => {
   const h = await harness({ cursor: { scopeId: "fixed-scope", token: "page-two" }, afterOrdinal: 2 });
   const edit = await screen.findByRole("button", { name: i18n.t("workbenchV2.entryEdit", { key: "key.unit-c" }) }); expect(edit).toHaveTextContent("3");

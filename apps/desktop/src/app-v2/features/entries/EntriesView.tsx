@@ -68,7 +68,7 @@ export default function EntriesView({ project, view, disabled, patch, navigate, 
   });
   const [captured, setCaptured] = useState<RetainedEntryCapture | null>(null);
   const [captureError, setCaptureError] = useState(false), [capturing, setCapturing] = useState(false), [queueEnd, setQueueEnd] = useState(false);
-  const request = useRef(0), selectionRequest = useRef(0);
+  const request = useRef(0), selectionRequest = useRef(0), attemptedPageRecovery = useRef(false);
   const openingReview = useRef(false), reviewSerial = useRef(0), diagnosticTicket = useRef<{ id: string; valid: boolean } | null>(null);
   const [reviewNotice, setReviewNotice] = useState<"reviewEditorReading" | "reviewEditorChanged" | "reviewEditorFailed" | "reviewEditorReturnBlocked" | null>(null);
   const [selecting, setSelecting] = useState(false), [selectionFailed, setSelectionFailed] = useState(false), [rowFocus, setRowFocus] = useState<string | null>(null);
@@ -92,8 +92,9 @@ export default function EntriesView({ project, view, disabled, patch, navigate, 
   const capture = captured?.locale === view.locale && sameEntryQuery(captured.query, query)
     && (view.queueActive || captured.scope.snapshotId === scope.data?.currentSnapshot) ? captured.scope : null;
 
-  async function captureCurrent(refresh = false) {
+  async function captureCurrent(mode: "reuse" | "refresh" | "recover" = "reuse") {
     if (!configuredQuery) return;
+    const refresh = mode !== "reuse";
     const ticket = ++request.current;
     setCapturing(true); setCaptureError(false);
     try {
@@ -102,14 +103,16 @@ export default function EntriesView({ project, view, disabled, patch, navigate, 
         || !sameEntryQuery(retained.query, query))) throw new Error("Fixed queue is no longer available");
       const next = retained?.scope ?? await captureEntries(reads, view.locale, query, refresh);
       if (ticket !== request.current || reads.retired || live.current.id !== view.id || live.current.locale !== view.locale
-        || live.current.query !== view.query || live.current.preset !== view.preset) return;
+        || live.current.query !== view.query || live.current.preset !== view.preset
+        || mode === "recover" && live.current.queueActive) return;
       setCaptured({ locale: view.locale, query, scope: next });
       if (live.current.queueActive && live.current.queueScopeId !== next.scopeId) patch({ queueScopeId: next.scopeId });
-      if (refresh) patch({ afterOrdinal: 0, cursor: null });
+      if (refresh) patch({ afterOrdinal: 0, cursor: null, scroll: { top: 0, left: 0 } });
     } catch { if (ticket === request.current && !reads.retired) setCaptureError(true); }
     finally { if (ticket === request.current) setCapturing(false); }
   }
   useEffect(() => {
+    attemptedPageRecovery.current = false;
     setCaptured(null); setQueueEnd(false);
     if (availableLocale && configuredQuery && !disabled && (scope.data?.currentSnapshot || view.queueActive && view.queueScopeId)) void captureCurrent();
     return () => { request.current++; };
@@ -134,6 +137,20 @@ export default function EntriesView({ project, view, disabled, patch, navigate, 
     scopes: ["source", "translation", "review", "resources"], enabled: enabled && view.queueActive,
     refetchOnMount: true,
     read: () => { if (!capture) throw new Error("No fixed entry queue"); return readEntryQueueWindow(reads, view.locale, query, capture, view.queueAnchor); } });
+  const expiredPage = isCommandError(page.error) && page.error.code === "dependency-conflict"
+    && (page.error.reason === "segment-read-changed" || page.error.reason === "review-scope-expired"
+      || page.error.reason === "segment-scope-expired");
+  useEffect(() => {
+    if (!enabled || view.queueActive || capturing || page.isFetching) return;
+    if (page.isSuccess) {
+      attemptedPageRecovery.current = false;
+    } else if (expiredPage && !attemptedPageRecovery.current) {
+      // An old cursor cannot read under a new basis. Recover browsing only;
+      // the fixed editing queue and explicitly selected scope keep their identities.
+      attemptedPageRecovery.current = true;
+      void captureCurrent("recover");
+    }
+  }, [enabled, view.queueActive, capturing, page.isFetching, page.isSuccess, expiredPage, capture]);
   const result = view.queueActive ? queue : page;
   const current = !result.error && result.data?.scopeId === capture?.scopeId ? result.data : null;
   const comparison = useSessionQuery({ key: entrySourceComparisonKey(view.locale, capture ?? emptyCapture, current?.rows ?? []),
@@ -160,7 +177,7 @@ export default function EntriesView({ project, view, disabled, patch, navigate, 
   async function refresh() {
     if (disabled || !await navigate({ focus: null, editing: false, focusMode: false, queueActive: false, queueAnchor: null, queueScopeId: null, cursor: null, afterOrdinal: 0 })) return;
     const source = await scope.refetch();
-    if (source.data?.currentSnapshot && !reads.retired) await captureCurrent(true);
+    if (source.data?.currentSnapshot && !reads.retired) await captureCurrent("refresh");
   }
   async function confirm(advance: boolean) {
     if (!drafts || !key || !canConfirm()) return;
@@ -255,7 +272,7 @@ export default function EntriesView({ project, view, disabled, patch, navigate, 
     }
   }, [rowFocus, current, view.editing, view.focus]);
   const empty = scope.isSuccess && !scope.data.currentSnapshot && !view.queueActive;
-  const failed = scope.isError || captureError || result.isError;
+  const failed = scope.isError || captureError || !capturing && result.isError;
   const stalePage = isCommandError(result.error) && result.error.code === "dependency-conflict";
   const loading = !failed && !empty && (scope.isPending || capturing || !!capture && result.isPending);
   const readSettled = !configuredQuery || !availableLocale || failed || empty || !loading && current !== null;
