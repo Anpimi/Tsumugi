@@ -37,7 +37,10 @@ export function ConnectionKeyFields({ connection, profileId, secret, onSecret, o
       }}><option value="environment">{t("connections.keyEnvironment")}</option><option value="keychain">{t("connections.keySystem")}</option></select>
     </Field>
     {reference ? <>
-      <Field id="connection-key-input" label={t("connections.keyInput")} description={t("connections.keyInputHelp")}>
+      <Field id="connection-key-input" label={t("connections.keyInput")} description={<>
+        {t("connections.keyInputHelp")}
+        {navigator.platform.startsWith("Win") ? <> {t("connections.keyWindowsLimit")}</> : null}
+      </>}>
         <TextInput type="password" value={secret} autoComplete="new-password" autoCapitalize="none" spellCheck={false}
           disabled={disabled || query.data?.availability === "unsupported-platform" || query.isError} onChange={event => onSecret(event.target.value)}/>
       </Field>

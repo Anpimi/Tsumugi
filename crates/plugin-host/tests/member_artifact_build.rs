@@ -1,4 +1,8 @@
-#![cfg(any(target_os = "macos", target_os = "linux"))]
+#![cfg(any(
+    target_os = "macos",
+    target_os = "linux",
+    all(windows, target_arch = "x86_64")
+))]
 //! Exercise the actual desktop build owner without compiling or launching Tauri.
 use std::{fs, path::Path};
 

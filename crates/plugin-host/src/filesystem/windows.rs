@@ -30,12 +30,12 @@ use windows_sys::{
         },
         Storage::FileSystem::{
             CreateFileW, DELETE, FILE_ATTRIBUTE_DIRECTORY, FILE_ATTRIBUTE_REPARSE_POINT,
-            FILE_ATTRIBUTE_TAG_INFO, FILE_DISPOSITION_INFO, FILE_FLAG_BACKUP_SEMANTICS,
-            FILE_FLAG_OPEN_REPARSE_POINT, FILE_GENERIC_READ, FILE_GENERIC_WRITE, FILE_ID_INFO,
-            FILE_SHARE_DELETE, FILE_SHARE_READ, FILE_SHARE_WRITE, FILE_STANDARD_INFO,
-            FILE_TYPE_DISK, FileAttributeTagInfo, FileDispositionInfo, FileIdInfo,
-            FileStandardInfo, GetFileInformationByHandleEx, GetFileType, OPEN_EXISTING, ReOpenFile,
-            SetFileInformationByHandle,
+            FILE_ATTRIBUTE_TAG_INFO, FILE_BASIC_INFO, FILE_DISPOSITION_INFO,
+            FILE_FLAG_BACKUP_SEMANTICS, FILE_FLAG_OPEN_REPARSE_POINT, FILE_GENERIC_READ,
+            FILE_GENERIC_WRITE, FILE_ID_INFO, FILE_SHARE_DELETE, FILE_SHARE_READ, FILE_SHARE_WRITE,
+            FILE_STANDARD_INFO, FILE_TYPE_DISK, FileAttributeTagInfo, FileBasicInfo,
+            FileDispositionInfo, FileIdInfo, FileStandardInfo, GetFileInformationByHandleEx,
+            GetFileType, OPEN_EXISTING, ReOpenFile, SetFileInformationByHandle,
         },
         System::IO::IO_STATUS_BLOCK,
     },
@@ -112,6 +112,40 @@ fn entry(file: &File) -> io::Result<Entry> {
         directory: standard.Directory,
         length: standard.EndOfFile as u64,
     })
+}
+
+/// Stable capture metadata from the same held handle as the bytes. Exclude
+/// last access time, which can change because the capture itself read the file.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct CaptureStamp {
+    identity: Identity,
+    attributes: u32,
+    modified: i64,
+    changed: i64,
+    pub(crate) is_directory: bool,
+    pub(crate) length: u64,
+}
+
+impl CaptureStamp {
+    pub(crate) fn read(file: &File) -> HostResult<Self> {
+        let observed = entry(file).map_err(|_| HostError::PackagePath)?;
+        let basic: FILE_BASIC_INFO =
+            information(file, FileBasicInfo).map_err(|_| HostError::CaptureFailed)?;
+        Ok(Self {
+            identity: observed.identity,
+            attributes: basic.FileAttributes,
+            modified: basic.LastWriteTime,
+            changed: basic.ChangeTime,
+            is_directory: observed.directory,
+            length: observed.length,
+        })
+    }
+
+    pub(crate) fn executable(&self) -> bool {
+        // The Windows runtime owner marks its declared tool explicitly. A
+        // generic directory scan grants no execution attribute by filename.
+        false
+    }
 }
 
 pub(crate) fn identity(file: &File) -> HostResult<Identity> {

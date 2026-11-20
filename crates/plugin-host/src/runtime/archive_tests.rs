@@ -347,21 +347,41 @@ fn runtime_archive_revocation_after_a_body_read_prevents_the_snapshot() {
 
 #[cfg(windows)]
 #[test]
-fn windows_directory_capture_remains_unsupported_without_reading_a_directory() {
-    let (_, _, approval) = archive_fixture();
-    let unused = Path::new("unavailable-runtime-directory");
-    assert_eq!(
-        CapturedRuntime::capture_directories(unused, unused, &approval, || true).unwrap_err(),
-        HostError::UnsupportedPlatform,
-    );
+fn windows_capture_binds_only_the_declared_executable_and_rejects_hard_links() {
+    let directory = tempfile::tempdir().unwrap();
+    let tool = directory.path().join("tool");
+    let host = directory.path().join("host");
+    std::fs::create_dir(&tool).unwrap();
+    std::fs::create_dir(&host).unwrap();
+    std::fs::write(tool.join("node.exe"), b"fixed tool").unwrap();
+    std::fs::write(tool.join("data.exe"), b"data resource").unwrap();
+    std::fs::write(host.join("main.js"), b"fixed host").unwrap();
+
     let request = RuntimeInspectionRequest {
-        profile: approval.profile,
-        tool_version: approval.tool_version,
-        tool_entrypoint: approval.tool.entrypoint,
-        host_entrypoint: approval.host.entrypoint,
+        profile: sdk::RuntimeEnvironmentProfile::NodeSystemLibrariesV1,
+        tool_version: "26.10.0".into(),
+        tool_entrypoint: "node.exe".into(),
+        host_entrypoint: "main.js".into(),
     };
+    let inspected = CapturedRuntime::inspect_directories(&tool, &host, &request, || true).unwrap();
+    let captured =
+        CapturedRuntime::capture_directories(&tool, &host, &inspected.environment, || true)
+            .unwrap();
+    assert_eq!(captured.environment_digest(), inspected.environment_digest);
+    assert!(captured.tool_files()["node.exe"].executable);
+    assert!(!captured.tool_files()["data.exe"].executable);
+    assert!(!captured.host_files()["main.js"].executable);
+
+    std::fs::write(tool.join("node.exe"), b"changed tool").unwrap();
     assert_eq!(
-        CapturedRuntime::inspect_directories(unused, unused, &request, || true).unwrap_err(),
-        HostError::UnsupportedPlatform,
+        CapturedRuntime::capture_directories(&tool, &host, &inspected.environment, || true)
+            .unwrap_err(),
+        HostError::RuntimeMismatch,
+    );
+
+    std::fs::hard_link(tool.join("data.exe"), directory.path().join("alias")).unwrap();
+    assert_eq!(
+        CapturedRuntime::inspect_directories(&tool, &host, &request, || true).unwrap_err(),
+        HostError::PackagePath,
     );
 }

@@ -23,7 +23,14 @@ pub(crate) fn capture_tree(
     limits: &TreeLimits,
     authorized: impl Fn() -> bool,
 ) -> HostResult<BTreeMap<String, RuntimeArtifactFile>> {
-    capture_tree_with_layout(root, limits, authorized).map(|tree| tree.files)
+    #[cfg(windows)]
+    {
+        platform::capture(root, limits, authorized).map(|tree| tree.files)
+    }
+    #[cfg(not(windows))]
+    {
+        capture_tree_with_layout(root, limits, authorized).map(|tree| tree.files)
+    }
 }
 
 pub(crate) fn capture_tree_with_layout(
@@ -42,20 +49,20 @@ pub(crate) fn capture_tree_with_layout(
     }
 }
 
-#[cfg(any(target_os = "macos", target_os = "linux"))]
+#[cfg(any(target_os = "macos", target_os = "linux", windows))]
 mod platform {
     use super::*;
     use crate::filesystem::{directory_names, open_directory, open_entry};
     use crate::package::portable_path;
     use sha2::{Digest, Sha256};
-    use std::{
-        ffi::OsStr,
-        fs::{File, Metadata},
-        io::Read,
-        os::unix::fs::MetadataExt,
-        time::Instant,
-    };
+    use std::{ffi::OsStr, fs::File, io::Read, time::Instant};
 
+    #[cfg(windows)]
+    use crate::filesystem::CaptureStamp as Stamp;
+    #[cfg(unix)]
+    use std::os::unix::fs::MetadataExt;
+
+    #[cfg(unix)]
     #[derive(Clone, Debug, PartialEq, Eq)]
     struct Stamp {
         device: u64,
@@ -63,20 +70,31 @@ mod platform {
         mode: u32,
         links: u64,
         length: u64,
+        is_directory: bool,
         modified: (i64, i64),
         changed: (i64, i64),
     }
-    impl From<&Metadata> for Stamp {
-        fn from(value: &Metadata) -> Self {
-            Self {
+    #[cfg(unix)]
+    impl Stamp {
+        fn read(file: &File) -> HostResult<Self> {
+            let value = file.metadata().map_err(|_| HostError::CaptureFailed)?;
+            if !value.is_dir() && (!value.is_file() || value.nlink() != 1) {
+                return Err(HostError::PackagePath);
+            }
+            Ok(Self {
                 device: value.dev(),
                 inode: value.ino(),
                 mode: value.mode(),
                 links: value.nlink(),
                 length: value.len(),
+                is_directory: value.is_dir(),
                 modified: (value.mtime(), value.mtime_nsec()),
                 changed: (value.ctime(), value.ctime_nsec()),
-            }
+            })
+        }
+
+        fn executable(&self) -> bool {
+            self.mode & 0o111 != 0
         }
     }
     #[derive(Debug, PartialEq, Eq)]
@@ -110,11 +128,8 @@ mod platform {
         }
     }
 
-    fn metadata(file: &File) -> HostResult<Metadata> {
-        file.metadata().map_err(|_| HostError::CaptureFailed)
-    }
     fn unchanged(file: &File, stamp: &Stamp) -> HostResult<()> {
-        if Stamp::from(&metadata(file)?) != *stamp {
+        if Stamp::read(file)? != *stamp {
             return Err(HostError::PackageChanged);
         }
         Ok(())
@@ -133,7 +148,7 @@ mod platform {
         if depth > limits.max_depth || snapshot.directory_count > limits.max_directories {
             return Err(HostError::PackageLimit);
         }
-        let stamp = Stamp::from(&metadata(directory)?);
+        let stamp = Stamp::read(directory)?;
         snapshot.entries.insert(
             prefix.to_owned(),
             Entry {
@@ -162,8 +177,8 @@ mod platform {
             // Inspect the actual held child without following a link. The file
             // descriptor supplies the type, not a preceding path stat.
             let child = open_entry(directory, OsStr::new(&name))?;
-            let info = metadata(&child)?;
-            if info.is_dir() {
+            let stamp = Stamp::read(&child)?;
+            if stamp.is_directory {
                 if limits
                     .special_file_limit
                     .is_some_and(|(name, _)| path == name)
@@ -181,9 +196,6 @@ mod platform {
                 )?;
                 continue;
             }
-            if !info.is_file() || info.nlink() != 1 {
-                return Err(HostError::PackagePath);
-            }
             snapshot.file_count += 1;
             if snapshot.file_count > limits.max_files {
                 return Err(HostError::PackageLimit);
@@ -193,15 +205,14 @@ mod platform {
                 .special_file_limit
                 .filter(|(name, _)| path == *name)
                 .map_or(remaining, |(_, limit)| remaining.min(limit));
-            if info.len() > limit as u64 {
+            if stamp.length > limit as u64 {
                 return Err(HostError::PackageLimit);
             }
-            let stamp = Stamp::from(&info);
             let mut reader = child;
             let mut bytes = Vec::new();
             if capture_bytes {
                 bytes
-                    .try_reserve_exact(info.len() as usize)
+                    .try_reserve_exact(stamp.length as usize)
                     .map_err(|_| HostError::PackageLimit)?;
             }
             let mut hash = Sha256::new();
@@ -225,26 +236,26 @@ mod platform {
                 }
             }
             unchanged(&reader, &stamp)?;
-            if read as u64 != info.len() {
+            if read as u64 != stamp.length {
                 return Err(HostError::PackageChanged);
             }
             snapshot.bytes += read;
+            if capture_bytes {
+                snapshot.files.insert(
+                    path.clone(),
+                    RuntimeArtifactFile {
+                        bytes,
+                        executable: stamp.executable(),
+                    },
+                );
+            }
             snapshot.entries.insert(
-                path.clone(),
+                path,
                 Entry {
                     stamp,
                     digest: Some(hash.finalize().into()),
                 },
             );
-            if capture_bytes {
-                snapshot.files.insert(
-                    path,
-                    RuntimeArtifactFile {
-                        bytes,
-                        executable: info.mode() & 0o111 != 0,
-                    },
-                );
-            }
         }
         unchanged(directory, &stamp)
     }
@@ -262,14 +273,14 @@ mod platform {
         };
         guard.check()?;
         let (root, held) = open_directory(root)?;
-        let before = Stamp::from(&metadata(&held)?);
+        let before = Stamp::read(&held)?;
         let mut snapshot = Snapshot::default();
         walk(&held, "", 0, &mut snapshot, true, limits, &guard)?;
         let mut observed = Snapshot::default();
         // Reopening from the selected absolute path detects replacement of the
         // root or any ancestor. Every file is reread with O_NOFOLLOW.
         let (_, reopened) = open_directory(&root)?;
-        if Stamp::from(&metadata(&reopened)?) != before {
+        if Stamp::read(&reopened)? != before {
             return Err(HostError::PackageChanged);
         }
         walk(&reopened, "", 0, &mut observed, false, limits, &guard)?;

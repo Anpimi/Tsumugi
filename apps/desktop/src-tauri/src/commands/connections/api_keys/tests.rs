@@ -135,14 +135,14 @@ fn absent_key_change_can_be_discarded_but_a_committed_original_is_not_erased() {
     assert_eq!(owner.api_key(request.action_id).unwrap(), "synthetic-saved");
 }
 
-#[cfg(target_os = "macos")]
+#[cfg(any(target_os = "macos", all(windows, target_arch = "x86_64")))]
 #[test]
-#[ignore = "writes one synthetic key to macOS Keychain, then removes exactly that reference"]
-fn native_keychain_round_trip_reopens_and_removes_only_the_test_reference() {
+#[ignore = "writes one synthetic key to the system credential store, then removes exactly that reference"]
+fn native_system_credential_round_trip_reopens_and_removes_only_the_test_reference() {
     struct Cleanup { directory: std::path::PathBuf, reference: ExecutionId }
     impl Drop for Cleanup {
         fn drop(&mut self) {
-            let storage = storage::KeychainStorage::new(&self.directory);
+            let storage = storage::SystemStorage::new(&self.directory);
             if storage.delete(self.reference).is_err() { eprintln!("synthetic API-key cleanup could not be confirmed"); }
         }
     }
@@ -159,11 +159,31 @@ fn native_keychain_round_trip_reopens_and_removes_only_the_test_reference() {
     assert_eq!(reopened.status(reference).unwrap().availability, ApiKeyAvailability::Missing);
     assert!(reopened.api_key(reference).is_err());
 }
-#[cfg(target_os = "macos")]
+#[cfg(any(target_os = "macos", all(windows, target_arch = "x86_64")))]
 #[test]
-fn missing_keychain_identity_status_creates_no_files() {
+fn missing_system_credential_identity_status_creates_no_files() {
     let temp = tempfile::tempdir().unwrap(); let root = temp.path().join("application");
     let owner = ApiKeys::new(&root);
     assert_eq!(owner.status(ExecutionId::new()).unwrap().availability, ApiKeyAvailability::Missing);
     assert!(!root.exists());
+}
+
+#[cfg(all(windows, target_arch = "x86_64"))]
+#[test]
+fn windows_credential_size_is_checked_before_identity_creation() {
+    let temp = tempfile::tempdir().unwrap();
+    let directory = temp.path().join("application");
+    let owner = ApiKeys::new(&directory);
+    let settings = temp.path().join("connections");
+    let store = ModelConnectionStore::at(settings.clone()).unwrap();
+
+    for oversized_key in ["键".repeat(854), "x".repeat(MAX_KEY_BYTES + 1)] {
+        let request = change(&store, ExecutionId::new(), "Synthetic");
+        let error = owner
+            .change(&store, &request, Some(&oversized_key))
+            .unwrap_err();
+        assert_eq!(error.stage, "api-key-windows-limit");
+    }
+    assert!(!directory.exists());
+    assert!(!settings.exists());
 }

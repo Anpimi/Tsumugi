@@ -1,105 +1,97 @@
-use super::super::secure_storage::{IdentityError, InstallationIdentity};
 use super::*;
 
-pub(super) struct KeychainStorage {
+#[cfg(any(target_os = "macos", all(windows, target_arch = "x86_64")))]
+use super::super::secure_storage::{IdentityError, InstallationIdentity};
+
+#[cfg(target_os = "macos")]
+#[path = "storage/macos.rs"]
+mod native;
+#[cfg(all(windows, target_arch = "x86_64"))]
+#[path = "storage/windows.rs"]
+mod native;
+
+pub(super) fn validate_key(secret: &str) -> Result<(), ExecutionError> {
+    #[cfg(all(windows, target_arch = "x86_64"))]
+    native::validate_size(secret)?;
+    if !valid_key(secret) {
+        return Err(fail(ErrorCode::InvalidInput, "api-key-value"));
+    }
+    Ok(())
+}
+
+pub(super) struct SystemStorage {
+    #[cfg(any(target_os = "macos", all(windows, target_arch = "x86_64")))]
     installation: InstallationIdentity,
 }
-impl KeychainStorage {
-    pub(super) fn new(directory: &Path) -> Self {
+
+impl SystemStorage {
+    pub(super) fn new(_directory: &Path) -> Self {
         Self {
-            installation: InstallationIdentity::new(directory, "api-keys.lock"),
+            #[cfg(any(target_os = "macos", all(windows, target_arch = "x86_64")))]
+            installation: InstallationIdentity::new(_directory, "api-keys.lock"),
         }
     }
-    #[cfg(target_os = "macos")]
+
+    #[cfg(any(target_os = "macos", all(windows, target_arch = "x86_64")))]
     fn host(&self, create: bool) -> Result<Option<ExecutionId>, ExecutionError> {
         self.installation.host(create).map_err(|error| match error {
             IdentityError::Busy => fail(ErrorCode::Busy, "api-key-owner"),
             IdentityError::Unavailable => storage_error(),
         })
     }
-    #[cfg(target_os = "macos")]
-    fn entry(host: ExecutionId, reference: ExecutionId) -> Result<keyring::Entry, ExecutionError> {
-        keyring::Entry::new(
-            "app.tsumugi.desktop.api-key",
-            &format!("{host}/{reference}"),
-        )
-        .map_err(|_| storage_error())
+}
+
+#[cfg(any(target_os = "macos", all(windows, target_arch = "x86_64")))]
+impl CredentialStorage for SystemStorage {
+    fn supported(&self) -> bool {
+        true
     }
-    #[cfg(target_os = "macos")]
-    fn load(entry: &keyring::Entry) -> Result<Option<String>, ExecutionError> {
-        match entry.get_secret() {
-            Ok(bytes) if bytes.len() <= MAX_KEY_BYTES => String::from_utf8(bytes)
-                .map(Some)
-                .map_err(|_| storage_error()),
-            Err(keyring::Error::NoEntry) => Ok(None),
-            _ => Err(storage_error()),
-        }
+
+    fn read(&self, reference: ExecutionId) -> Result<Option<String>, ExecutionError> {
+        let Some(host) = self.host(false)? else {
+            return Ok(None);
+        };
+        native::with_entry(host, reference, |entry| entry.read())
+    }
+
+    fn create(&self, reference: ExecutionId, secret: &str) -> Result<(), ExecutionError> {
+        validate_key(secret)?;
+
+        let host = self.host(true)?.ok_or_else(storage_error)?;
+        native::with_entry(host, reference, |entry| match entry.read()? {
+            Some(saved) if saved == secret => Ok(()),
+            Some(_) => Err(fail(
+                ErrorCode::DependencyConflict,
+                "api-key-reference-changed",
+            )),
+            None => entry.write(secret),
+        })
+    }
+
+    fn delete(&self, reference: ExecutionId) -> Result<(), ExecutionError> {
+        let Some(host) = self.host(false)? else {
+            return Ok(());
+        };
+        native::with_entry(host, reference, |entry| entry.delete())
     }
 }
-impl CredentialStorage for KeychainStorage {
+
+#[cfg(not(any(target_os = "macos", all(windows, target_arch = "x86_64"))))]
+impl CredentialStorage for SystemStorage {
     fn supported(&self) -> bool {
-        cfg!(target_os = "macos")
+        false
     }
-    fn read(&self, reference: ExecutionId) -> Result<Option<String>, ExecutionError> {
-        #[cfg(target_os = "macos")]
-        {
-            let Some(host) = self.host(false)? else {
-                return Ok(None);
-            };
-            super::super::secure_storage::noninteractive(storage_error, || {
-                Self::load(&Self::entry(host, reference)?)
-            })
-        }
-        #[cfg(not(target_os = "macos"))]
-        {
-            let _ = reference;
-            Err(fail(ErrorCode::Unauthorized, "api-key-platform"))
-        }
+
+    fn read(&self, _reference: ExecutionId) -> Result<Option<String>, ExecutionError> {
+        Err(fail(ErrorCode::Unauthorized, "api-key-platform"))
     }
-    fn create(&self, reference: ExecutionId, secret: &str) -> Result<(), ExecutionError> {
-        if !valid_key(secret) {
-            return Err(fail(ErrorCode::InvalidInput, "api-key-value"));
-        }
-        #[cfg(target_os = "macos")]
-        {
-            let host = self.host(true)?.ok_or_else(storage_error)?;
-            super::super::secure_storage::noninteractive(storage_error, || {
-                let entry = Self::entry(host, reference)?;
-                match Self::load(&entry)? {
-                    Some(saved) if saved == secret => Ok(()),
-                    Some(_) => Err(fail(
-                        ErrorCode::DependencyConflict,
-                        "api-key-reference-changed",
-                    )),
-                    None => entry
-                        .set_secret(secret.as_bytes())
-                        .map_err(|_| storage_error()),
-                }
-            })
-        }
-        #[cfg(not(target_os = "macos"))]
-        {
-            let _ = reference;
-            Err(fail(ErrorCode::Unauthorized, "api-key-platform"))
-        }
+
+    fn create(&self, _reference: ExecutionId, secret: &str) -> Result<(), ExecutionError> {
+        validate_key(secret)?;
+        Err(fail(ErrorCode::Unauthorized, "api-key-platform"))
     }
-    fn delete(&self, reference: ExecutionId) -> Result<(), ExecutionError> {
-        #[cfg(target_os = "macos")]
-        {
-            let Some(host) = self.host(false)? else {
-                return Ok(());
-            };
-            super::super::secure_storage::noninteractive(storage_error, || {
-                match Self::entry(host, reference)?.delete_credential() {
-                    Ok(()) | Err(keyring::Error::NoEntry) => Ok(()),
-                    Err(_) => Err(storage_error()),
-                }
-            })
-        }
-        #[cfg(not(target_os = "macos"))]
-        {
-            let _ = reference;
-            Err(fail(ErrorCode::Unauthorized, "api-key-platform"))
-        }
+
+    fn delete(&self, _reference: ExecutionId) -> Result<(), ExecutionError> {
+        Err(fail(ErrorCode::Unauthorized, "api-key-platform"))
     }
 }

@@ -1,0 +1,28 @@
+{
+  "version": "26.10.0",
+  "archive": "node-v26.10.0-win-x64.zip",
+  "url": "https://nodejs.org/dist/v26.10.0/node-v26.10.0-win-x64.zip",
+  "checksumsUrl": "https://nodejs.org/dist/v26.10.0/SHASUMS256.txt",
+  "archiveSha256": "9fef7eca6743a6b910989cd8e78712376b394fcb9b6e1e9c44a0799a287f90c5",
+  "toolTreeDigest": "bd93429191a4a0f3e3f260388703fa78f647a4c91129699e74b11268d049d06c",
+  "files": {
+    "bin/node.exe": "cea6ac365f9bb9586dafd2084d996e092e7d3e7d07ab52d1f76bf53d1fca9bc4",
+    "LICENSE": "168f764dbef057a171bca4f00e11c4714e8e532e7ed63c0289bee35649b9c395"
+  },
+  "minimumSystemVersion": "10.0.22000",
+  "systemLibraries": [
+    "advapi32.dll",
+    "api-ms-win-core-synch-l1-2-0.dll",
+    "crypt32.dll",
+    "dbghelp.dll",
+    "iphlpapi.dll",
+    "kernel32.dll",
+    "ntdll.dll",
+    "ole32.dll",
+    "shell32.dll",
+    "user32.dll",
+    "userenv.dll",
+    "winmm.dll",
+    "ws2_32.dll"
+  ]
+}

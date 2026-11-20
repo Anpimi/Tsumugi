@@ -15,12 +15,12 @@
 | 桌面壳、已保存内容的人工编辑 | 已有 macOS 源码路径 | 保留 Windows x64、Intel Mac 源码路径；当前完整包未验 |
 | SMAPI／WebVTT 导入、检查与导出 | 需要固定插件包、已批准的 Node／Host，以及逐次执行许可 | 尚无选定的完整资源包；源码编译不自动附带格式插件 |
 | Skyrim SE 开发集成 | [独立候选包与匹配的原生 Host](integrations.md#skyrim-se-development-package) 已在桌面应用导入 64 MiB、50,000 字段的合成 ESP，导出经独立检查、全部保留原文的构建，并在重开后读回回执。两版更新维护另用较小的合成 Mod 验证 | Windows 桌面处理与 Skyrim SE 实际游戏加载仍待验证 |
-| OpenAI 兼容 API Key 直接请求 | 已有 Core transport；macOS Keychain 或明确选择的环境变量 | 存在 transport 源码，不代表完整平台验收 |
-| Pi 成员与动态团队 | 需要成员产物和已安装、批准的随附 Node，以及明确请求许可 | Windows 成员执行返回不支持平台，尚无完整 Windows Agent 包；未选定 Intel／Linux 完整包 |
+| OpenAI 兼容 API Key 直接请求 | 已有 Core transport；macOS Keychain 或明确选择的环境变量 | Windows x64 源码构建可用 Windows 凭据管理器或明确选择的环境变量 |
+| Pi 成员与动态团队 | 需要成员产物和已安装、批准的随附 Node，以及明确请求许可 | Windows x64 已有固定 Node 和 Pi 产物的开发 Host 路径。Windows 完整桌面交付仍待验；未选定 Intel／Linux 完整包 |
 | ChatGPT 订阅登录 | macOS Keychain 实现；账号与外发许可另行确认 | 当前桌面凭据实现不支持 |
 | 完整离线应用包 | `tauri.runtime.conf.json`，macOS arm64 构建机与目标，下述资源全部齐备 | 当前随附资源配置拒绝其他目标 |
 
-保存连接不代表模型兼容性测试；安装资源也不授予外发许可。macOS 桌面密钥输入及原环境变量方式见 [AI 翻译说明](ai-translation.md)。钥匙串可用不代表 Provider 或完整平台验收通过。
+保存连接不代表模型兼容性测试；安装资源也不授予外发许可。macOS 和 Windows x64 的桌面密钥输入及环境变量方式见 [AI 翻译说明](ai-translation.md)。Provider 与完整平台验收另有记录。
 
 ## 首次运行与离线样例
 

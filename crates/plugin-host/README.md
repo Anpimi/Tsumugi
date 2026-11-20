@@ -84,6 +84,24 @@ TSUMUGI_TEST_MEMBER_ARTIFACT=/absolute/new/member-runtime \
   cargo test -p tsumugi-plugin-host --features member-conformance --test member --test member_artifact_build --locked -- --test-threads=1
 ```
 
+On Windows 11 x64, the member conformance suite uses the existing Job Object and owned pipes. Prepare the compiled JavaScript Host production deploy with the [locked build steps](../../docs/plugin-distribution.md#prepare-and-build). Use the [pinned Windows Node ZIP](../../runtimes/javascript-host/scripts/node-distribution.windows-x86_64.json) and the native `tsumugi-plugin-runtime.exe` built with `cargo build --locked -p tsumugi-plugin-host --bin tsumugi-plugin-runtime`.
+
+```powershell
+node runtimes/javascript-host/scripts/prepare-desktop-runtime.mjs `
+  --node-archive 'C:\fixtures\node-v26.10.0-win-x64.zip' `
+  --host-source 'C:\fixtures\compiled-host' `
+  --inspector "$PWD\target\debug\tsumugi-plugin-runtime.exe" `
+  --output 'C:\fixtures\prepared-runtime'
+pnpm --dir runtimes/agent-service package:runtime --output 'C:\fixtures\member-runtime'
+$env:TSUMUGI_TEST_RUNTIME_TOOL = 'C:\fixtures\prepared-runtime\tool'
+$env:TSUMUGI_TEST_RUNTIME_HOST = 'C:\fixtures\prepared-runtime\host'
+$env:TSUMUGI_TEST_RUNTIME_APPROVAL = 'C:\fixtures\reviewed-environment.json'
+$env:TSUMUGI_TEST_MEMBER_ARTIFACT = 'C:\fixtures\member-runtime'
+cargo test -p tsumugi-plugin-host --features member-conformance --test member --test member_artifact_build --locked -- --test-threads=1
+```
+
+Use a reviewed runtime descriptor containing the `environment` object for the exact prepared Node and Host artifacts. This suite covers the synthetic member channel and its lifecycle. Windows desktop installation and first run have separate acceptance.
+
 ## Running Conformance and Compatibility Tests
 
 ### Host & JavaScript Channel Conformance

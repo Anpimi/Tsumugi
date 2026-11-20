@@ -87,7 +87,7 @@ impl CapturedRuntime {
         request: &RuntimeInspectionRequest,
         live_read_guard: impl Fn() -> bool,
     ) -> HostResult<RuntimeInspection> {
-        #[cfg(any(target_os = "macos", target_os = "linux"))]
+        #[cfg(any(target_os = "macos", target_os = "linux", windows))]
         {
             let captured =
                 platform::capture_observed(tool_root, host_root, request, None, live_read_guard)?;
@@ -106,7 +106,7 @@ impl CapturedRuntime {
                 byte_count: bytes as u64,
             })
         }
-        #[cfg(not(any(target_os = "macos", target_os = "linux")))]
+        #[cfg(not(any(target_os = "macos", target_os = "linux", windows)))]
         {
             let _ = (tool_root, host_root, request, live_read_guard);
             Err(HostError::UnsupportedPlatform)
@@ -133,11 +133,11 @@ impl CapturedRuntime {
         approval
             .validate()
             .map_err(|_| HostError::InvalidContract)?;
-        #[cfg(any(target_os = "macos", target_os = "linux"))]
+        #[cfg(any(target_os = "macos", target_os = "linux", windows))]
         {
             platform::capture(tool_root, host_root, approval, live_read_guard)
         }
-        #[cfg(not(any(target_os = "macos", target_os = "linux")))]
+        #[cfg(not(any(target_os = "macos", target_os = "linux", windows)))]
         {
             let _ = (tool_root, host_root, live_read_guard);
             Err(HostError::UnsupportedPlatform)
@@ -349,7 +349,7 @@ fn capture_sources(
     })
 }
 
-#[cfg(any(target_os = "macos", target_os = "linux"))]
+#[cfg(any(target_os = "macos", target_os = "linux", windows))]
 mod platform {
     use super::*;
     use crate::tree::{TreeLimits, capture_tree};
@@ -399,7 +399,7 @@ mod platform {
             expected,
             &live_check,
             || {
-                capture_tree(
+                let tool = capture_tree(
                     tool_root,
                     &limits(
                         sdk::MAX_RUNTIME_ARTIFACT_FILES,
@@ -407,7 +407,22 @@ mod platform {
                         check(&live_read_guard, deadline)?,
                     ),
                     &live_read_guard,
-                )
+                )?;
+                #[cfg(windows)]
+                let tool = {
+                    let mut tool = tool;
+                    if !request.tool_entrypoint.ends_with(".exe") {
+                        return Err(HostError::RuntimeMismatch);
+                    }
+                    let entry = tool
+                        .get_mut(&request.tool_entrypoint)
+                        .ok_or(HostError::MissingArtifact)?;
+                    // The approved descriptor binds this exact executable
+                    // flag and every file byte. NTFS has no POSIX mode bits.
+                    entry.executable = true;
+                    tool
+                };
+                Ok(tool)
             },
             |remaining_files, remaining_bytes| {
                 capture_tree(

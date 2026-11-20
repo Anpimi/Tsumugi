@@ -1,4 +1,4 @@
-//! Immutable Keychain references share the original connection CAS and receipt.
+//! Immutable system credential references share the original connection CAS and receipt.
 //! Secret input is consumed here, never included in a Core request or response.
 use super::*;
 use std::sync::{Arc, Mutex};
@@ -67,7 +67,7 @@ pub(in crate::commands) struct ApiKeys {
 impl ApiKeys {
     pub(super) fn new(directory: &Path) -> Self {
         Self {
-            storage: Box::new(storage::KeychainStorage::new(directory)),
+            storage: Box::new(storage::SystemStorage::new(directory)),
             operations: Mutex::new(()),
         }
     }
@@ -148,9 +148,11 @@ impl ApiKeys {
         if connection.credential_reference != Some(change.action_id)
             || !connection.credential_env.is_empty()
             || connection.chatgpt_account.is_some()
-            || secret.is_some_and(|key| !valid_key(key))
         {
             return Err(fail(ErrorCode::InvalidInput, "api-key-connection"));
+        }
+        if let Some(secret) = secret {
+            storage::validate_key(secret)?;
         }
         store.check_change(change)?;
         // Exact receipts are authoritative even after the key was removed. A

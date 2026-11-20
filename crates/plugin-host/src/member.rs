@@ -358,7 +358,11 @@ pub async fn run_member_observed(
     observation: &MemberRunObservation,
 ) -> HostResult<MemberRunReceipt> {
     observation.enter(MemberPhase::Admission);
-    #[cfg(not(any(target_os = "macos", target_os = "linux")))]
+    #[cfg(not(any(
+        target_os = "macos",
+        target_os = "linux",
+        all(windows, target_arch = "x86_64")
+    )))]
     {
         let _ = (
             artifact,
@@ -371,7 +375,11 @@ pub async fn run_member_observed(
         );
         Err(HostError::UnsupportedPlatform)
     }
-    #[cfg(any(target_os = "macos", target_os = "linux"))]
+    #[cfg(any(
+        target_os = "macos",
+        target_os = "linux",
+        all(windows, target_arch = "x86_64")
+    ))]
     {
         options.limits.validate()?;
         if !options.allow_unsandboxed_execution {

@@ -1,5 +1,9 @@
 #![cfg(all(
-    any(target_os = "macos", target_os = "linux"),
+    any(
+        target_os = "macos",
+        target_os = "linux",
+        all(windows, target_arch = "x86_64")
+    ),
     feature = "core-adapter",
     feature = "member-conformance"
 ))]
@@ -288,6 +292,7 @@ fn empty_stage(stage: &std::path::Path) {
         "only the owned, reaped instance should have been removed"
     );
 }
+#[cfg(unix)]
 fn no_waitable_child(pid: u32) {
     let mut status = 0;
     assert_eq!(
@@ -298,6 +303,25 @@ fn no_waitable_child(pid: u32) {
         std::io::Error::last_os_error().raw_os_error(),
         Some(libc::ECHILD)
     );
+}
+
+#[cfg(windows)]
+fn no_waitable_child(pid: u32) {
+    use windows_sys::Win32::{
+        Foundation::{CloseHandle, ERROR_INVALID_PARAMETER, WAIT_OBJECT_0},
+        System::Threading::{OpenProcess, PROCESS_SYNCHRONIZE, WaitForSingleObject},
+    };
+    let process = unsafe { OpenProcess(PROCESS_SYNCHRONIZE, 0, pid) };
+    if process.is_null() {
+        assert_eq!(
+            std::io::Error::last_os_error().raw_os_error(),
+            Some(ERROR_INVALID_PARAMETER as i32)
+        );
+    } else {
+        let state = unsafe { WaitForSingleObject(process, 0) };
+        unsafe { CloseHandle(process) };
+        assert_eq!(state, WAIT_OBJECT_0);
+    }
 }
 
 #[tokio::test(flavor = "current_thread")]

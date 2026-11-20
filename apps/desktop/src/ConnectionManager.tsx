@@ -30,6 +30,7 @@ const reasons: Partial<Record<string, { field: string; message: TranslationKey }
   "api-key-secure-storage": { field: "key", message: "connections.keyWriteFailed" },
   "api-key-owner": { field: "key", message: "connections.keyWriteFailed" },
   "api-key-platform": { field: "key", message: "connections.keyUnsupported" },
+  "api-key-windows-limit": { field: "key", message: "connections.keyWindowsLimit" },
   "api-key-value": { field: "key", message: "connections.keyInvalid" },
   "api-key-connection": { field: "key", message: "connections.keyInvalid" },
   "api-key-reference-changed": { field: "key", message: "connections.keyChanged" },

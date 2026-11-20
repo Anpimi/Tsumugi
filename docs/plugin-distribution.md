@@ -15,12 +15,12 @@ This matrix describes current source capabilities and packaging constraints, not
 | Desktop shell and manual editing of saved content | Existing macOS source path | Windows x64 and Intel Mac source paths; current full-package acceptance not established |
 | SMAPI / WebVTT import, checks and export | Pinned packages, approved Node/Host and per-operation consent required | No fixed complete package selected; source compilation alone supplies no format packages |
 | Skyrim SE development integration | The [separate package and matching Native Host](integrations.md#skyrim-se-development-package) imported a synthetic 64 MiB ESP with 50,000 fields in the desktop app, exported a checked build retaining all source text, and showed the same export receipt after the project reopened. Two-version maintenance was tested with a smaller synthetic Mod | Windows desktop processing and actual Skyrim SE loading remain unverified |
-| Direct OpenAI-compatible API-key requests | Existing Core transport; macOS Keychain or an explicitly selected environment variable | Transport source exists; no complete-platform acceptance claim |
-| Pi members and dynamic teams | Included member artifact plus installed, approved bundled Node; explicit request permission | Windows member execution returns unsupported-platform; no complete Windows Agent package. Intel/Linux complete bundles are not selected |
+| Direct OpenAI-compatible API-key requests | Existing Core transport; macOS Keychain or an explicitly selected environment variable | Windows x64 source builds can use Windows Credential Manager or an explicitly selected environment variable |
+| Pi members and dynamic teams | Included member artifact plus installed, approved bundled Node; explicit request permission | Windows x64 has a development Host path for the pinned Node and Pi artifacts. Complete Windows desktop delivery is still unverified. Intel/Linux complete bundles are not selected |
 | ChatGPT subscription sign-in | macOS Keychain implementation; an account and separate request consent are required | Unsupported by the current desktop credential implementation |
 | Complete offline application bundle | `tauri.runtime.conf.json`, macOS arm64 builder and target, all resources below | Current bundle configuration rejects other targets |
 
-Saving a connection is not a model compatibility test. Installing resources does not approve an external request. The macOS desktop key-entry and existing environment-variable workflows are documented in [AI translation](ai-translation.md). Keychain availability does not establish provider or complete-platform acceptance.
+Saving a connection is not a model compatibility test. Installing resources does not approve an external request. The macOS and Windows x64 desktop key-entry and environment-variable workflows are documented in [AI translation](ai-translation.md). Provider and complete-platform acceptance are tracked separately.
 
 ## First run and offline sample
 
