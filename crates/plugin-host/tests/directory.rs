@@ -1,12 +1,14 @@
-#![cfg(any(target_os = "macos", target_os = "linux"))]
+#![cfg(any(
+    target_os = "macos",
+    target_os = "linux",
+    all(windows, target_arch = "x86_64")
+))]
+#[cfg(unix)]
 use std::{
-    cell::Cell,
-    collections::BTreeMap,
     ffi::CString,
-    fs,
     os::unix::{ffi::OsStrExt, fs::PermissionsExt},
-    path::Path,
 };
+use std::{cell::Cell, collections::BTreeMap, fs, path::Path};
 use tsumugi_plugin_host::*;
 
 fn package(root: &Path) -> String {
@@ -24,7 +26,7 @@ fn package(root: &Path) -> String {
             PackageFile {
                 // Capturing an executable never runs its bytes.
                 bytes: b"this is deliberately not a program".to_vec(),
-                executable: true,
+                executable: cfg!(unix),
             },
         ),
     ]);
@@ -34,6 +36,7 @@ fn package(root: &Path) -> String {
         let path = root.join(name);
         fs::create_dir_all(path.parent().unwrap()).unwrap();
         fs::write(&path, &file.bytes).unwrap();
+        #[cfg(unix)]
         fs::set_permissions(
             &path,
             fs::Permissions::from_mode(if file.executable { 0o700 } else { 0o600 }),
@@ -51,13 +54,16 @@ fn rejects(root: &Path, digest: &str, error: HostError) {
 #[test]
 fn captures_binary_bytes_executable_bits_and_independent_digest() {
     let temporary = tempfile::tempdir().unwrap();
-    let root = temporary.path().join("package");
+    let root = temporary.path().join("package-資料");
     let digest = package(&root);
     let image = PackageImage::capture_directory(&root, &digest, || true).unwrap();
     assert_eq!(image.package_digest(), digest);
     assert_eq!(image.manifest().manifest().plugin.id, "local-data");
     rejects(&root, &"0".repeat(64), HostError::PackageMismatch);
+    #[cfg(unix)]
     fs::set_permissions(root.join("bin/tool"), fs::Permissions::from_mode(0o600)).unwrap();
+    #[cfg(windows)]
+    fs::write(root.join("bin/tool"), b"changed tool bytes").unwrap();
     rejects(&root, &digest, HostError::PackageMismatch);
     // The successful snapshot remains fixed after its source is changed.
     assert_eq!(image.package_digest(), digest);
@@ -80,11 +86,14 @@ fn inspection_uses_the_capture_owner_and_returns_only_a_candidate_fingerprint() 
             + fs::metadata(root.join("bin/tool")).unwrap().len()
     );
     // Both entrypoints reject the same unsafe source and live read revocation.
-    std::os::unix::fs::symlink(&root, temporary.path().join("link")).unwrap();
+    let linked_file = root.join("data/alias.bin");
+    fs::hard_link(root.join("data/resource.bin"), &linked_file).unwrap();
     assert_eq!(
-        PackageImage::inspect_directory(&temporary.path().join("link"), || true).unwrap_err(),
+        PackageImage::inspect_directory(&root, || true).unwrap_err(),
         HostError::PackagePath
     );
+    rejects(&root, &expected, HostError::PackagePath);
+    fs::remove_file(linked_file).unwrap();
     assert_eq!(
         PackageImage::inspect_directory(&root, || false).unwrap_err(),
         HostError::AuthorityRevoked
@@ -103,6 +112,7 @@ fn inspection_uses_the_capture_owner_and_returns_only_a_candidate_fingerprint() 
 }
 
 #[test]
+#[cfg(unix)]
 fn rejects_root_ancestor_and_file_links_hardlinks_and_special_files() {
     let temporary = tempfile::tempdir().unwrap();
     let root = temporary.path().join("package");
@@ -148,15 +158,6 @@ fn rejects_portable_aliases_and_reserved_materialization_names() {
         "non-ascii-中",
         "MANIFEST.JSON",
     ] {
-        let temporary = tempfile::tempdir().unwrap();
-        let root = temporary.path().join("package");
-        let digest = package(&root);
-        if name == "MANIFEST.JSON" {
-            fs::rename(root.join("manifest.json"), root.join(name)).unwrap();
-        } else {
-            fs::write(root.join(name), b"extra").unwrap();
-        }
-        rejects(&root, &digest, HostError::PackagePath);
         let files = BTreeMap::from([(
             name.into(),
             PackageFile {
@@ -168,6 +169,20 @@ fn rejects_portable_aliases_and_reserved_materialization_names() {
             PackageImage::digest(b"{}", &files).unwrap_err(),
             HostError::PackagePath
         );
+        #[cfg(windows)]
+        if name != "MANIFEST.JSON" && name != "non-ascii-中" {
+            // Win32 maps or refuses these names before they reach capture.
+            continue;
+        }
+        let temporary = tempfile::tempdir().unwrap();
+        let root = temporary.path().join("package");
+        let digest = package(&root);
+        if name == "MANIFEST.JSON" {
+            fs::rename(root.join("manifest.json"), root.join(name)).unwrap();
+        } else {
+            fs::write(root.join(name), b"extra").unwrap();
+        }
+        rejects(&root, &digest, HostError::PackagePath);
     }
 }
 

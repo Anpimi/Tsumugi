@@ -551,7 +551,18 @@ mod platform {
             let directory = stage(&parent);
             let name = directory.path().file_name().unwrap().to_owned();
             let moved = temporary.path().join("moved-parent");
-            fs::rename(&parent, &moved).unwrap();
+            if let Err(error) = fs::rename(&parent, &moved) {
+                // Windows can refuse to rename a directory with held children.
+                assert!(cfg!(windows));
+                assert_eq!(error.kind(), std::io::ErrorKind::PermissionDenied);
+                assert!(!moved.exists());
+                directory.verify_binding().unwrap();
+                let original = directory.path().to_owned();
+                assert!(original.join("package/resource.bin").exists());
+                drop(directory);
+                assert!(!original.exists());
+                return;
+            }
             fs::create_dir(&parent).unwrap();
             let replacement = parent.join(&name);
             fs::create_dir(&replacement).unwrap();

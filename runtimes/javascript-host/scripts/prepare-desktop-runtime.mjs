@@ -27,8 +27,8 @@ function options(args) {
   return result;
 }
 
-// Keep the actual verified archive bytes in memory. Extraction cannot switch
-// to a subsequently replaced path or extract unselected archive members.
+// Capture the selected archive once. Extraction uses these verified bytes,
+// without reopening the selected source path.
 async function archiveBytes(path, lock) {
   if (process.platform === 'win32' && !(await fs.lstat(path)).isFile()) {
     fail('Node archive must be a bounded regular file.');
@@ -177,10 +177,32 @@ async function distribution() {
   fail('Runtime preparation requires macOS arm64 or Windows x64.');
 }
 
+async function extractNodeFiles(execute, { operatingSystem, tar, lock, archiveEntrypoint }, archive, parent) {
+  const root = lock.archive.replace(/(?:\.tar\.xz|\.zip)$/, '');
+  const extract = async (source, input) => [
+    await execute(tar, ['-xOf', source, '--', `${root}/${archiveEntrypoint}`], input, MAX_NODE_BYTES),
+    await execute(tar, ['-xOf', source, '--', `${root}/LICENSE`], input, 1024 * 1024),
+  ];
+  if (operatingSystem !== 'windows') return extract('-', archive);
+
+  // Windows tar needs a seekable ZIP to find all entries in this distribution.
+  // Stage the captured bytes under a new name and still verify each selected
+  // file against its independent pin before preparing any runtime resources.
+  const staging = await fs.mkdtemp(join(parent, '.node-archive-'));
+  const source = join(staging, lock.archive);
+  try {
+    await fs.writeFile(source, archive, { flag: 'wx', mode: 0o600 });
+    return await extract(source, undefined);
+  } finally {
+    await fs.rm(source, { force: true });
+    await fs.rmdir(staging);
+  }
+}
+
 export async function prepare(args) {
   const config = options(args);
-  const { operatingSystem, architecture, lock, toolEntrypoint, archiveEntrypoint,
-    tar, inspectNode, env } = await distribution();
+  const platform = await distribution();
+  const { operatingSystem, architecture, lock, toolEntrypoint, inspectNode, env } = platform;
   const execute = (binary, argv, input, limit) => command(binary, argv, input, limit, env);
   const output = join(await fs.realpath(dirname(config['--output'])), basename(config['--output']));
   try { await fs.lstat(output); fail('Output already exists; choose a new directory.'); }
@@ -193,9 +215,7 @@ export async function prepare(args) {
   };
   if (inside(source, output) || inside(output, source)) fail('Host input and preparation output must be separate.');
   const archive = await archiveBytes(config['--node-archive'], lock);
-  const root = lock.archive.replace(/(?:\.tar\.xz|\.zip)$/, '');
-  const node = await execute(tar, ['-xOf', '-', '--', `${root}/${archiveEntrypoint}`], archive, MAX_NODE_BYTES);
-  const license = await execute(tar, ['-xOf', '-', '--', `${root}/LICENSE`], archive, 1024 * 1024);
+  const [node, license] = await extractNodeFiles(execute, platform, archive, dirname(output));
   if (sha256(node) !== lock.files[toolEntrypoint] || sha256(license) !== lock.files.LICENSE) {
     fail('Selected Node files do not match the pinned distribution.');
   }

@@ -20,7 +20,7 @@ use windows_sys::{
         Storage::FileSystem::{
             FILE_CREATE, FILE_DIRECTORY_FILE, FILE_NAMES_INFORMATION, FILE_NON_DIRECTORY_FILE,
             FILE_OPEN, FILE_OPEN_REPARSE_POINT, FILE_SYNCHRONOUS_IO_NONALERT, FileNamesInformation,
-            NtCreateFile, NtQueryDirectoryFile,
+            NtCreateFile, NtOpenFile, NtQueryDirectoryFile,
         },
     },
     Win32::{
@@ -32,10 +32,11 @@ use windows_sys::{
             CreateFileW, DELETE, FILE_ATTRIBUTE_DIRECTORY, FILE_ATTRIBUTE_REPARSE_POINT,
             FILE_ATTRIBUTE_TAG_INFO, FILE_BASIC_INFO, FILE_DISPOSITION_INFO,
             FILE_FLAG_BACKUP_SEMANTICS, FILE_FLAG_OPEN_REPARSE_POINT, FILE_GENERIC_READ,
-            FILE_GENERIC_WRITE, FILE_ID_INFO, FILE_SHARE_DELETE, FILE_SHARE_READ, FILE_SHARE_WRITE,
-            FILE_STANDARD_INFO, FILE_TYPE_DISK, FileAttributeTagInfo, FileBasicInfo,
-            FileDispositionInfo, FileIdInfo, FileStandardInfo, GetFileInformationByHandleEx,
-            GetFileType, OPEN_EXISTING, ReOpenFile, SetFileInformationByHandle,
+            FILE_GENERIC_WRITE, FILE_ID_INFO, FILE_READ_ATTRIBUTES, FILE_SHARE_DELETE,
+            FILE_SHARE_READ, FILE_SHARE_WRITE, FILE_STANDARD_INFO, FILE_TYPE_DISK,
+            FileAttributeTagInfo, FileBasicInfo, FileDispositionInfo, FileIdInfo, FileStandardInfo,
+            GetFileInformationByHandleEx, GetFileType, OPEN_EXISTING, SYNCHRONIZE,
+            SetFileInformationByHandle,
         },
         System::IO::IO_STATUS_BLOCK,
     },
@@ -152,6 +153,44 @@ pub(crate) fn identity(file: &File) -> HostResult<Identity> {
     entry(file)
         .map(|entry| entry.identity)
         .map_err(|_| HostError::CaptureFailed)
+}
+
+/// Open the same object with a separate file cursor or new access rights.
+pub(crate) fn reopen_held(original: &File, access: u32) -> io::Result<File> {
+    let expected = entry(original)?;
+    let name = UNICODE_STRING::default();
+    let attributes = OBJECT_ATTRIBUTES {
+        Length: size_of::<OBJECT_ATTRIBUTES>() as u32,
+        RootDirectory: raw(original),
+        ObjectName: &name,
+        Attributes: OBJ_DONT_REPARSE,
+        SecurityDescriptor: null(),
+        SecurityQualityOfService: null(),
+    };
+    let mut handle = null_mut();
+    let mut status = IO_STATUS_BLOCK::default();
+    // An empty name with a held RootDirectory reopens that object, so no
+    // ancestor path is resolved again. The new synchronous handle owns its cursor.
+    let result = unsafe {
+        NtOpenFile(
+            &mut handle,
+            access | FILE_READ_ATTRIBUTES | SYNCHRONIZE,
+            &attributes,
+            &mut status,
+            FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
+            FILE_SYNCHRONOUS_IO_NONALERT | FILE_OPEN_REPARSE_POINT,
+        )
+    };
+    if result < 0 {
+        return Err(io::Error::from_raw_os_error(
+            unsafe { RtlNtStatusToDosError(result) } as i32,
+        ));
+    }
+    let reopened = file(handle)?;
+    if entry(&reopened)?.identity != expected.identity {
+        return Err(invalid("held file-system identity changed"));
+    }
+    Ok(reopened)
 }
 
 fn child_name(name: &OsStr) -> io::Result<Vec<u16>> {
@@ -453,20 +492,7 @@ pub(crate) fn directory_names(
     if !observed.directory {
         return Err(HostError::PackagePath);
     }
-    // ReOpenFile addresses the held object, not a path, and creates an
-    // independent synchronous directory cursor instead of duplicating one.
-    let reader = file(unsafe {
-        ReOpenFile(
-            raw(directory),
-            FILE_GENERIC_READ,
-            FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
-            FILE_FLAG_BACKUP_SEMANTICS,
-        )
-    })
-    .map_err(|_| HostError::CaptureFailed)?;
-    if identity(&reader)? != observed.identity {
-        return Err(HostError::PackageChanged);
-    }
+    let reader = reopen_held(directory, FILE_GENERIC_READ).map_err(|_| HostError::CaptureFailed)?;
     let mut storage = vec![0u64; 8192];
     let capacity = std::mem::size_of_val(storage.as_slice());
     let mut result = Vec::new();

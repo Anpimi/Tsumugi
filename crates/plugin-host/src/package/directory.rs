@@ -87,11 +87,12 @@ impl PackageImage {
     /// caller supplies the independently approved digest and a live read guard;
     /// source selection/trust and execution consent are separate decisions.
     ///
-    /// macOS and Linux reject links, special files, hard-linked files, aliases,
-    /// oversized trees and observed changes. Two complete descriptor-relative
-    /// scans must agree before immutable bytes are returned. No archive or
-    /// installation script is executed. This synchronous IO belongs on a
-    /// blocking worker, never the project thread or async executor.
+    /// The supported platforms reject links, special files, hard-linked files,
+    /// aliases, oversized trees and observed changes. Two complete
+    /// descriptor-relative scans must agree before immutable bytes are returned.
+    /// On Windows x64 a directory supplies no executable flags. Packages with
+    /// native workers require an archive carrying the approved flags.
+    /// This synchronous IO belongs on a blocking worker.
     pub fn capture_directory(
         root: &Path,
         expected_digest: &str,
@@ -105,7 +106,11 @@ impl PackageImage {
         expected_digest: Option<&str>,
         authorized: impl Fn() -> bool,
     ) -> HostResult<Self> {
-        #[cfg(any(target_os = "macos", target_os = "linux"))]
+        #[cfg(any(
+            target_os = "macos",
+            target_os = "linux",
+            all(windows, target_arch = "x86_64")
+        ))]
         {
             use crate::tree::{TreeLimits, capture_tree};
             use std::time::{Duration, Instant};
@@ -140,7 +145,11 @@ impl PackageImage {
             }
             Ok(image)
         }
-        #[cfg(not(any(target_os = "macos", target_os = "linux")))]
+        #[cfg(not(any(
+            target_os = "macos",
+            target_os = "linux",
+            all(windows, target_arch = "x86_64")
+        )))]
         {
             let _ = (root, expected_digest, authorized);
             Err(HostError::UnsupportedPlatform)

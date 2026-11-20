@@ -9,7 +9,7 @@ use std::{
 };
 
 use windows_sys::Win32::{
-    Foundation::{ERROR_INSUFFICIENT_BUFFER, GENERIC_ALL, HANDLE, INVALID_HANDLE_VALUE, LocalFree},
+    Foundation::{ERROR_INSUFFICIENT_BUFFER, GENERIC_ALL, HANDLE, LocalFree},
     Security::{
         ACCESS_ALLOWED_ACE, ACL,
         Authorization::{
@@ -22,9 +22,8 @@ use windows_sys::Win32::{
         SE_DACL_PROTECTED, SECURITY_ATTRIBUTES, TOKEN_QUERY, TOKEN_USER, TokenUser,
     },
     Storage::FileSystem::{
-        FILE_ALL_ACCESS, FILE_FLAG_BACKUP_SEMANTICS, FILE_FLAG_OPEN_REPARSE_POINT,
-        FILE_GENERIC_EXECUTE, FILE_GENERIC_READ, FILE_GENERIC_WRITE, FILE_SHARE_DELETE,
-        FILE_SHARE_READ, FILE_SHARE_WRITE, READ_CONTROL, ReOpenFile, WRITE_DAC,
+        FILE_ALL_ACCESS, FILE_GENERIC_EXECUTE, FILE_GENERIC_READ, FILE_GENERIC_WRITE, READ_CONTROL,
+        WRITE_DAC,
     },
     System::Threading::{GetCurrentProcess, OpenProcessToken},
 };
@@ -40,7 +39,12 @@ impl Drop for LocalAllocation {
 mod tests {
     use super::*;
     use std::os::windows::ffi::OsStrExt;
-    use windows_sys::Win32::Storage::FileSystem::{CREATE_NEW, CreateFileW};
+    use windows_sys::Win32::{
+        Foundation::INVALID_HANDLE_VALUE,
+        Storage::FileSystem::{
+            CREATE_NEW, CreateFileW, FILE_SHARE_DELETE, FILE_SHARE_READ, FILE_SHARE_WRITE,
+        },
+    };
 
     #[test]
     fn private_modes_reject_a_broad_or_inherited_dacl_and_restore_the_held_file() {
@@ -356,18 +360,7 @@ impl PrivateSecurity {
         }
         // Reopen the same held object for ACL access, never a new path binding.
         // Owners can tighten their DACL without requesting WRITE_OWNER.
-        let handle = unsafe {
-            ReOpenFile(
-                file.as_raw_handle().cast(),
-                WRITE_DAC | READ_CONTROL,
-                FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
-                FILE_FLAG_BACKUP_SEMANTICS | FILE_FLAG_OPEN_REPARSE_POINT,
-            )
-        };
-        if handle.is_null() || handle == INVALID_HANDLE_VALUE {
-            return Err(io::Error::last_os_error());
-        }
-        let handle = unsafe { OwnedHandle::from_raw_handle(handle.cast()) };
+        let handle = crate::filesystem::reopen_held(file, WRITE_DAC | READ_CONTROL)?;
         let code = unsafe {
             SetSecurityInfo(
                 handle.as_raw_handle().cast(),

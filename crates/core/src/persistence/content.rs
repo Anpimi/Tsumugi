@@ -29,7 +29,7 @@ pub(super) struct SourcePositions<'a> {
 }
 
 impl SourcePositions<'_> {
-    pub(super) const FIRST_OCCURRENCES: &str = "first_occurrences AS MATERIALIZED (
+    pub(super) const FIRST_OCCURRENCES: &'static str = "first_occurrences AS MATERIALIZED (
         SELECT ?4 AS snapshot_id,json_extract(value,'$[0]') AS unit_id,
                json_extract(value,'$[1]') AS ordinal
         FROM json_each(?3))";
