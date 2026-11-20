@@ -1901,6 +1901,7 @@ mod tests {
     mod recovery_lifecycle;
     mod semantic_review;
     mod team_findings;
+    #[cfg(any(target_os = "macos", target_os = "linux"))]
     mod settings;
     mod tool_result_reads;
     mod team_history;

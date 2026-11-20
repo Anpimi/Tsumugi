@@ -1170,7 +1170,7 @@ mod tests {
         let selected = Selection::authorize_webvtt(root.path().into()).unwrap();
         let bundle = selected.capture("en", &Cancellation::default()).unwrap();
         assert_eq!(bundle.files.len(), 1);
-        assert_eq!(bundle.files[0].utf8.as_bytes(), bytes);
+        assert_eq!(bundle.files[0].text().unwrap().as_bytes(), bytes);
         let cancel = Cancellation::default();
         cancel.request();
         assert_eq!(
@@ -1266,7 +1266,7 @@ mod tests {
                 },
             )
             .unwrap();
-        assert_eq!(bundle.file.utf8, r#"{"a":"你好"}"#);
+        assert_eq!(bundle.file.text().unwrap(), r#"{"a":"你好"}"#);
         assert_eq!(bundle.source_snapshot_id, snapshot);
         assert!(
             selection
@@ -1301,7 +1301,7 @@ mod tests {
             .unwrap();
         drop(selection);
         fs::remove_file(root.path().join("i18n/default.json")).unwrap();
-        assert_eq!(bundle.files[1].utf8, r#"{"a":"one"}"#);
+        assert_eq!(bundle.files[1].text().unwrap(), r#"{"a":"one"}"#);
     }
     #[test]
     fn capture_rejects_existing_writer_missing_files_split_layout_and_limits() {
