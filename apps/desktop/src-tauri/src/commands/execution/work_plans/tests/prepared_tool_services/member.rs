@@ -87,6 +87,7 @@ fn accept(listener: &TcpListener) -> TcpStream {
         }
     }
 }
+#[cfg(unix)]
 fn member_pid(staging: &Path) -> u32 {
     let children = std::process::Command::new("/usr/bin/pgrep")
         .args(["-P", &std::process::id().to_string()])
@@ -265,7 +266,13 @@ fn start_in_scope(setup: &Setup, scope: &Value) -> Value {
     setup.fixture.call("start_work_plan_agent_generation",json!({"scopeId":scope["scopeId"],"generation":generation,"inputDigest":preflight["inputDigest"]})).unwrap();
     generation
 }
-fn absent(pid: u32) {
+#[cfg(windows)]
+use super::windows_process::member_pid;
+
+pub(super) fn absent(pid: u32) {
+    #[cfg(windows)]
+    super::windows_process::assert_exited(pid);
+    #[cfg(unix)]
     assert!(
         !std::process::Command::new("/bin/kill")
             .args(["-0", &pid.to_string()])
@@ -597,6 +604,7 @@ fn pi_member_application_default_node_supports_empty_plan_and_empty_delegated_ro
     }
 }
 
+#[cfg(target_os = "macos")]
 #[test]
 fn pi_member_application_default_node_calls_independently_approved_native_tool() {
     let setup = super::application::setup(true, false, false);

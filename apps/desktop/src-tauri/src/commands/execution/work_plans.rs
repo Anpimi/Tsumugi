@@ -1908,7 +1908,10 @@ mod tests {
     mod run;
     mod history;
     mod questions;
-    #[cfg(all(target_os = "macos", target_arch = "aarch64"))]
+    #[cfg(any(
+        all(target_os = "macos", target_arch = "aarch64"),
+        all(windows, target_arch = "x86_64")
+    ))]
     mod team_discussions;
     use super::*;
     use serde_json::{Value, json};

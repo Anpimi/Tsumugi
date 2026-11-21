@@ -1,8 +1,9 @@
 //! One installed owner for independently captured package/runtime test inputs.
 use crate::commands::plugins::ApplicationPlugins;
+#[cfg(unix)]
+use std::os::unix::fs::PermissionsExt;
 use std::{
     fs,
-    os::unix::fs::PermissionsExt,
     path::{Path, PathBuf},
 };
 use tsumugi_core::execution::ExecutionId;
@@ -121,6 +122,7 @@ pub(super) fn configure_member_artifact(plugins: &ApplicationPlugins, resources:
 }
 
 pub(in crate::commands) struct OwnedDirectory(pub(super) tempfile::TempDir);
+#[cfg(unix)]
 impl Drop for OwnedDirectory {
     fn drop(&mut self) {
         fn removable(path: &Path) {

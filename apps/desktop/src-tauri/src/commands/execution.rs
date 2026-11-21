@@ -11,7 +11,7 @@ pub(super) mod mcp_retrieval;
 mod package_lifecycle;
 use package_lifecycle::{PackageControl, PackageWork, PackageWorkState, RetiredQuery};
 
-#[cfg(all(test, target_os = "macos"))]
+#[cfg(all(test, any(target_os = "macos", all(windows, target_arch = "x86_64"))))]
 pub(super) mod test_fixtures;
 
 macro_rules! handlers {

@@ -51,8 +51,10 @@ mod philosophy_generation;
 
 #[cfg(all(
     feature = "execution-test-host",
-    target_os = "macos",
-    target_arch = "aarch64"
+    any(
+        all(target_os = "macos", target_arch = "aarch64"),
+        all(windows, target_arch = "x86_64")
+    )
 ))]
 #[path = "prepared_tool_services.rs"]
 pub(super) mod prepared_tool_services;

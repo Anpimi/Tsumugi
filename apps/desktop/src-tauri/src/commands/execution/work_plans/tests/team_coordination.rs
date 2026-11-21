@@ -7,10 +7,10 @@ mod recovery;
 #[path = "team_concurrency.rs"]
 mod concurrency;
 #[path = "team_tool_history.rs"]
-#[cfg(feature = "execution-test-host")]
+#[cfg(all(feature = "execution-test-host", target_os = "macos"))]
 mod tool_history;
 #[path = "team_host_crash.rs"]
-#[cfg(feature = "execution-test-host")]
+#[cfg(all(feature = "execution-test-host", target_os = "macos"))]
 mod host_crash;
 
 struct TeamFixture(
@@ -26,7 +26,7 @@ impl TeamFixture {
         );
         Self(Some(fixture), Some(runtime))
     }
-    #[cfg(feature = "execution-test-host")]
+    #[cfg(all(feature = "execution-test-host", target_os = "macos"))]
     fn query(pending: bool) -> (Self, Value) {
         let (fixture, installation, selection) =
             super::super::generation_tests::prepared_tool_services::team_query_fixture(pending);

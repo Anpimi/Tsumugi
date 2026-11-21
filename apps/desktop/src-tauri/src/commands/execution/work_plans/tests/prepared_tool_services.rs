@@ -2,6 +2,9 @@
 use super::*;
 #[path = "prepared_tool_services/member.rs"]
 mod member;
+#[cfg(windows)]
+#[path = "prepared_tool_services/windows_process.rs"]
+mod windows_process;
 use crate::commands::execution::test_fixtures::{
     OwnedDirectory, approved_runtime, provision_packages,
 };
@@ -389,6 +392,7 @@ impl Setup {
     }
 }
 
+#[cfg(target_os = "macos")]
 #[path = "prepared_tool_services/application.rs"]
 mod application;
 
@@ -610,13 +614,5 @@ fn prepared_tool_services_caller_cancel_reaps_both_real_processes() {
         child["items"][0]["resultId"].is_null(),
         "cancelled query cannot publish a result"
     );
-    assert!(
-        !std::process::Command::new("/bin/kill")
-            .args(["-0", &pid.to_string()])
-            .output()
-            .unwrap()
-            .status
-            .success(),
-        "the owned query PID must actually be reaped"
-    );
+    member::absent(pid.try_into().unwrap());
 }

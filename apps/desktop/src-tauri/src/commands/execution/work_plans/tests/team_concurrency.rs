@@ -1,5 +1,6 @@
 //! Independent Pi requests preserve manual selections and admission-time messages.
 use super::*;
+#[cfg(unix)]
 use std::collections::BTreeSet;
 
 pub(super) fn physical_requests(fixture: &Fixture, work: &Value) -> Vec<Value> {
@@ -24,6 +25,7 @@ pub(super) fn physical_requests(fixture: &Fixture, work: &Value) -> Vec<Value> {
     })
 }
 
+#[cfg(unix)]
 fn assert_held(http: &Http) {
     http.socket.set_nonblocking(true).unwrap();
     let result = http.socket.peek(&mut [0; 1]);
@@ -78,6 +80,7 @@ pub(super) fn owned_member_pids(fixture: &TeamFixture) -> Vec<u32> {
         .collect()
 }
 
+#[cfg(unix)]
 fn assert_owned(fixture: &Fixture, attempts: &[ExecutionId; 3], expected: [bool; 3]) {
     let attempts = *attempts;
     let actual = fixture

@@ -307,6 +307,52 @@ fn pi_team_human_guidance_is_frozen_consumed_once_and_reconciles_without_a_host(
     assert_no_http(&peers);
 }
 
+#[test]
+fn pi_team_takeover_preserves_inflight_request_and_control_receipt_after_reopen() {
+    let mut fixture = TeamFixture::create();
+    let manual = save_human(&fixture);
+    let peers = peers();
+    let ids = std::array::from_fn(|_| ExecutionId::new());
+    let (plan, grant) = team_plan(&fixture, &[&peers[0], &peers[1], &peers[2]], &ids);
+    let mut pending = admitted(&fixture, &peers[0], ids[0]);
+    let work = work_view(&pending).1["work"].clone();
+    let sent = concurrency::physical_requests(&fixture, &work);
+    assert_eq!(sent.len(), 1);
+    assert_eq!(sent[0]["state"], "unknown");
+    assert_eq!(sent[0]["capture"]["body"], pending.raw);
+
+    let request = json!({
+        "actionId":ExecutionId::new(), "planId":plan["planId"],
+        "expectedGeneration":grant["lease"]["generation"], "command":"take-over",
+        "confirmed":false, "checkerExecutions":[], "toolExecution":false,
+        "applicationToolExecutions":[], "expiresAt":null
+    });
+    let receipt = fixture.call("control_work_plan", request.clone()).unwrap();
+    assert_eq!(receipt["state"], "taken-over");
+    assert_ne!(receipt["lease"], grant["lease"]);
+    pending.socket.set_read_timeout(Some(Duration::from_secs(10))).unwrap();
+    match pending.socket.read(&mut [0u8; 1]) {
+        Ok(0) => {}
+        Err(error) if error.kind() == std::io::ErrorKind::ConnectionReset => {}
+        other => panic!("taken-over request must close its original connection: {other:?}"),
+    }
+
+    let before_reopen = execution(&fixture, &plan);
+    assert_eq!(before_reopen["budget"]["dispatched"], 1);
+    assert_eq!(before_reopen["budget"]["unresolved"], 1);
+    fixture.0.as_mut().unwrap().reopen();
+    assert!(!has_host(&fixture));
+    let reopened = execution(&fixture, &plan);
+    assert_eq!(reopened["budget"], before_reopen["budget"]);
+    assert_eq!(concurrency::physical_requests(&fixture, &work), sent);
+    let original = fixture.call("read_work_plan_control_action", request.clone()).unwrap();
+    assert_eq!(original["receipt"], receipt);
+    assert_eq!(history(&fixture)["current"]["eventId"], manual["selection"]["eventId"]);
+    assert!(!has_host(&fixture));
+    assert_eq!(fixture.call("control_work_plan", request).unwrap(), receipt);
+    assert_no_http(&peers);
+}
+
 #[cfg(all(
     feature = "execution-test-host",
     any(target_os = "macos", target_os = "linux")
