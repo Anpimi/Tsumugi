@@ -12,13 +12,13 @@ macOS 13.5+ Apple silicon 和 Windows 11 x64 的完整打包配置包含固定�
 
 | 能力 | Apple Silicon macOS 13.5+ | 其他桌面目标 |
 |---|---|---|
-| 桌面壳、已保存内容的人工编辑 | 已有 macOS 源码路径 | 保留 Windows x64、Intel Mac 源码路径；当前完整包未验 |
+| 桌面壳、已保存内容的人工编辑 | 已有 macOS 源码路径 | 已在 Windows 11 x64 开发机的原生构建中验证项目创建、WebVTT 导入、人工编辑和重开。干净设备的安装包首跑待验。Intel Mac 保留源码构建路径 |
 | 本机预构建包检查 | 只读目录指纹和声明诊断 | Windows x64 源码构建可用 `tsumugi-plugin-package` 检查数据和 JavaScript 扩展目录 |
 | 本机扩展与运行时存储 | 应用管理安装与设置回执 | Windows x64 在本地 NTFS 的专用存储中使用相同的批准与恢复流程 |
 | SMAPI／WebVTT 导入、检查与导出 | 需要固定插件包、已批准的 Node／Host，以及逐次执行许可 | Windows 11 x64 候选使用独立的固定清单，沿用相同的运行时批准和执行许可 |
 | Skyrim SE 开发集成 | [独立候选包与匹配的原生 Host](integrations.md#skyrim-se-development-package) 已在桌面应用导入 64 MiB、50,000 字段的合成 ESP，导出经独立检查、全部保留原文的构建，并在重开后读回回执。两版更新维护另用较小的合成 Mod 验证 | Windows 桌面处理与 Skyrim SE 实际游戏加载仍待验证 |
 | OpenAI 兼容 API Key 直接请求 | 已有 Core transport；macOS Keychain 或明确选择的环境变量 | Windows x64 源码构建可用 Windows 凭据管理器或明确选择的环境变量 |
-| Pi 成员与动态团队 | 需要成员产物和已安装、批准的随附 Node，以及明确请求许可 | Windows x64 候选使用固定版 Node 和 Pi 产物，完整桌面和团队流程仍待验收 |
+| Pi 成员与动态团队 | 需要成员产物和已安装、批准的随附 Node，以及明确请求许可 | Windows x64 已通过桌面 IPC 运行固定版 Node 和 Pi，使用本地模型 fixture 验证成员执行与团队接管。候选安装包仍需在干净设备上验收 |
 | ChatGPT 订阅登录 | macOS Keychain 实现；账号与外发许可另行确认 | 当前桌面凭据实现不支持 |
 | 完整离线应用包 | 在 Apple silicon 构建机使用 `tauri.runtime.conf.json` | Windows 11 x64 MSVC 构建使用 Windows 配置覆盖，随附 WebView2 离线安装程序 |
 

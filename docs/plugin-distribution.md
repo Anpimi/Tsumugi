@@ -12,13 +12,13 @@ This matrix describes current source capabilities and packaging constraints, not
 
 | Capability | Apple Silicon macOS 13.5+ | Other desktop targets |
 |---|---|---|
-| Desktop shell and manual editing of saved content | Existing macOS source path | Windows x64 and Intel Mac source paths; current full-package acceptance not established |
+| Desktop shell and manual editing of saved content | Existing macOS source path | Windows 11 x64 project creation, WebVTT import, manual editing, and reopening exercised in a native build on a development machine. Clean-device installer first run pending. Intel Mac has a source build path |
 | Local prebuilt package inspection | Read-only directory fingerprint and declaration diagnostics | Windows x64 source builds can inspect data and JavaScript plugin directories using `tsumugi-plugin-package` |
 | Local extension and runtime storage | Application-owned install and settings receipts | Windows x64 uses the same approval and recovery flows in a private store on local NTFS |
 | SMAPI / WebVTT import, checks and export | Pinned packages, approved Node/Host and per-operation consent required | The Windows 11 x64 candidate uses its fixed catalog with the same runtime approval and consent flow |
 | Skyrim SE development integration | The [separate package and matching Native Host](integrations.md#skyrim-se-development-package) imported a synthetic 64 MiB ESP with 50,000 fields in the desktop app, exported a checked build retaining all source text, and showed the same export receipt after the project reopened. Two-version maintenance was tested with a smaller synthetic Mod | Windows desktop processing and actual Skyrim SE loading remain unverified |
 | Direct OpenAI-compatible API-key requests | Existing Core transport; macOS Keychain or an explicitly selected environment variable | Windows x64 source builds can use Windows Credential Manager or an explicitly selected environment variable |
-| Pi members and dynamic teams | Included member artifact plus installed, approved bundled Node; explicit request permission | The Windows x64 candidate uses the pinned Node and Pi artifacts. Full desktop and team acceptance is pending |
+| Pi members and dynamic teams | Included member artifact plus installed, approved bundled Node; explicit request permission | Windows x64 ran pinned Node and Pi workers through desktop IPC, including a team takeover, against a local model fixture. The installed candidate still needs clean-device acceptance |
 | ChatGPT subscription sign-in | macOS Keychain implementation; an account and separate request consent are required | Unsupported by the current desktop credential implementation |
 | Complete offline application bundle | `tauri.runtime.conf.json` on a matching Apple silicon builder | Windows 11 x64 MSVC uses the Windows overlay and an offline WebView2 installer |
 
