@@ -331,7 +331,8 @@ impl Store {
                 }
                 if tx.mode == 0o500 {
                     self.retired_image(&journal, tx, true, authorized)?;
-                    sync(&tx.directory).map_err(|_| InstallError::UnknownCommit)?;
+                    sync_sealed(&[&tx.directory], &journal.directory)
+                        .map_err(|_| InstallError::UnknownCommit)?;
                     self.sync_parents(&journal.directory, authorized)
                         .map_err(|_| InstallError::UnknownCommit)?;
                     return Ok(tx.receipt.clone());
@@ -412,6 +413,7 @@ impl Store {
             OsStr::new(&candidate_name),
             &journal.directory,
             OsStr::new(action),
+            candidate_id,
         )?;
         // An original-action intent is now visible. Every later failure is
         // uncertain; leave all bytes intact and require an exact retry.
@@ -478,11 +480,14 @@ impl Store {
             self.check_settings_snapshot(&settings, authorized)?;
             same_file(&self.objects, OsStr::new(digest), true, object.directory_id)?;
             self.check_transaction(journal, tx, authorized)?;
+            let object_id = object.directory_id;
+            drop(object);
             promote(
                 &self.objects,
                 OsStr::new(digest),
                 &tx.directory,
                 OsStr::new("object"),
+                object_id,
             )?;
             #[cfg(test)]
             if self.fail_commit_checkpoint == Some(CommitCheckpoint::UninstallMove) {
@@ -497,7 +502,7 @@ impl Store {
         same_file(&tx.directory, OsStr::new("object"), true, object_id)?;
         chmod(&object, 0o500)?;
         private(&object, true, 0o500)?;
-        sync(&object)?;
+        sync_sealed(&[&object], &tx.directory)?;
         self.check_transaction(journal, tx, authorized)?;
         self.sync_parents(&self.objects, authorized)?;
         sync(&tx.directory)?;
@@ -509,7 +514,7 @@ impl Store {
         self.check_settings_snapshot(&settings, authorized)?;
         self.check_transaction(journal, tx, authorized)?;
         let mut mode = tx.mode;
-        self.seal_wrapper(&tx.directory, &mut mode, authorized)?;
+        self.seal_wrapper(&tx.directory, &mut mode, &journal.directory, authorized)?;
         self.sync_parents(&journal.directory, authorized)?;
         let current = self
             .journal(authorized)?

@@ -295,7 +295,7 @@ impl InstalledRuntime {
 /// A whole operation observes a 60-second deadline between guard checkpoints;
 /// it does not interrupt an individual blocking filesystem syscall.
 pub struct PackageStore {
-    #[cfg(any(target_os = "macos", target_os = "linux"))]
+    #[cfg(any(target_os = "macos", target_os = "linux", all(windows, target_arch = "x86_64")))]
     inner: platform::Store,
 }
 
@@ -312,11 +312,11 @@ impl PackageStore {
         &self,
         authorized: impl Fn() -> bool,
     ) -> InstallResult<Vec<RepositorySourceRecord>> {
-        #[cfg(any(target_os = "macos", target_os = "linux"))]
+        #[cfg(any(target_os = "macos", target_os = "linux", all(windows, target_arch = "x86_64")))]
         {
             self.inner.repository_sources(&authorized)
         }
-        #[cfg(not(any(target_os = "macos", target_os = "linux")))]
+        #[cfg(not(any(target_os = "macos", target_os = "linux", all(windows, target_arch = "x86_64"))))]
         {
             let _ = authorized;
             Err(InstallError::UnsupportedPlatform)
@@ -333,12 +333,12 @@ impl PackageStore {
         authorized: impl Fn() -> bool + Send + Sync + 'static,
     ) -> InstallResult<crate::repository::VerifiedOfflineRepository> {
         request.validate()?;
-        #[cfg(any(target_os = "macos", target_os = "linux"))]
+        #[cfg(any(target_os = "macos", target_os = "linux", all(windows, target_arch = "x86_64")))]
         {
             self.inner
                 .refresh_repository(request, captured, std::sync::Arc::new(authorized))
         }
-        #[cfg(not(any(target_os = "macos", target_os = "linux")))]
+        #[cfg(not(any(target_os = "macos", target_os = "linux", all(windows, target_arch = "x86_64"))))]
         {
             let _ = (captured, authorized);
             Err(InstallError::UnsupportedPlatform)
@@ -355,7 +355,7 @@ impl PackageStore {
         authorized: impl Fn() -> bool + Send + Sync + 'static,
     ) -> InstallResult<crate::repository::VerifiedOfflineRepository> {
         validate_action(action_id)?;
-        #[cfg(any(target_os = "macos", target_os = "linux"))]
+        #[cfg(any(target_os = "macos", target_os = "linux", all(windows, target_arch = "x86_64")))]
         {
             self.inner.resume_repository(
                 source_id,
@@ -364,7 +364,7 @@ impl PackageStore {
                 std::sync::Arc::new(authorized),
             )
         }
-        #[cfg(not(any(target_os = "macos", target_os = "linux")))]
+        #[cfg(not(any(target_os = "macos", target_os = "linux", all(windows, target_arch = "x86_64"))))]
         {
             let _ = (source_id, expected_revision, authorized);
             Err(InstallError::UnsupportedPlatform)
@@ -387,12 +387,12 @@ impl PackageStore {
         authorized: impl Fn() -> bool,
     ) -> InstallResult<UninstallReceipt> {
         validate_action(action_id)?;
-        #[cfg(any(target_os = "macos", target_os = "linux"))]
+        #[cfg(any(target_os = "macos", target_os = "linux", all(windows, target_arch = "x86_64")))]
         {
             self.inner
                 .uninstall(expected_revision, action_id, approval, &authorized)
         }
-        #[cfg(not(any(target_os = "macos", target_os = "linux")))]
+        #[cfg(not(any(target_os = "macos", target_os = "linux", all(windows, target_arch = "x86_64"))))]
         {
             let _ = (expected_revision, approval, authorized);
             Err(InstallError::UnsupportedPlatform)
@@ -405,11 +405,11 @@ impl PackageStore {
         &self,
         authorized: impl Fn() -> bool,
     ) -> InstallResult<Vec<UninstallRecord>> {
-        #[cfg(any(target_os = "macos", target_os = "linux"))]
+        #[cfg(any(target_os = "macos", target_os = "linux", all(windows, target_arch = "x86_64")))]
         {
             self.inner.uninstallations(&authorized)
         }
-        #[cfg(not(any(target_os = "macos", target_os = "linux")))]
+        #[cfg(not(any(target_os = "macos", target_os = "linux", all(windows, target_arch = "x86_64"))))]
         {
             let _ = authorized;
             Err(InstallError::UnsupportedPlatform)
@@ -420,11 +420,11 @@ impl PackageStore {
     /// code. Only a missing settings file produces empty revision-zero state;
     /// invalid settings are refused and preserved.
     pub fn settings(&self, authorized: impl Fn() -> bool) -> InstallResult<PluginSettings> {
-        #[cfg(any(target_os = "macos", target_os = "linux"))]
+        #[cfg(any(target_os = "macos", target_os = "linux", all(windows, target_arch = "x86_64")))]
         {
             self.inner.settings(&authorized)
         }
-        #[cfg(not(any(target_os = "macos", target_os = "linux")))]
+        #[cfg(not(any(target_os = "macos", target_os = "linux", all(windows, target_arch = "x86_64"))))]
         {
             let _ = authorized;
             Err(InstallError::UnsupportedPlatform)
@@ -443,12 +443,12 @@ impl PackageStore {
         update: &PluginSettingsUpdate,
         authorized: impl Fn() -> bool,
     ) -> InstallResult<PluginSettings> {
-        #[cfg(any(target_os = "macos", target_os = "linux"))]
+        #[cfg(any(target_os = "macos", target_os = "linux", all(windows, target_arch = "x86_64")))]
         {
             self.inner
                 .update_settings(expected_revision, action_id, update, &authorized)
         }
-        #[cfg(not(any(target_os = "macos", target_os = "linux")))]
+        #[cfg(not(any(target_os = "macos", target_os = "linux", all(windows, target_arch = "x86_64"))))]
         {
             let _ = (expected_revision, action_id, update, authorized);
             Err(InstallError::UnsupportedPlatform)
@@ -462,11 +462,11 @@ impl PackageStore {
         update: &PluginSettingsUpdate, request: &str, complete: bool,
         authorized: impl Fn() -> bool,
     ) -> InstallResult<PluginSettings> {
-        #[cfg(any(target_os = "macos", target_os = "linux"))]
+        #[cfg(any(target_os = "macos", target_os = "linux", all(windows, target_arch = "x86_64")))]
         {
             self.inner.update_settings_proven(expected_revision, action_id, update, request, complete, &authorized)
         }
-        #[cfg(not(any(target_os = "macos", target_os = "linux")))]
+        #[cfg(not(any(target_os = "macos", target_os = "linux", all(windows, target_arch = "x86_64"))))]
         {
             let _ = (expected_revision, action_id, update, request, complete, authorized);
             Err(InstallError::UnsupportedPlatform)
@@ -479,11 +479,11 @@ impl PackageStore {
         &mut self, expected_revision: u64, action_id: &str, request: &str,
         authorized: impl Fn() -> bool,
     ) -> InstallResult<PluginSettings> {
-        #[cfg(any(target_os = "macos", target_os = "linux"))]
+        #[cfg(any(target_os = "macos", target_os = "linux", all(windows, target_arch = "x86_64")))]
         {
             self.inner.confirm_settings_action(expected_revision, action_id, request, &authorized)
         }
-        #[cfg(not(any(target_os = "macos", target_os = "linux")))]
+        #[cfg(not(any(target_os = "macos", target_os = "linux", all(windows, target_arch = "x86_64"))))]
         {
             let _ = (expected_revision, action_id, request, authorized);
             Err(InstallError::UnsupportedPlatform)
@@ -496,11 +496,11 @@ impl PackageStore {
     /// checked. Full artifact hashing and admission require independent approval
     /// and selected load; receipts cannot be used as a source of that approval.
     pub fn inventory(&self, authorized: impl Fn() -> bool) -> InstallResult<InstalledInventory> {
-        #[cfg(any(target_os = "macos", target_os = "linux"))]
+        #[cfg(any(target_os = "macos", target_os = "linux", all(windows, target_arch = "x86_64")))]
         {
             self.inner.inventory(&authorized)
         }
-        #[cfg(not(any(target_os = "macos", target_os = "linux")))]
+        #[cfg(not(any(target_os = "macos", target_os = "linux", all(windows, target_arch = "x86_64"))))]
         {
             let _ = authorized;
             Err(InstallError::UnsupportedPlatform)
@@ -522,13 +522,13 @@ impl PackageStore {
         suffix: &[&str],
         authorized: impl Fn() -> bool,
     ) -> InstallResult<Self> {
-        #[cfg(any(target_os = "macos", target_os = "linux"))]
+        #[cfg(any(target_os = "macos", target_os = "linux", all(windows, target_arch = "x86_64")))]
         {
             Ok(Self {
                 inner: platform::Store::provision(anchor, suffix, &authorized)?,
             })
         }
-        #[cfg(not(any(target_os = "macos", target_os = "linux")))]
+        #[cfg(not(any(target_os = "macos", target_os = "linux", all(windows, target_arch = "x86_64"))))]
         {
             let _ = (anchor, suffix, authorized);
             Err(InstallError::UnsupportedPlatform)
@@ -538,13 +538,13 @@ impl PackageStore {
     /// Open an existing current-user mode-0700 managed directory without
     /// following links. The caller chooses its application-owned location.
     pub fn open_existing(root: &Path) -> InstallResult<Self> {
-        #[cfg(any(target_os = "macos", target_os = "linux"))]
+        #[cfg(any(target_os = "macos", target_os = "linux", all(windows, target_arch = "x86_64")))]
         {
             Ok(Self {
                 inner: platform::Store::open(root)?,
             })
         }
-        #[cfg(not(any(target_os = "macos", target_os = "linux")))]
+        #[cfg(not(any(target_os = "macos", target_os = "linux", all(windows, target_arch = "x86_64"))))]
         {
             let _ = root;
             Err(InstallError::UnsupportedPlatform)
@@ -565,11 +565,11 @@ impl PackageStore {
         authorized: impl Fn() -> bool,
     ) -> InstallResult<InstallReceipt> {
         validate_action(action_id)?;
-        #[cfg(any(target_os = "macos", target_os = "linux"))]
+        #[cfg(any(target_os = "macos", target_os = "linux", all(windows, target_arch = "x86_64")))]
         {
             self.inner.install(action_id, package, &authorized)
         }
-        #[cfg(not(any(target_os = "macos", target_os = "linux")))]
+        #[cfg(not(any(target_os = "macos", target_os = "linux", all(windows, target_arch = "x86_64"))))]
         {
             let _ = (package, authorized);
             Err(InstallError::UnsupportedPlatform)
@@ -587,12 +587,12 @@ impl PackageStore {
         authorized: impl Fn() -> bool,
     ) -> InstallResult<RuntimeInstallReceipt> {
         validate_action(action_id)?;
-        #[cfg(any(target_os = "macos", target_os = "linux"))]
+        #[cfg(any(target_os = "macos", target_os = "linux", all(windows, target_arch = "x86_64")))]
         {
             self.inner
                 .install_runtime(action_id, runtime, approval, &authorized)
         }
-        #[cfg(not(any(target_os = "macos", target_os = "linux")))]
+        #[cfg(not(any(target_os = "macos", target_os = "linux", all(windows, target_arch = "x86_64"))))]
         {
             let _ = (runtime, approval, authorized);
             Err(InstallError::UnsupportedPlatform)
@@ -606,11 +606,11 @@ impl PackageStore {
         approval: &RuntimeApproval,
         authorized: impl Fn() -> bool,
     ) -> InstallResult<InstalledRuntime> {
-        #[cfg(any(target_os = "macos", target_os = "linux"))]
+        #[cfg(any(target_os = "macos", target_os = "linux", all(windows, target_arch = "x86_64")))]
         {
             self.inner.load_runtime(approval, &authorized)
         }
-        #[cfg(not(any(target_os = "macos", target_os = "linux")))]
+        #[cfg(not(any(target_os = "macos", target_os = "linux", all(windows, target_arch = "x86_64"))))]
         {
             let _ = (approval, authorized);
             Err(InstallError::UnsupportedPlatform)
@@ -625,11 +625,11 @@ impl PackageStore {
         approval: &PackageApproval,
         authorized: impl Fn() -> bool,
     ) -> InstallResult<InstalledPackage> {
-        #[cfg(any(target_os = "macos", target_os = "linux"))]
+        #[cfg(any(target_os = "macos", target_os = "linux", all(windows, target_arch = "x86_64")))]
         {
             self.inner.load(approval, &authorized)
         }
-        #[cfg(not(any(target_os = "macos", target_os = "linux")))]
+        #[cfg(not(any(target_os = "macos", target_os = "linux", all(windows, target_arch = "x86_64"))))]
         {
             let _ = (approval, authorized);
             Err(InstallError::UnsupportedPlatform)
@@ -651,15 +651,15 @@ fn valid_digest(value: &str) -> bool {
             .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
 }
 
-#[cfg(any(target_os = "macos", target_os = "linux"))]
+#[cfg(any(target_os = "macos", target_os = "linux", all(windows, target_arch = "x86_64")))]
 mod platform {
     mod repository;
+    #[cfg_attr(windows, path = "windows_store_io.rs")]
     mod store_io;
     mod uninstall;
     use self::store_io::{
         Identity, Stamp, check_provision_directory, chmod, lock_exclusive, mkdir, new_file,
-        permission_mode, private, promote, replace_file, same_file, same_root, same_volume,
-        settings_read_error, sync, unchanged,
+        permission_mode, private, promote, replace_file, settings_read_error, sync, sync_sealed,
     };
     use super::*;
     use crate::{
@@ -678,6 +678,34 @@ mod platform {
     };
 
     const OPERATION_TIMEOUT: Duration = Duration::from_secs(60);
+
+    fn unchanged(file: &File, expected: &Stamp) -> InstallResult<()> {
+        if Stamp::read(file)? != *expected {
+            return Err(InstallError::StoreChanged);
+        }
+        Ok(())
+    }
+
+    fn same_file(parent: &File, child: &OsStr, directory: bool, expected: Identity) -> InstallResult<()> {
+        let reopened = filesystem::open_child(parent, child, directory)
+            .map_err(|_| InstallError::StoreChanged)?;
+        if filesystem::identity(&reopened)? != expected {
+            return Err(InstallError::StoreChanged);
+        }
+        Ok(())
+    }
+
+    fn same_root(path: &Path, expected: Identity) -> InstallResult<()> {
+        let (_, reopened) = filesystem::open_directory(path).map_err(|_| InstallError::StoreChanged)?;
+        if filesystem::identity(&reopened)? != expected {
+            return Err(InstallError::StoreChanged);
+        }
+        Ok(())
+    }
+
+    fn same_volume(left: Identity, right: Identity) -> bool {
+        left.0 == right.0
+    }
 
     struct OperationGuard<'a, F> {
         authorized: &'a F,
@@ -994,7 +1022,7 @@ mod platform {
             if self.fail_commit_checkpoint == Some(CommitCheckpoint::SettingsFileSync) {
                 return Err(InstallError::Io);
             }
-            sync(file)?;
+            sync_sealed(&[file], &self.root)?;
             check()?;
             #[cfg(test)]
             if self.fail_commit_checkpoint == Some(CommitCheckpoint::SettingsRootSync) {
@@ -1180,6 +1208,7 @@ mod platform {
                     &self.root,
                     OsStr::new(&candidate),
                     OsStr::new(Self::SETTINGS_FILE),
+                    candidate_id,
                 )?;
             } else {
                 promote(
@@ -1187,6 +1216,7 @@ mod platform {
                     OsStr::new(&candidate),
                     &self.root,
                     OsStr::new(Self::SETTINGS_FILE),
+                    candidate_id,
                 )
                 .map_err(|error| {
                     if error == InstallError::ActionConflict {
@@ -1315,6 +1345,8 @@ mod platform {
             }
             let (path, file) =
                 filesystem::open_directory(anchor).map_err(|_| InstallError::InvalidRoot)?;
+            #[cfg(windows)]
+            store_io::validate_local_volume(&path, &file)?;
             let identity = filesystem::identity(&file)?;
             let mut directories = vec![ProvisionDirectory {
                 path,
@@ -1374,6 +1406,8 @@ mod platform {
             if !authorized() {
                 return Err(InstallError::AuthorityRevoked);
             }
+            #[cfg(windows)]
+            store_io::validate_local_volume(&path, &root)?;
             private(&root, true, 0o700).map_err(|_| InstallError::InvalidRoot)?;
             let root_id = filesystem::identity(&root)?;
             same_root(&path, root_id)?;
@@ -1386,7 +1420,7 @@ mod platform {
                 },
             };
             private(&lock, false, 0o600).map_err(|_| InstallError::InvalidRoot)?;
-            lock_exclusive(&lock)?;
+            let lock = lock_exclusive(lock)?;
             let lock_id = filesystem::identity(&lock)?;
             same_root(&path, root_id)?;
             same_file(&root, OsStr::new(".lock"), false, lock_id)?;
@@ -1560,6 +1594,7 @@ mod platform {
             &self,
             directory: &File,
             mode: &mut u32,
+            namespace: &File,
             authorized: &impl Fn() -> bool,
         ) -> InstallResult<()> {
             self.check(authorized)?;
@@ -1572,7 +1607,7 @@ mod platform {
                 *mode = 0o500;
             }
             private(directory, true, 0o500)?;
-            sync(directory)?;
+            sync_sealed(&[directory], namespace)?;
             self.check(authorized)
         }
 
@@ -1960,11 +1995,13 @@ mod platform {
             self.check_candidate(&candidate_name, candidate_id, authorized)?;
             unchanged(&self.objects, &objects_before)?;
             unchanged(&self.runtimes, &runtimes_before)?;
+            drop((held_package, final_receipt));
             promote(
                 &self.root,
                 OsStr::new(&candidate_name),
                 &self.objects,
                 OsStr::new(package.package_digest()),
+                candidate_id,
             )?;
             // From this point every error is an unknown commit. Never remove
             // the promoted object or claim that the action was rejected.
@@ -2307,7 +2344,7 @@ mod platform {
                 // checks again; a visible receipt alone cannot complete it.
                 let confirmed = (|| {
                     self.check_runtime_object(&digest, &object, authorized)?;
-                    self.seal_wrapper(&object.directory, &mut object.directory_mode, authorized)?;
+                    self.seal_wrapper(&object.directory, &mut object.directory_mode, &self.runtimes, authorized)?;
                     self.sync_runtime_object(&object, authorized)?;
                     self.sync_parents(&self.runtimes, authorized)?;
                     self.capture_runtime_object(&digest, &object, authorized)?;
@@ -2418,11 +2455,13 @@ mod platform {
             check_candidate()?;
             unchanged(&self.objects, &objects_before)?;
             unchanged(&self.runtimes, &runtimes_before)?;
+            drop((held_tool, held_host, final_receipt));
             promote(
                 &self.root,
                 OsStr::new(&candidate_name),
                 &self.runtimes,
                 OsStr::new(&digest),
+                candidate_id,
             )?;
             let confirmed = (|| {
                 self.check(authorized)?;
@@ -2436,7 +2475,7 @@ mod platform {
                 }
                 self.capture_runtime_object(&digest, &object, authorized)?;
                 self.check_runtime_object(&digest, &object, authorized)?;
-                self.seal_wrapper(&object.directory, &mut object.directory_mode, authorized)?;
+                self.seal_wrapper(&object.directory, &mut object.directory_mode, &self.runtimes, authorized)?;
                 self.sync_runtime_object(&object, authorized)?;
                 self.sync_parents(&self.runtimes, authorized)?;
                 let mut expected_names = names;
@@ -2460,10 +2499,7 @@ mod platform {
             authorized: &impl Fn() -> bool,
         ) -> InstallResult<()> {
             self.check_runtime_object(&object.receipt.environment_digest, object, authorized)?;
-            sync(&object.tool)?;
-            sync(&object.host)?;
-            sync(&object.receipt_file)?;
-            sync(&object.directory)?;
+            sync_sealed(&[&object.tool, &object.host, &object.receipt_file, &object.directory], &self.runtimes)?;
             self.check_runtime_object(&object.receipt.environment_digest, object, authorized)
         }
 
@@ -2509,9 +2545,7 @@ mod platform {
             authorized: &impl Fn() -> bool,
         ) -> InstallResult<()> {
             self.check_object(&object.receipt.package_digest, object, authorized)?;
-            sync(&object.package)?;
-            sync(&object.receipt_file)?;
-            sync(&object.directory)?;
+            sync_sealed(&[&object.package, &object.receipt_file, &object.directory], &self.objects)?;
             self.check_object(&object.receipt.package_digest, object, authorized)
         }
 
@@ -2525,7 +2559,7 @@ mod platform {
                 return Err(InstallError::ActionConflict);
             }
             self.check_object(&object.receipt.package_digest, object, authorized)?;
-            self.seal_wrapper(&object.directory, &mut object.directory_mode, authorized)?;
+            self.seal_wrapper(&object.directory, &mut object.directory_mode, &self.objects, authorized)?;
             self.check_object(&object.receipt.package_digest, object, authorized)
         }
 
@@ -2553,15 +2587,47 @@ mod platform {
     #[cfg(test)]
     mod tests {
         use super::*;
-        use std::{fs, os::unix::fs::PermissionsExt};
+        use std::fs;
+        #[cfg(unix)]
+        use std::os::unix::fs::PermissionsExt;
         use tsumugi_plugin_sdk as sdk;
 
+        fn set_fixture_mode(path: &Path, mode: u32) -> std::io::Result<()> {
+            #[cfg(unix)]
+            return fs::set_permissions(path, fs::Permissions::from_mode(mode));
+            #[cfg(windows)]
+            filesystem::set_mode(&fixture_handle(path)?, mode)
+        }
+
+        #[cfg(windows)]
+        fn fixture_handle(path: &Path) -> std::io::Result<File> {
+            if path.is_dir() {
+                filesystem::open_directory(path).map(|(_, file)| file).map_err(std::io::Error::other)
+            } else {
+                File::open(path)
+            }
+        }
+
+        fn fixture_mode(path: &Path) -> u32 {
+            #[cfg(unix)]
+            return fs::metadata(path).unwrap().permissions().mode() & 0o7777;
+            #[cfg(windows)]
+            permission_mode(&fixture_handle(path).unwrap()).unwrap()
+        }
+
         struct OwnedRoot(tempfile::TempDir);
+        impl OwnedRoot {
+            fn new() -> Self {
+                let root = tempfile::tempdir().unwrap();
+                set_fixture_mode(root.path(), 0o700).unwrap();
+                Self(root)
+            }
+        }
         impl Drop for OwnedRoot {
             fn drop(&mut self) {
                 fn prepare(path: &Path) {
                     if fs::symlink_metadata(path).is_ok_and(|metadata| metadata.is_dir()) {
-                        let _ = fs::set_permissions(path, fs::Permissions::from_mode(0o700));
+                        let _ = set_fixture_mode(path, 0o700);
                         if let Ok(entries) = fs::read_dir(path) {
                             for entry in entries.flatten() {
                                 prepare(&entry.path());
@@ -2578,8 +2644,9 @@ mod platform {
             let host_root = root.join("approved-host");
             fs::create_dir(&tool_root).unwrap();
             fs::create_dir(&host_root).unwrap();
+            let tool_name = if cfg!(windows) { "node.exe" } else { "node" };
             let tool = BTreeMap::from([(
-                "node".into(),
+                tool_name.into(),
                 sdk::RuntimeArtifactFile {
                     bytes: b"synthetic non-executable program".to_vec(),
                     executable: true,
@@ -2592,14 +2659,18 @@ mod platform {
                     executable: false,
                 },
             )]);
-            fs::write(tool_root.join("node"), &tool["node"].bytes).unwrap();
-            fs::set_permissions(tool_root.join("node"), fs::Permissions::from_mode(0o700)).unwrap();
+            let binary = tool_root.join(tool_name);
+            fs::write(&binary, &tool[tool_name].bytes).unwrap();
+            #[cfg(unix)]
+            set_fixture_mode(&binary, 0o700).unwrap();
             fs::write(host_root.join("main.js"), &host["main.js"].bytes).unwrap();
             let environment = sdk::RuntimeEnvironmentDescriptor {
                 protocol_version: sdk::RUNTIME_ENVIRONMENT_PROTOCOL,
                 platform: sdk::RuntimePlatform {
                     operating_system: if cfg!(target_os = "macos") {
                         sdk::RuntimeOperatingSystem::Macos
+                    } else if cfg!(windows) {
+                        sdk::RuntimeOperatingSystem::Windows
                     } else {
                         sdk::RuntimeOperatingSystem::Linux
                     },
@@ -2615,7 +2686,7 @@ mod platform {
                 tool_version: "26.10.0".into(),
                 tool: sdk::RuntimeArtifactBinding {
                     tree_digest: sdk::runtime_artifact_digest(&tool).unwrap(),
-                    entrypoint: "node".into(),
+                    entrypoint: tool_name.into(),
                 },
                 host: sdk::RuntimeArtifactBinding {
                     tree_digest: sdk::runtime_artifact_digest(&host).unwrap(),
@@ -2645,12 +2716,7 @@ mod platform {
                 CommitCheckpoint::ObjectsSync,
                 CommitCheckpoint::RootSync,
             ] {
-                let root = OwnedRoot(
-                    tempfile::Builder::new()
-                        .permissions(fs::Permissions::from_mode(0o700))
-                        .tempdir()
-                        .unwrap(),
-                );
+                let root = OwnedRoot::new();
                 let (runtime, approval) = runtime_fixture(root.0.path());
                 let action = "00000000-0000-4000-8000-000000000001";
                 let wrong_action = "00000000-0000-4000-8000-000000000002";
@@ -2688,7 +2754,7 @@ mod platform {
                         InstallError::RecoveryRequired
                     );
                     assert_eq!(
-                        fs::metadata(&object_path).unwrap().permissions().mode() & 0o777,
+                        fixture_mode(&object_path),
                         0o700
                     );
                 } else {
@@ -2720,13 +2786,11 @@ mod platform {
                     .unwrap();
                 let loaded = store.load_runtime(&approval, || true).unwrap();
                 assert_eq!(loaded.receipt(), &receipt);
+                let tool = &loaded.runtime().tool_files()[&runtime.descriptor().tool.entrypoint];
+                assert_eq!(tool.bytes, b"synthetic non-executable program");
+                assert!(tool.executable);
                 assert_eq!(
-                    loaded.runtime().tool_files()["node"].bytes,
-                    b"synthetic non-executable program"
-                );
-                assert!(loaded.runtime().tool_files()["node"].executable);
-                assert_eq!(
-                    fs::metadata(&object_path).unwrap().permissions().mode() & 0o777,
+                    fixture_mode(&object_path),
                     0o500
                 );
                 assert_eq!(
@@ -2741,12 +2805,7 @@ mod platform {
         #[test]
         #[cfg(any(target_arch = "aarch64", target_arch = "x86_64"))]
         fn loaded_runtime_snapshot_does_not_change_with_persisted_files() {
-            let root = OwnedRoot(
-                tempfile::Builder::new()
-                    .permissions(fs::Permissions::from_mode(0o700))
-                    .tempdir()
-                    .unwrap(),
-            );
+            let root = OwnedRoot::new();
             let (runtime, approval) = runtime_fixture(root.0.path());
             let mut store = PackageStore::open_existing(root.0.path()).unwrap();
             store
@@ -2764,9 +2823,9 @@ mod platform {
                 .join("runtimes")
                 .join(runtime.environment_digest())
                 .join("host.tar");
-            fs::set_permissions(&path, fs::Permissions::from_mode(0o600)).unwrap();
+            set_fixture_mode(&path, 0o600).unwrap();
             fs::write(&path, b"changed stored bytes").unwrap();
-            fs::set_permissions(&path, fs::Permissions::from_mode(0o400)).unwrap();
+            set_fixture_mode(&path, 0o400).unwrap();
             assert_eq!(
                 loaded.runtime().host_files()["main.js"].bytes,
                 b"throw new Error('capture only');"
@@ -2844,12 +2903,7 @@ mod platform {
                 CommitCheckpoint::ObjectsSync,
                 CommitCheckpoint::RootSync,
             ] {
-                let root = OwnedRoot(
-                    tempfile::Builder::new()
-                        .permissions(fs::Permissions::from_mode(0o700))
-                        .tempdir()
-                        .unwrap(),
-                );
+                let root = OwnedRoot::new();
                 let mut store = PackageStore::open_existing(root.0.path()).unwrap();
                 let installed = store
                     .install(
@@ -2971,12 +3025,7 @@ mod platform {
                 CommitCheckpoint::ObjectsSync,
                 CommitCheckpoint::RootSync,
             ] {
-                let root = OwnedRoot(
-                    tempfile::Builder::new()
-                        .permissions(fs::Permissions::from_mode(0o700))
-                        .tempdir()
-                        .unwrap(),
-                );
+                let root = OwnedRoot::new();
                 let mut store = PackageStore::open_existing(root.0.path()).unwrap();
                 store.inner.fail_commit_checkpoint = Some(checkpoint);
                 assert_eq!(
@@ -2998,7 +3047,7 @@ mod platform {
                         InstallError::RecoveryRequired
                     );
                     assert_eq!(
-                        fs::metadata(&object_path).unwrap().permissions().mode() & 0o777,
+                        fixture_mode(&object_path),
                         0o700
                     );
                     let wrong_action = "00000000-0000-4000-8000-000000000002";
@@ -3025,7 +3074,7 @@ mod platform {
                         InstallError::ActionConflict
                     );
                     assert_eq!(
-                        fs::metadata(&object_path).unwrap().permissions().mode() & 0o777,
+                        fixture_mode(&object_path),
                         0o700
                     );
                 } else {
@@ -3038,7 +3087,7 @@ mod platform {
                         action
                     );
                     assert_eq!(
-                        fs::metadata(&object_path).unwrap().permissions().mode() & 0o777,
+                        fixture_mode(&object_path),
                         0o500
                     );
                 }
@@ -3048,7 +3097,7 @@ mod platform {
                 assert_eq!(receipt.action_id(), action);
                 assert_eq!(store.load(&approval, || true).unwrap().receipt(), &receipt);
                 assert_eq!(
-                    fs::metadata(&object_path).unwrap().permissions().mode() & 0o777,
+                    fixture_mode(&object_path),
                     0o500
                 );
                 assert_eq!(
@@ -3067,12 +3116,7 @@ mod platform {
                     CommitCheckpoint::SettingsRootSync,
                     CommitCheckpoint::SettingsConfirmation,
                 ] {
-                    let root = OwnedRoot(
-                        tempfile::Builder::new()
-                            .permissions(fs::Permissions::from_mode(0o700))
-                            .tempdir()
-                            .unwrap(),
-                    );
+                    let root = OwnedRoot::new();
                     let mut store = PackageStore::open_existing(root.0.path()).unwrap();
                     let old_action = "00000000-0000-4000-8000-000000000001";
                     let action = "00000000-0000-4000-8000-000000000002";
@@ -3153,11 +3197,7 @@ mod platform {
                         bytes
                     );
                     assert_eq!(
-                        fs::metadata(root.0.path().join("settings.json"))
-                            .unwrap()
-                            .permissions()
-                            .mode()
-                            & 0o7777,
+                        fixture_mode(&root.0.path().join("settings.json")),
                         0o400
                     );
                     let candidates = fs::read_dir(root.0.path())
@@ -3176,6 +3216,21 @@ mod platform {
         }
 
         #[test]
+        #[cfg(windows)]
+        fn windows_store_provisions_under_app_data_and_locks_until_drop() {
+            let app_data = OwnedRoot::new();
+            let mut store = PackageStore::provision(app_data.0.path(), &["app", "plugins"], || true).unwrap();
+            let path = app_data.0.path().join("app/plugins");
+            assert_eq!(PackageStore::open_existing(&path).unwrap_err(), InstallError::Busy);
+            let action = "00000000-0000-4000-8000-000000000001";
+            let saved = store.update_settings(0, action, &PluginSettingsUpdate::default(), || true).unwrap();
+            assert!(fs::OpenOptions::new().write(true).open(path.join("settings.json")).is_err());
+            drop(store);
+            let reopened = PackageStore::open_existing(&path).unwrap();
+            assert_eq!(reopened.settings(|| true).unwrap(), saved);
+        }
+
+        #[test]
         fn settings_action_proof_upgrade_and_completion_keep_one_atomic_snapshot() {
             let old_action = "00000000-0000-4000-8000-000000000001";
             let action = "00000000-0000-4000-8000-000000000002";
@@ -3184,17 +3239,16 @@ mod platform {
             let update = PluginSettingsUpdate::default();
             for checkpoint in [CommitCheckpoint::SettingsCandidateSync, CommitCheckpoint::SettingsFileSync,
                 CommitCheckpoint::SettingsRootSync, CommitCheckpoint::SettingsConfirmation] {
-                let root = OwnedRoot(tempfile::Builder::new().permissions(fs::Permissions::from_mode(0o700))
-                    .tempdir().unwrap());
+                let root = OwnedRoot::new();
                 let mut store = PackageStore::open_existing(root.0.path()).unwrap();
                 store.update_settings(0, old_action, &update, || true).unwrap();
                 let path = root.0.path().join("settings.json");
                 let mut legacy: serde_json::Value = serde_json::from_slice(&fs::read(&path).unwrap()).unwrap();
                 legacy["formatVersion"] = serde_json::json!(2);
                 legacy.as_object_mut().unwrap().remove("knownSettingsActions");
-                fs::set_permissions(&path, fs::Permissions::from_mode(0o600)).unwrap();
+                set_fixture_mode(&path, 0o600).unwrap();
                 fs::write(&path, serde_json::to_vec(&legacy).unwrap()).unwrap();
-                fs::set_permissions(&path, fs::Permissions::from_mode(0o400)).unwrap();
+                set_fixture_mode(&path, 0o400).unwrap();
                 let original_bytes = fs::read(&path).unwrap();
                 let old = store.settings(|| true).unwrap();
                 assert_eq!(old.revision(), 1);
@@ -3248,9 +3302,9 @@ mod platform {
                 assert_eq!(store.update_settings_with_proof(3, action, &update, proof, false, || true).unwrap_err(), InstallError::ActionConflict);
                 let mut forged_legacy: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
                 forged_legacy["formatVersion"] = serde_json::json!(2);
-                fs::set_permissions(&path, fs::Permissions::from_mode(0o600)).unwrap();
+                set_fixture_mode(&path, 0o600).unwrap();
                 fs::write(&path, serde_json::to_vec(&forged_legacy).unwrap()).unwrap();
-                fs::set_permissions(&path, fs::Permissions::from_mode(0o400)).unwrap();
+                set_fixture_mode(&path, 0o400).unwrap();
                 assert_eq!(store.settings(|| true).unwrap_err(), InstallError::CorruptSettings);
             }
         }

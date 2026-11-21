@@ -9,21 +9,22 @@ use std::{
 };
 
 use windows_sys::Win32::{
-    Foundation::{ERROR_INSUFFICIENT_BUFFER, GENERIC_ALL, HANDLE, LocalFree},
+    Foundation::{ERROR_INSUFFICIENT_BUFFER, GENERIC_ALL, GENERIC_WRITE, HANDLE, LocalFree},
     Security::{
-        ACCESS_ALLOWED_ACE, ACL,
+        ACCESS_ALLOWED_ACE, ACE_HEADER, ACL,
         Authorization::{
             ConvertSidToStringSidW, ConvertStringSecurityDescriptorToSecurityDescriptorW,
             GetSecurityInfo, SDDL_REVISION_1, SE_FILE_OBJECT, SetSecurityInfo,
         },
-        DACL_SECURITY_INFORMATION, EqualSid, GetAce, GetLengthSid, GetSecurityDescriptorControl,
-        GetSecurityDescriptorDacl, GetSecurityDescriptorOwner, GetTokenInformation, IsValidAcl,
-        IsValidSid, OWNER_SECURITY_INFORMATION, PROTECTED_DACL_SECURITY_INFORMATION, PSID,
-        SE_DACL_PROTECTED, SECURITY_ATTRIBUTES, TOKEN_QUERY, TOKEN_USER, TokenUser,
+        DACL_SECURITY_INFORMATION, EqualSid, GetAce, GetSecurityDescriptorControl,
+        GetSecurityDescriptorDacl, GetSecurityDescriptorOwner, GetTokenInformation,
+        INHERIT_ONLY_ACE, IsValidAcl, IsValidSid, IsWellKnownSid, OWNER_SECURITY_INFORMATION,
+        PROTECTED_DACL_SECURITY_INFORMATION, PSID, SE_DACL_PROTECTED, SECURITY_ATTRIBUTES,
+        TOKEN_QUERY, TOKEN_USER, TokenUser, WinBuiltinAdministratorsSid, WinLocalSystemSid,
     },
     Storage::FileSystem::{
-        FILE_ALL_ACCESS, FILE_GENERIC_EXECUTE, FILE_GENERIC_READ, FILE_GENERIC_WRITE, READ_CONTROL,
-        WRITE_DAC,
+        DELETE, FILE_ALL_ACCESS, FILE_DELETE_CHILD, FILE_GENERIC_EXECUTE, FILE_GENERIC_READ,
+        FILE_GENERIC_WRITE, READ_CONTROL, SYNCHRONIZE, WRITE_DAC, WRITE_OWNER,
     },
     System::Threading::{GetCurrentProcess, OpenProcessToken},
 };
@@ -169,6 +170,62 @@ fn mode_rights(mode: u32) -> io::Result<u32> {
     }
 }
 
+fn allow_sid(ace: *mut c_void, size: usize) -> Option<PSID> {
+    const SID_OFFSET: usize = offset_of!(ACCESS_ALLOWED_ACE, SidStart);
+    if size < SID_OFFSET + 8 {
+        return None;
+    }
+    let sid: PSID = unsafe { ace.cast::<u8>().add(SID_OFFSET).cast() };
+    // The ACE bounds are validated before access. Check the variable-length
+    // SID before passing the pointer to a Win32 SID function.
+    let count = unsafe { *sid.cast::<u8>().add(1) } as usize;
+    if count > 15 || SID_OFFSET + 8 + count * 4 != size || unsafe { IsValidSid(sid) } == 0 {
+        return None;
+    }
+    Some(sid)
+}
+
+struct FileSecurity {
+    descriptor: LocalAllocation,
+    owner: PSID,
+    dacl: *mut ACL,
+}
+
+impl FileSecurity {
+    fn read(file: &File) -> io::Result<Self> {
+        let mut owner = null_mut();
+        let mut dacl = null_mut();
+        let mut descriptor = null_mut();
+        // The result owns the storage containing the owner SID and DACL.
+        let code = unsafe {
+            GetSecurityInfo(
+                file.as_raw_handle().cast(),
+                SE_FILE_OBJECT,
+                OWNER_SECURITY_INFORMATION | DACL_SECURITY_INFORMATION,
+                &mut owner,
+                null_mut(),
+                &mut dacl,
+                null_mut(),
+                &mut descriptor,
+            )
+        };
+        if code != 0 {
+            return Err(io::Error::from_raw_os_error(code as i32));
+        }
+        Ok(Self {
+            descriptor: LocalAllocation(descriptor),
+            owner,
+            dacl,
+        })
+    }
+
+    fn owned_by(&self, expected: PSID) -> bool {
+        !self.owner.is_null()
+            && unsafe { IsValidSid(self.owner) } != 0
+            && unsafe { EqualSid(self.owner, expected) } != 0
+    }
+}
+
 /// One explicit current-user owner and one non-inheriting, protected allow ACE.
 pub(crate) struct PrivateSecurity(LocalAllocation);
 impl PrivateSecurity {
@@ -263,30 +320,10 @@ impl PrivateSecurity {
     pub(crate) fn matches(file: &File, mode: Option<u32>) -> io::Result<bool> {
         let expected =
             Self::with_rights(mode.map(mode_rights).transpose()?.unwrap_or(GENERIC_ALL))?;
-        let mut owner = null_mut();
-        let mut dacl = null_mut();
-        let mut descriptor = null_mut();
-        let code = unsafe {
-            GetSecurityInfo(
-                file.as_raw_handle().cast(),
-                SE_FILE_OBJECT,
-                OWNER_SECURITY_INFORMATION | DACL_SECURITY_INFORMATION,
-                &mut owner,
-                null_mut(),
-                &mut dacl,
-                null_mut(),
-                &mut descriptor,
-            )
-        };
-        if code != 0 {
-            return Err(io::Error::from_raw_os_error(code as i32));
-        }
-        let descriptor = LocalAllocation(descriptor);
+        let security = FileSecurity::read(file)?;
+        let dacl = security.dacl;
         let expected_owner = expected.owner()?;
-        if owner.is_null()
-            || unsafe { IsValidSid(owner) } == 0
-            || unsafe { EqualSid(owner, expected_owner) } == 0
-        {
+        if !security.owned_by(expected_owner) {
             return Ok(false);
         }
         let Some(mode) = mode else {
@@ -295,7 +332,7 @@ impl PrivateSecurity {
         let mut control = 0;
         let mut revision = 0;
         checked(unsafe {
-            GetSecurityDescriptorControl(descriptor.0, &mut control, &mut revision)
+            GetSecurityDescriptorControl(security.descriptor.0, &mut control, &mut revision)
         })?;
         if control & SE_DACL_PROTECTED == 0
             || dacl.is_null()
@@ -331,18 +368,57 @@ impl PrivateSecurity {
         {
             return Ok(false);
         }
-        let sid: PSID = unsafe { ace.cast::<u8>().add(SID_OFFSET).cast() };
-        // Validate the variable-length SID fits in the ACE before asking Win32
-        // to read it. Its header is revision, subauthority count, authority[6].
-        let count = unsafe { *sid.cast::<u8>().add(1) } as usize;
-        if count > 15
-            || SID_OFFSET + 8 + count * 4 != allowed.Header.AceSize as usize
-            || unsafe { IsValidSid(sid) } == 0
-            || unsafe { GetLengthSid(sid) } as usize != 8 + count * 4
+        Ok(allow_sid(ace, usize::from(allowed.Header.AceSize))
+            .is_some_and(|sid| unsafe { EqualSid(sid, expected_owner) } != 0))
+    }
+
+    /// Accept the current user's existing app-data directory with its usual
+    /// inherited ACL. The new Store namespace still requires the exact ACL.
+    pub(crate) fn store_anchor(file: &File) -> io::Result<bool> {
+        let expected = Self::new()?;
+        let expected_owner = expected.owner()?;
+        let security = FileSecurity::read(file)?;
+        let dacl = security.dacl;
+        if !security.owned_by(expected_owner) || dacl.is_null() || unsafe { IsValidAcl(dacl) } == 0
         {
             return Ok(false);
         }
-        Ok(unsafe { EqualSid(sid, expected_owner) } != 0)
+        const MUTATION: u32 = GENERIC_ALL
+            | GENERIC_WRITE
+            | DELETE
+            | WRITE_DAC
+            | WRITE_OWNER
+            | FILE_DELETE_CHILD
+            | (FILE_GENERIC_WRITE & !(SYNCHRONIZE | READ_CONTROL));
+        // Validate the entire kernel ACL before inspecting basic ACEs.
+        let count = unsafe { (*dacl).AceCount };
+        for index in 0..u32::from(count) {
+            let mut ace = null_mut();
+            checked(unsafe { GetAce(dacl, index, &mut ace) })?;
+            let header = unsafe { &*ace.cast::<ACE_HEADER>() };
+            if header.AceFlags & INHERIT_ONLY_ACE as u8 != 0 || header.AceType == 1 {
+                continue;
+            }
+            if header.AceType != 0
+                || usize::from(header.AceSize) < size_of::<ACCESS_ALLOWED_ACE>() + 4
+            {
+                return Ok(false);
+            }
+            let allow = unsafe { &*ace.cast::<ACCESS_ALLOWED_ACE>() };
+            if allow.Mask & MUTATION == 0 {
+                continue;
+            }
+            let Some(sid) = allow_sid(ace, usize::from(header.AceSize)) else {
+                return Ok(false);
+            };
+            if unsafe { EqualSid(sid, expected_owner) } == 0
+                && unsafe { IsWellKnownSid(sid, WinLocalSystemSid) } == 0
+                && unsafe { IsWellKnownSid(sid, WinBuiltinAdministratorsSid) } == 0
+            {
+                return Ok(false);
+            }
+        }
+        Ok(true)
     }
 
     pub(crate) fn apply_to(&self, file: &File) -> io::Result<()> {

@@ -14,6 +14,7 @@
 |---|---|---|
 | 桌面壳、已保存内容的人工编辑 | 已有 macOS 源码路径 | 保留 Windows x64、Intel Mac 源码路径；当前完整包未验 |
 | 本机预构建包检查 | 只读目录指纹和声明诊断 | Windows x64 源码构建可用 `tsumugi-plugin-package` 检查数据和 JavaScript 扩展目录 |
+| 本机扩展与运行时存储 | 应用管理安装与设置回执 | Windows x64 在本地 NTFS 的专用存储中使用相同的批准与恢复流程 |
 | SMAPI／WebVTT 导入、检查与导出 | 需要固定插件包、已批准的 Node／Host，以及逐次执行许可 | 尚无选定的完整资源包；源码编译不自动附带格式插件 |
 | Skyrim SE 开发集成 | [独立候选包与匹配的原生 Host](integrations.md#skyrim-se-development-package) 已在桌面应用导入 64 MiB、50,000 字段的合成 ESP，导出经独立检查、全部保留原文的构建，并在重开后读回回执。两版更新维护另用较小的合成 Mod 验证 | Windows 桌面处理与 Skyrim SE 实际游戏加载仍待验证 |
 | OpenAI 兼容 API Key 直接请求 | 已有 Core transport；macOS Keychain 或明确选择的环境变量 | Windows x64 源码构建可用 Windows 凭据管理器或明确选择的环境变量 |

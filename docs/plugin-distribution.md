@@ -14,6 +14,7 @@ This matrix describes current source capabilities and packaging constraints, not
 |---|---|---|
 | Desktop shell and manual editing of saved content | Existing macOS source path | Windows x64 and Intel Mac source paths; current full-package acceptance not established |
 | Local prebuilt package inspection | Read-only directory fingerprint and declaration diagnostics | Windows x64 source builds can inspect data and JavaScript plugin directories using `tsumugi-plugin-package` |
+| Local extension and runtime storage | Application-owned install and settings receipts | Windows x64 uses the same approval and recovery flows in a private store on local NTFS |
 | SMAPI / WebVTT import, checks and export | Pinned packages, approved Node/Host and per-operation consent required | No fixed complete package selected; source compilation alone supplies no format packages |
 | Skyrim SE development integration | The [separate package and matching Native Host](integrations.md#skyrim-se-development-package) imported a synthetic 64 MiB ESP with 50,000 fields in the desktop app, exported a checked build retaining all source text, and showed the same export receipt after the project reopened. Two-version maintenance was tested with a smaller synthetic Mod | Windows desktop processing and actual Skyrim SE loading remain unverified |
 | Direct OpenAI-compatible API-key requests | Existing Core transport; macOS Keychain or an explicitly selected environment variable | Windows x64 source builds can use Windows Credential Manager or an explicitly selected environment variable |

@@ -539,6 +539,7 @@ impl Store {
             OsStr::new(&candidate_name),
             &source,
             OsStr::new(&request.action_id),
+            candidate_id,
         )?;
         self.repository_confirmed.remove(&request.source_id);
         if sync(&source)
@@ -593,11 +594,11 @@ impl Store {
             }
             private(&file, false, mode)?;
             check()?;
-            filesystem::remove_child(candidate, OsStr::new(&name), false)
+            filesystem::remove_recorded_child(candidate, OsStr::new(&name), false, filesystem::identity(&file)?)
                 .map_err(|_| InstallError::Io)?;
         }
         check()?;
-        filesystem::remove_child(source, OsStr::new(candidate_name), true)
+        filesystem::remove_recorded_child(source, OsStr::new(candidate_name), true, candidate_id)
             .map_err(|_| InstallError::Io)?;
         sync(source)?;
         self.check(&|| authorized())
@@ -644,6 +645,7 @@ impl Store {
                 OsStr::new(&action.name),
                 &source.directory,
                 OsStr::new(action_id),
+                filesystem::identity(&action.directory)?,
             )?;
             sync(&source.directory).map_err(|_| InstallError::UnknownCommit)?;
             Action {
@@ -735,7 +737,7 @@ fn write_new(
     name: &str,
     bytes: &[u8],
     check: &impl Fn() -> InstallResult<()>,
-) -> InstallResult<()> {
+) -> InstallResult<Identity> {
     check()?;
     let mut file = new_file(parent, OsStr::new(name))?;
     let id = filesystem::identity(&file)?;
@@ -748,7 +750,8 @@ fn write_new(
     chmod(&file, 0o400)?;
     sync(&file)?;
     same_file(parent, OsStr::new(name), false, id)?;
-    check()
+    check()?;
+    Ok(id)
 }
 
 struct Working {
@@ -903,7 +906,7 @@ impl Capability {
                 if Stamp::read(&file)?.length > limit as u64 {
                     return Err(InstallError::CorruptStore);
                 }
-                sync(&file)?;
+                sync_sealed(&[&file], &self.action)?;
                 self.check_state(&working)?;
             }
             self.sync_chain()
@@ -945,7 +948,7 @@ impl Capability {
                 // could have been acknowledged from its incomplete bytes.
                 private(&next, false, 0o600)?;
                 self.check_state(&working)?;
-                filesystem::remove_child(&self.action, OsStr::new(NEXT), false)
+                filesystem::remove_recorded_child(&self.action, OsStr::new(NEXT), false, filesystem::identity(&next)?)
                     .map_err(|_| InstallError::Io)?;
                 self.sync_chain().map_err(|_| InstallError::UnknownCommit)?;
             } else {
@@ -973,8 +976,8 @@ impl Capability {
                     return Err(InstallError::CorruptStore);
                 }
                 self.check_state(&working)?;
-                sync(&next)?;
-                self.promote_progress(&mut working, state, bytes)?;
+                sync_sealed(&[&next], &self.action)?;
+                self.promote_progress(&mut working, state, bytes, filesystem::identity(&next)?)?;
             }
         }
         Ok(())
@@ -985,8 +988,9 @@ impl Capability {
         working: &mut Working,
         state: TrustState,
         bytes: Vec<u8>,
+        expected: Identity,
     ) -> InstallResult<()> {
-        if let Err(error) = replace_file(&self.action, OsStr::new(NEXT), OsStr::new(STATE)) {
+        if let Err(error) = replace_file(&self.action, OsStr::new(NEXT), OsStr::new(STATE), expected) {
             working.failure = Some(error);
             return Err(error);
         }
@@ -1012,9 +1016,9 @@ impl Capability {
         if optional_file(&self.action, NEXT)?.is_some() {
             return Err(InstallError::RecoveryRequired);
         }
-        write_new(&self.action, NEXT, &bytes, &|| self.check_state(working))?;
+        let expected = write_new(&self.action, NEXT, &bytes, &|| self.check_state(working))?;
         self.check_state(working)?;
-        self.promote_progress(working, state, bytes)
+        self.promote_progress(working, state, bytes, expected)
     }
 
     fn finish(

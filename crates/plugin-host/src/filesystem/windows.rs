@@ -19,8 +19,10 @@ use windows_sys::{
         Foundation::OBJECT_ATTRIBUTES,
         Storage::FileSystem::{
             FILE_CREATE, FILE_DIRECTORY_FILE, FILE_NAMES_INFORMATION, FILE_NON_DIRECTORY_FILE,
-            FILE_OPEN, FILE_OPEN_REPARSE_POINT, FILE_SYNCHRONOUS_IO_NONALERT, FileNamesInformation,
-            NtCreateFile, NtOpenFile, NtQueryDirectoryFile,
+            FILE_OPEN, FILE_OPEN_REPARSE_POINT, FILE_RENAME_INFORMATION,
+            FILE_RENAME_POSIX_SEMANTICS, FILE_RENAME_REPLACE_IF_EXISTS,
+            FILE_SYNCHRONOUS_IO_NONALERT, FileNamesInformation, FileRenameInformationEx,
+            NtCreateFile, NtOpenFile, NtQueryDirectoryFile, NtSetInformationFile,
         },
     },
     Win32::{
@@ -35,8 +37,8 @@ use windows_sys::{
             FILE_GENERIC_WRITE, FILE_ID_INFO, FILE_READ_ATTRIBUTES, FILE_SHARE_DELETE,
             FILE_SHARE_READ, FILE_SHARE_WRITE, FILE_STANDARD_INFO, FILE_TYPE_DISK,
             FileAttributeTagInfo, FileBasicInfo, FileDispositionInfo, FileIdInfo, FileStandardInfo,
-            GetFileInformationByHandleEx, GetFileType, OPEN_EXISTING, SYNCHRONIZE,
-            SetFileInformationByHandle,
+            GetFileInformationByHandleEx, GetFileType, GetVolumeInformationByHandleW,
+            OPEN_EXISTING, SYNCHRONIZE, SetFileInformationByHandle,
         },
         System::IO::IO_STATUS_BLOCK,
     },
@@ -451,6 +453,87 @@ pub(crate) fn remove_recorded_child(
             size_of::<FILE_DISPOSITION_INFO>() as u32,
         )
     })
+}
+
+pub(crate) fn local_ntfs(path: &Path, file: &File) -> io::Result<bool> {
+    use windows_sys::Win32::Storage::FileSystem::GetDriveTypeW;
+    let Some(Component::Prefix(prefix)) = path.components().next() else {
+        return Ok(false);
+    };
+    let drive = match prefix.kind() {
+        Prefix::Disk(drive) | Prefix::VerbatimDisk(drive) => drive,
+        _ => return Ok(false),
+    };
+    const DRIVE_FIXED: u32 = 3;
+    let root = [u16::from(drive), b':' as u16, b'\\' as u16, 0];
+    if unsafe { GetDriveTypeW(root.as_ptr()) } != DRIVE_FIXED {
+        return Ok(false);
+    }
+    let mut name = [0u16; 16];
+    checked(unsafe {
+        GetVolumeInformationByHandleW(
+            raw(file),
+            null_mut(),
+            0,
+            null_mut(),
+            null_mut(),
+            null_mut(),
+            name.as_mut_ptr(),
+            name.len() as u32,
+        )
+    })?;
+    Ok(name[..5].iter().copied().eq("NTFS\0".encode_utf16()))
+}
+
+pub(crate) fn rename_recorded_child(
+    from_parent: &File,
+    from_name: &OsStr,
+    expected: Identity,
+    to_parent: &File,
+    to_name: &OsStr,
+    replace_file: bool,
+) -> io::Result<()> {
+    let source = open_at(from_parent, from_name, None, false, true)?;
+    let observed = entry(&source)?;
+    if observed.identity != expected || (replace_file && observed.directory) {
+        return Err(invalid("source identity changed before rename"));
+    }
+    let name = child_name(to_name)?;
+    let name_bytes = name.len() * size_of::<u16>();
+    let length = (offset_of!(FILE_RENAME_INFORMATION, FileName) + name_bytes)
+        .max(size_of::<FILE_RENAME_INFORMATION>());
+    let mut buffer = vec![0u64; length.div_ceil(size_of::<u64>())];
+    let info = buffer.as_mut_ptr().cast::<FILE_RENAME_INFORMATION>();
+    let flags = if replace_file {
+        FILE_RENAME_REPLACE_IF_EXISTS | FILE_RENAME_POSIX_SEMANTICS
+    } else {
+        0
+    };
+    let mut status = IO_STATUS_BLOCK::default();
+    // The variable length buffer holds one relative child name and the target
+    // directory handle. The source handle denies other delete-access opens.
+    let result = unsafe {
+        (*info).Anonymous.Flags = flags;
+        (*info).RootDirectory = raw(to_parent);
+        (*info).FileNameLength = name_bytes as u32;
+        let filename = info
+            .cast::<u8>()
+            .add(offset_of!(FILE_RENAME_INFORMATION, FileName));
+        std::ptr::copy_nonoverlapping(name.as_ptr(), filename.cast::<u16>(), name.len());
+        NtSetInformationFile(
+            raw(&source),
+            &mut status,
+            info.cast(),
+            length as u32,
+            FileRenameInformationEx,
+        )
+    };
+    if result < 0 {
+        return Err(io::Error::from_raw_os_error(
+            unsafe { RtlNtStatusToDosError(result) } as i32,
+        ));
+    }
+    Ok(())
 }
 
 fn record(buffer: &[u8], position: usize) -> io::Result<(String, Option<usize>)> {

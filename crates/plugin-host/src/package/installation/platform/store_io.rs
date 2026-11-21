@@ -9,7 +9,6 @@ use std::{
         fd::AsRawFd,
         unix::{ffi::OsStrExt, fs::MetadataExt},
     },
-    path::Path,
 };
 
 #[derive(Clone, PartialEq, Eq)]
@@ -60,9 +59,9 @@ fn name(value: &OsStr) -> InstallResult<CString> {
 pub(super) fn sync(file: &File) -> InstallResult<()> {
     file.sync_all().map_err(|_| InstallError::Io)
 }
-pub(super) fn unchanged(file: &File, expected: &Stamp) -> InstallResult<()> {
-    if Stamp::read(file)? != *expected {
-        return Err(InstallError::StoreChanged);
+pub(super) fn sync_sealed(files: &[&File], _namespace: &File) -> InstallResult<()> {
+    for file in files {
+        sync(file)?;
     }
     Ok(())
 }
@@ -84,26 +83,6 @@ pub(super) fn new_file(parent: &File, child: &OsStr) -> InstallResult<File> {
     private(&file, false, 0o600)?;
     Ok(file)
 }
-pub(super) fn same_file(
-    parent: &File,
-    child: &OsStr,
-    directory: bool,
-    expected: Identity,
-) -> InstallResult<()> {
-    let reopened =
-        filesystem::open_child(parent, child, directory).map_err(|_| InstallError::StoreChanged)?;
-    if filesystem::identity(&reopened)? != expected {
-        return Err(InstallError::StoreChanged);
-    }
-    Ok(())
-}
-pub(super) fn same_root(path: &Path, expected: Identity) -> InstallResult<()> {
-    let (_, reopened) = filesystem::open_directory(path).map_err(|_| InstallError::StoreChanged)?;
-    if filesystem::identity(&reopened)? != expected {
-        return Err(InstallError::StoreChanged);
-    }
-    Ok(())
-}
 pub(super) fn permission_mode(file: &File) -> InstallResult<u32> {
     Ok(metadata(file)?.mode() & 0o7777)
 }
@@ -120,11 +99,7 @@ pub(super) fn check_provision_directory(file: &File, anchor: bool) -> InstallRes
     Ok(())
 }
 
-pub(super) fn same_volume(left: Identity, right: Identity) -> bool {
-    left.0 == right.0
-}
-
-pub(super) fn lock_exclusive(file: &File) -> InstallResult<()> {
+pub(super) fn lock_exclusive(file: File) -> InstallResult<File> {
     if unsafe { libc::flock(file.as_raw_fd(), libc::LOCK_EX | libc::LOCK_NB) } != 0 {
         let error = std::io::Error::last_os_error().raw_os_error();
         return Err(
@@ -135,7 +110,7 @@ pub(super) fn lock_exclusive(file: &File) -> InstallResult<()> {
             },
         );
     }
-    Ok(())
+    Ok(file)
 }
 
 pub(super) fn settings_read_error(error: std::io::Error) -> InstallError {
@@ -149,6 +124,7 @@ pub(super) fn replace_file(
     parent: &File,
     source: &OsStr,
     destination: &OsStr,
+    _expected: Identity,
 ) -> InstallResult<()> {
     filesystem::replace_file(parent, source, destination).map_err(|error| {
         if error.raw_os_error() == Some(libc::EIO) {
@@ -164,6 +140,7 @@ pub(super) fn promote(
     source: &OsStr,
     destination_parent: &File,
     destination: &OsStr,
+    _expected: Identity,
 ) -> InstallResult<()> {
     let source = name(source)?;
     let destination = name(destination)?;
