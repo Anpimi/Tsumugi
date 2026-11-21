@@ -15,6 +15,7 @@ enum Mode {
     NoTools,
     RootOnly,
     HttpStall,
+    HttpTimeout,
     ToolStall,
 }
 
@@ -146,7 +147,7 @@ fn provider(
         model: "synthetic-member".into(),
         credential_env: String::new(),
         max_requests: 3,
-        timeout_seconds: 30,
+        timeout_seconds: if matches!(mode, Mode::HttpTimeout) { 15 } else { 30 },
         ..AiConfig::default()
     };
     let staging = setup._installation.0.path().join("application");
@@ -177,7 +178,12 @@ fn provider(
         assert!(!prepared_text.contains("Query only; do not adopt."));
         let pid = member_pid(&staging);
         assert_ne!(pid, std::process::id());
-        if matches!(mode, Mode::HttpStall) {
+        if matches!(mode, Mode::HttpStall | Mode::HttpTimeout) {
+            if matches!(mode, Mode::HttpTimeout) {
+                first
+                    .set_read_timeout(Some(Duration::from_secs(40)))
+                    .unwrap();
+            }
             write!(first,"HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nTransfer-Encoding: chunked\r\n\r\nB\r\n: waiting\n\n\r\n").unwrap();
             first.flush().unwrap();
             started.send(pid).unwrap();
@@ -458,6 +464,80 @@ fn pi_member_cancel_during_physical_request_closes_socket_and_reaps_member() {
         (budget.dispatched, budget.unresolved, budget.usage_unknown),
         (2, 1, 1)
     );
+}
+
+#[test]
+fn pi_member_http_timeout_reaps_worker_and_reopens_original_receipt_and_budget() {
+    let mut setup = Setup::new(false);
+    configure_member(&setup);
+    let (config, node, provider) = provider(&setup, Mode::HttpTimeout);
+    let (_plan, grant) = setup.start_plan(config);
+    let (scope, generation) = start(&setup, &grant);
+    let node = node.recv_timeout(Duration::from_secs(60)).unwrap();
+    let terminal = setup.wait_terminal(&generation["attemptId"]);
+    assert_ne!(terminal["items"][0]["status"]["execution"], "succeeded");
+    assert!(terminal["items"][0]["resultId"].is_null());
+    absent(node);
+    let (calls, closed) = provider.join().unwrap();
+    assert_eq!(calls.len(), 2);
+    assert!(
+        closed,
+        "the unfinished provider response must be closed by the client"
+    );
+    assert!(tool_attempts(&setup).is_empty());
+
+    setup.fixture.call("close_project", json!({})).unwrap();
+    let reopened = call(
+        &setup.fixture.webview,
+        "open_project",
+        json!({"locator": setup.fixture.project_path}),
+    )
+    .unwrap();
+    setup.fixture.context = json!({
+        "sessionToken": reopened["sessionToken"],
+        "projectId": reopened["metadata"]["projectId"]
+    });
+    let read = setup
+        .fixture
+        .call(
+            "read_execution_attempt",
+            json!({"attemptId": generation["attemptId"], "offset": 0, "limit": 100}),
+        )
+        .unwrap();
+    assert_eq!(read["items"], terminal["items"]);
+    let root = serde_json::from_value(scope["parentTask"].clone()).unwrap();
+    let budget = setup
+        .fixture
+        .app
+        .state::<AppState>()
+        .sessions
+        .with(move |sessions| {
+            sessions
+                .active
+                .as_ref()
+                .unwrap()
+                .store
+                .provider_budget(root)
+                .unwrap()
+                .unwrap()
+        });
+    assert_eq!(
+        (budget.dispatched, budget.unresolved, budget.usage_unknown),
+        (2, 1, 1)
+    );
+    let connection =
+        rusqlite::Connection::open(setup.fixture.project_path.join("project.sqlite3")).unwrap();
+    let (state, usage, capture): (String, Option<Vec<u8>>, Vec<u8>) = connection
+        .query_row(
+            "SELECT state,usage,capture FROM execution_provider_requests WHERE attempt_id=?1",
+            [generation["attemptId"].as_str().unwrap()],
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+        )
+        .unwrap();
+    assert_eq!(state, "unknown");
+    assert!(usage.is_none());
+    let capture: Value = serde_json::from_slice(&capture).unwrap();
+    assert_eq!(capture["body"], calls[1]);
 }
 
 #[test]
