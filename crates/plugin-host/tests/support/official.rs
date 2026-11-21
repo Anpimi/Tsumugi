@@ -1,6 +1,6 @@
 //! Shared real-package Store and captured-runtime pairing harness.
 use serde_json::Value;
-use std::{os::unix::fs::PermissionsExt, path::PathBuf};
+use std::path::PathBuf;
 use tsumugi_plugin_host::{catalog::*, *};
 use tsumugi_plugin_sdk::*;
 #[path = "runtime.rs"]
@@ -44,10 +44,8 @@ pub fn installed_from(
     let mut catalog = PackageCatalog::new();
     catalog.register(image, approval.clone()).unwrap();
     let root = temporary.join("packages");
-    std::fs::create_dir(&root).unwrap();
-    std::fs::set_permissions(&root, std::fs::Permissions::from_mode(0o700)).unwrap();
     {
-        let mut store = PackageStore::open_existing(&root).unwrap();
+        let mut store = PackageStore::provision(temporary, &["packages"], || true).unwrap();
         store
             .install(
                 "00000000-0000-4000-8000-000000000031",
@@ -153,7 +151,10 @@ pub async fn invoke_received(
 ) -> ReceivedResult {
     let channel = session.channel();
     let request = request_for(session, binding, dispatch, value);
-    let received = session.invoke(&request, || false, || true).await.unwrap();
+    let received = session
+        .invoke(&request, || false, || true)
+        .await
+        .unwrap_or_else(|error| panic!("synthetic dispatch {dispatch}: {error:?}"));
     assert_eq!(
         received.channel().provider,
         channel.provider(&binding.provider.contribution_id).unwrap()

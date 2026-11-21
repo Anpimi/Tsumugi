@@ -4,7 +4,7 @@ The source import workflow imports and maintains project source snapshots using 
 
 ## Preparing extensions and capturing source files
 
-Before importing source files, open **Extensions** to review, install, and enable the source package, and independently approve and install its required runtime (the initial bundled JavaScript runtime targets Apple silicon Macs running macOS 13.5 or later). Each executable role—producer, semantic checker, and format reviewer—maintains its own `Project` or `Attempt` execution binding.
+Before importing source files, open **Extensions** to review, install, and enable the source package, and independently approve and install its required runtime. The complete bundle configurations for Apple silicon macOS 13.5+ and Windows 11 x64 include a fixed JavaScript runtime. Each executable role—producer, semantic checker, and format reviewer—maintains its own `Project` or `Attempt` execution binding.
 
 When preparing a new project from the welcome screen, choose a source folder in the project form or drop one folder. Canceling the system picker keeps the previous folder and its completed file check if that selection is still current. If a drop contains multiple items, the form keeps your settings and shows how to choose again. A folder picker that is already open can still finish. When you drop several times in succession, the latest processed drop determines which folder is offered or whether the form asks you to choose again.
 

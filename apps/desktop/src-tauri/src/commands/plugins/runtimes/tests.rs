@@ -329,7 +329,7 @@ fn runtime_source_pin_and_system_version_are_strict() {
         "../../../../../test/fixtures/pluginRuntime.contract.json"
     ))
     .unwrap();
-    let pin = runtime_bundle::node_pin().unwrap();
+    let pin = runtime_bundle::node_pin(&offer.environment.platform).unwrap();
     assert!(runtime_bundle::supported_tool(&offer.environment, &pin));
     let mut changed = offer.environment.clone();
     changed.tool.tree_digest = "f".repeat(64);

@@ -590,12 +590,9 @@ impl ProcessSession {
         if !valid_scope {
             return Err(HostError::InvalidContract);
         }
-        // Windows archive capture and the staging/process backends do not
-        // establish verified runtime identity, distribution or product lifecycle
-        // guarantees. Keep this execution entry closed until those are complete.
-        #[cfg(not(unix))]
+        #[cfg(not(any(unix, all(windows, target_arch = "x86_64"))))]
         return Err(HostError::UnsupportedPlatform);
-        #[cfg(unix)]
+        #[cfg(any(unix, all(windows, target_arch = "x86_64")))]
         {
             let manifest = image.manifest().manifest();
             let contribution = manifest
@@ -637,7 +634,9 @@ impl ProcessSession {
                 _ => return Err(HostError::UnsupportedRuntime),
             };
             let runtime = match (component.runtime, launcher) {
+                #[cfg(unix)]
                 (RuntimeKind::NativeWorker, RuntimeLauncher::Native) => None,
+                #[cfg(unix)]
                 (RuntimeKind::NativeWorker, RuntimeLauncher::NativeCore { runtime }) => {
                     runtime.require_current()?;
                     None

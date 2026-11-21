@@ -37,6 +37,7 @@ use windows_sys::Win32::{
             ConnectNamedPipe, CreateNamedPipeW, GetNamedPipeClientProcessId, PIPE_READMODE_BYTE,
             PIPE_REJECT_REMOTE_CLIENTS, PIPE_TYPE_BYTE, PIPE_WAIT,
         },
+        SystemInformation::GetSystemWindowsDirectoryW,
         Threading::{
             CREATE_SUSPENDED, CREATE_UNICODE_ENVIRONMENT, CreateEventW, CreateProcessW,
             DeleteProcThreadAttributeList, EXTENDED_STARTUPINFO_PRESENT, GetCurrentProcessId,
@@ -253,6 +254,26 @@ impl Drop for Attributes {
     }
 }
 
+fn system_windows_directory() -> io::Result<Vec<u16>> {
+    let mut path = vec![0u16; 260];
+    let mut len = unsafe { GetSystemWindowsDirectoryW(path.as_mut_ptr(), path.len() as u32) };
+    if len as usize >= path.len() {
+        path.resize(len as usize, 0);
+        len = unsafe { GetSystemWindowsDirectoryW(path.as_mut_ptr(), path.len() as u32) };
+    }
+    if len == 0 {
+        return Err(io::Error::last_os_error());
+    }
+    if len as usize >= path.len() {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            "system Windows directory changed",
+        ));
+    }
+    path.truncate(len as usize);
+    Ok(path)
+}
+
 pub(super) fn spawn(command: &ChildCommand) -> io::Result<OwnedChild> {
     let application = wide(&command.program)?;
     let mut arguments = command_line(command)?;
@@ -261,6 +282,11 @@ pub(super) fn spawn(command: &ChildCommand) -> io::Result<OwnedChild> {
         .as_ref()
         .map(|directory| wide(directory.as_os_str()))
         .transpose()?;
+    // Node's Windows crypto provider needs SystemRoot. Derive it from
+    // Windows and pass only that OS value in the child's environment block.
+    let mut environment: Vec<_> = "SystemRoot=".encode_utf16().collect();
+    environment.extend(system_windows_directory()?);
+    environment.extend([0u16, 0]);
     let security = PrivateSecurity::new()?;
     let job_attributes = security.attributes(false);
     let job = handle(unsafe { CreateJobObjectW(&job_attributes, null()) })?;
@@ -300,7 +326,6 @@ pub(super) fn spawn(command: &ChildCommand) -> io::Result<OwnedChild> {
     startup.StartupInfo.hStdError = inherited[2];
     startup.lpAttributeList = attributes.pointer();
     let mut created = PROCESS_INFORMATION::default();
-    let environment = [0u16, 0];
     checked(unsafe {
         CreateProcessW(
             application.as_ptr(),
@@ -532,7 +557,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn admission_is_suspended_and_start_preserves_arguments_and_empty_environment() {
+    async fn admission_is_suspended_and_start_preserves_arguments_and_system_root_only() {
         let fixture = Fixture::new();
         let mut command = fixture.command("fixture_marks_and_exits");
         let argument = r#"spaces and \"quotes\" with trailing slash\"#;
@@ -552,7 +577,7 @@ mod tests {
         );
         assert!(child.id().is_none());
         let observed = fs::read(fixture.path("entered")).unwrap();
-        let mut expected = 0u64.to_le_bytes().to_vec();
+        let mut expected = 1u64.to_le_bytes().to_vec();
         for argument in &command.arguments {
             let encoded: Vec<_> = argument.encode_wide().collect();
             expected.extend_from_slice(&(encoded.len() as u64).to_le_bytes());
@@ -699,6 +724,10 @@ mod tests {
     #[ignore = "subprocess fixture"]
     fn fixture_marks_and_exits() {
         let fixture = running_fixture();
+        assert_eq!(
+            std::env::var_os("SystemRoot"),
+            Some(std::ffi::OsString::from_wide(&system_windows_directory().unwrap()))
+        );
         let mut observed = (std::env::vars_os().count() as u64).to_le_bytes().to_vec();
         for argument in std::env::args_os().skip(1) {
             let encoded: Vec<_> = argument.encode_wide().collect();

@@ -1,5 +1,6 @@
 //! Source-owned selection of independent prebuilt packages. Observations never
 //! authenticate a publisher or replace these trusted application-build pins.
+use crate::runtime_bundle::{MACOS_ARM64, WINDOWS_X64};
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeSet;
 use tsumugi_plugin_host::catalog::PackageOrigin;
@@ -39,11 +40,7 @@ impl BundleSelection {
             || self.packages.len() > 128
             || self.process_protocol != sdk::PROCESS_PROTOCOL
             || self.runtime_profile != sdk::RuntimeEnvironmentProfile::NodeSystemLibrariesV1
-            || self.platform
-                != (sdk::RuntimePlatform {
-                    operating_system: sdk::RuntimeOperatingSystem::Macos,
-                    architecture: sdk::RuntimeArchitecture::Aarch64,
-                })
+            || (self.platform != MACOS_ARM64 && self.platform != WINDOWS_X64)
         {
             return Err("invalid bundled package selection");
         }
@@ -141,10 +138,19 @@ pub fn bundled_origin() -> PackageOrigin {
         publisher_id: "application-build".into(),
     }
 }
-pub fn selection() -> Result<BundleSelection, &'static str> {
+pub fn selection(platform: &sdk::RuntimePlatform) -> Result<BundleSelection, &'static str> {
+    let catalog = if *platform == MACOS_ARM64 {
+        include_str!("bundled-plugins.macos-aarch64.json")
+    } else if *platform == WINDOWS_X64 {
+        include_str!("bundled-plugins.windows-x86_64.json")
+    } else {
+        return Err("unsupported bundled selection platform");
+    };
     let selection: BundleSelection =
-        serde_json::from_str(include_str!("bundled-plugins.macos-aarch64.json"))
-            .map_err(|_| "invalid bundled selection")?;
+        serde_json::from_str(catalog).map_err(|_| "invalid bundled selection")?;
     selection.validate()?;
+    if selection.platform != *platform {
+        return Err("bundled selection platform differs from the build target");
+    }
     Ok(selection)
 }

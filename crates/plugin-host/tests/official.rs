@@ -1,4 +1,4 @@
-#![cfg(all(unix, feature = "javascript-conformance"))]
+#![cfg(all(any(unix, all(windows, target_arch = "x86_64")), feature = "javascript-conformance"))]
 //! Pairing checks consume an explicitly selected prebuilt official package.
 //! Domain source stays in its independent repository; this Host test does not
 //! link a parser or treat generic SDK validation as project adoption.

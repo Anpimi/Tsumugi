@@ -131,7 +131,7 @@ Workers / Domain Plugins / Agent Service
 
 ### 环境要求
 
-- **完整离线包目标**：Apple Silicon macOS 13.5+，须显式准备运行资源并使用对应打包配置。详见[分能力支持矩阵](docs/plugin-distribution.zh-CN.md#平台与构建支持)。
+- **完整离线包目标**：Apple silicon macOS 13.5+ 和 Windows 11 x64 MSVC 候选包。须准备固定运行资源并使用对应打包配置。详见[分能力支持矩阵](docs/plugin-distribution.zh-CN.md#平台与构建支持)。
 - **桌面壳开发**：源码保留 Windows x64 与 macOS 目标路径，不表示这些平台的完整 Agent 和随附插件包均已支持。
 - **开发工具链**：Rust 1.98+、Node.js、pnpm 12、Vite 8、Tauri 2
 - **Windows 原生依赖**：Visual Studio C++ Build Tools、Windows SDK、Microsoft Edge WebView2 Runtime

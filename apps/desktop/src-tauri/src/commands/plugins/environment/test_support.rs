@@ -180,7 +180,7 @@ impl Fixture {
             let path = root.path().join("host").join(relative); fs::create_dir_all(path.parent().unwrap()).unwrap();
             fs::write(&path, &file.bytes).unwrap(); fs::set_permissions(&path, fs::Permissions::from_mode(0o600)).unwrap();
         }
-        let pin = crate::runtime_bundle::node_pin().unwrap();
+        let pin = crate::runtime_bundle::node_pin(&crate::runtime_bundle::MACOS_ARM64).unwrap();
         let descriptor = sdk::RuntimeEnvironmentDescriptor {
             protocol_version: sdk::RUNTIME_ENVIRONMENT_PROTOCOL,
             platform: sdk::RuntimePlatform { operating_system: sdk::RuntimeOperatingSystem::Macos,

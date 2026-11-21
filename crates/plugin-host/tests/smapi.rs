@@ -1,4 +1,4 @@
-#![cfg(all(unix, feature = "javascript-conformance"))]
+#![cfg(all(any(unix, all(windows, target_arch = "x86_64")), feature = "javascript-conformance"))]
 //! Real pairing consumes a selected independent package, never domain source.
 use serde_json::Value;
 use tsumugi_plugin_host::*;
@@ -127,7 +127,9 @@ fn official_smapi_package_extracts_builds_and_checks_through_the_captured_host()
             assert_eq!(block.target, ContentTarget::Snapshot);
             assert_eq!(block.handling, ExtensionHandling::Required);
         }
-        let context = exchange.domain_blocks.iter().find(|block| block.schema == contract("tsumugi.source-context-facts")).unwrap();
+        let context = exchange.domain_blocks.iter()
+            .find(|block| block.schema == source_context_facts_contract())
+            .expect("current source-context facts block");
         let facts = parse_source_context_block(context, &exchange.artifacts).unwrap();
         assert_eq!(facts.facts.len(), 1);
         let name = &facts.facts[0];

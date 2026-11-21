@@ -1,0 +1,43 @@
+{
+  "formatVersion": 1,
+  "platform": {
+    "operatingSystem": "windows",
+    "architecture": "x86_64"
+  },
+  "runtimeProfile": "node-system-libraries-v1",
+  "processProtocol": 4,
+  "packages": [
+    {
+      "id": "webvtt",
+      "displayName": "WebVTT captions",
+      "plugin": {
+        "publisher": "org.tsumugi",
+        "id": "webvtt",
+        "version": "0.1.0-alpha.2"
+      },
+      "packageDigest": "9ddf49461125cb59586402d3ce70acd07dc863af9ceffa0b6b53188f11fec930",
+      "sourceRepository": "https://github.com/Anpimi/Tsumugi-plugins",
+      "sourceCommit": "27f78eaab4ff3ca44082b144e4e9af6a99cebc59",
+      "sdkVersion": "0.1.0-alpha.9",
+      "sdkArtifactSha256": "529fc51708b8ac0219643e020b1527b8f45dac8e0d08d0f2301370752ceb0e2b",
+      "archiveName": "webvtt.tar",
+      "archiveSha256": "49b26971fa258cf479569d7c4af22a7c25ed2d0d146a84890108a5386836a24c"
+    },
+    {
+      "id": "stardew-smapi",
+      "displayName": "SMAPI translations",
+      "plugin": {
+        "publisher": "org.tsumugi",
+        "id": "stardew-smapi",
+        "version": "0.1.0-alpha.2"
+      },
+      "packageDigest": "834f7d03bd8c45a599de3d33cf277cd5a32d4b12def74662a690c2cfab85faa5",
+      "sourceRepository": "https://github.com/Anpimi/Tsumugi-plugins",
+      "sourceCommit": "27f78eaab4ff3ca44082b144e4e9af6a99cebc59",
+      "sdkVersion": "0.1.0-alpha.9",
+      "sdkArtifactSha256": "529fc51708b8ac0219643e020b1527b8f45dac8e0d08d0f2301370752ceb0e2b",
+      "archiveName": "stardew-smapi.tar",
+      "archiveSha256": "38567ecc5840b9c15758f0c88b9c504ce6282cff158d38bcbc5a94f8eb04fec9"
+    }
+  ]
+}

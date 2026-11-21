@@ -80,7 +80,7 @@ pub(super) fn member_runtime_metadata() -> crate::runtime_bundle::BundledRuntime
                 id: crate::runtime_bundle::BUNDLE_ID.into(),
                 environment: observed.environment,
                 origin: crate::runtime_bundle::bundled_origin(),
-                minimum_system_version: crate::runtime_bundle::node_pin()
+                minimum_system_version: crate::runtime_bundle::node_pin(&expected.platform)
                     .unwrap()
                     .minimum_system_version,
                 file_count: observed.file_count,

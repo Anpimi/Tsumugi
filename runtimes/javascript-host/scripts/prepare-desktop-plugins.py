@@ -22,6 +22,7 @@ import uuid
 
 ROOT = Path(__file__).resolve().parents[3]
 SELECTION = ROOT / "apps/desktop/src-tauri/bundled-plugins.macos-aarch64.json"
+WINDOWS_SELECTION = ROOT / "apps/desktop/src-tauri/bundled-plugins.windows-x86_64.json"
 MAX_BYTES = 64 * 1024 * 1024
 MAX_ARCHIVE_BYTES = MAX_BYTES + 1024 * 1024
 MAX_FILES = 256
@@ -129,7 +130,10 @@ def selection(data):
     value = json_object(data)
     if (set(value) != {"formatVersion", "platform", "runtimeProfile", "processProtocol", "packages"}
             or type(value["formatVersion"]) is not int or value["formatVersion"] != 1
-            or value["platform"] != {"operatingSystem": "macos", "architecture": "aarch64"}
+            or value["platform"] not in (
+                {"operatingSystem": "macos", "architecture": "aarch64"},
+                {"operatingSystem": "windows", "architecture": "x86_64"},
+            )
             or value["runtimeProfile"] != "node-system-libraries-v1"
             or type(value["processProtocol"]) is not int or value["processProtocol"] < 1
             or not isinstance(value["packages"], list) or not 1 <= len(value["packages"]) <= 128):
@@ -446,9 +450,11 @@ def main():
     parser.add_argument("--inspector", type=Path, required=True, help="explicit approved tsumugi-plugin-package executable")
     parser.add_argument("--inspector-sha256", required=True)
     parser.add_argument("--output", type=Path, required=True, help="new resource directory beneath an existing parent")
+    parser.add_argument("--platform", choices=("macos-aarch64", "windows-x86_64"), default="macos-aarch64")
     args = parser.parse_args()
     try:
-        report = prepare(args.artifacts, args.output, args.inspector, args.inspector_sha256)
+        catalog = WINDOWS_SELECTION if args.platform == "windows-x86_64" else SELECTION
+        report = prepare(args.artifacts, args.output, args.inspector, args.inspector_sha256, selection_path=catalog)
         print(json.dumps(report, indent=2))
     except (OSError, ValueError, KeyError, TypeError, tarfile.TarError, AttributeError):
         print("Plugin preparation failed. Review the fixed pins, explicit inputs and any new .tsumugi-plugins-* staging directory. Existing outputs are never replaced; use a new output directory.", file=sys.stderr)

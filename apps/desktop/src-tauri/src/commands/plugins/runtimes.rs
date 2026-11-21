@@ -264,10 +264,7 @@ fn availability(
     environment: &sdk::RuntimeEnvironmentDescriptor,
     minimum: &str,
 ) -> RuntimeAvailability {
-    if !cfg!(all(target_os = "macos", target_arch = "aarch64"))
-        || environment.platform.operating_system != sdk::RuntimeOperatingSystem::Macos
-        || environment.platform.architecture != sdk::RuntimeArchitecture::Aarch64
-    {
+    if runtime_bundle::native_platform().as_ref() != Some(&environment.platform) {
         return RuntimeAvailability::UnsupportedPlatform;
     }
     let Some(current) = operating_system_version() else {
@@ -302,7 +299,28 @@ fn operating_system_version() -> Option<(u16, u16, u16)> {
     }
     runtime_bundle::system_version(std::str::from_utf8(&bytes[..length - 1]).ok()?)
 }
-#[cfg(not(target_os = "macos"))]
+#[cfg(windows)]
+fn operating_system_version() -> Option<(u16, u16, u16)> {
+    use windows_sys::{
+        Wdk::System::SystemServices::RtlGetVersion, Win32::System::SystemInformation::OSVERSIONINFOW,
+    };
+    // This kernel version query does not depend on the app manifest's
+    // Windows compatibility declarations.
+    let mut version = OSVERSIONINFOW {
+        dwOSVersionInfoSize: std::mem::size_of::<OSVERSIONINFOW>() as u32,
+        ..Default::default()
+    };
+    if unsafe { RtlGetVersion(&mut version) } != 0 {
+        return None;
+    }
+    Some((
+        version.dwMajorVersion.try_into().ok()?,
+        version.dwMinorVersion.try_into().ok()?,
+        version.dwBuildNumber.try_into().ok()?,
+    ))
+}
+
+#[cfg(not(any(target_os = "macos", windows)))]
 fn operating_system_version() -> Option<(u16, u16, u16)> {
     None
 }
@@ -413,7 +431,7 @@ pub(super) fn load_approved_runtime(
         .find(|entry| entry.environment.digest().ok().as_deref() == Some(digest))
         .ok_or_else(|| map_store_error(InstallError::ApprovalMismatch))?;
     let environment = approval.captured_environment().map_err(map_store_error)?;
-    let pin = runtime_bundle::node_pin().map_err(|_| unavailable())?;
+    let pin = runtime_bundle::node_pin(&environment.platform).map_err(|_| unavailable())?;
     // Deliberately selected older Host snapshots can coexist. Their complete
     // descriptor and current independent decision must still match exactly.
     if approval.origin != runtime_bundle::bundled_origin()

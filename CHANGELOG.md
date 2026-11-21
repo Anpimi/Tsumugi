@@ -29,6 +29,7 @@ The current workspace targets **`0.3.0-alpha.1`**. The published `0.2.0-alpha.1`
 - Extensions reports missing or incompatible AI member files without starting workers or testing a model connection, and links to the existing included-resource setup. Source-only builds explain their missing bundled extensions; the distribution guide separates platform capabilities and provides a complete offline preparation sequence and a public manual first-run sample.
 - The package inspector can read and fingerprint prebuilt data and JavaScript plugin directories on Windows x64.
 - Windows x64 source builds can install extensions and runtime packages on local NTFS, retain their approval settings, and reconcile interrupted operations using the original request.
+- The Windows 11 x64 candidate installer includes offline WebView2 setup, the pinned Node and Pi member resources, and the WebVTT and SMAPI format plugins.
 
 - Generate terminology proposals from an explicitly reviewed planning request. Save their exact model and entry provenance, compare them in Knowledge, and edit targets before adopting through the original resource decisions and recovery. Old proposals remain readable; saving or viewing does not run a model or adopt terms. The local draft journal uses format 19.
 

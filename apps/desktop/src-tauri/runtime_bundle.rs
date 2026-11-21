@@ -5,6 +5,34 @@ use tsumugi_plugin_sdk as sdk;
 
 pub const BUNDLE_ID: &str = "bundled-javascript";
 pub const RESOURCE_DIRECTORY: &str = "runtimes/javascript";
+pub const MACOS_ARM64: sdk::RuntimePlatform = sdk::RuntimePlatform {
+    operating_system: sdk::RuntimeOperatingSystem::Macos,
+    architecture: sdk::RuntimeArchitecture::Aarch64,
+};
+pub const WINDOWS_X64: sdk::RuntimePlatform = sdk::RuntimePlatform {
+    operating_system: sdk::RuntimeOperatingSystem::Windows,
+    architecture: sdk::RuntimeArchitecture::X86_64,
+};
+
+pub fn native_platform() -> Option<sdk::RuntimePlatform> {
+    if cfg!(all(target_os = "macos", target_arch = "aarch64")) {
+        Some(MACOS_ARM64)
+    } else if cfg!(all(windows, target_arch = "x86_64")) {
+        Some(WINDOWS_X64)
+    } else {
+        None
+    }
+}
+
+pub fn tool_entrypoint(platform: &sdk::RuntimePlatform) -> Result<&'static str, &'static str> {
+    if *platform == MACOS_ARM64 {
+        Ok("bin/node")
+    } else if *platform == WINDOWS_X64 {
+        Ok("bin/node.exe")
+    } else {
+        Err("unsupported bundled Node platform")
+    }
+}
 
 /// Validate prepared application code through the same capture owner used by
 /// member execution. This performs no build, installation or code execution.
@@ -48,20 +76,32 @@ pub struct NodeDistributionPin {
     pub system_libraries: Vec<String>,
 }
 
-pub fn node_pin() -> Result<NodeDistributionPin, &'static str> {
-    let pin: NodeDistributionPin = serde_json::from_str(include_str!(
-        "../../../runtimes/javascript-host/scripts/node-distribution.macos-aarch64.json"
-    ))
-    .map_err(|_| "invalid source-owned Node distribution pin")?;
+pub fn node_pin(platform: &sdk::RuntimePlatform) -> Result<NodeDistributionPin, &'static str> {
+    let entrypoint = tool_entrypoint(platform)?;
+    let (source, archive_suffix, library_count) = if *platform == MACOS_ARM64 {
+        (
+            include_str!("../../../runtimes/javascript-host/scripts/node-distribution.macos-aarch64.json"),
+            "darwin-arm64.tar.xz",
+            4,
+        )
+    } else {
+        (
+            include_str!("../../../runtimes/javascript-host/scripts/node-distribution.windows-x86_64.json"),
+            "win-x64.zip",
+            13,
+        )
+    };
+    let pin: NodeDistributionPin =
+        serde_json::from_str(source).map_err(|_| "invalid source-owned Node distribution pin")?;
     sdk::validate_package_digest(&pin.tool_tree_digest).map_err(|_| "invalid tool artifact pin")?;
     sdk::validate_package_digest(&pin.archive_sha256).map_err(|_| "invalid archive pin")?;
     if pin.files.len() != 2
-        || !pin.files.contains_key("bin/node")
+        || !pin.files.contains_key(entrypoint)
         || !pin.files.contains_key("LICENSE")
         || !pin.url.starts_with("https://nodejs.org/dist/")
         || !pin.checksums_url.starts_with("https://nodejs.org/dist/")
-        || pin.archive != format!("node-v{}-darwin-arm64.tar.xz", pin.version)
-        || pin.system_libraries.len() != 4
+        || pin.archive != format!("node-v{}-{archive_suffix}", pin.version)
+        || pin.system_libraries.len() != library_count
         || system_version(&pin.minimum_system_version).is_none()
     {
         return Err("invalid source-owned Node distribution profile");
@@ -86,7 +126,7 @@ pub struct BundledRuntimeMetadata {
 
 impl BundledRuntimeMetadata {
     pub fn validate(&self) -> Result<(), &'static str> {
-        let pin = node_pin()?;
+        let pin = node_pin(&self.environment.platform)?;
         self.environment
             .validate()
             .map_err(|_| "invalid bundled environment")?;
@@ -118,15 +158,10 @@ pub fn supported_tool(
     environment: &sdk::RuntimeEnvironmentDescriptor,
     pin: &NodeDistributionPin,
 ) -> bool {
-    environment.platform
-        == sdk::RuntimePlatform {
-            operating_system: sdk::RuntimeOperatingSystem::Macos,
-            architecture: sdk::RuntimeArchitecture::Aarch64,
-        }
-        && environment.profile == sdk::RuntimeEnvironmentProfile::NodeSystemLibrariesV1
+    environment.profile == sdk::RuntimeEnvironmentProfile::NodeSystemLibrariesV1
         && environment.tool_version == pin.version
         && environment.tool.tree_digest == pin.tool_tree_digest
-        && environment.tool.entrypoint == "bin/node"
+        && tool_entrypoint(&environment.platform).ok() == Some(environment.tool.entrypoint.as_str())
         && environment.host.entrypoint == "dist/main.js"
 }
 

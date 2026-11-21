@@ -423,7 +423,7 @@ fn journey(material: Materials, loss: PackageLoss) {
         behavior_version: 1,
     };
     let owned = OwnedDirectory::new(loss == PackageLoss::MissingInstallation);
-    let pin = crate::plugin_bundle::selection()
+    let pin = crate::plugin_bundle::selection(&crate::runtime_bundle::MACOS_ARM64)
         .unwrap()
         .packages
         .into_iter()

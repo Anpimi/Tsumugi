@@ -3,6 +3,17 @@ mod plugin_bundle;
 #[allow(dead_code)]
 mod runtime_bundle;
 
+fn bundle_platform() -> Result<tsumugi_plugin_sdk::RuntimePlatform, Box<dyn std::error::Error>> {
+    let host = std::env::var("HOST")?;
+    let target = std::env::var("TARGET")?;
+    if host != target
+        || !matches!(target.as_str(), "aarch64-apple-darwin" | "x86_64-pc-windows-msvc")
+    {
+        return Err("bundled resources require a matching Apple silicon macOS or Windows x64 MSVC builder and target".into());
+    }
+    runtime_bundle::native_platform().ok_or_else(|| "unsupported host for bundled resources".into())
+}
+
 fn prepare_metadata() -> Result<(), Box<dyn std::error::Error>> {
     use std::{env, path::PathBuf};
     use tsumugi_plugin_host::{CapturedRuntime, RuntimeInspectionRequest};
@@ -11,36 +22,35 @@ fn prepare_metadata() -> Result<(), Box<dyn std::error::Error>> {
     println!(
         "cargo:rerun-if-changed=../../../runtimes/javascript-host/scripts/node-distribution.macos-aarch64.json"
     );
+    println!(
+        "cargo:rerun-if-changed=../../../runtimes/javascript-host/scripts/node-distribution.windows-x86_64.json"
+    );
     println!("cargo:rerun-if-changed=../../../runtimes/agent-service/src/generated/profile.json");
     println!("cargo:rerun-if-env-changed=CARGO_FEATURE_BUNDLED_RUNTIME");
     let metadata = if env::var_os("CARGO_FEATURE_BUNDLED_RUNTIME").is_some() {
-        if env::var("TARGET")? != "aarch64-apple-darwin"
-            || env::var("HOST")? != "aarch64-apple-darwin"
-        {
-            return Err(
-                "bundled runtime requires an aarch64-apple-darwin target and builder".into(),
-            );
-        }
+        let platform = bundle_platform()?;
         let resources =
             PathBuf::from(env::var_os("CARGO_MANIFEST_DIR").ok_or("manifest directory missing")?)
                 .join("resources");
         let root = resources.join("javascript-runtime");
         println!("cargo:rerun-if-changed=resources/javascript-runtime");
-        let pin = runtime_bundle::node_pin()?;
+        let pin = runtime_bundle::node_pin(&platform)?;
         let observed = CapturedRuntime::inspect_directories(
             &root.join("tool"),
             &root.join("host"),
             &RuntimeInspectionRequest {
                 profile: sdk::RuntimeEnvironmentProfile::NodeSystemLibrariesV1,
                 tool_version: pin.version.clone(),
-                tool_entrypoint: "bin/node".into(),
+                tool_entrypoint: runtime_bundle::tool_entrypoint(&platform)?.into(),
                 host_entrypoint: "dist/main.js".into(),
             },
             || true,
         )?;
         // The independent complete tool pin includes the binary, license and
         // executable flags. Selected inspection JSON never approves itself.
-        if !runtime_bundle::supported_tool(&observed.environment, &pin) {
+        if observed.environment.platform != platform
+            || !runtime_bundle::supported_tool(&observed.environment, &pin)
+        {
             return Err("prepared tool differs from source-owned Node artifact pin".into());
         }
         // Core generation owns this protocol; the resource manifest cannot
@@ -78,16 +88,10 @@ fn prepare_plugin_metadata() -> Result<(), Box<dyn std::error::Error>> {
     use tsumugi_plugin_sdk as sdk;
     println!("cargo:rerun-if-changed=plugin_bundle.rs");
     println!("cargo:rerun-if-changed=bundled-plugins.macos-aarch64.json");
+    println!("cargo:rerun-if-changed=bundled-plugins.windows-x86_64.json");
     println!("cargo:rerun-if-env-changed=CARGO_FEATURE_BUNDLED_PLUGINS");
     let metadata = if env::var_os("CARGO_FEATURE_BUNDLED_PLUGINS").is_some() {
-        if env::var("TARGET")? != "aarch64-apple-darwin"
-            || env::var("HOST")? != "aarch64-apple-darwin"
-        {
-            return Err(
-                "bundled plugin distribution requires its selected platform builder".into(),
-            );
-        }
-        let selection = plugin_bundle::selection()?;
+        let selection = plugin_bundle::selection(&bundle_platform()?)?;
         let root =
             PathBuf::from(env::var_os("CARGO_MANIFEST_DIR").ok_or("manifest directory missing")?)
                 .join("resources/bundled-plugins");

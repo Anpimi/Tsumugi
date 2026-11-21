@@ -137,7 +137,7 @@ The React frontend renders workspace state and dispatches Tauri commands. The Ru
 
 ### Prerequisites
 
-- **Complete offline bundle target**: Apple Silicon macOS 13.5+, prepared with the explicit runtime configuration. See the [capability support matrix](docs/plugin-distribution.md#platform-and-build-support).
+- **Complete offline bundle targets**: Apple silicon macOS 13.5+ and the Windows 11 x64 MSVC candidate. Prepare the pinned resources and use the matching build configuration. See the [capability support matrix](docs/plugin-distribution.md#platform-and-build-support).
 - **Desktop shell development**: Windows x64 and macOS targets have source paths; this does not establish complete Agent or packaged-plugin support on those targets.
 - **Toolchain**: Rust 1.98+, Node.js, pnpm 12, Vite 8, Tauri 2
 - **Windows native dependencies**: Visual Studio C++ Build Tools, Windows SDK, and Microsoft Edge WebView2 Runtime

@@ -24,7 +24,7 @@ fn defaults_request_carries_only_exact_selection_revision_and_original_action() 
 }
 #[test]
 fn bundled_selection_refuses_duplicates_paths_wrong_sdk_and_unpinned_provenance() {
-    let selection = plugin_bundle::selection().unwrap();
+    let selection = plugin_bundle::selection(&crate::runtime_bundle::MACOS_ARM64).unwrap();
     assert_eq!(
         selection
             .packages
@@ -144,7 +144,7 @@ fn defaults_capture_real_independent_files_preserve_choices_and_reopen_without_w
             .as_deref(),
         Some("plugin-defaults-changed")
     );
-    for pin in plugin_bundle::selection().unwrap().packages {
+    for pin in plugin_bundle::selection(&crate::runtime_bundle::MACOS_ARM64).unwrap().packages {
         let component = resources
             .join("bundled-plugins")
             .join(pin.id)
