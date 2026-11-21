@@ -71,11 +71,26 @@ it("retains the same original runtime approval after an unknown result and panel
   expect(calls).toHaveLength(2); expect(calls[1][1]).toEqual(calls[0][1]);
 });
 
-it("explains unsupported runtime availability without permitting installation", async () => {
-  invoke.mockResolvedValue(bundled("system-too-old"));
+it.each([
+  ["macos", "aarch64", "13.5", "Requires macOS 13.5 or later on Apple silicon."],
+  ["windows", "x86_64", "10.0.22000", "Requires Windows 11 x64 with OS build 22000 or later."],
+])("explains the minimum %s runtime version without permitting installation", async (operatingSystem, architecture, minimumSystemVersion, requirement) => {
+  const view = bundled("system-too-old");
+  const offer = view.runtimeOffers[0]!;
+  const windows = operatingSystem === "windows";
+  invoke.mockResolvedValue({ ...view, runtimeOffers: [{
+    ...offer,
+    minimumSystemVersion,
+    environment: {
+      ...offer.environment,
+      platform: { operatingSystem, architecture },
+      tool: { ...offer.environment.tool, entrypoint: windows ? "bin/node.exe" : "bin/node" },
+    },
+  }] });
   const user = userEvent.setup(); render(<PluginManager disabled={false} onBusyChange={onBusy}/>, { wrapper: ApplicationReadProvider });
   await user.click(screen.getByRole("button", { name: "Extensions" }));
-  await screen.findByText(/Update macOS to the minimum required version/);
+  await screen.findByText(requirement);
+  await screen.findByText(/Update your operating system to the minimum required version/);
   expect(screen.queryByRole("button", { name: "Approve and install runtime" })).not.toBeInTheDocument();
   expect(screen.queryByRole("checkbox")).not.toBeInTheDocument();
 });

@@ -835,6 +835,7 @@ plugins: {
   defaultsChanged: "内置扩展文件自加载后已发生变化。请刷新当前状态，重新核对信息后再继续。",
 
   runtimeTitle: "JavaScript 运行环境", bundledRuntime: "Node {{version}} 与随附 Host", runtimeSystem: "需要 Apple 芯片及 macOS {{version}} 或更高版本。",
+  runtimeSystemWindows: "需要 Windows 11 x64，系统内部版本须为 {{build}} 或更高。",
   runtimeEffect: "批准并安装应用随附的运行环境文件。此操作不会启用插件、运行代码或授予任务执行权限。每次执行均需单独授权，且子进程不具备操作系统沙箱隔离。",
   runtimeNotBundled: "当前应用版本未包含 JavaScript 运行环境。请安装包含受支持运行环境的应用版本。",
   runtimeUnavailable: "当前系统不支持此运行环境。请检查系统要求及应用版本。",
@@ -855,7 +856,7 @@ plugins: {
   nativeHostApproved: "已批准原生应用 {{version}}。运行任务时需使用匹配的 Host 程序，并在每次执行前单独授权。",
   runtimeApprovedMissing: "Node {{version}} 已获批准但尚未安装文件。请查看并安装匹配的随附运行环境。",
   verifyRuntime: "校验已安装的运行环境", runtimeVerified: "已安装的运行环境文件与获批指纹一致。本次校验未启动 Worker，也未授予执行权限。",
-  runtimeAvailability: { "unsupported-platform": "此随附运行环境仅支持搭载 Apple 芯片的 macOS。", "system-too-old": "请先将 macOS 升级至所需的最低版本，再安装此运行环境。", "system-version-unknown": "无法确认当前 macOS 版本，暂时无法安装运行环境。", "resources-unavailable": "找不到随附的运行环境文件。请重新安装完整的应用版本。" },
+  runtimeAvailability: { "unsupported-platform": "请使用与当前操作系统和处理器匹配的完整应用版本。", "system-too-old": "请先将操作系统升级至所需的最低版本，再安装此运行环境。", "system-version-unknown": "须确认操作系统版本后才能安装此运行环境。", "resources-unavailable": "找不到随附的运行环境文件。请重新安装完整的应用版本。" },
   open: "扩展", title: "已安装扩展", description: "管理本地插件包，并控制哪些插件可用于新任务。",
   repositoryTitle: "签名仓库",
   repositoryPublisher: "仓库认证发布者：{{publisher}}",

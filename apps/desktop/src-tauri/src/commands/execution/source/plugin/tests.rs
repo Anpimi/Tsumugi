@@ -934,7 +934,10 @@ fn real_source_ipc_requires_two_grants_and_commits_only_checked_captured_bytes()
     removable(temporary.path());
 }
 
-#[cfg(all(target_os = "macos", target_arch = "aarch64"))]
+#[cfg(any(
+    all(target_os = "macos", target_arch = "aarch64"),
+    all(feature = "bundled-plugins", windows, target_arch = "x86_64")
+))]
 mod native;
 
 #[cfg(all(
@@ -956,7 +959,9 @@ mod lifecycle_update;
 
 #[cfg(all(
     feature = "bundled-plugins",
-    target_os = "macos",
-    target_arch = "aarch64"
+    any(
+        all(target_os = "macos", target_arch = "aarch64"),
+        all(windows, target_arch = "x86_64")
+    )
 ))]
 mod bundled;

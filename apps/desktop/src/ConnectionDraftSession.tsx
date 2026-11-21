@@ -1,6 +1,6 @@
 import { createContext, useCallback, useContext, useLayoutEffect, useRef, useState, type ReactNode } from "react";
 import { type QueryClient } from "@tanstack/react-query";
-import { connectionReadKey, connectionReadOptions, currentConnections, useApplicationQueryClient } from "./ApplicationReadProvider";
+import { connectionReadKey, connectionReadOptions, currentConnections, useApplicationQueryClient, useApplicationReadReservation } from "./ApplicationReadProvider";
 import { connectionCommands, confirmConnectionReceipt, sameConnection, type AiConnection, type ConnectionReadView,
   type ModelConnectionChange, type ModelConnectionProfile, type ModelConnectionReceipt } from "./connectionCommands";
 import { apiKeyCommands, apiKeyReadKey } from "./apiKeyCommands";
@@ -31,6 +31,7 @@ function useConnectionOwner(client: QueryClient) {
     busy: false, pending: null as Pending | null, failure: null as CommandFailure | null, notice: null as ConnectionNotice | null,
     conflict: false, exitPrompt: false, exitHeld: false, credentialReset: 0 }));
   const currentState = useRef(state), alive = useRef(true), running = useRef(false), exit = useRef<Exit | null>(null), permit = useRef<object | null>(null);
+  useApplicationReadReservation("connections", running);
   useLayoutEffect(() => { alive.current = true; return () => {
     alive.current = false; const previous = exit.current; exit.current = null; previous?.resolve(null); permit.current = null;
   }; }, []);

@@ -160,11 +160,14 @@ impl Bundle {
         [root.clone(), root.join("tool"), root.join("host")]
             .iter()
             .all(|path| std::fs::symlink_metadata(path).is_ok_and(|metadata| metadata.is_dir()))
-            && [root.join("tool/bin/node"), root.join("host/dist/main.js")]
-                .iter()
-                .all(|path| {
-                    std::fs::symlink_metadata(path).is_ok_and(|metadata| metadata.is_file())
-                })
+            && [
+                root.join("tool")
+                    .join(&self.metadata.environment.tool.entrypoint),
+                root.join("host")
+                    .join(&self.metadata.environment.host.entrypoint),
+            ]
+            .iter()
+            .all(|path| std::fs::symlink_metadata(path).is_ok_and(|metadata| metadata.is_file()))
     }
     pub(super) fn view(&self) -> Result<PluginRuntimeOfferView, CommandError> {
         Ok(PluginRuntimeOfferView {

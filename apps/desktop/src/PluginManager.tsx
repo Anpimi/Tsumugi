@@ -1,6 +1,6 @@
 import { useEffect, useImperativeHandle, useRef, useState, type Ref, type KeyboardEvent } from "react";
 import { useQuery, type QueryClient, type QueryKey } from "@tanstack/react-query";
-import { pluginInventoryReadKey as inventoryKey, pluginRepositoriesReadKey as repositoriesKey, useApplicationQueryClient, usePluginReadReservation } from "./ApplicationReadProvider";
+import { pluginInventoryReadKey as inventoryKey, pluginRepositoriesReadKey as repositoriesKey, useApplicationQueryClient, useApplicationReadReservation } from "./ApplicationReadProvider";
 import { Dialog, DialogTrigger, DialogPortal, DialogOverlay, DialogContent, DialogTitle, DialogDescription } from "@radix-ui/react-dialog";
 import { useTranslation } from "react-i18next";
 import { CommandFailureDetails, commandFailure, type CommandFailure } from "./CommandFailure";
@@ -160,7 +160,7 @@ export function PluginManager({ disabled, onBusyChange, hideTrigger = false, pre
       event.stopPropagation();
     }
   }
-  usePluginReadReservation(running);
+  useApplicationReadReservation("plugins", running);
   const mounted = useRef(true);
   const [candidate, setCandidate] = useState<PluginCandidateView | null>(null);
   const [consent, setConsent] = useState(false);
@@ -568,7 +568,10 @@ export function PluginManager({ disabled, onBusyChange, hideTrigger = false, pre
           const record = inventory.runtimes.find(record => record.environmentDigest === offer.environmentDigest);
           return <div key={offer.environmentDigest}>
             <h4>{t("plugins.bundledRuntime", { version: offer.environment.toolVersion })}</h4>
-            <p>{t("plugins.runtimeSystem", { version: offer.minimumSystemVersion })}</p><p>{t("plugins.runtimeEffect")}</p>
+            <p>{offer.environment.platform.operatingSystem === "windows"
+              ? t("plugins.runtimeSystemWindows", { build: offer.minimumSystemVersion.slice(offer.minimumSystemVersion.lastIndexOf(".") + 1) })
+              : t("plugins.runtimeSystem", { version: offer.minimumSystemVersion })}</p>
+            <p>{t("plugins.runtimeEffect")}</p>
             <details><summary>{t("plugins.runtimeFingerprint")}</summary><code>{offer.environmentDigest}</code><p>{t("plugins.files", { count: offer.fileCount, bytes: offer.byteCount })}</p></details>
             {offer.availability !== "available" ? <p>{t(`plugins.runtimeAvailability.${offer.availability}`)}</p> : <>
               <Field className="plugin-consent" label={t("plugins.runtimeConsent")}><input type="checkbox" checked={runtimeConsent === offer.environmentDigest} disabled={blocked || intent !== null} onChange={event => setRuntimeConsent(event.target.checked ? offer.environmentDigest : null)}/></Field>

@@ -1,15 +1,16 @@
 use super::*;
+#[cfg(target_os = "macos")]
 use crate::commands::plugins::InstalledFixture as Fixture;
-use std::{
-    fs,
-    path::PathBuf,
-    time::{SystemTime, UNIX_EPOCH},
-};
+#[cfg(target_os = "macos")]
+use std::{fs, path::PathBuf};
+use std::time::{SystemTime, UNIX_EPOCH};
+#[cfg(target_os = "macos")]
+use tauri::Manager;
 use tauri::{
-    Manager,
     ipc::{CallbackFn, InvokeBody},
     webview::InvokeRequest,
 };
+#[cfg(target_os = "macos")]
 use tsumugi_plugin_host::{
     CapturedNativeRuntime, PackageImage,
     catalog::{PackageApproval, PackageOrigin},
@@ -98,6 +99,7 @@ pub(super) fn completed(
     }
 }
 
+#[cfg(target_os = "macos")]
 fn native_review(
     window: &tauri::WebviewWindow<tauri::test::MockRuntime>,
     context: &Value,
@@ -146,6 +148,7 @@ fn native_review(
     current
 }
 
+#[cfg(target_os = "macos")]
 #[test]
 #[ignore = "requires an explicit independently built macOS arm64 Native catalog package and digest"]
 fn actual_native_desktop_source_translation_review_and_build_use_independent_grants_and_proofs() {

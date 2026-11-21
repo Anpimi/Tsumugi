@@ -4,9 +4,10 @@ use super::{
     native::{call, completed, consent, consents, scoped, source_consent},
     *,
 };
+#[cfg(unix)]
+use std::os::unix::fs::PermissionsExt;
 use std::{
     fs,
-    os::unix::fs::PermissionsExt,
     path::{Path, PathBuf},
 };
 use tauri::Manager;
@@ -42,6 +43,7 @@ impl OwnedTemporary {
         self.0.path()
     }
 }
+#[cfg(unix)]
 impl Drop for OwnedTemporary {
     fn drop(&mut self) {
         // Managed installed objects are read-only. Make only this test's owned
@@ -52,6 +54,7 @@ impl Drop for OwnedTemporary {
 
 fn copy_tree(source: &Path, output: &Path) {
     fs::create_dir(output).unwrap();
+    #[cfg(unix)]
     fs::set_permissions(output, fs::Permissions::from_mode(0o700)).unwrap();
     for entry in fs::read_dir(source).unwrap() {
         let source = entry.unwrap().path();
@@ -63,6 +66,7 @@ fn copy_tree(source: &Path, output: &Path) {
         } else {
             assert!(info.is_file());
             fs::copy(&source, &output).unwrap();
+            #[cfg(unix)]
             fs::set_permissions(
                 output,
                 fs::Permissions::from_mode(info.permissions().mode() & 0o700),
@@ -72,6 +76,7 @@ fn copy_tree(source: &Path, output: &Path) {
     }
 }
 
+#[cfg(unix)]
 fn removable(path: &Path) {
     if fs::symlink_metadata(path).is_ok_and(|info| info.is_dir()) {
         fs::set_permissions(path, fs::Permissions::from_mode(0o700)).unwrap();
@@ -315,7 +320,6 @@ fn journey(material: Materials, reopen_before_publication: bool) {
         state.plugins.close();
         drop(state);
         drop(app);
-        removable(temporary.path());
         return;
     }
     call(&window, "finish_source_check", finish).unwrap();
@@ -533,7 +537,6 @@ fn journey(material: Materials, reopen_before_publication: bool) {
     state.plugins.close();
     drop(state);
     drop(app);
-    removable(temporary.path());
 }
 
 #[test]

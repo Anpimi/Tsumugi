@@ -4,7 +4,9 @@ import { connectionCommands, sameConnection, sameConnectionReference, type Conne
 import type { AiConfig } from "./aiCommands";
 import type { PluginInventoryView } from "./pluginCommands";
 
-const ApplicationReads = createContext<{ client: QueryClient; pluginReadReservations: Set<() => boolean> } | null>(null);
+type ReadArea = "connections" | "plugins";
+type ReadReservations = Record<ReadArea, Set<() => boolean>>;
+const ApplicationReads = createContext<{ client: QueryClient; readReservations: ReadReservations } | null>(null);
 export const connectionReadKey = ["application", "connections", "current"] as const;
 export const pluginInventoryReadKey = ["application", "plugins", "inventory"] as const;
 export const pluginRepositoriesReadKey = ["application", "plugins", "repositories"] as const;
@@ -20,28 +22,31 @@ export function ApplicationReadProvider({ children }: { children: ReactNode }) {
   const [owner] = useState(() => ({ client: new QueryClient({ defaultOptions: { queries: {
     networkMode: "always", retry: false, staleTime: 0, gcTime: 60_000,
     refetchOnWindowFocus: false, refetchOnReconnect: false,
-  } } }), pluginReadReservations: new Set<() => boolean>() }));
-  const { client, pluginReadReservations } = owner;
+  } } }), readReservations: { connections: new Set<() => boolean>(), plugins: new Set<() => boolean>() } }));
+  const { client, readReservations } = owner;
   useEffect(() => {
     let alive = true;
-    const pluginReadReserved = () => [...pluginReadReservations].some(reserved => reserved());
     const focus = () => {
-      for (const queryKey of [connectionReadKey, pluginInventoryReadKey, pluginRepositoriesReadKey]) {
-        const pluginRead = queryKey !== connectionReadKey;
-        if (pluginRead && pluginReadReserved()) continue;
+      for (const [queryKey, area] of [
+        [connectionReadKey, "connections"],
+        [pluginInventoryReadKey, "plugins"],
+        [pluginRepositoriesReadKey, "plugins"],
+      ] as const) {
+        const reserved = () => [...readReservations[area]].some(isRunning => isRunning());
+        if (reserved()) continue;
         const filter = { queryKey, exact: true };
         // Cancel even a first read with no data so its pre-focus response
         // cannot confirm the facts requested by this focus check.
         void client.invalidateQueries({ ...filter, refetchType: "none" });
         void client.cancelQueries(filter, { revert: false }).then(() => {
           // A write may reserve the owner before cancellation finishes.
-          if (alive && (!pluginRead || !pluginReadReserved())) return client.refetchQueries({ ...filter, type: "active" });
+          if (alive && !reserved()) return client.refetchQueries({ ...filter, type: "active" });
         });
       }
     };
     window.addEventListener("focus", focus);
     return () => { alive = false; window.removeEventListener("focus", focus); client.clear(); };
-  }, [client, pluginReadReservations]);
+  }, [client, readReservations]);
   return <ApplicationReads.Provider value={owner}>{children}</ApplicationReads.Provider>;
 }
 export function useApplicationQueryClient() {
@@ -49,15 +54,15 @@ export function useApplicationQueryClient() {
   if (!owner) throw new Error("ApplicationReadProvider is required");
   return owner.client;
 }
-/** Focus consults the original Extensions reservation, including before busy renders. */
-export function usePluginReadReservation(running: RefObject<boolean>) {
+/** Focus consults the operation owner before its busy state reaches the view. */
+export function useApplicationReadReservation(area: ReadArea, running: RefObject<boolean>) {
   const owner = useContext(ApplicationReads);
   if (!owner) throw new Error("ApplicationReadProvider is required");
   useEffect(() => {
     const reserved = () => running.current;
-    owner.pluginReadReservations.add(reserved);
-    return () => { owner.pluginReadReservations.delete(reserved); };
-  }, [owner, running]);
+    owner.readReservations[area].add(reserved);
+    return () => { owner.readReservations[area].delete(reserved); };
+  }, [owner, area, running]);
 }
 export function currentConnections(client: QueryClient): ConnectionReadView | undefined {
   const value = client.getQueryState<ConnectionReadView>(connectionReadKey);
@@ -92,7 +97,7 @@ export function usePluginFacts() {
   }), [client]);
   const snapshot = useCallback(() => client.getQueryState<PluginInventoryView>(pluginInventoryReadKey), [client]);
   const state = useSyncExternalStore(subscribe, snapshot, snapshot);
-  return { client, state, current: () => currentPlugins(client), reserved: () => [...owner.pluginReadReservations].some(check => check()) };
+  return { client, state, current: () => currentPlugins(client), reserved: () => [...owner.readReservations.plugins].some(check => check()) };
 }
 export function connectionConfigCurrent(view: ConnectionReadView | undefined, config: AiConfig): boolean {
   const reference = config.connectionProfile;

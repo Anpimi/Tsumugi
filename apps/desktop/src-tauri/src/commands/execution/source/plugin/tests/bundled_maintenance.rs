@@ -683,7 +683,6 @@ fn included_webvtt_maintenance_builds_checks_and_exports_two_traceable_releases(
     state.plugins.close();
     drop(state);
     drop(app);
-    removable(temporary.path());
 }
 
 

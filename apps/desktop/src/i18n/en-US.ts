@@ -845,6 +845,7 @@ plugins: {
   defaultsChanged: "Bundled extension files changed since they were loaded. Refresh current state and review the updated details before continuing.",
 
   runtimeTitle: "JavaScript runtime", bundledRuntime: "Node {{version}} and bundled Host", runtimeSystem: "Requires macOS {{version}} or later on Apple silicon.",
+  runtimeSystemWindows: "Requires Windows 11 x64 with OS build {{build}} or later.",
   runtimeEffect: "Approve and install the runtime environment bundled with this application. This does not enable plugins, run code, or authorize task execution. Each execution requires separate permission, and child processes are not sandboxed by the OS.",
   runtimeNotBundled: "This application build does not include a JavaScript runtime. Install a build that includes the supported runtime.",
   runtimeUnavailable: "This runtime is not supported on your current system. Check the system requirements and application build.",
@@ -865,7 +866,7 @@ plugins: {
   nativeHostApproved: "Approved for native application {{version}}. Running a task requires the matching Host binary and separate permission per run.",
   runtimeApprovedMissing: "Node {{version}} is approved but not currently installed. Review a matching bundled runtime to install it.",
   verifyRuntime: "Verify installed runtime", runtimeVerified: "Installed runtime files match the approved fingerprint. No worker was started and no execution permissions were granted.",
-  runtimeAvailability: { "unsupported-platform": "This bundled runtime only supports macOS on Apple silicon.", "system-too-old": "Update macOS to the minimum required version before installing this runtime.", "system-version-unknown": "Could not verify your macOS version. Runtime installation is unavailable.", "resources-unavailable": "Bundled runtime files could not be found. Reinstall a complete application build." },
+  runtimeAvailability: { "unsupported-platform": "Use a complete application build for this operating system and processor.", "system-too-old": "Update your operating system to the minimum required version before installing this runtime.", "system-version-unknown": "Runtime installation requires a verified operating system version.", "resources-unavailable": "Bundled runtime files could not be found. Reinstall a complete application build." },
   open: "Extensions", title: "Installed extensions", description: "Manage local plugin packages and choose which ones can be used for new tasks.",
   repositoryPublisher: "Repository-verified publisher: {{publisher}}",
   repositoryTitle: "Signed repositories",

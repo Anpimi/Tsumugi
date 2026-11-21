@@ -162,6 +162,30 @@ describe("application connection draft owner", () => {
 
 describe("system-key connection actions", () => {
   function keyValues() { const draft = values("System fixture"); draft.connection.credentialEnv = ""; draft.connection.credentialReference = actionId; return draft; }
+  it("keeps the original credential save alive when window focus races with its settings read", async () => {
+    const first = deferred<ConnectionReadView>();
+    let reads = 0;
+    invoke.mockImplementation(async (command, args) => {
+      if (command === "read_model_connections") return ++reads === 1 ? first.promise : structuredClone(current);
+      if (command === "save_model_connection_key") return commit(args.request.change);
+      throw new Error(command);
+    });
+    const result = setup();
+    act(() => {
+      result.result.current.owner.edit(keyValues());
+      result.result.current.owner.editCredential(true);
+    });
+    let save!: Promise<void>;
+    act(() => { save = result.result.current.owner.save("synthetic-focus-key"); });
+    await waitFor(() => expect(reads).toBe(1));
+    act(() => window.dispatchEvent(new Event("focus")));
+    await act(async () => { first.resolve(current); await save; });
+    const calls = invoke.mock.calls.filter(([command]) => command === "save_model_connection_key");
+    expect(calls).toHaveLength(1);
+    expect(result.result.current.owner.state.notice).toBe("saved");
+    expect(result.result.current.owner.state.failure).toBeNull();
+  });
+
   it("keeps secrets out of the shared owner and preserves every newer key edit across a delayed acknowledgement", async () => {
     const write = deferred<ModelConnectionReceipt>(); let request!:ModelConnectionChange;
     invoke.mockImplementation(async (command, args) => {
